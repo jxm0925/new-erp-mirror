@@ -1,1 +1,13 @@
-{"navigationBarTitleText":"仓库单据","navigationBarBackgroundColor":"#ffffff","navigationBarTextStyle":"black","enablePullDownRefresh":true,"usingComponents":{"van-icon":"@vant/weapp/icon/index","van-loading":"@vant/weapp/loading/index","warehouse-locator":"/components/warehouse-locator/index","warehouse-return-serial":"/components/warehouse-return-serial/index"}}
+{
+  "navigationBarTitleText": "仓库单据",
+  "navigationBarBackgroundColor": "#d81e06",
+  "navigationBarTextStyle": "white",
+  "enablePullDownRefresh": true,
+  "usingComponents": {
+    "van-icon": "@vant/weapp/icon/index",
+    "van-loading": "@vant/weapp/loading/index",
+    "warehouse-context": "/components/warehouse-context/index",
+    "warehouse-locator": "/components/warehouse-locator/index",
+    "warehouse-return-serial": "/components/warehouse-return-serial/index"
+  }
+}

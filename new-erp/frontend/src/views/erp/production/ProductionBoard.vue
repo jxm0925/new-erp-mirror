@@ -21,6 +21,10 @@
       </div>
     </header>
 
+    <el-alert v-for="job in pendingReceipts" :key="job.id" type="warning" :closable="false" title="入库申请结果待核对" show-icon>
+      <el-button type="text" :disabled="saving" @click="recoverReceipt(job)">核对上次入库申请结果</el-button>
+    </el-alert>
+
     <!-- 顶部核心指标统计网格 -->
     <div class="metric-strip" v-if="board">
       <div class="metric-card">
@@ -347,7 +351,7 @@
 
     <!-- 办理入库居中弹窗 -->
     <el-dialog
-      title="成品办理入库确认"
+      title="提交生产入库申请"
       :visible.sync="receipt.visible"
       width="540px"
       custom-class="centered-modal"
@@ -361,29 +365,29 @@
         </div>
         <el-form label-position="top" size="small">
           <el-form-item label="入库设备序列号" required>
-            <el-checkbox-group v-model="receipt.unit_ids" class="sn-checkbox-group">
+            <el-checkbox-group v-model="receipt.unit_ids" class="sn-checkbox-group" :disabled="saving || receipt.pending">
               <el-checkbox v-for="u in receipt.row.units" :key="u.id" :label="u.id">{{ u.serial_no }}</el-checkbox>
             </el-checkbox-group>
           </el-form-item>
           <el-form-item label="入库目标仓库" required>
-            <el-button class="receipt-selector-btn" :disabled="saving || !receipt.management_scope" @click="openReceiptPicker('warehouses')">
+            <el-button class="receipt-selector-btn" :disabled="saving || receipt.pending || !receipt.management_scope" @click="openReceiptPicker('warehouses')">
               <span>{{ receipt.warehouse_name || '选择目标仓库' }}</span>
               <i class="el-icon-search" />
             </el-button>
           </el-form-item>
           <el-form-item label="入库目标库位" required>
-            <el-button class="receipt-selector-btn" :disabled="!receipt.warehouse_id || saving" @click="openReceiptPicker('locations')">
+            <el-button class="receipt-selector-btn" :disabled="!receipt.warehouse_id || saving || receipt.pending" @click="openReceiptPicker('locations')">
               <span>{{ receipt.location_name || '选择具体库位' }}</span>
               <i class="el-icon-search" />
             </el-button>
           </el-form-item>
           <el-form-item label="入库备注">
-            <el-input v-model="receipt.remark" maxlength="500" placeholder="填写相关入库说明" />
+            <el-input v-model="receipt.remark" :disabled="saving || receipt.pending" maxlength="500" placeholder="填写相关入库说明" />
           </el-form-item>
         </el-form>
         <div class="modal-notice">
           <i class="el-icon-info" />
-          <span>业务说明：完成入库确认后，系统将自动核算入库暂估制造成本，并流转至产成品可用库存。</span>
+          <span>{{ receipt.pending ? '上次申请结果尚未核对，请先核对原操作结果。' : '提交后等待仓库核对实物与库位；仓库确认后核算入库成本并计入库存。' }}</span>
         </div>
       </template>
       <span slot="footer">
@@ -393,10 +397,10 @@
           type="success"
           class="btn-theme-create"
           :loading="saving"
-          :disabled="!receipt.unit_ids.length || !receipt.location_id"
+          :disabled="!receipt.pending && (!receipt.unit_ids.length || !receipt.location_id)"
           @click="saveReceipt"
         >
-          确认办理入库
+          {{ receipt.pending ? '核对上次申请结果' : '提交入库申请' }}
         </el-button>
       </span>
     </el-dialog>
@@ -420,6 +424,7 @@
 import { getProductionBoard, taskAction, listTaskPeople, reviewScrapReport, receiveWorkOrderUnits } from '../../../api/erp/production'
 import { getEntity } from '../../../api/erp/master'
 import SystemRecordPicker from '../../../components/system/SystemRecordPicker.vue'
+import { pendingWarehouseCommand, pendingWarehouseCommands, submitWarehouseCommand } from '../../../api/erp/warehouse'
 import { qty, shortDate, errorText, isCancel } from './mfg-helpers'
 
 export default {
@@ -431,6 +436,7 @@ export default {
     board: null,
     timer: null,
     people: [],
+    pendingReceipts: [],
     videoVisible: false,
     videoMedia: null,
     filters: { keyword: '', owner_legacy_id: null, urgent_only: false, custom_only: false },
@@ -445,7 +451,8 @@ export default {
       warehouse_name: '',
       location_id: null,
       location_name: '',
-      remark: ''
+      remark: '',
+      pending: false
     },
     receiptPicker: { visible: false, type: 'warehouses' }
   }),
@@ -496,6 +503,7 @@ export default {
         }
         const { data } = await getProductionBoard(params)
         this.board = data.data
+        this.pendingReceipts = pendingWarehouseCommands('mfg_receipt.request')
         this.board.pending_scraps = (this.board.pending_scraps || []).map(row => ({ ...row, media: Array.from(new Map([
           ...(row.media || []), ...(row.photos || []).map(photo => typeof photo === 'string' ? { type: 'image', url: photo } : { ...photo, type: 'image' })
         ].filter(item => item.url).map(item => [`${item.type}:${item.url}`, item])).values()) }))
@@ -575,8 +583,10 @@ export default {
         warehouse_name: '',
         location_id: null,
         location_name: '',
-        remark: ''
+        remark: '',
+        pending: Boolean(pendingWarehouseCommand('mfg_receipt.request', w.work_order_id))
       }
+      if (r.pending) return
       if (!r.management_scope) {
         this.$message.error('产出物料管理范围未确定，请先核对物料档案')
         return
@@ -595,7 +605,7 @@ export default {
       }
     },
     openReceiptPicker(type) {
-      if (this.saving || !this.receipt.visible || !this.receipt.management_scope || (type === 'locations' && !this.receipt.warehouse_id)) return
+      if (this.saving || this.receipt.pending || !this.receipt.visible || !this.receipt.management_scope || (type === 'locations' && !this.receipt.warehouse_id)) return
       if (!this.receipt.allowed_location_purposes.length) {
         this.$message.error('入库库位用途未确定，请刷新看板后重试')
         return
@@ -627,14 +637,27 @@ export default {
           location_id: r.location_id,
           remark: r.remark || undefined
         })
-        this.$message.success(data.message || '办理入库成功')
+        this.$message.success(data.message || '入库申请已提交，等待仓库确认')
         r.visible = false
         this.load(true)
       } catch (e) {
+        r.pending = Boolean(e.pendingCommand)
         this.$message.error(errorText(e, '办理入库失败'))
       } finally {
         this.saving = false
       }
+    },
+    async recoverReceipt(job) {
+      if (this.saving) return
+      this.saving = true
+      try {
+        await submitWarehouseCommand('mfg_receipt.request', job.id)
+        this.$message.success('入库申请已提交，等待仓库确认')
+        await this.load(true)
+      } catch (e) {
+        this.$message.error(errorText(e, '申请结果核对失败'))
+        this.pendingReceipts = pendingWarehouseCommands('mfg_receipt.request')
+      } finally { this.saving = false }
     }
   }
 }

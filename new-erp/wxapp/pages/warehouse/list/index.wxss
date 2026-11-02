@@ -1,17 +1,202 @@
 @import "../shared.wxss";
-.warehouse-tabs { display: flex; background: white; border-bottom: 1rpx solid #edf0f5; }
-.warehouse-tabs > view { flex: 1; text-align: center; padding: 20rpx 0 22rpx; font-size: 30rpx; position: relative; }
-.warehouse-tabs > view.selected { color: #ef1008; font-weight: 600; }
-.warehouse-tabs > view.selected::after { content: ''; position: absolute; left: 36%; right: 36%; bottom: 0; height: 4rpx; background: #ef1008; }
-.warehouse-filter { display: flex; align-items: center; gap: 16rpx; margin: 18rpx 0; font-size: 26rpx; }
-.warehouse-filter picker { border: 1rpx solid #dce2ea; border-radius: 8rpx; background: white; padding: 8rpx 22rpx; }
-.warehouse-filter-button { margin-left: auto; }
-.warehouse-document-card { padding: 18rpx 22rpx; }
-.warehouse-document-card .warehouse-field { margin: 2rpx 0; font-size: 25rpx; line-height: 1.5; gap: 8rpx; }
-.warehouse-document-card .warehouse-label { width: 138rpx; }
-.warehouse-document-card button { margin-top: 14rpx; padding: 12rpx 16rpx; font-size: 27rpx; }
-.warehouse-document-heading { display: flex; justify-content: space-between; align-items: center; gap: 18rpx; margin-bottom: 14rpx; font-size: 27rpx; }
-.warehouse-type { padding: 5rpx 14rpx; border-radius: 8rpx; background: #ffebe9; color: #ef1008; }
-.warehouse-type.output, .warehouse-type.sales_shipment { color: #0083ee; background: #e5f3ff; }
-.warehouse-type.remnant, .warehouse-type.purchase_return { color: #ed4e06; background: #fff0e5; }
-.warehouse-current-page { padding: 12rpx 20rpx; background: #ef1008; color: white; border-radius: 8rpx; }
+
+.list-filter-card {
+  padding: 20rpx 22rpx;
+}
+
+.warehouse-tabs {
+  display: flex;
+  background: #f1f5f9;
+  border-radius: 18rpx;
+  padding: 6rpx;
+  margin-bottom: 18rpx;
+}
+
+.warehouse-tabs > view {
+  flex: 1;
+  text-align: center;
+  padding: 16rpx 0;
+  font-size: 27rpx;
+  font-weight: 600;
+  color: #64748b;
+  border-radius: 14rpx;
+  transition: all 0.15s ease;
+}
+
+.warehouse-tabs > view.selected {
+  background: #ffffff;
+  color: #d81e06;
+  font-weight: 800;
+  box-shadow: 0 4rpx 12rpx rgba(15, 23, 42, 0.06);
+}
+
+.warehouse-filter {
+  display: flex;
+  align-items: flex-start;
+  gap: 14rpx;
+  margin-top: 16rpx;
+}
+
+.warehouse-filter-select {
+  flex: 1;
+  min-width: 0;
+}
+
+.warehouse-filter-button {
+  height: 76rpx;
+  padding: 0 24rpx;
+  border-radius: 18rpx;
+  background: #f8fafc;
+  border: 1rpx solid #e2e8f0;
+  color: #475569;
+  font-size: 25rpx;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8rpx;
+  flex-shrink: 0;
+}
+
+.warehouse-filter-button.has-date {
+  background: #fff1f0;
+  border-color: #ffa39e;
+  color: #d81e06;
+}
+
+.warehouse-document-card {
+  padding: 24rpx;
+}
+
+.warehouse-document-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16rpx;
+  padding-bottom: 16rpx;
+  margin-bottom: 12rpx;
+  border-bottom: 1rpx solid #f1f5f9;
+}
+
+.warehouse-doc-title-group {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+  min-width: 0;
+  flex: 1;
+  flex-wrap: wrap;
+}
+
+.warehouse-doc-no {
+  font-size: 28rpx;
+  font-weight: 800;
+  color: #1e293b;
+  word-break: break-all;
+}
+
+.warehouse-type {
+  padding: 4rpx 14rpx;
+  border-radius: 10rpx;
+  background: #fff1f0;
+  color: #d81e06;
+  font-size: 22rpx;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.warehouse-type.output,
+.warehouse-type.sales_shipment,
+.warehouse-type.material_delivery,
+.warehouse-type.inventory_transfer,
+.warehouse-type.material_physical_transfer {
+  color: #0284c7;
+  background: #f0f9ff;
+}
+
+.warehouse-type.remnant,
+.warehouse-type.cutting_remnant,
+.warehouse-type.purchase_return,
+.warehouse-type.material_return {
+  color: #d97706;
+  background: #fffbeb;
+}
+
+.warehouse-status-badge {
+  font-size: 22rpx;
+  font-weight: 700;
+  padding: 4rpx 14rpx;
+  border-radius: 999rpx;
+  background: #fff1f0;
+  color: #d81e06;
+  flex-shrink: 0;
+}
+
+.warehouse-status-badge.is-done {
+  background: #ecfdf5;
+  color: #059669;
+}
+
+.warehouse-doc-body {
+  padding: 4rpx 0 8rpx;
+}
+
+.warehouse-document-card .warehouse-field {
+  margin: 8rpx 0;
+  font-size: 25rpx;
+}
+
+.warehouse-document-card .warehouse-label {
+  width: 148rpx;
+}
+
+.warehouse-value-strong {
+  font-weight: 800;
+  color: #1f2329;
+}
+
+.warehouse-doc-footer {
+  margin-top: 16rpx;
+  padding-top: 16rpx;
+  border-top: 1rpx dashed #e2e8f0;
+}
+
+.warehouse-current-page {
+  padding: 10rpx 22rpx;
+  background: #fff1f0;
+  color: #d81e06;
+  font-weight: 800;
+  border-radius: 999rpx;
+  font-size: 24rpx;
+}
+
+.warehouse-pager-total {
+  color: #64748b;
+  font-size: 24rpx;
+}
+
+.list-empty-title {
+  font-size: 29rpx;
+  font-weight: 800;
+  color: #1f2329;
+}
+
+.list-retry-btn {
+  max-width: 320rpx;
+}
+
+.list-date-field {
+  margin-bottom: 20rpx;
+}
+
+.list-date-label {
+  display: block;
+  font-size: 25rpx;
+  font-weight: 700;
+  color: #475569;
+  margin-bottom: 10rpx;
+}
+
+.list-date-picker {
+  display: block;
+  width: 100%;
+}

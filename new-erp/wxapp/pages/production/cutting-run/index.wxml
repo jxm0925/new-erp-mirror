@@ -21,7 +21,7 @@
     <view wx:for="{{runs}}" wx:key="id" class="mt-card" data-id="{{item.id}}" bindtap="openRunTap">
       <view class="mt-row">
         <text class="mono" style="font-weight: 700;">{{item.run_no}}</text>
-        <text class="mt-tag {{item.status === 'running' ? 'amber' : 'green'}}">{{item.status_label}}</text>
+        <text class="mt-tag {{item.status === 'finished' ? 'green' : 'amber'}}">{{item.status_label}}</text>
       </view>
       <view class="mt-product">{{item.output_item_name}} <text class="mt-muted">{{item.bom_no}}</text></view>
       <view class="mt-muted" wx:if="{{item.status === 'running'}}">计划开料 {{item.set_qty}} 套 · 已计工时 {{item.laborText}}<text wx:if="{{item.timing_names.length}}"> · {{item.timing_names.length}} 人计时中</text></view>
@@ -72,7 +72,7 @@
 
 <view wx:if="{{panel === 'run'}}" class="tk-mask" catchtouchmove="stop">
   <view class="tk-sheet">
-    <view class="mt-row tk-sheet-head"><text class="mt-title mono">{{run.run_no}}</text><text class="mt-tag {{run.status === 'running' ? 'amber' : 'green'}}">{{run.status_label}}</text></view>
+    <view wx:if="{{run.waiting_reason}}" class="mt-note">{{run.waiting_reason}}</view><view class="mt-row tk-sheet-head"><text class="mt-title mono">{{run.run_no}}</text><text class="mt-tag {{run.status === 'running' ? 'amber' : 'green'}}">{{run.status_label}}</text></view>
     <scroll-view scroll-y class="tk-sheet-body">
       <view class="mt-product">{{run.output_item_name}} <text class="mt-muted">{{run.bom_no}} · 计划 {{run.set_qty}} 套</text></view>
       <view class="cr-timer">{{run.status === 'running' ? liveText : run.laborText}}</view>

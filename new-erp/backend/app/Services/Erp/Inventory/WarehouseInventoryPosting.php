@@ -299,18 +299,20 @@ class WarehouseInventoryPosting
     }
 
     /** Post an identity-preserving warehouse-to-warehouse transfer. */
-    public function postPhysicalTransfer(object $transfer, object $physical, InventoryBalance $source, object $operator): InventoryTransaction
+    public function postPhysicalTransfer(object $transfer, object $physical, InventoryBalance $source, object $operator, string $direction = 'both'): InventoryTransaction
     {
         if (DB::transactionLevel() < 1) throw new \LogicException('Physical transfer posting requires an application transaction.');
+        if (! in_array($direction, ['both', 'out', 'in'], true)) throw new \InvalidArgumentException('Invalid physical transfer direction.');
+        $snapshot = json_decode($transfer->source_snapshot ?? '{}', true, 512, JSON_THROW_ON_ERROR);
         $transaction = $this->kernel->begin([
             
-            'transaction_type' => 'physical_material_transfer',
+            'transaction_type' => $direction === 'both' ? 'physical_material_transfer' : 'physical_material_transfer_'.($direction === 'out' ? 'outbound' : 'inbound'),
             'source_type' => 'material_physical_transfer',
             'source_id' => $transfer->id,
             'source_no' => $transfer->transfer_no,
             'posting_status' => 'posted',
-            'warehouse_id' => $source->warehouse_id,
-            'location_id' => $source->location_id,
+            'warehouse_id' => $direction === 'in' ? $transfer->target_warehouse_id : ($snapshot['warehouse_id'] ?? $source->warehouse_id),
+            'location_id' => $direction === 'in' ? $transfer->target_location_id : ($snapshot['location_id'] ?? $source->location_id),
             'transaction_date' => now()->toDateString(),
             'posted_by' => (int) ($operator->legacy_id ?? $operator->id ?? 0),
             'posted_at' => now(),
@@ -318,33 +320,38 @@ class WarehouseInventoryPosting
         ]);
         $common = [
             'item_id' => $physical->item_id,
-            'unit_id' => $source->unit_id,
-            'unit_cost' => (float) $physical->total_cost,
-            'material_lot_id' => $source->material_lot_id,
+            'unit_id' => $snapshot['unit_id'] ?? $source->unit_id,
+            'unit_cost' => (string) $transfer->total_cost,
+            'material_lot_id' => $snapshot['material_lot_id'] ?? $source->material_lot_id,
+            'cost_source_type' => 'physical_transfer_total',
             'source_type' => 'material_physical_transfer',
             'source_id' => $transfer->id,
             'source_item_id' => $physical->id,
             'physical_transfer_id' => $transfer->id,
             'physical_material_id' => $physical->id,
         ];
-        $this->kernel->apply($transaction, $common + [
-            'warehouse_id' => $source->warehouse_id,
-            'location_id' => $source->location_id,
-            'batch_no' => $source->batch_no,
+        if ($direction !== 'in') $this->kernel->apply($transaction, $common + [
+            'warehouse_id' => $snapshot['warehouse_id'] ?? $source->warehouse_id,
+            'location_id' => $snapshot['location_id'] ?? $source->location_id,
+            'batch_no' => $snapshot['batch_no'] ?? $source->batch_no,
             'change_qty' => '-1',
-            'cost_amount' => bcsub('0', (string) $physical->total_cost, 4),
+            'cost_amount' => bcsub('0', (string) $transfer->total_cost, 4),
             'physical_operation' => 'transfer_out',
             'remark' => '实物调拨出库',
         ]);
-        $this->kernel->apply($transaction, $common + [
+        if ($direction !== 'out') $this->kernel->apply($transaction, $common + [
             'warehouse_id' => $transfer->target_warehouse_id,
             'location_id' => $transfer->target_location_id,
             'batch_no' => $transfer->target_batch_no,
             'change_qty' => '1',
-            'cost_amount' => (string) $physical->total_cost,
+            'cost_amount' => (string) $transfer->total_cost,
             'physical_operation' => 'transfer_in',
             'remark' => '实物调拨入库',
         ]);
+        InventoryPostingLog::create(['source_type' => 'material_physical_transfer', 'source_id' => $transfer->id, 'source_no' => $transfer->transfer_no,
+            'transaction_type' => $transaction->transaction_type, 'transaction_id' => $transaction->id, 'posting_status' => 'posted',
+            'message' => $direction === 'out' ? '实物跨仓调出成功' : ($direction === 'in' ? '实物跨仓整单接收成功' : '实物同仓移库成功'),
+            'posted_by' => (int) ($operator->legacy_id ?? $operator->id ?? 0), 'posted_at' => now()]);
         return $transaction->fresh(['items']);
     }
 

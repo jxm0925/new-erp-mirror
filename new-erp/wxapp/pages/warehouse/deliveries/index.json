@@ -1,9 +1,11 @@
 {
   "navigationBarTitleText": "生产配料",
-  "navigationBarBackgroundColor": "#ec1808",
+  "navigationBarBackgroundColor": "#d81e06",
   "navigationBarTextStyle": "white",
   "enablePullDownRefresh": true,
   "usingComponents": {
-    "warehouse-context": "/components/warehouse-context/index"
+    "warehouse-context": "/components/warehouse-context/index",
+    "van-icon": "@vant/weapp/icon/index",
+    "van-loading": "@vant/weapp/loading/index"
   }
 }

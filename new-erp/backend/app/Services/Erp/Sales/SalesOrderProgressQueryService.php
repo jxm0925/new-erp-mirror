@@ -13,7 +13,7 @@ final class SalesOrderProgressQueryService
 {
     public function tree(SalesOrder $order, bool $workOrderLinks): array
     {
-        $lines = SalesOrderLine::query()->where('sales_order_id', $order->id)->orderBy('line_no')->orderBy('id')->get();
+        $lines = SalesOrderLine::query()->where('sales_order_id', $order->id)->where('line_status', '!=', 'removed')->orderBy('line_no')->orderBy('id')->get();
         $graph = $this->graph($order);
         $orders = $graph['orders'];
         $operations = MfgWorkOrderOperation::query()->whereIn('work_order_id', $orders->keys())->where('execution_context', 'production')->orderBy('sequence')->orderBy('id')->get()->groupBy('work_order_id');
@@ -21,8 +21,10 @@ final class SalesOrderProgressQueryService
             ->selectRaw('work_order_id, component_item_id, COUNT(DISTINCT unit_id) AS installed_qty')->groupBy('work_order_id', 'component_item_id')->get()
             ->keyBy(fn ($row) => $row->work_order_id.':'.$row->component_item_id);
         $reserved = DB::table('erp_inventory_reservations')->where('source_type', 'sales_order')->where('source_order_id', $order->id)
+            ->whereExists(fn (Builder $current) => $current->selectRaw('1')->from('erp_sales_order_lines as current_line')->whereColumn('current_line.id', 'erp_inventory_reservations.source_order_line_id')->whereColumn('current_line.item_id', 'erp_inventory_reservations.item_id'))
             ->whereIn('reservation_status', ['active', 'converted_to_shipment'])->selectRaw('source_order_line_id, SUM(reserved_qty) AS qty')->groupBy('source_order_line_id')->pluck('qty', 'source_order_line_id');
         $shipped = SalesShipmentLine::query()->whereIn('shipment_id', DB::table('erp_sales_shipments')->where('sales_order_id', $order->id)->where('shipment_status', '!=', 'cancelled')->select('id'))
+            ->whereExists(fn (Builder $current) => $current->selectRaw('1')->from('erp_sales_order_lines as current_line')->whereColumn('current_line.id', 'erp_sales_shipment_lines.sales_order_line_id')->whereColumn('current_line.item_id', 'erp_sales_shipment_lines.item_id'))
             ->where('line_status', 'shipped')->selectRaw('sales_order_line_id, SUM(sales_qty) AS qty')->groupBy('sales_order_line_id')->pluck('qty', 'sales_order_line_id');
         $shippingStates = $this->treeShippingStates($order, $lines);
         $children = $graph['links']->groupBy('parent_work_order_id');
@@ -32,7 +34,7 @@ final class SalesOrderProgressQueryService
             $nested = [];
             foreach ($links as $link) {
                 $child = $orders->get($link->child_work_order_id);
-                if ($child && ! in_array((int) $child->id, $path, true)) $nested[] = $build($child, $lineId, $path, $historical);
+                if ($child && $child->status !== 'cancelled' && ! in_array((int) $child->id, $path, true)) $nested[] = $build($child, $lineId, $path, $historical);
             }
             $pending = $operations->get($wo->id, collect())->first(fn ($op) => (float) $op->completed_qty + 0.00001 < (float) $wo->planned_qty);
             $status = $wo->status === 'cancelled' || $historical ? 'cancelled' : ((float) $wo->stored_qty + 0.00001 >= (float) $wo->planned_qty ? 'completed' : ($wo->started_at ? 'in_progress' : 'pending'));
@@ -48,9 +50,9 @@ final class SalesOrderProgressQueryService
         };
         $nodes = [];
         foreach ($lines as $line) {
-            $direct = $orders->filter(fn ($wo) => $graph['line_ids']->get($wo->id) === (int) $line->id && ! $graph['parents']->has($wo->id));
-            $nested = $direct->map(fn ($wo) => $build($wo, (int) $line->id, [], $graph['historical']->get($wo->id) || $this->historical($wo, $line)))->values()->all();
-            $active = $direct->where('status', '!=', 'cancelled')->reject(fn ($wo) => $graph['historical']->get($wo->id) || $this->historical($wo, $line));
+            $active = $orders->filter(fn ($wo) => $graph['line_ids']->get($wo->id) === (int) $line->id && ! $graph['parents']->has($wo->id)
+                && $wo->status !== 'cancelled' && ! $graph['historical']->get($wo->id) && ! $this->historical($wo, $line));
+            $nested = $active->map(fn ($wo) => $build($wo, (int) $line->id))->values()->all();
             $planned = max(0, (float) $line->order_qty - (float) $line->cancelled_qty);
             $shippedQty = (float) ($shipped[$line->id] ?? 0);
             $factor = max(0.00000001, (float) ($line->fulfillment_factor_snapshot ?: 1));
@@ -74,6 +76,7 @@ final class SalesOrderProgressQueryService
     private function treeShippingStates(SalesOrder $order, Collection $orderLines): array
     {
         $lines = SalesShipmentLine::query()->with('shipment')->whereIn('shipment_id', DB::table('erp_sales_shipments')->where('sales_order_id', $order->id)->select('id'))
+            ->whereExists(fn (Builder $current) => $current->selectRaw('1')->from('erp_sales_order_lines as current_line')->whereColumn('current_line.id', 'erp_sales_shipment_lines.sales_order_line_id')->whereColumn('current_line.item_id', 'erp_sales_shipment_lines.item_id'))
             ->whereNotIn('line_status', ['cancelled', 'replaced'])->orderBy('id')->get()->filter(fn ($line) => $line->shipment?->shipment_status !== 'cancelled');
         $contents = ShipmentPackingContent::query()->whereIn('shipment_line_id', $lines->pluck('id'))->get(['id', 'shipment_line_id']);
         $operations = ShipmentPackingOperation::query()->whereIn('shipment_id', $lines->pluck('shipment_id')->unique())->where('status', '!=', 'CANCELLED')->orderBy('sequence')->orderBy('id')
@@ -139,7 +142,8 @@ final class SalesOrderProgressQueryService
             : $this->sourceProduction($order, $line, $unit?->inventory_serial_id ? (int) $unit->inventory_serial_id : null, $workOrderLinks);
         if ($line->line_status === 'removed' || ($wo && ($this->historical($wo, $line) || $this->transferred($wo, $order, $line)))) $production = $this->historicalProduction($production);
         if (! $unit && ! $wo) {
-            $direct = MfgWorkOrder::query()->where('sales_order_id', $order->id)->where('sales_order_line_id', $line->id)->where('status', '!=', 'cancelled')->orderBy('id')->get();
+            $direct = MfgWorkOrder::query()->where('sales_order_id', $order->id)->where('sales_order_line_id', $line->id)->where('status', '!=', 'cancelled')->orderBy('id')->get()
+                ->reject(fn ($item) => $this->historical($item, $line));
             if ($direct->isNotEmpty()) {
                 $production = ['nodes' => [], 'records' => [], 'destination_label' => null, 'materials' => []];
                 foreach ($direct as $item) {
@@ -225,13 +229,19 @@ final class SalesOrderProgressQueryService
     {
         $assigned = DB::table('erp_sales_shipment_lines as sl')->join('erp_sales_shipments as sh', 'sh.id', '=', 'sl.shipment_id')
             ->join('erp_inventory_serials as s', fn ($join) => $join->whereRaw("JSON_CONTAINS(sl.serial_snapshot, JSON_ARRAY(s.id), '$.inventory_serial_ids')"))
-            ->where('sh.sales_order_id', $order->id)->where('sl.sales_order_line_id', $line->id)->select('s.id');
+            ->where('sh.sales_order_id', $order->id)->where('sl.sales_order_line_id', $line->id)
+            ->where('sh.shipment_status', '!=', 'cancelled')->whereNotIn('sl.line_status', ['cancelled', 'replaced'])
+            ->when($line->item_id, fn ($q) => $q->where('sl.item_id', $line->item_id)->where('s.item_id', $line->item_id))->select('s.id');
         $units = DB::table('erp_mfg_work_order_units as u')->join('erp_mfg_work_orders as w', 'w.id', '=', 'u.work_order_id')
             ->leftJoin('erp_mfg_work_order_operations as o', 'o.id', '=', 'u.current_operation_id')
-            ->when($workOrderId, fn ($q) => $q->where('w.id', $workOrderId), fn ($q) => $q->where(fn ($scope) => $scope
-                ->where(fn ($direct) => $direct->where('w.sales_order_id', $order->id)->where('w.sales_order_line_id', $line->id))
-                ->orWhere(fn ($history) => $history->whereNull('w.sales_order_id')->where('w.source_type', 'stock')->where('w.stock_reason', 'order_released')->where('w.sales_order_no', $order->sales_order_no)->where('w.sales_order_line_no', $line->line_no))
-                ->orWhereIn('u.inventory_serial_id', clone $assigned)))
+            // 根节点只选当前商品的有效设备；指定工单仍可独立追溯取消、转备货和换机历史。
+            ->when($workOrderId, fn ($q) => $q->where('w.id', $workOrderId), fn ($q) => $q
+                ->where('w.status', '!=', 'cancelled')->where('u.status', '!=', 'cancelled')
+                ->when($line->item_id, fn ($item) => $item->where('w.item_id', $line->item_id))
+                ->when($line->sku_id, fn ($sku) => $sku->where(fn ($match) => $match->whereNull('w.sku_id')->orWhere('w.sku_id', $line->sku_id)))
+                ->where(fn ($scope) => $scope
+                    ->where(fn ($direct) => $direct->where('w.sales_order_id', $order->id)->where('w.sales_order_line_id', $line->id))
+                    ->orWhereIn('u.inventory_serial_id', clone $assigned)))
             ->selectRaw("CONCAT('unit:', u.id) AS `key`, u.id AS unit_id, u.inventory_serial_id, u.work_order_id, w.work_order_no, w.item_id AS source_item_id, w.sku_id AS source_sku_id,
                 w.sales_order_id AS source_order_id, w.sales_order_line_id AS source_line_id, w.sales_order_no AS source_order_no, w.sales_order_line_no AS source_line_no, w.source_type, w.stock_reason,
                 u.unit_no, u.serial_no, u.status, u.current_operation_id, o.operation_name, u.started_at, u.completed_at, u.stored_at, u.updated_at");
@@ -334,7 +344,7 @@ final class SalesOrderProgressQueryService
                 ]);
             }
         }
-        $receipts = MfgReceipt::query()->where('work_order_id', $wo->id)->whereNotNull('inventory_transaction_id')
+        $receipts = MfgReceipt::query()->where('work_order_id', $wo->id)
             ->when($unitId, fn ($q) => $q->whereJsonContains('serial_nos', $units->first()?->serial_no))->orderBy('id')->get();
         $completion = $this->completion($wo, $operations->last(), $units, $receipts, $planned, $unitId, $links);
         $nodes = array_merge($nodes, $completion['nodes']);
@@ -398,21 +408,45 @@ final class SalesOrderProgressQueryService
         $logs = $allHandoffs->filter(fn ($log) => $receipts->contains('id', (int) data_get($log->payload, 'receipt_id')));
         $handoffs = $logs->keyBy(fn ($log) => (int) data_get($log->payload, 'receipt_id'));
         $targetNames = MfgWorkOrderOperation::query()->whereIn('id', $logs->map(fn ($log) => data_get($log->payload, 'operation_id'))->filter())->pluck('operation_name', 'id');
-        $labels = ['store' => '完工入库', 'handoff' => '直接交接', 'handoff_shipment' => '直接交接待发', 'choice' => '交接或入库'];
+        $labels = ['store' => \App\Services\Erp\Manufacturing\ReceiptService::allowedLocationPurposes($wo) === ['general'] ? '半成品入库' : '成品入库',
+            'handoff' => '直接交接', 'handoff_shipment' => '直接交接待发', 'choice' => '交接或入库'];
         $pendingLabels = ['store' => '待入库', 'handoff' => '待交接', 'handoff_shipment' => '待交接', 'choice' => '待选择去向'];
         $groups = [];
         $records = [];
+        $pendingReceiptQty = 0.0;
         foreach ($receipts as $receipt) {
+            $qty = $unitId ? 1.0 : (float) $receipt->qty;
+            $receiptUnits = collect($receipt->serial_nos ?: [])->when($unitId, fn ($names) => $names->filter(fn ($name) => $name === $units->first()?->serial_no))
+                ->map(fn ($name) => ['serial_no' => $this->deviceLabel($name, $wo->work_order_no, $links)])->values()->all();
+            $receiptContext = ['quantity' => $qty, 'scope' => $unitId ? 'unit' : 'work_order', 'units' => $receiptUnits,
+                'receipt_id' => (int) $receipt->id, 'completion_kind' => 'store', 'is_cancelled' => $wo->status === 'cancelled'];
+            if ($receipt->confirmation_source === 'manual' && $receipt->requested_at) {
+                $records[] = $this->record('receipt-request:'.$receipt->id, 'completion:'.$wo->id.':store', '提交入库', $receiptContext + [
+                    'status' => 'completed', 'status_label' => '已提交', 'person' => $receipt->operator_name,
+                    'completed_at' => $receipt->requested_at->toDateTimeString(), 'description' => $receipt->receipt_no]);
+            }
+            if ($receipt->status === 'rejected') {
+                $records[] = $this->record('receipt-reject:'.$receipt->id, 'completion:'.$wo->id.':store', '仓库驳回', $receiptContext + [
+                    'status' => 'failed', 'status_label' => '已驳回', 'person' => $receipt->rejected_by_name,
+                    'occurred_at' => $receipt->rejected_at?->toDateTimeString(), 'description' => $receipt->receipt_no.' · '.$receipt->reject_reason]);
+            }
+            if ($receipt->status === 'pending') {
+                $pendingReceiptQty += $qty;
+                $groups['store'] ??= ['done' => 0.0, 'pending' => 0.0, 'time' => null];
+                $groups['store']['pending'] += $qty;
+                $pendingLabels['store'] = '待仓库确认';
+            }
+            if ($receipt->status !== 'confirmed' || ! $receipt->inventory_transaction_id) continue;
             $log = $handoffs->get($receipt->id);
             $kind = $log?->action ?: 'store';
-            $qty = $unitId ? 1.0 : (float) $receipt->qty;
             $groups[$kind] ??= ['done' => 0.0, 'pending' => 0.0, 'time' => null];
             $groups[$kind]['done'] += $qty;
-            $time = $log?->created_at?->toDateTimeString() ?: $receipt->created_at?->toDateTimeString();
+            $time = $receipt->confirmed_at?->toDateTimeString();
             $groups[$kind]['time'] = max($groups[$kind]['time'], $time);
             $target = $targetNames[data_get($log?->payload, 'operation_id')] ?? null;
             $records[] = $this->record('completion-receipt:'.$receipt->id, 'completion:'.$wo->id.':'.$kind, $labels[$kind], [
-                'status' => 'completed', 'status_label' => $kind === 'store' ? '已入库' : '已交接', 'person' => $log?->operator_name ?: $receipt->operator_name,
+                'status' => 'completed', 'status_label' => $kind === 'store' ? '已入库' : '已交接',
+                'person' => $log?->operator_name ?: ($receipt->confirmed_by_name ?: ($receipt->confirmation_source === 'legacy_posted' ? $receipt->operator_name : null)),
                 'completed_at' => $time, 'quantity' => $qty, 'scope' => $unitId ? 'unit' : 'work_order',
                 'description' => implode(' · ', array_filter([$target ? '交接至'.$target : null, $receipt->receipt_no])),
                 'units' => collect($receipt->serial_nos ?: [])->when($unitId, fn ($names) => $names->filter(fn ($name) => $name === $units->first()?->serial_no))
@@ -421,7 +455,7 @@ final class SalesOrderProgressQueryService
                 'completion_kind' => $kind, 'is_cancelled' => $wo->status === 'cancelled',
             ]);
         }
-        $remaining = max(0.0, $planned - collect($groups)->sum('done') - $units->whereIn('status', ['scrapped', 'cancelled'])->count());
+        $remaining = max(0.0, $planned - collect($groups)->sum('done') - $pendingReceiptQty - $units->whereIn('status', ['scrapped', 'cancelled'])->count());
         $canContinue = in_array($wo->status, ['planned', 'released', 'in_progress', 'paused'], true);
         $mode = $last && in_array($last->output_mode, ['warehouse_optional', 'warehouse_required'], true) ? $last->output_mode : 'flow_only';
         $future = [];
@@ -559,7 +593,7 @@ final class SalesOrderProgressQueryService
             return ['nodes' => [$this->node($key, $label, $serial->posted_at ? 'completed' : 'pending', $serial->posted_at ? 1 : 0, 1)], 'records' => $records];
         }
         $reservations = DB::table('erp_inventory_reservations')->where('source_type', 'sales_order')->where('source_order_id', $order->id)
-            ->where('source_order_line_id', $line->id)->whereIn('reservation_status', ['active', 'converted_to_shipment', 'consumed', 'released'])->get();
+            ->where('source_order_line_id', $line->id)->where('item_id', $line->item_id)->whereIn('reservation_status', ['active', 'converted_to_shipment', 'consumed', 'released'])->get();
         foreach ($reservations as $reservation) $records[] = $this->record('reservation:'.$reservation->id, $key, '库存备货', [
             'status' => 'completed', 'status_label' => match ($reservation->reservation_status) {'consumed' => '原预留已发运', 'released' => '原预留已释放', default => '已预留'},
             'quantity' => (float) $reservation->reserved_qty, 'is_cancelled' => $reservation->reservation_status === 'released',
@@ -589,14 +623,16 @@ final class SalesOrderProgressQueryService
         $done = (float) $reservations->whereIn('reservation_status', ['active', 'converted_to_shipment', 'consumed'])->sum('reserved_qty');
         $occupied = $reservations->whereIn('reservation_status', ['active', 'converted_to_shipment'])->sum('reserved_qty');
         $consumed = $reservations->where('reservation_status', 'consumed')->sum('reserved_qty');
-        return ['nodes' => [$this->node($key, '库存 / 采购备货', $this->quantityStatus($done, $planned), $done, $planned,
-            ['progress_label' => '已备货 '.$this->number($done).'/'.$this->number($planned).'；当前占用 '.$this->number($occupied).'；已发运 '.$this->number($consumed)])], 'records' => $records];
+        $status = $this->quantityStatus($done, $planned);
+        return ['nodes' => [$this->node($key, '库存 / 采购备货', $status, $done, $planned,
+            ['status_label' => match ($status) {'completed' => '已备货', 'in_progress' => '部分备货', default => '待备货'},
+                'progress_label' => '已备货 '.$this->number($done).'/'.$this->number($planned).'；当前占用 '.$this->number($occupied).'；已发运 '.$this->number($consumed)])], 'records' => $records];
     }
 
     /** 只装载所选 SN（或当前页 SN）的发货事实；null 表示明确的订单行数量视图。 */
     private function shipmentData(SalesOrderLine $line, ?array $serialIds): array
     {
-        $query = SalesShipmentLine::query()->with(['shipment', 'reservation'])->where('sales_order_line_id', $line->id)
+        $query = SalesShipmentLine::query()->with(['shipment', 'reservation'])->where('sales_order_line_id', $line->id)->where('item_id', $line->item_id)
             ->whereHas('shipment', fn ($q) => $q->where('sales_order_id', $line->sales_order_id));
         if ($serialIds !== null) $query->where(function ($q) use ($serialIds) {
             if ($serialIds === []) $q->whereRaw('1 = 0');
@@ -815,6 +851,7 @@ final class SalesOrderProgressQueryService
             $active = $lines->filter(fn ($l) => ! $this->cancelledShipmentLine($l));
             $latest = $active->last();
             $label = $row->operation_name ?: ($row->stored_at ? ($row->work_order_id ? '已完工' : '已入库') : ($row->completed_at ? '待完成去向' : '未开工'));
+            if ($row->status === 'pending_receipt') $label = '待仓库确认';
             $key = $row->current_operation_id ? 'production:'.$row->current_operation_id : ($row->stored_at ? 'stored' : 'pending');
             $status = in_array($row->status, ['stored', 'completed'], true) ? 'completed' : ($row->status === 'in_progress' ? 'in_progress' : 'pending');
             if ($latest) {

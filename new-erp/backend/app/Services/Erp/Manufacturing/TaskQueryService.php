@@ -156,7 +156,7 @@ final class TaskQueryService
         $hasCutting = $lane === 'normal' && in_array((int) $op->id, $cuttingOps, true);
         $otherLane = $lane === 'normal' ? 'rework' : 'normal';
         $unitWord = $this->tasks->unitWord($wo);
-        $cuttingBatches = $hasCutting ? MfgCuttingBatch::query()->where('work_order_operation_id', $op->id)->get(['status', 'unit_qty', 'completed_unit_qty']) : collect();
+        $cuttingBatches = $hasCutting ? MfgCuttingBatch::query()->where('work_order_operation_id', $op->id)->get(['id', 'batch_no', 'cutting_run_id', 'status', 'unit_qty', 'completed_unit_qty']) : collect();
         $cutUnits = $hasCutting ? (int) app(MaterialIssueService::class)->cutUnits($wo, $op) : 0;
         // 用按数量管理的板材／管材的下料工序：可以计时报工，也可以集中下料后点「已备料」不计时交下道。
         // 逐张板材的下料工序也可以：集中开料切好的件点「已备料」，按定额从开料池扣。
@@ -194,6 +194,8 @@ final class TaskQueryService
                 'source_label' => $wo->rework_of_work_order_id ? '返工工单' : match ($wo->source_type) { 'stock' => '备货', 'work_order' => '半成品子工单', default => '销售订单' },
                 'is_sub_work_order' => $parentBrief !== null || $wo->source_type === 'work_order' || (bool) $wo->rework_of_work_order_id,
                 'status' => $wo->status, 'status_label' => WorkOrderQueryService::STATUS_LABELS[$wo->status] ?? $wo->status,
+                'pending_receipt_qty' => MfgWorkOrderUnit::query()->where('work_order_id', $wo->id)->where('status', 'pending_receipt')->count(),
+                'completion_blockers' => $this->workOrders->completionBlockers($wo),
                 'pause_reason' => $wo->pause_reason, 'product_name' => $wo->product_name ?: $wo->item_name, 'item_code' => $wo->item_code, 'item_name' => $wo->item_name,
                 'sku_code' => $wo->sku_code, 'sku_name' => $wo->sku_name,
                 'item_spec' => $specInfo['item_spec'], 'material_grade' => $specInfo['material_grade'], 'specification' => $specInfo['specification'],
@@ -254,7 +256,9 @@ final class TaskQueryService
                 'cut_units' => $cutUnits,
                 'completed_units' => $opDone,
                 'reportable_units' => max(0, min($here, $cutUnits - $opDone)),
-                'pending_batches' => $cuttingBatches->where('status', 'issued')->count(),
+                'pending_batches' => $cuttingBatches->whereIn('status', ['issued', 'awaiting_confirm'])->count(),
+                'awaiting_confirmation_batches' => $cuttingBatches->where('status', 'awaiting_confirm')->count(),
+                'waiting_reasons' => $cuttingBatches->where('status', 'awaiting_confirm')->map(fn ($batch) => app(CuttingRemnantReceiptService::class)->waitingReason($batch))->values()->all(),
                 // 集中开料池里这几种板还剩多少平方米可以备料
                 'pool' => $sheetRows->unique('component_item_id')->map(fn ($m) => ['item_id' => (int) $m->component_item_id, 'item_name' => $m->component_item_name,
                     'left_measure' => round((float) ($pool[$m->component_item_id] ?? 0), 4)])->values()->all(),
@@ -388,8 +392,15 @@ final class TaskQueryService
                 'units' => $group->map(fn ($u) => ['id' => $u->id, 'serial_no' => $u->serial_no, 'short' => substr($u->serial_no, -4),
                     'passed_at' => isset($lastPass[$u->id]) ? substr((string) $lastPass[$u->id], 0, 16) : null])->values()->all()];
         })->values()->all();
-        $receipts = MfgReceipt::query()->whereDate('created_at', $today)->orderByDesc('id')->limit(20)->get();
-        $receiptWos = MfgWorkOrder::query()->whereIn('id', $receipts->pluck('work_order_id') ?: [0])->get(['id', 'work_order_no', 'product_name', 'item_name', 'sku_name'])->keyBy('id');
+        // 历史确认时间取原正式流水，不把申请时间计成今日入库。
+        $receiptTime = 'COALESCE(erp_mfg_receipts.confirmed_at, receipt_tx.posted_at, erp_mfg_receipts.created_at)';
+        $receiptQuery = MfgReceipt::query()->join('erp_inventory_transactions as receipt_tx', 'receipt_tx.id', '=', 'erp_mfg_receipts.inventory_transaction_id')
+            ->where('erp_mfg_receipts.status', 'confirmed')->where('receipt_tx.source_type', 'mfg_receipt')
+            ->whereColumn('receipt_tx.source_id', 'erp_mfg_receipts.id')->where('receipt_tx.transaction_type', 'production_receipt_inbound')
+            ->where('receipt_tx.posting_status', 'posted')->whereDate(DB::raw($receiptTime), $today);
+        $receipts = (clone $receiptQuery)->select('erp_mfg_receipts.*')->selectRaw($receiptTime.' as receipt_confirmed_at')->orderByDesc('erp_mfg_receipts.id')->limit(20)->get();
+        $receiptWos = MfgWorkOrder::query()->whereIn('id', $receipts->pluck('work_order_id') ?: [0])->get(['id', 'work_order_no', 'product_name', 'item_name', 'sku_name', 'item_id'])->keyBy('id');
+        $serialItems = Item::query()->whereIn('id', $receiptWos->pluck('item_id'))->get()->keyBy('id');
         $warehouses = Warehouse::query()->whereIn('id', $receipts->pluck('warehouse_id') ?: [0])->pluck('warehouse_name', 'id');
         $locations = Location::query()->whereIn('id', $receipts->pluck('location_id') ?: [0])->pluck('location_code', 'id');
         $cards = collect($columns)->flatMap(fn ($c) => $c['cards']);
@@ -405,16 +416,21 @@ final class TaskQueryService
                 'unclaimed' => $cards->where('state', 'unclaimed')->count(),
                 'rework_units' => MfgWorkOrderUnit::query()->where('status', 'rework')->count(),
                 'waiting_receipt' => MfgWorkOrderUnit::query()->where('status', 'completed')->count(),
-                'today_received_qty' => (float) MfgReceipt::query()->whereDate('created_at', $today)->sum('qty'),
+                'pending_receipt_qty' => MfgWorkOrderUnit::query()->where('status', 'pending_receipt')->count(),
+                'today_received_qty' => (float) (clone $receiptQuery)->sum('erp_mfg_receipts.qty'),
                 'today_hours' => round($todayMinutes / 60, 1),
             ],
             'columns' => $columns,
             'waiting_receipt' => $waiting,
             'today_receipts' => $receipts->map(fn ($r) => ['id' => $r->id, 'receipt_no' => $r->receipt_no, 'work_order_no' => $receiptWos->get($r->work_order_id)?->work_order_no,
                 'product_name' => ($w = $receiptWos->get($r->work_order_id)) ? ($w->product_name ?: $w->item_name) : null, 'sku_name' => $w?->sku_name,
-                'qty' => (float) $r->qty, 'serial_nos' => $r->serial_nos ?: [], 'operator_name' => $r->operator_name,
+                'qty' => (float) $r->qty, 'requires_serial_check' => ($serial = $serialItems->get($w?->item_id)) && $serial->serialTrackingMode() !== 'none',
+                'serial_nos' => $serial && $serial->serialTrackingMode() !== 'none' ? ($r->serial_nos ?: []) : [], 'operator_name' => $r->confirmed_by_name ?: $r->operator_name,
+                'status' => $r->status, 'confirmation_source' => $r->confirmation_source, 'confirmed_at' => (string) $r->receipt_confirmed_at,
                 'warehouse_name' => $warehouses[$r->warehouse_id] ?? null, 'location_code' => $locations[$r->location_id] ?? null,
-                'created_at' => $r->created_at?->toDateTimeString()])->values()->all(),
+                'created_at' => (string) $r->receipt_confirmed_at, 'requested_at' => ($r->requested_at ?? $r->created_at)?->toDateTimeString()])->values()->all(),
+            'pending_receipts' => MfgReceipt::query()->where('status', 'pending')->orderBy('requested_at')->orderBy('id')->limit(10)->get()
+                ->map(fn ($r) => app(ReceiptService::class)->present($r, false))->values()->all(),
             'unclaimed' => $cards->where('state', 'unclaimed')->map(fn ($c) => ['operation_id' => $c['operation_id'], 'operation_name' => $c['operation_name'],
                 'work_order_no' => $c['work_order_no'], 'product_name' => $c['product_name'], 'sku_name' => $c['sku_name'], 'qty' => count($c['units']),
                 'is_custom' => $c['is_custom'], 'planned_finish_date' => $c['planned_finish_date']])->values()->all(),

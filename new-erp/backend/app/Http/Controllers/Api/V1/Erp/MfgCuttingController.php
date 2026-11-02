@@ -8,6 +8,7 @@ use App\Models\Erp\MfgCuttingBatch;
 use App\Models\Erp\MfgTaskParticipant;
 use App\Services\Erp\AuthContextService;
 use App\Services\Erp\Manufacturing\CuttingService;
+use App\Services\Erp\Manufacturing\CuttingRemnantReceiptService;
 use Illuminate\Http\Request;
 
 /** 原项目生产工单的集中开料入口；权限与执行岗位沿用正式生产权限。 */
@@ -46,13 +47,13 @@ class MfgCuttingController extends Controller
     public function settle(Request $request, int $id, CuttingService $cutting)
     {
         $batch = MfgCuttingBatch::query()->findOrFail($id);
-        [$user, $amounts] = $this->user($request, true, (int) $batch->work_order_operation_id);
-        $data = $request->validate($this->assignmentRules() + ['expected_version' => 'required|integer|min:1', 'idempotency_key' => 'required|string|min:16|max:80',
-            'unit_qty' => 'required|integer|min:1|max:1000', 'confirmed' => 'required|accepted', 'remark' => 'nullable|string|max:500',
-            'remnants' => 'required|array|min:1|max:1000', 'remnants.*.source_key' => 'required|string|max:120',
-            'remnants.*.measure_qty' => 'required|string|regex:/^\d{1,10}(?:\.\d{1,8})?$/D',
-            'remnants.*.warehouse_id' => 'required|integer|min:1', 'remnants.*.location_id' => 'required|integer|min:1']);
-        return response()->json(['message' => '开料产出与余料已正式结算，可以继续后续制造工序。', 'data' => $cutting->settle($id, $data, $user, $amounts)]);
+        [$user] = $this->user($request, true, (int) $batch->work_order_operation_id);
+        $data = $request->validate(CuttingRemnantReceiptService::requestRules() + ['client_command_id' => 'required|string|max:120']);
+        $commandId = $data['client_command_id']; unset($data['client_command_id']);
+        $auth = app(AuthContextService::class);
+        $result = app(\App\Services\Erp\WarehouseCommandService::class)->run('cutting_batch.request', $id, $commandId, $data,
+            $user, $auth->permissionCodes($user), $auth->isSuperAdmin($user))['result'];
+        return response()->json(['message' => $result['status'] === 'settled' ? '真实零余料已确认，开料已结算。' : '产出已登记，车间可继续加工；余料待仓库确认。', 'data' => $result]);
     }
 
     private function planRules(): array

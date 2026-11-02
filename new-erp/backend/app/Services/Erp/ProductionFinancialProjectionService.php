@@ -45,6 +45,8 @@ final class ProductionFinancialProjectionService
     private function sensitive(string $key): bool
     {
         $normalized = strtolower(preg_replace('/([a-z0-9])([A-Z])/', '$1_$2', $key));
+        if (in_array($normalized, ['cost_method', 'cost_status', 'cost_status_label', 'cost_source', 'cost_source_type', 'cost_source_id',
+            'cost_source_complete', 'cost_collection_complete', 'material_cost_collection_complete', 'cost_allocation_method'], true)) return false;
         return (bool) preg_match('/(^|_)(price|amount|cost|profit|margin|receivable|payable|freight|fee|commission|wage|salary)(_|$)/', $normalized)
             || (bool) preg_match('/(^|_)performance(_|$)/', $normalized)
             || in_array($normalized, ['basis_policy', 'basis_mode', 'basis_snapshot', 'tax_rate', 'discount_rate'], true)

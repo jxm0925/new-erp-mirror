@@ -163,7 +163,12 @@ class ShipmentSourceResolver
             ->where(fn ($types) => $types->where(fn ($purchase) => $purchase->where('inbound.source_type', 'purchase_receipt')
                 ->whereIn('tx.transaction_type', ['purchase_receipt_posting', 'purchase_receipt_quality_release']))
                 ->orWhere(fn ($stock) => $stock->where('inbound.source_type', 'inventory_adjustment')->where('tx.source_type', 'inventory_adjustment')->where('tx.transaction_type', 'manual_adjustment'))
-                ->orWhere(fn ($transfer) => $transfer->where('inbound.source_type', 'inventory_transfer')->where('tx.transaction_type', 'inventory_transfer')
+                ->orWhere(fn ($transfer) => $transfer->where('inbound.source_type', 'inventory_transfer')
+                    ->where(fn ($mode) => $mode->where('tx.transaction_type', 'inventory_transfer')
+                        ->orWhere(fn ($split) => $split->where('tx.transaction_type', 'inventory_transfer_inbound')
+                            ->whereExists(fn ($posted) => $posted->selectRaw('1')->from('erp_inventory_transfers as confirmed_transfer')
+                                ->whereColumn('confirmed_transfer.id', 'inbound.source_id')->where('confirmed_transfer.transfer_status', 'posted')
+                                ->whereColumn('confirmed_transfer.inbound_transaction_id', 'tx.id')->whereNotNull('confirmed_transfer.confirmed_at'))))
                     ->whereIn('inbound.cost_source_type', ShipmentDirectSourcePolicy::TRANSFER_SOURCES)))
             ->select('inbound.id', 'inbound.transaction_id', 'inbound.item_id', 'inbound.warehouse_id', 'inbound.location_id', 'inbound.batch_no', 'inbound.unit_id',
                 'inbound.source_type', 'inbound.source_id', 'inbound.source_item_id', 'inbound.change_qty', 'inbound.cost_source_type', 'tx.transaction_type', 'tx.posting_status');
@@ -397,7 +402,9 @@ class ShipmentSourceResolver
         $groups = [];
         foreach ($facts as $fact) {
             if (in_array($fact['source_type'], ['inventory_transfer', 'sales_shipment_movement'], true)) {
-                $groups[$fact['transaction_id'].':'.$fact['source_type'].':'.$fact['source_item_id']][] = $fact;
+                $group = $fact['source_type'] === 'inventory_transfer' ? $fact['source_type'].':'.$fact['source_id'].':'.$fact['source_item_id']
+                    : $fact['transaction_id'].':'.$fact['source_type'].':'.$fact['source_item_id'];
+                $groups[$group][] = $fact;
             }
         }
         $pairs = [];
@@ -413,17 +420,29 @@ class ShipmentSourceResolver
                 || (int) $out['source_id'] !== (int) $in['source_id'] || (int) $out['location_id'] === (int) $in['location_id']
                 || $out['transaction_source_type'] !== $out['source_type'] || (int) $out['transaction_source_id'] !== (int) $out['source_id']) continue;
             if ($out['source_type'] === 'inventory_transfer') {
+                $single = $out['transaction_type'] === 'inventory_transfer' && $in['transaction_type'] === 'inventory_transfer'
+                    && (int) $out['transaction_id'] === (int) $in['transaction_id'];
+                $split = $out['transaction_type'] === 'inventory_transfer_outbound' && $in['transaction_type'] === 'inventory_transfer_inbound'
+                    && (int) $out['transaction_id'] !== (int) $in['transaction_id'];
+                if (! $single && ! $split) continue;
                 $transfer = DB::table('erp_inventory_transfer_lines as line')->join('erp_inventory_transfers as transfer', 'transfer.id', '=', 'line.transfer_id')
                     ->join('erp_inventory_balances as balance', 'balance.id', '=', 'line.inventory_balance_id')
                     ->where('line.id', $out['source_item_id'])->where('line.transfer_id', $out['source_id'])->where('transfer.transfer_status', 'posted')
-                    ->where('transfer.inventory_transaction_id', $out['transaction_id'])->where('transfer.source_warehouse_id', $out['warehouse_id'])
+                    ->where('transfer.source_warehouse_id', $out['warehouse_id'])
                     ->where('transfer.target_warehouse_id', $in['warehouse_id'])->where('line.item_id', $out['item_id'])
                     ->where('line.source_location_id', $out['location_id'])->where('line.target_location_id', $in['location_id'])
                     ->where('line.batch_no', $out['batch_no'])->where('line.unit_id', $unitId)->where('line.quantity', $in['change_qty'])
-                    ->where('line.cost_amount', $in['cost_amount'])->where('balance.item_id', $out['item_id'])->where('balance.warehouse_id', $out['warehouse_id'])
-                    ->where('balance.location_id', $out['location_id'])->where('balance.batch_no', $out['batch_no'])->where('balance.material_lot_id', $lotId)
-                    ->where('balance.unit_id', $unitId)->exists();
-                if (! $transfer || $out['transaction_type'] !== 'inventory_transfer') continue;
+                    ->where('line.cost_amount', $in['cost_amount']);
+                if ($single) $transfer->where('transfer.inventory_transaction_id', $out['transaction_id'])
+                    ->where('balance.item_id', $out['item_id'])->where('balance.warehouse_id', $out['warehouse_id'])
+                    ->where('balance.location_id', $out['location_id'])->where('balance.batch_no', $out['batch_no'])
+                    ->where('balance.material_lot_id', $lotId)->where('balance.unit_id', $unitId);
+                else $transfer->where('transfer.outbound_transaction_id', $out['transaction_id'])->where('transfer.inbound_transaction_id', $in['transaction_id'])
+                    ->whereNotNull('transfer.confirmed_at')->whereColumn('transfer.source_warehouse_id', '!=', 'transfer.target_warehouse_id')
+                    ->where('line.source_snapshot->outbound_transaction_item_id', $out['id'])->where('line.source_snapshot->material_lot_id', $lotId)
+                    ->where('line.source_snapshot->unit_id', $unitId)->where('line.source_snapshot->warehouse_id', $out['warehouse_id'])
+                    ->where('line.source_snapshot->location_id', $out['location_id'])->where('line.source_snapshot->batch_no', $out['batch_no']);
+                if (! $transfer->exists()) continue;
             } else {
                 $movement = DB::table('erp_sales_shipment_logs as log')->join('erp_sales_shipment_lines as line', 'line.shipment_id', '=', 'log.shipment_id')
                     ->where('log.id', $out['source_id'])->where('log.action', 'internal_move')->where('line.id', $out['source_item_id'])

@@ -42,7 +42,7 @@
   <block wx:if="{{tab === 'batches' && !loading}}">
     <view wx:if="{{!batches.length}}" class="mt-empty">暂无集中开料领板批次</view>
     <view wx:for="{{batches}}" wx:key="id" class="mt-card" data-id="{{item.id}}" bindtap="openBatch">
-      <view class="mt-row"><text class="mono" style="font-weight: 700;">{{item.batch_no}}</text><text class="mt-tag {{item.status === 'issued' ? 'amber' : 'green'}}">{{item.status === 'issued' ? '切割中 · 待登记余料' : '已登记结算'}}</text></view>
+      <view class="mt-row"><text class="mono" style="font-weight: 700;">{{item.batch_no}}</text><text class="mt-tag {{item.status === 'settled' ? 'green' : 'amber'}}">{{item.status === 'issued' ? '切割中 · 待登记余料' : item.status === 'awaiting_confirm' ? '余料待仓库确认' : '已登记结算'}}</text></view>
       <view class="mt-product">{{item.item_name}} <text class="mt-muted">{{item.specification || ''}}</text></view>
       <view class="mt-muted">领用 {{item.sheet_count}} 张 · 投入 {{item.inputText}} m²<text wx:if="{{item.status === 'settled'}}"> · 净耗 {{item.poolText}} m² · 已备料 {{item.allocatedText}} m² · 剩余 {{item.leftText}} m²</text></view>
       <view class="mt-muted">领料人：{{item.issued_by_name}} · {{item.issuedText}}</view>
@@ -86,6 +86,8 @@
 <view wx:if="{{panel === 'batch'}}" class="tk-mask" catchtouchmove="stop">
   <view class="tk-sheet">
     <view class="mt-row tk-sheet-head"><text class="mt-title mono">{{batch.batch_no}}</text><text class="mt-muted">{{batch.item_name}}</text></view>
+    <view wx:if="{{batch.waiting_reason}}" class="mt-note">{{batch.waiting_reason}}</view>
+    <button wx:if="{{batch.remnant_receipt.id}}" class="mt-btn plain" data-id="{{batch.remnant_receipt.id}}" bindtap="openRemnantReceipt">查看余料入库申请</button>
     <scroll-view scroll-y class="tk-sheet-body">
       <block wx:if="{{batch.status === 'issued'}}">
         <view class="mt-muted">请按每张板材切割后的可复用剩余面积（单位 m²）据实填写；无剩余填 0，有余板请选择回库库位。</view>

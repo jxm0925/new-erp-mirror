@@ -32,6 +32,7 @@ class InventoryReservationService
         $workOrders = DB::table('erp_mfg_work_orders')->where('source_type', 'sales_order')->where('sales_order_id', $order->id)
             ->whereIn('sales_fulfillment_id', $ids)->when($currentRead, fn ($q) => $q->lockForUpdate())->get()->groupBy('sales_fulfillment_id');
         $receipts = DB::table('erp_mfg_receipts as receipt')->join('erp_mfg_work_orders as wo', 'wo.id', '=', 'receipt.work_order_id')
+            ->where('receipt.status', 'confirmed')
             ->join('erp_sales_order_fulfillments as fulfillment', 'fulfillment.id', '=', 'wo.sales_fulfillment_id')
             ->join('erp_inventory_transactions as tx', 'tx.id', '=', 'receipt.inventory_transaction_id')
             ->where('wo.source_type', 'sales_order')->where('wo.sales_order_id', $order->id)->whereIn('wo.sales_fulfillment_id', $ids)
@@ -204,6 +205,8 @@ class InventoryReservationService
     public function reserveProductionReceipt(\App\Models\Erp\MfgReceipt $receipt, \App\Models\Erp\MfgWorkOrder $workOrder): array
     {
         if ($workOrder->source_type !== 'sales_order' || ! $workOrder->sales_fulfillment_id) return [];
+        if ($receipt->status !== 'confirmed' || ! $receipt->inventory_transaction_id)
+            throw new \RuntimeException('生产入库尚未仓库确认过账，不能建立销售预留。');
         return DB::transaction(function () use ($receipt, $workOrder): array {
             $fulfillment = SalesOrderFulfillment::query()->whereKey($workOrder->sales_fulfillment_id)
                 ->where('sales_order_id', $workOrder->sales_order_id)->where('sales_order_line_id', $workOrder->sales_order_line_id)

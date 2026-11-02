@@ -1,8 +1,98 @@
-<warehouse-context/>
-<view class="warehouse-page"><view class="warehouse-card"><view class="warehouse-search"><van-icon name="search"/><input placeholder="搜索工单 / 产品 / 工序 / 物料" value="{{keyword}}" bindinput="input" bindconfirm="search" confirm-type="search"/><button bindtap="search">搜索</button></view><view class="phase-tabs"><view wx:for="{{tabs}}" wx:key="value" class="{{status === item.value ? 'active' : ''}}" data-status="{{item.value}}" bindtap="switchTab">{{item.label}}</view></view></view>
-<view wx:if="{{loading}}" class="warehouse-empty"><van-loading color="#ed1609"/></view><view wx:elif="{{error}}" class="warehouse-empty">{{error}}<button class="warehouse-secondary" bindtap="load">重新加载</button></view><view wx:elif="{{!rows.length}}" class="warehouse-empty">暂无配料记录</view>
-<view wx:for="{{rows}}" wx:key="key" class="warehouse-card"><view class="phase-heading">{{status === 'pending' ? item.work_order_no : item.delivery_no}}<text wx:if="{{item.status_label}}" class="phase-tag">{{item.status_label}}</text></view><view class="warehouse-card-title">{{item.item_name}} · {{item.operation_name}}</view>
-<view wx:if="{{status === 'pending'}}" class="phase-metrics"><view>计划数量<text>{{item.planned_qty}} 台</text></view><view>已齐套<text class="locked">{{item.covered_units}} 台</text></view><view>车间等待<text>{{item.waiting_units}} 台</text></view></view>
-<view wx:else class="warehouse-field"><text class="warehouse-label">工单</text><text class="warehouse-value">{{item.work_order_no}} · {{item.unit_qty}} 台</text></view>
-<view class="warehouse-muted">物料摘要（共 {{item.lines.length}} 种）</view><view wx:for="{{item.lines}}" wx:for-item="line" wx:key="material_id" class="phase-line-title"><text>{{line.component_item_name}}</text><text>{{line.qtyText}} {{line.unit_name}}</text></view><button class="warehouse-primary" data-index="{{index}}" bindtap="open">{{status === 'pending' ? '立即配料' : '查看配料单'}}</button></view>
-<view class="warehouse-pager"><button disabled="{{page <= 1 || loading}}" data-delta="-1" bindtap="turn">上一页</button><text>{{page}} / {{lastPage}}</text><button disabled="{{page >= lastPage || loading}}" data-delta="1" bindtap="turn">下一页</button></view></view>
+<warehouse-context />
+
+<view class="warehouse-page">
+  <view class="warehouse-card dlv-filter-card">
+    <view class="warehouse-search">
+      <van-icon name="search" color="#64748b" size="32rpx" />
+      <input
+        placeholder="搜索工单 / 产品 / 工序 / 物料"
+        value="{{keyword}}"
+        bindinput="input"
+        bindconfirm="search"
+        confirm-type="search"
+      />
+      <button bindtap="search">搜索</button>
+    </view>
+    <view class="phase-tabs dlv-tabs">
+      <view
+        wx:for="{{tabs}}"
+        wx:key="value"
+        class="{{status === item.value ? 'active' : ''}}"
+        data-status="{{item.value}}"
+        bindtap="switchTab"
+      >{{item.label}}</view>
+    </view>
+  </view>
+
+  <view wx:if="{{loading}}" class="warehouse-empty">
+    <van-loading color="#d81e06" size="44rpx" />
+    <text class="warehouse-muted">正在加载配料单列表...</text>
+  </view>
+
+  <view wx:elif="{{error}}" class="warehouse-empty">
+    <van-icon name="warning-o" size="68rpx" color="#d81e06" />
+    <text class="warehouse-error">{{error}}</text>
+    <button class="warehouse-secondary dlv-retry-btn" bindtap="load">重新加载</button>
+  </view>
+
+  <view wx:elif="{{!rows.length}}" class="warehouse-empty">
+    <van-icon name="todo-list-o" size="84rpx" color="#cbd5e1" />
+    <view class="dlv-empty-title">暂无配料记录</view>
+    <view class="warehouse-muted">当前状态下没有待处理或历史配料单</view>
+  </view>
+
+  <block wx:else>
+    <view wx:for="{{rows}}" wx:key="key" class="warehouse-card dlv-card">
+      <view class="phase-heading">
+        <text>{{status === 'pending' ? item.work_order_no : item.delivery_no}}</text>
+        <text wx:if="{{item.status_label}}" class="phase-tag">{{item.status_label}}</text>
+      </view>
+
+      <view class="dlv-product-row">
+        <van-icon name="Setting-o" color="#d81e06" size="30rpx" />
+        <text class="warehouse-card-title dlv-product-title">{{item.item_name}} · {{item.operation_name}}</text>
+      </view>
+
+      <view wx:if="{{status === 'pending'}}" class="phase-metrics">
+        <view>计划数量<text>{{item.planned_qty}} 台</text></view>
+        <view>已齐套<text class="locked">{{item.covered_units}} 台</text></view>
+        <view>车间等待<text class="warehouse-danger">{{item.waiting_units}} 台</text></view>
+      </view>
+
+      <view wx:else class="warehouse-field">
+        <text class="warehouse-label">关联工单</text>
+        <text class="warehouse-value">{{item.work_order_no}} · {{item.unit_qty}} 台</text>
+      </view>
+
+      <view class="dlv-lines-box">
+        <view class="dlv-lines-head">
+          <text class="dlv-lines-title">物料摘要</text>
+          <text class="warehouse-muted">共 {{item.lines.length}} 种</text>
+        </view>
+        <view
+          wx:for="{{item.lines}}"
+          wx:for-item="line"
+          wx:key="material_id"
+          class="phase-line-title dlv-line-item"
+        >
+          <text class="dlv-line-name">{{line.component_item_name}}</text>
+          <text class="dlv-line-qty">{{line.qtyText}} {{line.unit_name}}</text>
+        </view>
+      </view>
+
+      <view class="dlv-card-footer">
+        <button
+          class="{{status === 'pending' ? 'warehouse-primary' : 'warehouse-secondary'}}"
+          data-index="{{index}}"
+          bindtap="open"
+        >{{status === 'pending' ? '立即配料' : '查看配料单'}}</button>
+      </view>
+    </view>
+  </block>
+
+  <view wx:if="{{!error}}" class="warehouse-pager">
+    <button disabled="{{page <= 1 || loading}}" data-delta="-1" bindtap="turn">上一页</button>
+    <text class="dlv-page-indicator">{{page}} / {{lastPage}}</text>
+    <button disabled="{{page >= lastPage || loading}}" data-delta="1" bindtap="turn">下一页</button>
+  </view>
+</view>

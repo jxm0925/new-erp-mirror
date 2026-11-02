@@ -23,6 +23,7 @@
               <el-tag size="small" :type="unitStatusType(wo.status)" effect="plain">
                 {{ wo.status_label || wo.status }}
               </el-tag>
+              <el-tag v-if="wo.pending_receipt_qty > 0" size="small" type="warning" effect="plain" class="lk-text" @click.native="$router.push({ path: '/inventory/inbound-confirmations', query: { kind: 'mfg_receipt', keyword: wo.work_order_no } })">待仓库确认 {{ qty(wo.pending_receipt_qty) }} {{ wo.unit_name || '台' }} · 查看申请</el-tag>
               <el-tag v-if="wo.is_urgent || wo.priority === 4" size="small" :type="wo.priority === 4 ? 'info' : 'danger'" effect="dark" class="urgent-tag">
                 {{ wo.priority_label || '加急' }}
               </el-tag>
@@ -128,6 +129,7 @@
           </el-button>
         </div>
       </header>
+      <el-alert v-for="(blocker, index) in wo.completion_blockers || []" :key="'completion-' + index" :title="blocker.text" type="warning" :closable="false" show-icon />
 
       <!-- 工单主档参数与生命周期进度概览卡片 -->
       <section class="detail-card overview-master-card">
@@ -227,6 +229,7 @@
               <div class="unit-status-counters">
                 <span class="counter-pill pill-success">已入库 <b class="text-success">{{ unitCount('stored') }}</b></span>
                 <span class="counter-pill">待入库 <b>{{ unitCount('completed') }}</b></span>
+                <span v-if="wo.pending_receipt_qty > 0" class="counter-pill">待仓库确认 <b>{{ qty(wo.pending_receipt_qty) }}</b></span>
                 <span class="counter-pill pill-primary">在制加工 <b class="text-primary">{{ unitCount('in_progress') }}</b></span>
                 <span class="counter-pill pill-danger">质量返修 <b class="text-danger">{{ unitCount('rework') }}</b></span>
                 <span class="counter-pill">待开工 <b>{{ unitCount('waiting') }}</b></span>
@@ -1089,7 +1092,7 @@
       :work-order-id="wo ? wo.id : 0"
       :operation-id="returnDialog.opId"
       :operation-name="returnDialog.opName"
-      @done="d => { if (d) wo = d }"
+      @done="load"
     />
   </div>
 </template>
@@ -1456,7 +1459,7 @@ export default {
         return
       }
       try {
-        const { data } = await cancelMaterialReturn(r.id)
+        const { data } = await cancelMaterialReturn(r.id, { expected_version: r.business_version })
         this.$message.success(data.message || '已撤回')
         this.load()
       } catch (e) {

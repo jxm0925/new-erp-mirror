@@ -51,8 +51,8 @@ class MfgTaskController extends Controller
             'stop' => $this->run(fn () => $tasks->stopTiming($id, (int) $request->validate(['employee_legacy_id' => 'required|integer|min:1'])['employee_legacy_id'], $user), '已停止这个人的计时。'),
             'assign' => $this->run(fn () => $tasks->assign($id, (int) $request->validate(['employee_legacy_id' => 'required|integer|min:1'])['employee_legacy_id'], $user, $lane), '已派工。'),
             'collaborators' => $this->collaborators($request, $id, $tasks, $user, $lane),
-            'pass' => $this->pass($request, $id, $tasks, $user, $lane),
-            'prepare' => $this->prepare($request, $id, $tasks, $user),
+            'pass' => $this->pass($request, $id, $user, $lane),
+            'prepare' => $this->prepare($request, $id, $user),
             'reject' => $this->reject($request, $id, $tasks, $user, $lane),
             'semi_order' => $this->semiOrder($request, $id, $user),
         };
@@ -67,18 +67,16 @@ class MfgTaskController extends Controller
     }
 
     /** 审核员工提交的不良处置（返工 / 报废 / 判定可用）。 */
-    public function reviewPlan(Request $request, int $id, MaterialReturnService $returns)
+    public function reviewPlan(Request $request, int $id, \App\Services\Erp\WarehouseCommandService $commands)
     {
         [$user, $codes] = $this->user($request, ['production.task.execute', 'production.scrap.approve']);
-        $data = $request->validate(['approve' => 'required|boolean', 'remark' => 'nullable|string|max:500']);
-        $return = $returns->reviewPlan($id, (bool) $data['approve'], $data['remark'] ?? null, $user, $this->canApprove($user, $codes));
-        $plan = $return->disposition_plan ?: [];
-        $text = ! $data['approve'] ? '已驳回，料还在原工序。' : match ($plan['action'] ?? '') {
-            'rework' => '已通过，返工工单 '.($plan['rework_work_order_no'] ?? '').' 已开，从'.($plan['start_operation_name'] ?? '').'开始返工。',
-            'scrap' => '已通过，不良件已报废。',
-            default => '已通过，不良件判定可用、回到仓库可用库存。',
-        };
-        return response()->json(['message' => $text]);
+        $data = $request->validate(['client_command_id' => 'required|string|max:120', 'expected_version' => 'required|integer|min:1',
+            'approve' => 'required|boolean', 'remark' => 'nullable|string|max:500']);
+        $commandId = $data['client_command_id'];
+        unset($data['client_command_id']);
+        $result = $commands->run('material_return.plan_review', $id, $commandId, $data, $user, $codes, app(AuthContextService::class)->isSuperAdmin($user));
+        return response()->json(['message' => $data['approve'] ? '处置方案已通过，待仓库确认入库后执行。' : '处置方案已驳回，料还在原工序。',
+            'data' => $result['result']]);
     }
 
     public function people(Request $request, int $id, TaskQueryService $query)
@@ -133,13 +131,59 @@ class MfgTaskController extends Controller
         return response()->json(['message' => $data['approve'] ? '已确认报废。' : '已驳回，继续返工。']);
     }
 
-    public function receive(Request $request, int $id, ReceiptService $receipts)
+    public function receive(Request $request, int $id)
     {
         [$user] = $this->user($request, ['production.receipt.execute']);
-        $data = $request->validate(['unit_ids' => 'required|array|min:1|max:1000', 'unit_ids.*' => 'integer|min:1',
+        $data = $request->validate(['client_command_id' => 'required|string|max:120', 'unit_ids' => 'required|array|min:1|max:1000', 'unit_ids.*' => 'integer|min:1|distinct',
             'warehouse_id' => 'required|integer|exists:erp_warehouses,id', 'location_id' => 'required|integer|exists:erp_locations,id', 'remark' => 'nullable|string|max:500']);
-        $receipt = $receipts->receive($id, $data['unit_ids'], (int) $data['warehouse_id'], (int) $data['location_id'], $data['remark'] ?? null, $user);
-        return response()->json(['message' => '已入库 '.(int) $receipt->qty.' '.$this->unitWord(null, $id).'（'.$receipt->receipt_no.'）。', 'data' => ['id' => $receipt->id, 'receipt_no' => $receipt->receipt_no]]);
+        $result = $this->productionCommand('mfg_receipt.request', $id, $data, $user);
+        return response()->json(['message' => '已提交 '.(int) $result['qty'].' '.$this->unitWord(null, $id).'，待仓库确认（'.$result['receipt_no'].'）。', 'data' => $result]);
+    }
+
+    public function receiptIndex(Request $request, ReceiptService $receipts)
+    {
+        [$user] = $this->user($request, ['inventory.inbound.confirm', 'production.receipt.execute', 'production.work_order.view', 'production.task.view', 'production.task.execute']);
+        $filters = $request->validate(['status' => 'nullable|in:pending,confirmed,rejected,cancelled', 'keyword' => 'nullable|string|max:120',
+            'work_order_id' => 'nullable|integer|min:1', 'page' => 'nullable|integer|min:1', 'per_page' => 'nullable|integer|min:1|max:100']);
+        return response()->json($receipts->paginate($filters, $user));
+    }
+
+    public function receiptShow(Request $request, int $id, ReceiptService $receipts)
+    {
+        [$user] = $this->user($request, ['inventory.inbound.confirm', 'production.receipt.execute', 'production.work_order.view', 'production.task.view', 'production.task.execute']);
+        return response()->json(['data' => $receipts->show($id, $user)]);
+    }
+
+    public function confirmReceipt(Request $request, int $id)
+    {
+        return $this->receiptAction($request, $id, 'confirm');
+    }
+
+    public function rejectReceipt(Request $request, int $id)
+    {
+        return $this->receiptAction($request, $id, 'reject');
+    }
+
+    public function cancelReceipt(Request $request, int $id)
+    {
+        return $this->receiptAction($request, $id, 'cancel');
+    }
+
+    private function receiptAction(Request $request, int $id, string $action)
+    {
+        [$user, $codes] = $this->user($request, $action === 'cancel' ? ['production.receipt.execute', 'production.task.execute'] : ['inventory.inbound.confirm']);
+        $data = $request->validate(['client_command_id' => 'required|string|max:120', 'expected_version' => 'required|integer|min:1'] + match ($action) {
+            'confirm' => ['warehouse_id' => 'nullable|integer|min:1', 'location_id' => 'required|integer|min:1',
+                'serial_nos' => 'nullable|array|max:1000', 'serial_nos.*' => 'required|string|max:120|distinct', 'remark' => 'nullable|string|max:500'],
+            'reject' => ['reason' => 'required|string|max:500'],
+            default => [],
+        });
+        $commandId = $data['client_command_id'];
+        unset($data['client_command_id']);
+        $result = app(\App\Services\Erp\WarehouseCommandService::class)->run('mfg_receipt.'.$action, $id, $commandId, $data, $user, $codes,
+            app(AuthContextService::class)->isSuperAdmin($user));
+        return response()->json(['message' => match ($action) { 'confirm' => '入库已确认。', 'reject' => '已驳回，设备回到等入库。', default => '入库申请已撤回。' },
+            'data' => $result['result']]);
     }
 
     public function workers(Request $request, int $id, TaskQueryService $query)
@@ -171,10 +215,10 @@ class MfgTaskController extends Controller
         return '协同人已保存。';
     }
 
-    private function pass(Request $request, int $id, TaskService $tasks, object $user, string $lane): string
+    private function pass(Request $request, int $id, object $user, string $lane): string
     {
-        $data = $request->validate(['unit_ids' => 'required|array|min:1|max:1000', 'unit_ids.*' => 'integer|min:1'] + $this->completionRules());
-        $result = $tasks->pass($id, $data['unit_ids'], $user, $lane, $data);
+        $data = $request->validate(['client_command_id' => 'required|string|max:120', 'unit_ids' => 'required|array|min:1|max:1000', 'unit_ids.*' => 'integer|min:1|distinct'] + $this->completionRules());
+        $result = $this->productionCommand('mfg_task.pass', $id, $data + ['lane' => $lane], $user);
         $word = $this->unitWord($id);
         $paused = ! empty($result['timing_paused']) ? '本道暂时没有可做的'.($lane === 'rework' ? '返工' : '').'，计时已自动暂停。' : '';
         if (isset($result['completion_action'])) return $this->completionMessage($result, $word).$paused;
@@ -185,11 +229,11 @@ class MfgTaskController extends Controller
     }
 
     /** 已备料：集中下料提前切好的料，不计时直接交下道。 */
-    private function prepare(Request $request, int $id, TaskService $tasks, object $user): string
+    private function prepare(Request $request, int $id, object $user): string
     {
-        $data = $request->validate(['unit_ids' => 'required|array|min:1|max:1000', 'unit_ids.*' => 'integer|min:1', 'remark' => 'nullable|string|max:500',
+        $data = $request->validate(['client_command_id' => 'required|string|max:120', 'unit_ids' => 'required|array|min:1|max:1000', 'unit_ids.*' => 'integer|min:1|distinct', 'remark' => 'nullable|string|max:500',
             'cutting_run_id' => 'nullable|integer|min:1'] + $this->completionRules());
-        $result = $tasks->prepare($id, $data['unit_ids'], $data['remark'] ?? null, $user, isset($data['cutting_run_id']) ? (int) $data['cutting_run_id'] : null, $data);
+        $result = $this->productionCommand('mfg_task.prepare', $id, $data, $user);
         if (isset($result['completion_action'])) return $this->completionMessage($result, $this->unitWord($id));
         if ($result['next_operation_name']) return $result['passed'].' '.$this->unitWord($id).'已备料，交'.$result['next_operation_name'].'。';
         return $result['passed'].' '.$this->unitWord($id).'已备料，生产完成。';
@@ -201,11 +245,20 @@ class MfgTaskController extends Controller
             + ProductionMediaService::rules();
     }
 
+    private function productionCommand(string $action, int $id, array $data, object $user): array
+    {
+        $auth = app(AuthContextService::class);
+        $commandId = $data['client_command_id'];
+        unset($data['client_command_id']);
+        return app(\App\Services\Erp\WarehouseCommandService::class)->run($action, $id, $commandId, $data, $user,
+            $auth->permissionCodes($user), $auth->isSuperAdmin($user))['result'];
+    }
+
     private function completionMessage(array $result, string $word): string
     {
         $message = $result['received_qty'].' '.$word.($result['completion_action'] === 'handoff'
             ? '已交接给'.$result['handoff_operation_name'].(! empty($result['shipment_no']) ? '（'.$result['shipment_no'].'）' : '').'。'
-            : '已入库（'.$result['receipt_no'].'）。');
+            : '已提交入库，待仓库确认（'.$result['receipt_no'].'）。');
         if (($result['repaired'] ?? 0) > 0) $message .= '另有 '.$result['repaired'].' 台原设备返修合格，请仓库在发货单上返回成品位后重新试水。';
         return $message;
     }

@@ -8,20 +8,24 @@
             <h1 class="page-title">库存调拨</h1>
             <el-tag size="small" type="success" effect="plain" class="head-tag total-tag">共 {{ stats.total || total }} 张调拨单</el-tag>
             <el-tag v-if="stats.draft > 0" size="small" type="warning" effect="plain" class="sub-total-tag">
-              {{ stats.draft }} 张草稿待过账
+              {{ stats.draft }} 张草稿待办理
             </el-tag>
+            <el-tag v-if="stats.in_transit > 0" size="small" type="warning" effect="plain" class="sub-total-tag" @click="quickStatus('in_transit')">{{ stats.in_transit }} 张在途待接收</el-tag>
           </div>
         </div>
       </div>
       <div class="head-actions">
         <el-button size="small" icon="el-icon-refresh" class="btn-refresh" :loading="loading" @click="load">刷新</el-button>
-        <el-button v-if="$can('inventory.transfer.create')" size="small" type="success" class="btn-theme-create" icon="el-icon-plus" @click="openForm()">新建调拨单</el-button>
+        <el-button v-if="$can('inventory.transfer.create')" size="small" type="success" class="btn-theme-create" icon="el-icon-plus" :disabled="saving || actionSaving || pendingCommands.length > 0" @click="openForm()">新建调拨单</el-button>
       </div>
     </header>
 
+    <el-alert v-if="pendingCommands.length" title="有调拨操作结果尚未确定，请先核对原操作结果。" type="warning" :closable="false" show-icon />
+    <el-button v-for="job in pendingCommands" :key="job.action + ':' + job.id" size="small" :loading="actionSaving" @click="recover(job)">核对上次{{ actionLabel(job.action) }}结果</el-button>
+
     <div class="erp-page-tip">
       <i class="el-icon-info" />
-      <span>支持同管理范围的库位间或跨仓库调拨；过账即时成对生成调出/调入流水并按来源批次平均成本结转，仅允许调拨「可用库存」（不含已锁定、不合格、待处理及盘点冻结数量）。</span>
+      <span>同仓移库一步完成；跨仓调出后进入在途，目标仓整单接收后才可用。接收按调出时冻结成本办理，短少或破损只记录异常、保持在途。</span>
     </div>
 
     <div class="metric-overview-grid">
@@ -35,7 +39,7 @@
       <article class="metric-card" :class="{ active: filters.status === 'draft' }" @click="quickStatus('draft')">
         <span class="metric-icon bg-orange"><i class="el-icon-edit-outline" /></span>
         <div class="metric-body">
-          <span class="metric-label">草稿待过账</span>
+          <span class="metric-label">草稿待办理</span>
           <strong class="metric-value font-tabular text-orange">{{ stats.draft || 0 }}</strong>
         </div>
       </article>
@@ -70,6 +74,10 @@
           <el-select v-model="filters.status" size="small" clearable placeholder="全部状态" @change="query">
             <el-option v-for="(label, value) in statuses" :key="value" :label="label" :value="value" />
           </el-select>
+        </div>
+        <div class="filter-item">
+          <span class="filter-label">接收异常</span>
+          <el-select v-model="filters.has_exception" size="small" clearable placeholder="全部" @change="query"><el-option label="有接收异常" :value="1" /><el-option label="无接收异常" :value="0" /></el-select>
         </div>
         <div class="filter-actions">
           <el-button size="small" type="success" class="btn-theme-create" icon="el-icon-search" @click="query">查询</el-button>
@@ -112,6 +120,7 @@
         <el-table-column label="状态" width="94" align="center">
           <template slot-scope="{ row }">
             <el-tag size="mini" :type="statusType(row.transfer_status)">{{ row.status_label }}</el-tag>
+            <div v-if="row.receipt_exception" class="cell-sub text-orange">{{ row.receipt_exception }}</div>
           </template>
         </el-table-column>
 
@@ -132,11 +141,12 @@
             <div class="row-actions">
               <el-button type="text" size="mini" class="action-link" icon="el-icon-view" @click="openDetail(row.id)">详情</el-button>
               <template v-if="row.transfer_status === 'draft'">
-                <el-button v-if="$can('inventory.transfer.create')" type="text" size="mini" class="action-link" icon="el-icon-edit" @click="openForm(row.id)">编辑</el-button>
-                <el-button v-if="$can('inventory.transfer.post')" type="text" size="mini" class="action-link" icon="el-icon-circle-check" @click="post(row)">过账</el-button>
-                <el-button v-if="$can('inventory.transfer.create') || $can('inventory.transfer.post')" type="text" size="mini" class="muted-link" @click="cancel(row)">取消</el-button>
-                <el-button v-if="$can('inventory.transfer.delete')" type="text" size="mini" class="danger-link" @click="remove(row)">删除</el-button>
+                <el-button v-if="row.can_edit" type="text" size="mini" class="action-link" icon="el-icon-edit" :disabled="actionSaving || rowPending(row.id)" @click="openForm(row.id)">编辑</el-button>
+                <el-button v-if="row.can_post" type="text" size="mini" class="action-link" icon="el-icon-circle-check" :disabled="actionSaving || rowPending(row.id)" @click="post(row)">{{ crossWarehouse(row) ? '调出' : '移库' }}</el-button>
+                <el-button v-if="row.can_cancel" type="text" size="mini" class="muted-link" :disabled="actionSaving || rowPending(row.id)" @click="cancel(row)">取消</el-button>
+                <el-button v-if="row.can_delete" type="text" size="mini" class="danger-link" :disabled="actionSaving || rowPending(row.id)" @click="remove(row)">删除</el-button>
               </template>
+              <template v-if="row.transfer_status === 'in_transit'"><el-button v-if="row.can_confirm" type="text" size="mini" class="action-link" :disabled="actionSaving || rowPending(row.id)" @click="openDetail(row.id, true)">整单接收</el-button><el-button v-if="row.can_record_exception" type="text" size="mini" class="muted-link" :disabled="actionSaving || rowPending(row.id)" @click="recordException(row)">记录异常</el-button></template>
             </div>
           </template>
         </el-table-column>
@@ -158,7 +168,7 @@
     </section>
 
     <el-dialog :title="form.id ? '编辑库存调拨单' : '新建库存调拨单'" :visible.sync="formVisible" :width="dialogWidth('1120px')" append-to-body :close-on-click-modal="false">
-      <el-form ref="form" :model="form" label-width="84px" size="small" class="transfer-form">
+      <el-form ref="form" :model="form" :disabled="saving || formPending" label-width="84px" size="small" class="transfer-form">
         <div class="form-top-grid">
           <el-form-item label="调出仓库" required>
             <paged-record-select v-model="form.source_warehouse_id" entity="warehouses" :params="warehouseParams" title="选择调出仓库" placeholder="选择调出仓库" @change="changeSource" @select="sourceWarehouse = $event" />
@@ -174,30 +184,30 @@
 
       <div class="lines-toolbar">
         <span class="lines-title">调拨物料明细（共 <b>{{ form.lines.length }}</b> 行）</span>
-        <el-button size="mini" type="success" class="btn-theme-create" icon="el-icon-plus" :disabled="!form.source_warehouse_id" @click="addLine">添加调拨行</el-button>
+        <el-button size="mini" type="success" class="btn-theme-create" icon="el-icon-plus" :disabled="!form.source_warehouse_id || saving || formPending" @click="addLine">添加调拨行</el-button>
       </div>
 
       <el-table :data="form.lines" border stripe fit size="small" class="enterprise-table">
         <el-table-column type="index" label="#" width="46" align="center" />
         <el-table-column label="来源库存（物料 / 库位 / 批次 / 可用量）" min-width="270">
           <template slot-scope="{ row }">
-            <paged-record-select v-model="row.inventory_balance_id" :request="listTransferBalances" :params="{ warehouse_id: form.source_warehouse_id }" :selected-rows.sync="balances" :label="balanceLabel" :columns="balanceColumns" :category-request="listSourceCategories" :disabled="!form.source_warehouse_id" size="mini" title="选择来源库存" placeholder="选择物料 / 库位 / 批次" @change="row.serial_ids = []" />
+            <paged-record-select v-model="row.inventory_balance_id" :request="listTransferBalances" :params="{ warehouse_id: form.source_warehouse_id }" :selected-rows.sync="balances" :label="balanceLabel" :columns="balanceColumns" :category-request="listSourceCategories" :disabled="!form.source_warehouse_id || saving || formPending" size="mini" title="选择来源库存" placeholder="选择物料 / 库位 / 批次" @change="row.serial_ids = []" />
           </template>
         </el-table-column>
         <el-table-column label="调入目标库位" min-width="175">
           <template slot-scope="{ row }">
-            <paged-record-select v-model="row.target_location_id" entity="locations" :params="{ warehouse_id: form.target_warehouse_id, statuses: warehouseParams.statuses, location_purposes: ['general', 'finished'] }" :disabled="!form.target_warehouse_id" size="mini" title="选择调入库位" placeholder="普通或成品库位" />
+            <paged-record-select v-model="row.target_location_id" entity="locations" :params="{ warehouse_id: form.target_warehouse_id, statuses: warehouseParams.statuses, location_purposes: ['general', 'finished'] }" :disabled="!form.target_warehouse_id || saving || formPending" size="mini" title="选择调入库位" placeholder="普通或成品库位" />
           </template>
         </el-table-column>
         <el-table-column label="调拨数量" width="145">
           <template slot-scope="{ row }">
-            <el-input-number v-model="row.quantity" :min="0" :max="maxQty(row)" :precision="4" :controls="false" size="mini" placeholder="输入数量" style="width: 120px" />
+            <el-input-number v-model="row.quantity" :disabled="saving || formPending" :min="0" :max="maxQty(row)" :precision="4" :controls="false" size="mini" placeholder="输入数量" style="width: 120px" />
           </template>
         </el-table-column>
         <el-table-column label="设备编号 / 序列号" min-width="210">
           <template slot-scope="{ row }">
             <template v-if="hasSerials(row)">
-              <paged-record-select v-model="row.serial_ids" :request="listSourceSerials" :params="{ inventory_balance_id: row.inventory_balance_id, warehouse_id: form.source_warehouse_id, for_transfer: 1 }" :columns="[{ prop: 'serial_no', label: '序列号' }]" :label="serialLabel" multiple size="mini" title="选择序列号" :placeholder="serialRequired(row) ? '选择序列号（必选）' : '选择序列号（可选）'" @change="changeSerials(row)" />
+              <paged-record-select v-model="row.serial_ids" :disabled="saving || formPending" :request="listSourceSerials" :params="{ inventory_balance_id: row.inventory_balance_id, warehouse_id: form.source_warehouse_id, for_transfer: 1 }" :columns="[{ prop: 'serial_no', label: '序列号' }]" :label="serialLabel" multiple size="mini" title="选择序列号" :placeholder="serialRequired(row) ? '选择序列号（必选）' : '选择序列号（可选）'" @change="changeSerials(row)" />
               <div class="serial-hint">{{ serialHint(row) }}</div>
             </template>
             <span v-else class="text-muted">—</span>
@@ -205,24 +215,24 @@
         </el-table-column>
         <el-table-column label="行备注" min-width="130">
           <template slot-scope="{ row }">
-            <el-input v-model="row.remark" size="mini" maxlength="500" placeholder="选填" />
+            <el-input v-model="row.remark" :disabled="saving || formPending" size="mini" maxlength="500" placeholder="选填" />
           </template>
         </el-table-column>
         <el-table-column label="操作" width="68" align="center">
           <template slot-scope="{ $index }">
-            <el-button type="text" size="mini" class="danger-link" :disabled="form.lines.length <= 1" @click="form.lines.splice($index, 1)">移除</el-button>
+            <el-button type="text" size="mini" class="danger-link" :disabled="form.lines.length <= 1 || saving || formPending" @click="form.lines.splice($index, 1)">移除</el-button>
           </template>
         </el-table-column>
       </el-table>
 
       <span slot="footer">
         <el-button size="small" @click="formVisible = false">取消</el-button>
-        <el-button size="small" class="btn-green-outline" :loading="saving" @click="submit(false)">保存草稿</el-button>
-        <el-button v-if="$can('inventory.transfer.post')" size="small" type="success" class="btn-theme-create" :loading="saving" @click="submit(true)">保存并立即过账</el-button>
+        <el-button size="small" class="btn-green-outline" :loading="saving" :disabled="formPending" @click="submit(false)">保存草稿</el-button>
+        <el-button v-if="$can('inventory.transfer.post')" size="small" type="success" class="btn-theme-create" :loading="saving" :disabled="formPending" @click="submit(true)">{{ crossWarehouse(form) ? '保存并调出' : '保存并移库' }}</el-button>
       </span>
     </el-dialog>
 
-    <el-dialog :title="detail ? `调拨单详情 · ${detail.transfer_no}` : '调拨单详情'" :visible.sync="detailVisible" :width="dialogWidth('1020px')" append-to-body>
+    <el-dialog :title="detail ? `调拨单详情 · ${detail.transfer_no}` : '调拨单详情'" :visible.sync="detailVisible" :width="dialogWidth('1020px')" append-to-body :close-on-click-modal="false">
       <div v-if="detail">
         <div class="detail-meta-strip">
           <div class="meta-kv">
@@ -241,10 +251,18 @@
             <span>过账人</span>
             <strong>{{ detail.posted_by_name }}</strong>
           </div>
+          <div v-if="detail.dispatched_at" class="meta-kv"><span>调出时间</span><strong>{{ dateTime(detail.dispatched_at) }}</strong></div>
+          <div v-if="detail.confirmed_at" class="meta-kv"><span>接收时间</span><strong>{{ detail.confirmed_by_name || '—' }} · {{ dateTime(detail.confirmed_at) }}</strong></div>
           <div v-if="detail.remark" class="meta-kv">
             <span>备注</span>
             <strong>{{ detail.remark }}</strong>
           </div>
+        </div>
+        <el-alert v-if="detail.receipt_exception" :title="'接收异常：' + detail.receipt_exception" type="warning" :closable="false" show-icon />
+        <el-alert v-if="detailError" :title="detailError" type="error" :closable="false" show-icon />
+        <div v-if="receiving && expectedSerials.length" class="lines-toolbar">
+          <span class="lines-title">编号核对 {{ Object.keys(checkedSerials).length }} / {{ expectedSerials.length }}</span>
+          <el-input v-model="serialCode" size="small" placeholder="扫描或输入序列号后回车" :disabled="actionSaving || detailPending" @keyup.enter.native="checkSerial"><el-button slot="append" icon="el-icon-full-screen" @click="checkSerial">核对</el-button></el-input>
         </div>
 
         <el-table :data="detail.lines" border stripe fit size="small" class="enterprise-table">
@@ -258,14 +276,15 @@
               </div>
             </template>
           </el-table-column>
-          <el-table-column prop="batch_no" label="批次号" min-width="115" show-overflow-tooltip>
+          <el-table-column prop="batch_no" label="批次号" min-width="160">
             <template slot-scope="{ row }">
               <span class="font-tabular">{{ row.batch_no || '—' }}</span>
             </template>
           </el-table-column>
-          <el-table-column label="来源库位 → 调入库位" min-width="190" show-overflow-tooltip>
+          <el-table-column :label="receiving ? '实际接收库位' : '来源库位 → 调入库位'" min-width="190">
             <template slot-scope="{ row }">
-              {{ row.source_location && row.source_location.location_name }} → {{ row.target_location && row.target_location.location_name }}
+              <paged-record-select v-if="receiving" v-model="row.received_target_location_id" entity="locations" :params="{ warehouse_id: detail.target_warehouse_id, statuses: warehouseParams.statuses, location_purposes: ['general', 'finished'] }" :disabled="actionSaving || detailPending" size="mini" title="选择实际接收库位" placeholder="请核对实际接收库位" />
+              <template v-else>{{ row.source_location && row.source_location.location_name }} → {{ row.target_location && row.target_location.location_name }}</template>
             </template>
           </el-table-column>
           <el-table-column label="调拨数量" width="115" align="right">
@@ -280,15 +299,20 @@
             </template>
           </el-table-column>
           <el-table-column label="迁移序列号" min-width="170" show-overflow-tooltip>
-            <template slot-scope="{ row }">{{ (row.serial_nos || []).join('、') || '—' }}</template>
+            <template slot-scope="{ row }"><template v-if="receiving"><el-tag v-for="sn in row.serial_nos || []" :key="sn" size="mini" :type="checkedSerials[sn] ? 'success' : 'info'">{{ sn }} · {{ checkedSerials[sn] ? '已核对' : '未核对' }}</el-tag><span v-if="!(row.serial_nos || []).length">—</span></template><template v-else>{{ (row.serial_nos || []).join('、') || '—' }}</template></template>
           </el-table-column>
         </el-table>
       </div>
       <span slot="footer">
-        <el-button size="small" @click="detailVisible = false">关闭</el-button>
+        <el-button size="small" :disabled="actionSaving" @click="detailVisible = false">关闭</el-button>
         <template v-if="detail && detail.transfer_status === 'draft'">
-          <el-button v-if="$can('inventory.transfer.create')" size="small" class="btn-green-outline" icon="el-icon-edit" @click="detailVisible = false; openForm(detail.id)">编辑草稿</el-button>
-          <el-button v-if="$can('inventory.transfer.post')" size="small" type="success" class="btn-theme-create" icon="el-icon-circle-check" @click="detailVisible = false; post(detail)">立即过账</el-button>
+          <el-button v-if="detail.can_edit" size="small" class="btn-green-outline" icon="el-icon-edit" :disabled="actionSaving || detailPending" @click="detailVisible = false; openForm(detail.id)">编辑草稿</el-button>
+          <el-button v-if="detail.can_post" size="small" type="success" class="btn-theme-create" icon="el-icon-circle-check" :disabled="actionSaving || detailPending" @click="post(detail)">{{ crossWarehouse(detail) ? '调出' : '移库' }}</el-button>
+        </template>
+        <template v-if="detail && detail.transfer_status === 'in_transit'">
+          <el-button v-if="detail.can_record_exception" size="small" :disabled="actionSaving || detailPending" @click="recordException(detail)">记录接收异常</el-button>
+          <el-button v-if="detail.can_confirm && !receiving" size="small" type="success" :disabled="actionSaving || detailPending" @click="openDetail(detail.id, true)">核对整单接收</el-button>
+          <el-button v-if="detail.can_confirm && receiving" size="small" type="success" :loading="actionSaving" :disabled="!receiptReady || detailPending" @click="receive">确认整单接收</el-button>
         </template>
       </span>
     </el-dialog>
@@ -296,7 +320,9 @@
 </template>
 
 <script>
-import { listTransfers, getTransferOptions, listTransferBalances, listInventoryBalanceSerials, getTransfer, saveTransfer, postTransfer, cancelTransfer, deleteTransfer } from '@/api/erp/inventory'
+import { listTransfers, getTransferOptions, listTransferBalances, listInventoryBalanceSerials, getTransfer, saveTransfer, postTransfer, confirmTransfer, recordTransferException, cancelTransfer, deleteTransfer } from '@/api/erp/inventory'
+import { pendingWarehouseCommands, submitWarehouseCommand } from '@/api/erp/warehouse'
+import { erpDateTime } from '@/utils/dateTime'
 import PagedRecordSelect from '@/components/common/PagedRecordSelect.vue'
 import { listEntity } from '@/api/erp/master'
 
@@ -309,12 +335,14 @@ export default {
     return {
       loading: false,
       saving: false,
+      actionSaving: false,
+      pendingCommands: [],
       rows: [],
       total: 0,
       page: 1,
       pageSize: 10,
-      stats: { total: 0, draft: 0, posted: 0, cancelled: 0 },
-      filters: { keyword: '', warehouse_id: null, status: '' },
+      stats: { total: 0, draft: 0, in_transit: 0, posted: 0, cancelled: 0 },
+      filters: { keyword: '', warehouse_id: null, status: '', has_exception: '' },
       warehouseParams: { statuses: ['enabled', 'active'], include_location_summary: 1 },
       sourceWarehouse: null,
       statuses: {},
@@ -328,13 +356,27 @@ export default {
         { prop: 'quantity_available', label: '可用数量', width: 110, format: row => `${this.num(row.quantity_available)} ${row.unit_name || ''}` }
       ],
       formVisible: false,
-      form: { id: null, source_warehouse_id: null, target_warehouse_id: null, remark: '', lines: [] },
+      form: { id: null, business_version: null, source_warehouse_id: null, target_warehouse_id: null, remark: '', lines: [] },
       detailVisible: false,
       detail: null,
+      receiving: false,
+      detailError: '',
+      checkedSerials: {},
+      serialCode: '',
       windowWidth: window.innerWidth
     }
   },
   computed: {
+    formPending() {
+      return this.pendingCommands.some(job => this.form.id ? Number(job.id) === Number(this.form.id) && job.action !== 'inventory_transfer.create'
+        : job.action === 'inventory_transfer.create' && Number(job.id) === Number(this.form.source_warehouse_id))
+    },
+    detailPending() { return Boolean(this.detail && this.rowPending(this.detail.id)) },
+    expectedSerials() { return this.detail ? this.detail.lines.flatMap(line => line.serial_nos || []) : [] },
+    receiptReady() {
+      return Boolean(this.detail && this.receiving && this.detail.lines.length && this.detail.lines.every(line => line.received_target_location_id)
+        && this.expectedSerials.every(sn => this.checkedSerials[sn]) && Object.keys(this.checkedSerials).length === this.expectedSerials.length)
+    },
     targetWarehouseParams() {
       return {
         ...this.warehouseParams,
@@ -345,12 +387,18 @@ export default {
   created() {
     this.loadOptions()
     this.load()
+    this.refreshPending()
+    if (Number(this.$route.query.id) > 0) this.openDetail(Number(this.$route.query.id))
     window.addEventListener('resize', this.onResize)
   },
   beforeDestroy() {
     window.removeEventListener('resize', this.onResize)
   },
+  watch: {
+    '$route.fullPath'() { if (this.$route.path === '/inventory/transfers' && Number(this.$route.query.id) > 0) this.openDetail(Number(this.$route.query.id)) }
+  },
   methods: {
+    dateTime: erpDateTime,
     listTransferBalances,
     listSourceCategories() {
       return listEntity('categories', { category_type: 'item', tree: 1 })
@@ -375,10 +423,34 @@ export default {
       return Number(value || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
     },
     statusType(status) {
-      return { draft: 'warning', posted: 'success', cancelled: 'info' }[status] || ''
+      return { draft: 'warning', in_transit: 'warning', posted: 'success', cancelled: 'info' }[status] || ''
     },
     fail(error) {
+      this.refreshPending()
       this.$message.error((error && error.userMessage) || '操作失败')
+    },
+    refreshPending() {
+      try {
+        this.pendingCommands = ['create', 'update', 'post', 'confirm', 'exception', 'cancel', 'delete'].flatMap(action => pendingWarehouseCommands('inventory_transfer.' + action))
+      } catch (error) { this.$message.error(error.message) }
+    },
+    rowPending(id) { return this.pendingCommands.some(job => job.action !== 'inventory_transfer.create' && Number(job.id) === Number(id)) },
+    actionLabel(action) { return { create: '新建', update: '保存', post: '调出/移库', confirm: '接收', exception: '记录异常', cancel: '取消', delete: '删除' }[action.split('.')[1]] || '调拨' },
+    crossWarehouse(row) { return Number(row.source_warehouse_id) !== Number(row.target_warehouse_id) },
+    async recover(job) {
+      if (this.actionSaving) return
+      this.actionSaving = true
+      try {
+        const result = await submitWarehouseCommand(job.action, job.id, job.payload)
+        this.refreshPending()
+        if (job.action === 'inventory_transfer.create' && this.formVisible && !this.form.id) {
+          this.form.id = result.id; this.form.business_version = result.business_version
+        }
+        this.$message.success('上次调拨操作结果已核对')
+        await this.load()
+        if (this.detailVisible && this.detail && Number(this.detail.id) === Number(job.id)) await this.openDetail(this.detail.id)
+      } catch (error) { this.fail(error) }
+      finally { this.actionSaving = false }
     },
     balanceOf(row) {
       return this.balances.find(b => b.id === row.inventory_balance_id)
@@ -432,7 +504,7 @@ export default {
     async load() {
       this.loading = true
       try {
-        const { data } = await listTransfers({ ...this.filters, page: this.page, per_page: this.pageSize })
+        const { data } = await listTransfers({ ...this.filters, has_exception: this.filters.has_exception === '' ? undefined : this.filters.has_exception, page: this.page, per_page: this.pageSize })
         this.rows = data.data || []
         this.total = data.total || 0
         if (data.stats) this.stats = data.stats
@@ -447,7 +519,7 @@ export default {
       this.load()
     },
     resetFilters() {
-      this.filters = { keyword: '', warehouse_id: null, status: '' }
+      this.filters = { keyword: '', warehouse_id: null, status: '', has_exception: '' }
       this.query()
     },
     quickStatus(status) {
@@ -473,7 +545,7 @@ export default {
     },
     async openForm(id) {
       this.sourceWarehouse = null
-      this.form = { id: null, source_warehouse_id: null, target_warehouse_id: null, remark: '', lines: [emptyLine()] }
+      this.form = { id: null, business_version: null, source_warehouse_id: null, target_warehouse_id: null, remark: '', lines: [emptyLine()] }
       this.balances = []
       if (id) {
         try {
@@ -482,6 +554,7 @@ export default {
           this.sourceWarehouse = t.source_warehouse
           this.form = {
             id: t.id,
+            business_version: t.business_version,
             source_warehouse_id: t.source_warehouse_id,
             target_warehouse_id: t.target_warehouse_id,
             remark: t.remark || '',
@@ -501,6 +574,7 @@ export default {
       this.formVisible = true
     },
     async submit(postImmediately = false) {
+      if (this.saving || this.formPending) return
       if (!this.form.source_warehouse_id || !this.form.target_warehouse_id) return this.$message.warning('请选择调出和调入仓库')
       const lines = this.form.lines.filter(l => l.inventory_balance_id)
       if (!lines.length) return this.$message.warning('请至少添加一行明细')
@@ -509,18 +583,20 @@ export default {
       if (serialError) return this.$message.warning(serialError)
       this.saving = true
       try {
-        const res = await saveTransfer({
+        const saved = await saveTransfer({
           ...this.form,
+          expected_version: this.form.id ? this.form.business_version : undefined,
           lines: lines.map(l => ({ ...l, serial_ids: l.serial_ids.length ? l.serial_ids : null }))
         })
-        const saved = res.data.data
+        this.form.id = saved.id; this.form.business_version = saved.business_version
         if (postImmediately && saved && saved.id) {
-          await postTransfer(saved.id)
-          this.$message.success('调拨单已保存并完成过账')
+          const posted = await postTransfer(saved.id, { expected_version: saved.business_version })
+          this.$message.success(posted.transfer_status === 'in_transit' ? '调拨单已调出，待目标仓整单接收' : '同仓移库已完成')
         } else {
           this.$message.success('调拨单草稿已保存')
         }
         this.formVisible = false
+        this.refreshPending()
         this.load()
       } catch (e) {
         this.fail(e)
@@ -528,37 +604,82 @@ export default {
         this.saving = false
       }
     },
-    async openDetail(id) {
+    async openDetail(id, receiving = false) {
+      const sequence = this.detailSequence = (this.detailSequence || 0) + 1
+      this.detail = null
       try {
         const { data } = await getTransfer(id)
-        this.detail = data.data
+        if (sequence !== this.detailSequence) return
+        this.detail = { ...data.data, lines: data.data.lines.map(line => ({ ...line, received_target_location_id: null })) }
+        this.receiving = Boolean(receiving && this.detail.can_confirm)
+        this.checkedSerials = {}; this.serialCode = ''; this.detailError = ''
         this.detailVisible = true
       } catch (e) {
         this.fail(e)
       }
     },
     async confirmAction(message, title, action, success) {
+      if (this.actionSaving) return
       try {
         await this.$confirm(message, title, { type: 'warning' })
       } catch (e) {
         return
       }
+      this.actionSaving = true
       try {
         await action()
         this.$message.success(success)
-        this.load()
+        this.refreshPending()
+        await this.load()
+        if (this.detailVisible && this.detail) await this.openDetail(this.detail.id)
       } catch (e) {
         this.fail(e)
+      } finally {
+        this.actionSaving = false
       }
     },
     post(row) {
-      this.confirmAction(`确认过账调拨单 ${row.transfer_no}？过账后库存立即转移。`, '调拨过账', () => postTransfer(row.id), '调拨已过账')
+      if (this.rowPending(row.id)) return
+      const cross = this.crossWarehouse(row)
+      this.confirmAction(cross ? `确认调出 ${row.transfer_no}？调出后保持在途，目标仓整单接收后才可用。` : `确认办理 ${row.transfer_no} 同仓移库？`,
+        cross ? '调拨调出' : '同仓移库', () => postTransfer(row.id, { expected_version: row.business_version }), cross ? '已调出，待目标仓接收' : '同仓移库已完成')
     },
     cancel(row) {
-      this.confirmAction(`确认取消调拨单 ${row.transfer_no}？`, '取消调拨', () => cancelTransfer(row.id), '调拨单已取消')
+      if (this.rowPending(row.id)) return
+      this.confirmAction(`确认取消调拨单 ${row.transfer_no}？`, '取消调拨', () => cancelTransfer(row.id, { expected_version: row.business_version }), '调拨单已取消')
     },
     remove(row) {
-      this.confirmAction(`确认删除调拨草稿 ${row.transfer_no}？`, '删除草稿', () => deleteTransfer(row.id), '已删除')
+      if (this.rowPending(row.id)) return
+      this.confirmAction(`确认删除调拨草稿 ${row.transfer_no}？`, '删除草稿', () => deleteTransfer(row.id, { expected_version: row.business_version }), '已删除')
+    },
+    checkSerial() {
+      if (this.actionSaving || this.detailPending) return
+      const sn = this.serialCode.trim().replace(/^ERP:SN:/i, '')
+      if (!this.expectedSerials.includes(sn)) { this.detailError = '该编号不属于当前调拨单'; return }
+      if (this.checkedSerials[sn]) { this.detailError = '该编号已经核对，请扫描其他编号'; return }
+      this.$set(this.checkedSerials, sn, true); this.serialCode = ''; this.detailError = ''
+    },
+    receive() {
+      if (!this.receiptReady || this.detailPending) return
+      const row = this.detail
+      const payload = { expected_version: row.business_version, serial_nos: Object.keys(this.checkedSerials),
+        lines: row.lines.map(line => ({ line_id: line.id, target_location_id: line.received_target_location_id })) }
+      this.confirmAction(`已逐行核对 ${row.transfer_no} 全部实物和实际库位，确认整单接收？`, '整单接收', () => confirmTransfer(row.id, payload), '调拨已整单接收')
+    },
+    async recordException(row) {
+      if (this.actionSaving || this.rowPending(row.id)) return
+      let reason
+      try {
+        const result = await this.$prompt('记录短少、破损等情况后仍保持在途，数量与成本不变。', '记录接收异常', { inputType: 'textarea', inputValidator: value => Boolean(value?.trim()) && value.trim().length <= 500 || '请填写500字以内的异常情况' })
+        reason = result.value.trim()
+      } catch (error) { return }
+      this.actionSaving = true
+      try {
+        await recordTransferException(row.id, { expected_version: row.business_version, reason })
+        this.refreshPending(); this.$message.success('接收异常已记录，调拨保持在途'); await this.load()
+        if (this.detailVisible && this.detail?.id === row.id) await this.openDetail(row.id)
+      } catch (error) { this.fail(error) }
+      finally { this.actionSaving = false }
     }
   }
 }

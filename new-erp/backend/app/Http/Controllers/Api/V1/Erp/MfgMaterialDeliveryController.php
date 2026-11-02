@@ -80,12 +80,17 @@ class MfgMaterialDeliveryController extends Controller
         return response()->json(['message' => "配料单 {$delivery->delivery_no} 已重新送达，等车间签收。", 'data' => $deliveries->row($delivery)]);
     }
 
-    public function recall(Request $request, int $id, MaterialDeliveryService $deliveries)
+    public function recall(Request $request, int $id, \App\Services\Erp\WarehouseCommandService $commands)
     {
         [$user] = $this->user($request, self::MANAGE);
-        $data = $request->validate(['reason' => 'required|string|max:300']);
-        $delivery = $deliveries->recall($id, $data['reason'], $user);
-        return response()->json(['message' => "配料单 {$delivery->delivery_no} 已收回入库。", 'data' => $deliveries->row($delivery)]);
+        $data = $request->validate(['client_command_id' => 'required|string|max:120', 'reason' => 'required|string|max:300',
+            'confirm_inbound' => 'nullable|boolean', 'location_id' => 'nullable|integer|min:1', 'serial_nos' => 'sometimes|array|max:1000',
+            'serial_nos.*' => 'required|string|max:120|distinct']);
+        $commandId = $data['client_command_id'];
+        unset($data['client_command_id']);
+        $auth = app(AuthContextService::class);
+        $row = $commands->run('material_delivery.recall', $id, $commandId, $data, $user, $auth->permissionCodes($user), $auth->isSuperAdmin($user))['result'];
+        return response()->json(['message' => ($row['return_status'] ?? '') === 'approved' ? '配料单已收回并确认入库。' : '配料单已收回，待仓库确认入库。', 'data' => $row]);
     }
 
     public function sign(Request $request, int $id, MaterialDeliveryService $deliveries, WorkOrderQueryService $query)

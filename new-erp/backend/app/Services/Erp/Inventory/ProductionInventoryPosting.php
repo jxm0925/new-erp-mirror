@@ -36,6 +36,18 @@ class ProductionInventoryPosting
     public function postProductionReceipt(\App\Models\Erp\MfgReceipt $receipt, \App\Models\Erp\MfgWorkOrder $workOrder, array $serialNos, ?int $operatorId = null): array
     {
         return DB::transaction(function () use ($receipt, $workOrder, $serialNos, $operatorId): array {
+            $receipt = \App\Models\Erp\MfgReceipt::query()->lockForUpdate()->findOrFail($receipt->id);
+            $expected = $receipt->serial_nos ?: [];
+            $actual = $serialNos;
+            sort($expected, SORT_STRING);
+            sort($actual, SORT_STRING);
+            if ((int) $receipt->work_order_id !== (int) $workOrder->id || $receipt->status !== 'confirmed'
+                || ! in_array($receipt->confirmation_source, ['manual', 'auto_handoff'], true)
+                || ($receipt->confirmation_source === 'manual' && ! $receipt->confirmed_by_legacy_id)
+                || $receipt->cost_source !== 'actual_materials_provisional' || $receipt->inventory_transaction_id
+                || $expected !== $actual || count(array_unique($actual)) !== count($actual) || count($actual) !== (int) $receipt->qty) {
+                throw ValidationException::withMessages(['receipt' => '生产入库必须先完成仓库确认或正式完工交接，且编号、数量、成本必须与单据一致。']);
+            }
             if (InventoryTransaction::query()->where('source_type', 'mfg_receipt')->where('source_id', $receipt->id)
                 ->where('transaction_type', 'production_receipt_inbound')->exists()) {
                 throw ValidationException::withMessages(['receipt' => '这张成品入库已经过账，不能重复入库。']);
@@ -443,11 +455,21 @@ class ProductionInventoryPosting
     {
         return DB::transaction(function () use ($batch, $workOrder, $operatorId) {
             $batch = \App\Models\Erp\MfgCuttingBatch::query()->lockForUpdate()->findOrFail($batch->id);
-            if ((int) $batch->work_order_id !== (int) $workOrder?->id || $batch->status !== 'issued'
+            if ((int) $batch->work_order_id !== (int) $workOrder?->id || $batch->status !== 'awaiting_confirm'
                 || ! $batch->inventory_issue_transaction_id || $batch->inventory_return_transaction_id) {
                 throw ValidationException::withMessages(['cutting' => '这张开料批次不能再次结算。']);
             }
             $positive = collect($batch->remnants)->filter(fn ($row) => bccomp((string) $row['measure_qty'], '0', 8) > 0);
+            $receipt = \App\Models\Erp\MfgCuttingRemnantReceipt::query()->where('cutting_batch_id', $batch->id)
+                ->where('status', 'confirmed')->whereNull('inventory_transaction_id')->orderByDesc('id')->lockForUpdate()->first();
+            if ($positive->isNotEmpty() && (! $receipt || ! $receipt->confirmed_by_legacy_id
+                || $receipt->confirmed_lines !== $batch->remnants)) {
+                throw ValidationException::withMessages(['cutting' => '余料必须来自本批仓库已确认的完整申请，不能从车间登记直接入库。']);
+            }
+            if ($positive->isEmpty() && (! $batch->settlement_key || \App\Models\Erp\MfgCuttingRemnantReceipt::query()
+                ->where('cutting_batch_id', $batch->id)->where('status', 'pending')->exists())) {
+                throw ValidationException::withMessages(['cutting' => '零余料必须由登记人明确确认或经独立报废处置，不能抹掉待确认申请。']);
+            }
             if ($positive->isEmpty()) return ['transaction' => null, 'lines' => []];
             $transaction = $this->kernel->begin([
                 'transaction_type' => 'mfg_cutting_remnant_inbound',

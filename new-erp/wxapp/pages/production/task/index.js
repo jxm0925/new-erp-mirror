@@ -20,6 +20,7 @@ function buildSpecText(obj) {
 }
 
 Page({
+  openReceiptRequests() { wx.navigateTo({ url: '/pages/warehouse/list/index?direction=inbound&kind=mfg_receipt&keyword=' + encodeURIComponent(this.data.task.work_order.work_order_no) }); },
   data: {
     id: 0, lane: '', task: null, loading: true, busy: false, error: '', selected: {}, selectedCount: 0, selectedCompletionCount: 0, clockText: '00:00:00',
     shareText: '', isImage: {}, panel: '', rejectCurrent: false, cutQty: 1, prepQty: 1, runPick: 0,
@@ -198,7 +199,7 @@ Page({
     this.completionJob = null;
     this.setData({ busy: true, completionLocatorOpen: false });
     return production.action(this.data.id, Object.assign({ lane: this.data.lane || 'normal' }, payload)).then(response => {
-      wx.showToast({ title: response.message || okText || '已完成', icon: 'none', duration: 2500 });
+      wx.showToast({ title: payload.completion_action === 'store' ? '已提交入库，等待仓库确认' : response.message || okText || '已完成', icon: 'none', duration: 2500 });
       this.setData({ panel: '' });
       if (response.data) this.apply(response.data); else this.load();
       return true;
@@ -550,8 +551,8 @@ Page({
       handoffDesc: canHandoff
         ? `目标：${target}（人员直接交接，系统自动记账）${remaining !== null ? '，还需 ' + view.quantity(remaining) + ' ' + task.unitShort : ''}`
         : (overText || completion.blocked_reason || '请先执行完工入库'),
-      storeTitle: '完工入库（入成品/半成品库）',
-      storeDesc: '下一步选择目标仓库与库位后正式办理完工入库',
+      storeTitle: '申请入库（入成品/半成品库）',
+      storeDesc: '选择申请库位后提交，等待仓库核对实物并确认入库',
       handoffConfirmText: `确认交接 (${count}${task.unitShort})`,
       storeConfirmText: '下一步：选择入库库位',
       success: result => {
@@ -578,14 +579,14 @@ Page({
     if (!location.location_id) return this.closeCompletionLocator();
     view.modal(this, {
       mediaEnabled: true, media: job.payload.media || [],
-      title: '确认完工入库',
-      subtitle: '请核对完工入库数量与目标库位',
+      title: '提交入库申请',
+      subtitle: '请核对数量与申请库位，提交后等待仓库确认',
       kvRows: [
         { k: '完工数量', v: `${job.count} ${job.task.unitShort}${job.repairText}`, red: true },
         { k: '目标仓库', v: location.warehouse_name || '-' },
         { k: '目标库位', v: location.location_name || '-' },
       ],
-      confirmText: '确认入库',
+      confirmText: '提交入库申请',
       success: res => {
         if (!this.completionIsCurrent(job)) return;
         if (res.confirm) this.run(Object.assign({}, job.payload, { completion_action: 'store', completion_location_id: location.location_id, media: res.media || [] }), job.okText);

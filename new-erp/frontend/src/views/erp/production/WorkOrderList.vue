@@ -288,6 +288,7 @@
               <el-tag size="small" :type="unitStatusType(row.status)" effect="plain">
                 {{ row.status_label || row.status }}
               </el-tag>
+              <div v-if="row.pending_receipt_qty > 0" class="text-warning">待仓库确认 {{ qty(row.pending_receipt_qty) }} 台</div>
             </template>
           </el-table-column>
 

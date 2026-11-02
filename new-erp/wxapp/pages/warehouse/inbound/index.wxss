@@ -1,0 +1,52 @@
+@import "../shared.wxss";
+
+.inbound-location {
+  margin-top: 16rpx;
+}
+
+.inbound-cost {
+  color: #d97706;
+  font-weight: 800;
+}
+
+.inbound-unit {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16rpx;
+  padding: 20rpx;
+  margin-top: 14rpx;
+  background: #f8fafc;
+  border: 1rpx solid #e2e8f0;
+  border-radius: 16rpx;
+  word-break: break-all;
+}
+
+.inb-unit-sn {
+  font-size: 26rpx;
+  font-weight: 700;
+  color: #1e293b;
+}
+
+.inbound-unit-tag {
+  flex-shrink: 0;
+  color: #64748b;
+  background: #e2e8f0;
+  border-radius: 999rpx;
+  padding: 6rpx 16rpx;
+  font-size: 22rpx;
+  font-weight: 700;
+}
+
+.inbound-unit-tag.checked {
+  color: #059669;
+  background: #d1fae5;
+}
+
+.inbound-transfer-line {
+  width: 100%;
+}
+
+.inb-retry-btn {
+  margin-top: 12rpx;
+}

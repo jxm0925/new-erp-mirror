@@ -13,7 +13,7 @@ class RbacBootstrapService
             $this->syncDepartments(true);
         }
         $created = $this->seedPermissions($force);
-        $grantableCreated = array_values(array_diff($created, ['inventory.amount.view']));
+        $grantableCreated = array_values(array_diff($created, ['inventory.amount.view', 'inventory.inbound.confirm']));
         // 全新安装（种子只建目录、整库还没有任何授权）时内置角色按默认矩阵初始化一次；已有授权的库绝不重置。
         $freshInstall = Schema::hasTable('erp_rbac_role_permissions') && ! DB::table('erp_rbac_role_permissions')->exists();
         $this->seedRoles($force, $grantableCreated !== []);
@@ -52,6 +52,7 @@ class RbacBootstrapService
             'master.item.view', 'inventory.balance.view', 'approval.todo', 'approval.task.view', 'approval.processed',
         ],
         'warehouse_manager' => [
+            'inventory.inbound.confirm',
             'purchase.receipt.view', 'purchase.receipt.create', 'purchase.receipt.confirm', 'purchase.quality.view', 'purchase.quality.handle',
             'purchase_return.view', 'purchase_return.post', 'sales_order.shipment.view', 'sales_order.shipment.post', 'sales_order.shipment.dispatch',
             'sales_order.shipment.packing.view', 'sales_return.view', 'sales_return.receive', 'sales_return.post',
@@ -167,7 +168,7 @@ class RbacBootstrapService
     }
 
     /** 库管：库存查看与过账、手工调整、库存预警、生产退料审核，以及查看工单和序列号追溯（直接退料要进工单详情）。 */
-    private function ensureWarehouseRolePermissions(): void
+    private function ensureWarehouseRolePermissions(bool $includeInboundConfirmation = false): void
     {
         $roleId = DB::table('erp_rbac_roles')->where('code', 'warehouse_manager')->value('id');
         if (! $roleId) return;
@@ -183,6 +184,8 @@ class RbacBootstrapService
             'production.work_order', 'production.work_order.view', 'production.serial', 'production.serial.view',
             'master.item', 'master.item.view', 'master.warehouse_location', 'master.warehouse.view',
         ];
+        // 新建角色可以采用默认模板，已有角色的确认权限必须由管理员手工分配。
+        if ($includeInboundConfirmation) $codes[] = 'inventory.inbound.confirm';
         foreach (DB::table('erp_rbac_permissions')->whereIn('code', $codes)->pluck('id') as $permissionId) {
             DB::table('erp_rbac_role_permissions')->insertOrIgnore(['role_id' => $roleId, 'permission_id' => $permissionId]);
         }
@@ -369,6 +372,7 @@ class RbacBootstrapService
             ['inventory.material_delivery', '生产配料', 'menu', 'inventory', '/inventory/material-deliveries', 'ProductionMaterialDeliveryList', 'el-icon-truck', 307],
             ['inventory.stocktake', '库存盘点', 'menu', 'inventory', '/inventory/stocktakes', 'InventoryStocktakeList', 'el-icon-s-check', 308],
             ['inventory.transfer', '库存调拨', 'menu', 'inventory', '/inventory/transfers', 'InventoryTransferList', 'el-icon-sort', 309],
+            ['inventory.inbound.confirm', '入库确认', 'menu', 'inventory', '/inventory/inbound-confirmations', 'InventoryInboundList', 'el-icon-finished', 310],
 
             // 库存管理 按钮
             ['inventory.amount.view', '查看库存金额与成本', 'button', 'inventory', null, null, 'el-icon-mouse', 1],
@@ -727,7 +731,7 @@ class RbacBootstrapService
         $adminRoleId = DB::table('erp_rbac_roles')->where('code', 'admin')->value('id');
         if ($adminRoleId && ($rebuildAdminPermissions || $permissionsChanged)) {
             // Inventory amounts are explicitly assigned in role management, including existing admin roles.
-            $permissionIds = DB::table('erp_rbac_permissions')->where('code', '<>', 'inventory.amount.view')->pluck('id')->all();
+            $permissionIds = DB::table('erp_rbac_permissions')->whereNotIn('code', ['inventory.amount.view', 'inventory.inbound.confirm'])->pluck('id')->all();
             $records = array_map(fn ($id) => [
                 'role_id' => $adminRoleId,
                 'permission_id' => $id,
@@ -741,7 +745,7 @@ class RbacBootstrapService
             $this->ensureProductionRolePermissions($onlyCodes);
             $this->ensureSalesInventoryLockPermission($onlyCodes);
             $this->ensureSalesAttachmentPermissions($onlyCodes);
-            if ($onlyCodes === null || in_array('warehouse_manager', $onlyCodes, true)) $this->ensureWarehouseRolePermissions();
+            if ($onlyCodes === null || in_array('warehouse_manager', $onlyCodes, true)) $this->ensureWarehouseRolePermissions(in_array('warehouse_manager', $missingCodes, true));
         }
     }
 

@@ -1,1 +1,14 @@
-<view class="warehouse-context"><text>{{actorName}} · 仓库</text><text>{{today}}</text></view>
+<view class="warehouse-context">
+  <view class="wc-circle wc-circle-1"></view>
+  <view class="wc-circle wc-circle-2"></view>
+  <view class="wc-left">
+    <view class="wc-avatar">{{actorInitial}}</view>
+    <view class="wc-meta">
+      <view class="wc-name-row">
+        <text class="wc-name">{{actorName}}</text>
+        <text class="wc-badge">仓储作业</text>
+      </view>
+    </view>
+  </view>
+  <text class="wc-date">{{today}}</text>
+</view>

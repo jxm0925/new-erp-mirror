@@ -1,7 +1,7 @@
 const production = require('../../../services/production');
 const view = require('../../../utils/warehouse-page');
 
-const UNIT_TAG = { waiting: 'gray', in_progress: 'amber', rework: 'red', completed: 'blue', stored: 'green', scrapped: 'gray', cancelled: 'gray' };
+const UNIT_TAG = { waiting: 'gray', in_progress: 'amber', rework: 'red', completed: 'blue', pending_receipt: 'amber', stored: 'green', scrapped: 'gray', cancelled: 'gray' };
 
 function buildSpecText(obj) {
   if (!obj) return '';
@@ -13,6 +13,7 @@ function buildSpecText(obj) {
 }
 
 Page({
+  openReceiptRequests() { wx.navigateTo({ url: '/pages/warehouse/list/index?direction=inbound&kind=mfg_receipt&keyword=' + encodeURIComponent(this.data.wo.work_order_no) }); },
   data: { id: 0, wo: null, ops: [], kittingOps: [], materialSummary: { total: 0, ready: 0, short: 0 }, units: [], showChildren: false, showMaterials: false, loading: true, error: '' },
   onLoad(options) { this.setData({ id: Number(options.id || 0) }); this.load(); },
   onPullDownRefresh() { this.load().finally(() => wx.stopPullDownRefresh()); },

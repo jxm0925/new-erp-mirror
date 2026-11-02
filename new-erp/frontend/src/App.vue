@@ -579,6 +579,7 @@ export default {
       if (path === '/inventory/material-deliveries') return '生产配料'
       if (path === '/inventory/stocktakes') return '库存盘点'
       if (path === '/inventory/transfers') return '库存调拨'
+      if (path === '/inventory/inbound-confirmations') return '入库确认'
       if (path.startsWith('/inventory/alerts/')) return '库存预警 / 详情'
 
       // BOM管理

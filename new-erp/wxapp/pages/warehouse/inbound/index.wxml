@@ -1,0 +1,330 @@
+<warehouse-context />
+
+<view class="warehouse-page">
+  <view wx:if="{{loading && !header.id}}" class="warehouse-empty">
+    <van-loading color="#d81e06" size="44rpx" />
+    <text class="warehouse-muted">正在加载入库单据...</text>
+  </view>
+
+  <view wx:if="{{error}}" class="warehouse-error">
+    <view>{{error}}</view>
+    <button class="warehouse-secondary inb-retry-btn" bindtap="load">重新加载</button>
+  </view>
+
+  <block wx:if="{{header.id}}">
+    <!-- 单据头部卡片 -->
+    <view class="warehouse-card">
+      <view class="phase-heading">
+        <text>{{header.number}}</text>
+        <text class="phase-tag">{{header.status_label}}</text>
+      </view>
+      <block wx:if="{{kind === 'mfg_receipt'}}">
+        <view class="warehouse-field">
+          <text class="warehouse-label">关联工单</text>
+          <text class="warehouse-value">{{header.work_order_no}}</text>
+        </view>
+        <view class="warehouse-field">
+          <text class="warehouse-label">产品名称</text>
+          <text class="warehouse-value">{{header.product_name || header.item_name}}</text>
+        </view>
+        <view class="warehouse-field">
+          <text class="warehouse-label">申请数量</text>
+          <text class="warehouse-value warehouse-danger">{{header.quantityText}} {{header.unit_name || '台'}}</text>
+        </view>
+        <view class="warehouse-field">
+          <text class="warehouse-label">申请人</text>
+          <text class="warehouse-value">{{header.operator_name || '-'}}</text>
+        </view>
+        <view class="warehouse-field">
+          <text class="warehouse-label">申请时间</text>
+          <text class="warehouse-value">{{header.requested_at}}</text>
+        </view>
+        <view class="warehouse-field">
+          <text class="warehouse-label">申请库位</text>
+          <text class="warehouse-value">{{header.requested_warehouse_name || '-'}} / {{header.requested_location_code || '-'}}</text>
+        </view>
+      </block>
+
+      <block wx:if="{{isRemnant}}">
+        <view class="warehouse-field">
+          <text class="warehouse-label">来源批次</text>
+          <text class="warehouse-value">{{header.batch_no}}</text>
+        </view>
+        <view class="warehouse-field">
+          <text class="warehouse-label">登记人</text>
+          <text class="warehouse-value">{{header.requested_by_name}}</text>
+        </view>
+        <view class="warehouse-field">
+          <text class="warehouse-label">{{header.status === 'pending' ? '已等待' : '申请时间'}}</text>
+          <text class="warehouse-value {{header.overdue ? 'warehouse-danger' : ''}}">{{header.status === 'pending' ? header.waiting_hours + ' 小时' : header.requested_at}}</text>
+        </view>
+      </block>
+
+      <block wx:if="{{isTransfer}}">
+        <view class="warehouse-field">
+          <text class="warehouse-label">来源仓库</text>
+          <text class="warehouse-value">{{header.sourceWarehouseName}} / {{header.sourceLocationCode || '按明细'}}</text>
+        </view>
+        <view class="warehouse-field">
+          <text class="warehouse-label">目标仓库</text>
+          <text class="warehouse-value">{{header.targetWarehouseName}}</text>
+        </view>
+        <view class="warehouse-field">
+          <text class="warehouse-label">调出时间</text>
+          <text class="warehouse-value">{{header.dispatched_at}}</text>
+        </view>
+      </block>
+
+      <view wx:if="{{canViewAmount}}" class="warehouse-field">
+        <text class="warehouse-label">成本</text>
+        <text class="warehouse-value inbound-cost">{{header.costText || '-'}}</text>
+      </view>
+      <view wx:if="{{header.sourceText}}" class="phase-audit">{{header.sourceText}}</view>
+    </view>
+
+    <!-- 实际入库库位 -->
+    <view wx:if="{{(actions.confirm || resubmitting) && (kind === 'mfg_receipt' || isPhysical)}}" class="warehouse-card">
+      <view class="phase-heading">实际入库库位</view>
+      <view class="phase-inline">
+        <scan-input
+          compact
+          value="{{locator.location_code}}"
+          placeholder="扫描入库库位"
+          types="{{['location']}}"
+          bind:input="locationInput"
+          bind:resolved="scanLocator"
+          disabled="{{saving || pendingActions.length}}"
+        />
+        <button class="warehouse-secondary" bindtap="openLocator" disabled="{{saving || pendingActions.length}}">选择</button>
+      </view>
+      <view wx:if="{{locator.location_id}}" class="warehouse-note inbound-location">{{locator.warehouse_name}} · {{locator.location_code}} {{locator.location_name}}</view>
+    </view>
+
+    <!-- 核对余料 -->
+    <view wx:if="{{isRemnant}}" class="warehouse-card">
+      <view class="phase-heading">核对余料</view>
+      <view wx:for="{{lines}}" wx:key="rowKey" class="phase-line">
+        <view class="phase-line-title">
+          <text>{{item.item_name}}</text>
+          <text>{{item.physical_no || item.source_key}}</text>
+        </view>
+        <view class="warehouse-field">
+          <text class="warehouse-label">原始投入</text>
+          <text class="warehouse-value">{{item.input_measure}} {{item.measureUnitText}}</text>
+        </view>
+        <view class="warehouse-field">
+          <text class="warehouse-label">实际产出</text>
+          <text class="warehouse-value">{{item.output_measure == null ? '未逐张分配' : item.output_measure + ' ' + item.measureUnitText}}</text>
+        </view>
+        <view class="warehouse-field">
+          <text class="warehouse-label">申请余料</text>
+          <text class="warehouse-value warehouse-danger">{{item.measure_qty}} {{item.measureUnitText}}</text>
+        </view>
+        <view class="warehouse-field">
+          <text class="warehouse-label">形状</text>
+          <text class="warehouse-value">{{item.mode === 'length' ? '管材余料' : item.shape === 'AREA_ONLY' ? '异形余板' : '原板'}}</text>
+        </view>
+        <view class="warehouse-field">
+          <text class="warehouse-label">确认{{item.mode === 'length' ? '长度' : '面积'}}</text>
+          <input
+            wx:if="{{(actions.confirm || resubmitting)}}"
+            class="warehouse-input warehouse-value"
+            type="digit"
+            value="{{drafts[item.source_key].measure_qty}}"
+            data-key="{{item.source_key}}"
+            bindinput="measureInput"
+            disabled="{{saving || pendingActions.length}}"
+          />
+          <text wx:else class="warehouse-value">{{item.measure_qty}}</text>
+          <text>{{item.measureUnitText}}</text>
+        </view>
+        <block wx:if="{{(actions.confirm || resubmitting)}}">
+          <view class="warehouse-title">实际入库库位</view>
+          <view class="phase-inline">
+            <scan-input
+              compact
+              value="{{drafts[item.source_key].location_code}}"
+              placeholder="扫描实际入库库位"
+              types="{{['location']}}"
+              data-key="{{item.source_key}}"
+              bind:resolved="scanLocator"
+              disabled="{{saving || pendingActions.length}}"
+            />
+            <button class="warehouse-secondary" data-key="{{item.source_key}}" bindtap="openLocator" disabled="{{saving || pendingActions.length}}">选择</button>
+          </view>
+          <view wx:if="{{drafts[item.source_key].location_id}}" class="phase-audit">{{drafts[item.source_key].warehouse_name}} · {{drafts[item.source_key].location_code}}</view>
+        </block>
+      </view>
+      <view wx:if="{{header.waiting_reason}}" class="warehouse-error">{{header.waiting_reason}}</view>
+    </view>
+
+    <!-- 逐台核对 / 调拨入库明细 -->
+    <view wx:if="{{!isRemnant}}" class="warehouse-card">
+      <view class="phase-heading">
+        <text>{{header.requires_serial_check ? '逐台核对' : '入库明细'}}</text>
+        <text wx:if="{{(actions.confirm || resubmitting) && header.requires_serial_check}}" class="warehouse-muted">已核对 <text class="warehouse-danger">{{checkedCount}}</text> / {{header.serial_nos.length}}</text>
+      </view>
+      <scan-input
+        wx:if="{{(actions.confirm || resubmitting) && header.requires_serial_check}}"
+        compact
+        raw
+        clear-after-resolve
+        placeholder="请扫描序列号"
+        bind:resolved="scanSerial"
+        disabled="{{saving || pendingActions.length}}"
+      />
+      <scan-input
+        wx:if="{{(actions.confirm || resubmitting) && isPhysical}}"
+        compact
+        raw
+        clear-after-resolve
+        placeholder="逐个扫描实物编号"
+        bind:resolved="scanPhysical"
+        disabled="{{saving || pendingActions.length}}"
+      />
+      <view wx:for="{{lines}}" wx:key="id" class="inbound-unit">
+        <block wx:if="{{kind === 'mfg_receipt'}}">
+          <text class="inb-unit-sn">{{header.requires_serial_check ? item.serial_no : ('第 ' + item.unit_no + ' 台')}}</text>
+          <text class="inbound-unit-tag {{checked[item.serial_no] ? 'checked' : ''}}">
+            {{(actions.confirm || resubmitting) && header.requires_serial_check ? (checked[item.serial_no] ? '✓ 已核对' : '未核对') : item.status_label}}
+          </text>
+        </block>
+        <view wx:else class="inbound-transfer-line">
+          <view class="phase-line-title">
+            <text>{{item.item_name || item.item.item_name}}</text>
+            <text>{{isPhysical ? item.physical_no : item.quantity}}</text>
+          </view>
+          <view wx:if="{{isPhysical}}" class="phase-audit">{{checkedPhysicals[item.physical_material_id] ? '✓ 实物已核对' : '实物未核对'}}</view>
+          <block wx:if="{{(actions.confirm || resubmitting) && !isPhysical}}">
+            <view class="warehouse-title">实际接收库位</view>
+            <view class="phase-inline">
+              <scan-input
+                compact
+                value="{{drafts[item.rowKey].location_code}}"
+                placeholder="扫描实际接收库位"
+                types="{{['location']}}"
+                data-key="{{item.rowKey}}"
+                bind:resolved="scanLocator"
+                disabled="{{saving || pendingActions.length}}"
+              />
+              <button class="warehouse-secondary" data-key="{{item.rowKey}}" bindtap="openLocator" disabled="{{saving || pendingActions.length}}">选择</button>
+            </view>
+            <view wx:if="{{drafts[item.rowKey].location_id}}" class="phase-audit">{{drafts[item.rowKey].location_code}} {{drafts[item.rowKey].location_name}}</view>
+          </block>
+        </view>
+      </view>
+      <view class="warehouse-pager">
+        <button disabled="{{page <= 1 || loading || saving}}" data-delta="-1" bindtap="turn">上一页</button>
+        <text>{{page}} / {{lastPage}}</text>
+        <button disabled="{{page >= lastPage || loading || saving}}" data-delta="1" bindtap="turn">下一页</button>
+      </view>
+    </view>
+
+    <!-- 备注说明 -->
+    <view wx:if="{{(actions.confirm || resubmitting)}}" class="warehouse-card">
+      <view class="phase-heading">备注说明</view>
+      <textarea
+        class="warehouse-input"
+        maxlength="200"
+        placeholder="请输入备注信息（选填）"
+        value="{{remark}}"
+        bindinput="input"
+        disabled="{{saving || pendingActions.length}}"
+      />
+    </view>
+
+    <!-- 处理记录 -->
+    <view wx:if="{{header.confirmed_at || header.reject_reason || header.cancelled_at}}" class="warehouse-card">
+      <view class="phase-heading">处理记录</view>
+      <view wx:if="{{header.confirmed_at}}" class="phase-audit">
+        {{header.sourceText || '仓库确认'}} {{header.confirmed_by_name || ''}} {{header.confirmed_at}}
+        <view>{{header.warehouse_name}} / {{header.location_code}}</view>
+      </view>
+      <view wx:if="{{header.reject_reason}}" class="warehouse-error">
+        驳回原因：{{header.reject_reason}}
+        <view>{{header.rejected_by_name}} {{header.rejected_at}}</view>
+      </view>
+      <view wx:if="{{header.cancelled_at}}" class="phase-audit">撤回时间 {{header.cancelled_at}}</view>
+    </view>
+
+    <view wx:if="{{header.remark}}" class="warehouse-note">{{header.remark}}</view>
+    <view wx:if="{{header.confirmation_remark}}" class="warehouse-note">确认备注：{{header.confirmation_remark}}</view>
+    <view wx:if="{{header.receipt_exception}}" class="warehouse-error">
+      接收异常：{{header.receipt_exception}}{{header.status === 'IN_TRANSIT' || header.transfer_status === 'in_transit' ? '。单据保持在途。' : '（历史记录）'}}
+    </view>
+    <view class="warehouse-error">{{formError}}</view>
+
+    <view wx:for="{{pendingActions}}" wx:key="*this" class="warehouse-actions">
+      <button class="warehouse-secondary" data-action="{{item}}" bindtap="recover" loading="{{saving}}" disabled="{{saving}}">核对上次操作结果</button>
+    </view>
+
+    <view wx:if="{{(actions.confirm || resubmitting) || actions.reject || actions.exception}}" class="warehouse-actions">
+      <button wx:if="{{actions.reject}}" class="warehouse-secondary" data-action="reject" bindtap="requestAction" disabled="{{saving || pendingActions.length}}">驳回</button>
+      <button wx:if="{{actions.exception}}" class="warehouse-secondary" data-action="exception" bindtap="requestAction" disabled="{{saving || pendingActions.length}}">登记异常</button>
+      <button
+        wx:if="{{(actions.confirm || resubmitting)}}"
+        class="warehouse-primary"
+        data-action="{{resubmitting ? 'resubmit' : 'confirm'}}"
+        bindtap="requestAction"
+        disabled="{{saving || pendingActions.length || !confirmReady}}"
+      >{{resubmitting ? '更正后重新提交' : isTransfer ? '确认接收' : '确认入库'}}</button>
+    </view>
+
+    <view wx:if="{{actions.scrap}}" class="warehouse-actions">
+      <button class="warehouse-secondary" data-action="scrap" bindtap="requestAction" disabled="{{saving || pendingActions.length}}">报废本批余料</button>
+    </view>
+    <view wx:if="{{actions.resubmit && !resubmitting}}" class="warehouse-actions">
+      <button class="warehouse-secondary" bindtap="startResubmit" disabled="{{saving || pendingActions.length}}">更正余料并重新提交</button>
+    </view>
+    <view wx:if="{{isRemnant}}" class="warehouse-pager">
+      <button disabled="{{page <= 1 || loading || saving}}" data-delta="-1" bindtap="turn">上一页</button>
+      <text>{{page}} / {{lastPage}}</text>
+      <button disabled="{{page >= lastPage || loading || saving}}" data-delta="1" bindtap="turn">下一页</button>
+    </view>
+    <view wx:if="{{actions.cancel}}" class="warehouse-actions">
+      <button class="warehouse-secondary" data-action="cancel" bindtap="requestAction" disabled="{{saving || pendingActions.length}}">撤回申请</button>
+    </view>
+  </block>
+</view>
+
+<warehouse-locator
+  open="{{locatorOpen}}"
+  value="{{locatorTarget ? drafts[locatorTarget] : locator}}"
+  warehouse-id="{{isTransfer ? header.target_warehouse_id : 0}}"
+  warehouse-name="{{header.targetWarehouseName}}"
+  location-purposes="{{header.allowed_location_purposes}}"
+  bind:confirm="chooseLocator"
+  bind:cancel="closeLocator"
+/>
+
+<view wx:if="{{dialog}}" class="warehouse-overlay" catchtouchmove="stop">
+  <view class="warehouse-dialog">
+    <view class="warehouse-dialog-header">
+      <text>{{dialog.title}}</text>
+      <button class="warehouse-close" bindtap="closeDialog" disabled="{{saving}}">
+        <van-icon name="cross" />
+      </button>
+    </view>
+    <view class="warehouse-dialog-body">
+      <view wx:for="{{dialog.facts}}" wx:key="name" class="phase-audit">
+        {{item.name}} · 原始投入 {{item.original}} {{item.unit}} · 实际废余料 {{item.actual}} {{item.unit}}
+      </view>
+      <view wx:if="{{dialog.required}}" class="warehouse-title">原因（必填）</view>
+      <textarea
+        wx:if="{{dialog.required}}"
+        class="warehouse-input"
+        maxlength="500"
+        placeholder="请输入原因"
+        value="{{dialog.reason}}"
+        bindinput="dialogInput"
+        disabled="{{saving}}"
+      />
+      <view class="phase-audit">{{dialog.message}}</view>
+      <view class="warehouse-error">{{dialog.error}}</view>
+    </view>
+    <view class="warehouse-dialog-footer">
+      <button class="warehouse-secondary" bindtap="closeDialog" disabled="{{saving}}">取消</button>
+      <button class="warehouse-primary" bindtap="confirmAction" loading="{{saving}}" disabled="{{saving}}">确认</button>
+    </view>
+  </view>
+</view>

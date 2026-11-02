@@ -10,6 +10,7 @@ Component({
     types: { type: Array, value: [] },
     nextInput: { type: String, value: '' },
     clearAfterResolve: Boolean,
+    raw: Boolean,
   },
   data: { inputValue: '', inputFocused: false, resolving: false, scanning: false },
   observers: {
@@ -51,10 +52,10 @@ Component({
       let resolved = false;
       this.setData({ inputValue: code, resolving: true });
       try {
-        const response = await warehouse.resolveScan(code);
+        const response = this.properties.raw ? { data: { type: 'raw', code } } : await warehouse.resolveScan(code);
         if (!this.live || sequence !== this.sequence || token !== wx.getStorageSync('erp_token') || permissionSnapshot !== JSON.stringify(wx.getStorageSync('erp_permissions') || [])) return;
         const result = response.data || response;
-        if (this.properties.types.length && !this.properties.types.includes(result.type)) throw new Error('该编码不适用于当前输入，请核对后重新扫描');
+        if (!this.properties.raw && this.properties.types.length && !this.properties.types.includes(result.type)) throw new Error('该编码不适用于当前输入，请核对后重新扫描');
         this.setData({ inputValue: result.code || code });
         this.triggerEvent('resolved', { code, result });
         if (this.properties.clearAfterResolve) this.setData({ inputValue: '' });

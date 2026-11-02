@@ -9,6 +9,7 @@ class InventoryTransfer extends MasterModel
         'transfer_date' => 'date:Y-m-d',
         'posted_at' => 'datetime',
         'cancelled_at' => 'datetime',
+        'dispatched_at' => 'datetime', 'confirmed_at' => 'datetime', 'exception_at' => 'datetime', 'business_version' => 'integer',
     ];
 
     public function lines() { return $this->hasMany(InventoryTransferLine::class, 'transfer_id')->orderBy('id'); }

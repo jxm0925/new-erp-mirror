@@ -462,7 +462,7 @@ final class MaterialPhysicalService
         $holding = $this->warehouseHolding($balance, 'REMNANT', (int) $balance->material_lot_id);
         $dimensions = ['area_m2' => CuttingDecimal::value($remnant['measure_qty']),
             'thickness_mm' => $input['dimensions']['thickness_mm']];
-        $uncut = bccomp((string) $remnant['output_measure'], '0', 8) === 0
+        $uncut = bccomp((string) ($remnant['output_measure'] ?? $remnant['consumed_measure']), '0', 8) === 0
             && bccomp((string) $remnant['measure_qty'], (string) $input['input_measure'], 8) === 0;
         if ($uncut && $input['shape'] === 'RECTANGLE') $dimensions = $input['dimensions'];
         if (isset($input['dimensions']['nominal_thickness_mm'])) $dimensions['nominal_thickness_mm'] = $input['dimensions']['nominal_thickness_mm'];
@@ -484,7 +484,7 @@ final class MaterialPhysicalService
     }
 
     /** 原板成本拆为真实余板与半成品净耗，旧身份只作历史，不能再次领入。 */
-    public function completeManufacturingCut(\App\Models\Erp\MfgCuttingBatch $batch, array $input, string $netCost, int $operatorId): void
+    public function completeManufacturingCut(\App\Models\Erp\MfgCuttingBatch $batch, array $input, string $netCost, int $operatorId, bool $scrapRemnant = false): int
     {
         $physical = DB::table('erp_material_physicals')->where('id', $input['physical_material_id'])->lockForUpdate()->first();
         $holding = $physical ? DB::table('erp_material_holdings')->where('id', $physical->current_holding_id)->lockForUpdate()->first() : null;
@@ -494,9 +494,9 @@ final class MaterialPhysicalService
             throw ValidationException::withMessages(['cutting' => '原板开料持有状态或金额已变化，不能结算。']);
         }
         $targetId = $this->nonWarehouseHolding((int) $physical->material_lot_id, 'MFG_OUTPUT', (int) $batch->id, $netCost, 'CONSUMED');
-        DB::table('erp_material_movements')->insert([
+        $movementId = DB::table('erp_material_movements')->insertGetId([
             'movement_no' => $this->numbers->next('material_movement', 'MM'), 'source_holding_id' => $holding->id, 'target_holding_id' => $targetId,
-            'action' => 'MFG_CUT_SETTLED', 'quantity' => '1', 'total_cost' => $netCost,
+            'action' => $scrapRemnant ? 'MFG_REMNANT_SCRAP' : 'MFG_CUT_SETTLED', 'quantity' => '1', 'total_cost' => $netCost,
             'inventory_transaction_id' => $batch->inventory_return_transaction_id, 'operator_legacy_id' => $operatorId,
             'created_at' => now(), 'updated_at' => now(),
         ]);
@@ -506,6 +506,7 @@ final class MaterialPhysicalService
             'current_holding_id' => $targetId, 'status' => 'CONSUMED', 'first_cut_at' => $physical->first_cut_at ?: now(),
             'business_version' => (int) $physical->business_version + 1, 'updated_at' => now(),
         ]);
+        return $movementId;
     }
 
     public function assertPhysicalNotInOpenDocument(int $physicalId, ?int $ignoreAdjustmentId = null, ?int $ignoreReturnId = null): void

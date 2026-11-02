@@ -12,6 +12,7 @@ require_once __DIR__.'/../schema/InitialTableMigration.php';
  * 按数量管理的料切完结束时按 件数 × qty_per_set ÷ per_set 从仓库扣（库存流水 inventory_issue_transaction_id），扣的数量和成本记在 material_qty / material_cost，
  * 已被工单带走的记在 allocated_material_qty / allocated_material_cost；逐张管理的板材走这批里的领板批次（erp_mfg_cutting_batches.cutting_run_id）。
  * 工单下料点「已备料」时按件数从这里领，带走的工时 = 这批总工时 × 领走件数 ÷ 这批总件数，料和成本同样按件数带走（明细见 erp_mfg_cutting_run_allocations）。
+ * awaiting_confirm 表示实际件数与加工工时已冻结，关联余料办结后再完成成本阶段并开放领用，不继续累计加工时间。
  */
 return new class extends InitialTableMigration
 {

@@ -13,6 +13,7 @@ use App\Http\Controllers\Api\V1\Erp\FinanceController;
 use App\Http\Controllers\Api\V1\Erp\InventoryAdjustmentController;
 use App\Http\Controllers\Api\V1\Erp\InventoryStocktakeController;
 use App\Http\Controllers\Api\V1\Erp\InventoryTransferController;
+use App\Http\Controllers\Api\V1\Erp\MfgCuttingRemnantReceiptController;
 use App\Http\Controllers\Api\V1\Erp\InventoryAlertController;
 use App\Http\Controllers\Api\V1\Erp\InventoryBalanceController;
 use App\Http\Controllers\Api\V1\Erp\InventoryPostingController;
@@ -328,6 +329,13 @@ Route::prefix('v1/erp/inventory')->group(function () {
     Route::get('stocktakes/{id}/lines/{lineId}/entries', [InventoryStocktakeController::class, 'entries'])->whereNumber('id')->whereNumber('lineId');
     Route::post('stocktakes/{id}/complete', [InventoryStocktakeController::class, 'complete'])->whereNumber('id');
     Route::post('stocktakes/{id}/cancel', [InventoryStocktakeController::class, 'cancel'])->whereNumber('id');
+    Route::get('transit', [InventoryBalanceController::class, 'transit']);
+    Route::get('material-physical-transfers', [PhysicalInventoryController::class, 'transfers']);
+    Route::get('material-physical-transfers/{id}', [PhysicalInventoryController::class, 'showTransfer'])->whereNumber('id');
+    Route::post('material-physical-transfers/{id}/confirm', [PhysicalInventoryController::class, 'confirmTransfer'])->whereNumber('id');
+    Route::post('material-physical-transfers/{id}/exception', [PhysicalInventoryController::class, 'transferException'])->whereNumber('id');
+    Route::post('transfers/{id}/confirm', [InventoryTransferController::class, 'confirm'])->whereNumber('id');
+    Route::post('transfers/{id}/exception', [InventoryTransferController::class, 'receiptException'])->whereNumber('id');
     Route::get('transfers', [InventoryTransferController::class, 'index']);
     Route::get('transfers/options', [InventoryTransferController::class, 'options']);
     Route::get('transfers/balances', [InventoryTransferController::class, 'balances']);
@@ -517,6 +525,12 @@ Route::prefix('v1/erp/production')->group(function () {
     Route::get('work-orders/{id}/cutting/sources', [MfgCuttingController::class, 'sources'])->whereNumber('id');
     Route::post('work-orders/{id}/cutting/preview', [MfgCuttingController::class, 'preview'])->whereNumber('id');
     Route::post('work-orders/{id}/cutting/issue', [MfgCuttingController::class, 'issue'])->whereNumber('id');
+    Route::get('remnant-receipts', [MfgCuttingRemnantReceiptController::class, 'index']);
+    Route::get('remnant-receipts/{id}', [MfgCuttingRemnantReceiptController::class, 'show'])->whereNumber('id');
+    Route::post('remnant-receipts/{id}/confirm', [MfgCuttingRemnantReceiptController::class, 'confirm'])->whereNumber('id');
+    Route::post('remnant-receipts/{id}/reject', [MfgCuttingRemnantReceiptController::class, 'reject'])->whereNumber('id');
+    Route::post('remnant-receipts/{id}/cancel', [MfgCuttingRemnantReceiptController::class, 'cancel'])->whereNumber('id');
+    Route::post('remnant-receipts/{id}/scrap', [MfgCuttingRemnantReceiptController::class, 'scrap'])->whereNumber('id');
     Route::post('cutting-batches/{id}/settle', [MfgCuttingController::class, 'settle'])->whereNumber('id');
     // 集中开料：不属于工单，按待切清单领板切割、登记余料；工单下料「已备料」按定额从开料池扣
     Route::get('cutting-sessions/demand', [MfgSharedCuttingController::class, 'demand']);
@@ -545,6 +559,11 @@ Route::prefix('v1/erp/production')->group(function () {
     Route::get('reviews', [MfgTaskController::class, 'reviews']);
     Route::post('material-returns/{id}/plan-review', [MfgTaskController::class, 'reviewPlan'])->whereNumber('id');
     Route::post('work-orders/{id}/receipts', [MfgTaskController::class, 'receive'])->whereNumber('id');
+    Route::get('receipts', [MfgTaskController::class, 'receiptIndex']);
+    Route::get('receipts/{id}', [MfgTaskController::class, 'receiptShow'])->whereNumber('id');
+    Route::post('receipts/{id}/confirm', [MfgTaskController::class, 'confirmReceipt'])->whereNumber('id');
+    Route::post('receipts/{id}/reject', [MfgTaskController::class, 'rejectReceipt'])->whereNumber('id');
+    Route::post('receipts/{id}/cancel', [MfgTaskController::class, 'cancelReceipt'])->whereNumber('id');
     Route::get('operations/{id}/workers', [MfgTaskController::class, 'workers'])->whereNumber('id');
     Route::put('operations/{id}/workers', [MfgTaskController::class, 'saveWorkers'])->whereNumber('id');
     Route::get('tech', [MfgTechController::class, 'index']);

@@ -1,2 +1,88 @@
 @import "../shared.wxss";
-.phase-line-title { padding: 22rpx 8rpx; border-bottom: 1rpx solid #edf1f5; }
+
+.dlv-filter-card {
+  padding: 20rpx 22rpx;
+}
+
+.dlv-tabs {
+  margin-bottom: 0;
+}
+
+.dlv-product-row {
+  display: flex;
+  align-items: center;
+  gap: 10rpx;
+  margin-bottom: 12rpx;
+}
+
+.dlv-product-title {
+  margin-bottom: 0;
+  font-size: 28rpx;
+}
+
+.dlv-lines-box {
+  background: #f8fafc;
+  border: 1rpx solid #e2e8f0;
+  border-radius: 18rpx;
+  padding: 16rpx 20rpx 8rpx;
+  margin-top: 14rpx;
+}
+
+.dlv-lines-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8rpx;
+  padding-bottom: 10rpx;
+  border-bottom: 1rpx dashed #cbd5e1;
+}
+
+.dlv-lines-title {
+  font-size: 24rpx;
+  font-weight: 700;
+  color: #475569;
+}
+
+.dlv-line-item {
+  padding: 14rpx 0;
+  margin-bottom: 0;
+  border-bottom: 1rpx solid #edf2f7;
+  font-size: 26rpx;
+}
+
+.dlv-line-item:last-child {
+  border-bottom: none;
+}
+
+.dlv-line-name {
+  color: #1e293b;
+  font-weight: 600;
+}
+
+.dlv-line-qty {
+  color: #d81e06;
+  font-weight: 800;
+}
+
+.dlv-card-footer {
+  margin-top: 20rpx;
+}
+
+.dlv-empty-title {
+  font-size: 29rpx;
+  font-weight: 800;
+  color: #1f2329;
+}
+
+.dlv-retry-btn {
+  max-width: 320rpx;
+}
+
+.dlv-page-indicator {
+  padding: 8rpx 20rpx;
+  border-radius: 999rpx;
+  background: #fff1f0;
+  color: #d81e06;
+  font-weight: 800;
+  font-size: 24rpx;
+}

@@ -8,7 +8,7 @@ const LABELS = {
 Page({
   data: { kind: '', id: 0, parent: 0, loading: true, saving: false, error: '', formError: '', header: {}, lines: [], preview: null,
     actions: {}, page: 1, lastPage: 1, total: 0, units: '', remark: '', locator: {}, locatorOpen: false, dialog: null,
-    checks: {}, checkedLocations: {}, checkedSerials: {}, dispositionDrafts: {}, pendingActions: [], planReviewRequired: false,
+    checks: {}, checkedLocations: {}, checkedSerials: {}, dispositionDrafts: {}, pendingActions: [], planReviewRequired: false, canConfirmInbound: false, recallConfirmInbound: false,
     dispositionOptions: [{ value: 'release', label: '判定可用' }, { value: 'scrap', label: '报废' }, { value: 'supplier_return', label: '退供应商' }] },
   onLoad(options) {
     const kind = ['material_preparation', 'material_delivery', 'material_return'].includes(options.kind) ? options.kind : '';
@@ -23,6 +23,8 @@ Page({
     return warehouse.document(this.data.kind, this.data.id, { page: this.data.page, per_page: 10, units: this.data.units || undefined }).then(response => {
       if (sequence !== this.sequence) return;
       const body = response.data || response; const result = page.rows(body.lines); const actions = {};
+      if (this.returnVersion && this.returnVersion !== body.header.business_version && this.data.kind === 'material_return') this.setData({ checks: {}, locator: {}, formError: '退料单已变化，请重新核对实物与库位' });
+      this.returnVersion = body.header.business_version;
       const documentKey = this.data.kind + ':' + this.data.id;
       if (this.pickDocument !== documentKey || (this.sourceRevision && this.sourceRevision !== body.header.source_revision)) {
         if (this.pickDocument === documentKey) this.setData({ checkedLocations: {}, checkedSerials: {}, formError: '拣货来源已变化，请重新核对库位和序列号' });
@@ -43,7 +45,7 @@ Page({
       }));
       if (result.page > result.lastPage) { this.setData({ page: result.lastPage }); return this.load(); }
       this.setData({ header: body.header || {}, lines, preview: body.preview || null, actions, loading: false, page: result.page,
-        lastPage: result.lastPage, total: result.total, planReviewRequired: !!body.plan_review_required,
+        lastPage: result.lastPage, total: result.total, planReviewRequired: !!body.plan_review_required, canConfirmInbound: page.permissions()('inventory.inbound.confirm'),
         pendingActions: Object.keys(LABELS).filter(action => this.data.kind === 'material_preparation' ? action === 'material_delivery.prepare' : this.data.kind === 'material_return' ? action.startsWith('material_return.') : action.startsWith('material_delivery.') && action !== 'material_delivery.prepare')
           .filter(action => warehouse.pending(action, this.data.id)).map(action => ({ action, label: LABELS[action] })) });
       this.updatePickChecks();
@@ -118,13 +120,16 @@ Page({
     } else if (action === 'material_return.approve') {
       if (!this.data.locator.location_id) return this.setData({ formError: '请扫描或选择入库库位' });
       if (Object.values(this.data.checks).filter(row => row.complete).length < this.data.total) return this.setData({ formError: '请逐项扫描物料和序列号，核对全部退料明细' });
-      payload = { location_id: this.data.locator.location_id, remark: this.data.remark };
+      const serials = (this.data.header.serial_nos || []).filter(no => Object.values(this.pickLines || {}).some(row => row.serial_no === no && (this.data.checks[row.id] || {}).serial));
+      if (serials.length !== (this.data.header.serial_nos || []).length) return this.setData({ formError: '请逐个核对全部退料序列号' });
+      payload = { location_id: this.data.locator.location_id, remark: this.data.remark, serial_nos: serials };
     } else if (action === 'material_return.dispose') {
       const lines = this.data.lines.filter(line => Number(line.held_qty) > 0).map(line => this.data.dispositionDrafts[line.id] || line.disposition);
       if (!lines.length) return this.setData({ formError: '当前页没有待处置明细' });
       for (const line of lines) { const row = this.data.lines.find(row => Number(row.id) === Number(line.line_id)); if (!(Number(line.qty) > 0) || Number(line.qty) > Number(row.held_qty)) return this.setData({ formError: '处置数量须大于零且不超过待处置数量' }); }
       payload = { lines, remark: this.data.remark };
     } else if (action === 'material_delivery.redeliver') payload = { remark: this.data.remark };
+    if (action.startsWith('material_return.')) payload.expected_version = this.data.header.business_version;
     const required = action === 'material_delivery.recall' || action === 'material_return.reject';
     const messages = {
       'material_delivery.prepare': dispatch ? '配好后直接发出，将按拣货来源扣减库存。' : '确认按当前预览生成配料单？',
@@ -132,13 +137,13 @@ Page({
       'material_delivery.repick': '已拣出的物料请放回原位，重新分配后按新来源取料。',
       'material_delivery.cancel': '取消配料单，不改变库存。',
       'material_delivery.redeliver': '确认已将本单全部物料重新送达车间？',
-      'material_delivery.recall': '本单全部物料退回原库存位置。',
+      'material_delivery.recall': '收回后生成待仓库确认的退料单；核全实物和实际库位可同时接收入库。',
       'material_return.approve': '确认实物核对无误并按所选库位接收入库？',
       'material_return.reject': '驳回后物料仍留在原工序。',
       'material_return.dispose': '按当前页选择的处置方式处理退料，确认后改变库存。',
       'material_return.cancel': '确认撤回这张退料申请？',
     };
-    this.setData({ formError: '', dialog: { action, payload, title: LABELS[action], message: messages[action], required, reason: '', error: '' } });
+    this.setData({ formError: '', dialog: { action, payload, title: LABELS[action], message: messages[action], required, reason: '', error: '', confirmInbound: action === 'material_delivery.recall' && this.data.recallConfirmInbound } });
   },
   picksVerified(lines) {
     const serials = Object.values(this.data.checkedSerials);
@@ -149,11 +154,22 @@ Page({
     return true;
   },
   dialogInput(event) { this.setData({ 'dialog.reason': event.detail.value }); }, closeDialog() { if (!this.data.saving) this.setData({ dialog: null }); },
+  toggleRecallReceive() { if (!this.data.saving) this.setData({ recallConfirmInbound: !this.data.recallConfirmInbound }); },
   confirmAction() {
     const dialog = this.data.dialog; if (!dialog || this.data.saving) return;
     if (dialog.required && !dialog.reason.trim()) return this.setData({ 'dialog.error': '请输入原因' });
     const payload = Object.assign({}, dialog.payload);
-    if (dialog.action === 'material_delivery.recall') payload.reason = dialog.reason.trim();
+    if (dialog.action === 'material_delivery.recall') {
+      payload.reason = dialog.reason.trim();
+      if (dialog.confirmInbound) {
+        if (Object.keys(this.pickLines || {}).length !== this.data.total) return this.setData({ 'dialog.error': '请逐页核对本单全部明细' });
+        const expected = Object.values(this.pickLines || {}).flatMap(row => (row.picks || []).flatMap(pick => pick.serial_nos || []));
+        const checked = Object.values(this.data.checkedSerials);
+        if (!this.data.locator.location_id) return this.setData({ 'dialog.error': '请选择实际接收库位' });
+        if (!expected.every(no => checked.includes(no))) return this.setData({ 'dialog.error': '请逐个核对本单全部序列号' });
+        Object.assign(payload, { confirm_inbound: true, location_id: this.data.locator.location_id, serial_nos: expected });
+      }
+    }
     if (dialog.action === 'material_return.reject') payload.remark = dialog.reason.trim();
     return this.execute(dialog.action, payload);
   },
@@ -164,7 +180,7 @@ Page({
     try {
       const result = await warehouse.submit(action, this.data.id, payload);
       this.setData({ dialog: null, remark: '', checks: {}, checkedLocations: {}, checkedSerials: {}, dispositionDrafts: {} });
-      wx.showToast({ title: '操作成功', icon: 'success' });
+      wx.showToast({ title: action === 'material_delivery.recall' ? (result.return_status === 'approved' ? '已收回并接收入库' : '已收回，等待仓库确认') : '操作成功', icon: 'none' });
       if (action === 'material_delivery.prepare') {
         this.setData({ kind: 'material_delivery', id: Number(result.id), page: 1, units: '' }); wx.setNavigationBarTitle({ title: '配料单详情' });
       }

@@ -17,6 +17,7 @@
         <el-button size="small" icon="el-icon-refresh" class="btn-refresh" :loading="loading" @click="load">刷新</el-button>
       </div>
     </header>
+    <el-alert v-for="job in pendingRecalls" :key="job.id" title="收回结果待核对" type="warning" :closable="false"><el-button type="text" :disabled="saving" @click="recoverRecall(job)">核对上次收回结果</el-button></el-alert>
 
     <div class="erp-page-tip">
       <i class="el-icon-info" />
@@ -217,6 +218,11 @@
         <el-button size="small" type="success" class="btn-theme-create" :loading="saving" :disabled="!canSubmitPrep" @click="submitPrep(true)">配好并直接发出</el-button>
       </span>
     </el-dialog>
+    <el-dialog title="整单收回配料" :visible.sync="recallForm.visible" width="680px" custom-class="master-style-dialog" :close-on-click-modal="false">
+      <template v-if="recallForm.row"><p>配料单 {{ recallForm.row.delivery_no }}。收回后生成待仓库确认的退料单。</p><el-form label-position="top" size="small" :disabled="saving"><el-form-item label="收回原因" required><el-input v-model="recallForm.reason" type="textarea" maxlength="300" /></el-form-item><el-checkbox v-if="$can('inventory.inbound.confirm')" v-model="recallForm.confirmInbound">同时确认接收入库</el-checkbox><template v-if="recallForm.confirmInbound"><el-form-item label="实际接收库位" required><div class="picker-row"><el-button @click="recallPicker = { visible: true, mode: 'warehouse' }">{{ recallForm.warehouse_name || '选择接收仓库' }}</el-button><el-button :disabled="!recallForm.warehouse_id" @click="recallPicker = { visible: true, mode: 'location' }">{{ recallForm.location_name || '选择实际库位' }}</el-button></div></el-form-item><el-form-item v-if="recallSerials.length" :label="'逐个核对序列号 · 已核对 ' + Object.keys(recallChecked).length + ' / ' + recallSerials.length"><el-input v-model="recallSerialCode" placeholder="扫描或输入序列号后回车" @keyup.enter.native="checkRecallSerial"><el-button slot="append" @click="checkRecallSerial">核对</el-button></el-input><el-tag v-for="sn in recallSerials" :key="sn" size="small" :type="recallChecked[sn] ? 'success' : 'info'">{{ sn }} · {{ recallChecked[sn] ? '已核对' : '未核对' }}</el-tag></el-form-item></template></el-form></template>
+      <span slot="footer"><el-button size="small" :disabled="saving" @click="recallForm.visible = false">取消</el-button><el-button size="small" type="success" :loading="saving" :disabled="!recallForm.reason.trim() || (recallForm.confirmInbound && (!recallForm.location_id || Object.keys(recallChecked).length !== recallSerials.length))" @click="submitRecall">{{ recallForm.confirmInbound ? '收回并接收入库' : '确认收回' }}</el-button></span>
+    </el-dialog>
+    <system-record-picker :visible.sync="recallPicker.visible" :request="requestRecallLocators" :params="{ mode: recallPicker.mode, warehouse_id: recallPicker.mode === 'location' ? recallForm.warehouse_id : undefined, location_purpose: recallPicker.mode === 'location' ? 'general' : undefined }" :multiple="false" :value="[]" :config="{ title: recallPicker.mode === 'warehouse' ? '选择接收仓库' : '选择实际接收库位' }" :columns="[{ prop: 'code', label: '编码' }, { prop: 'name', label: '名称' }]" @confirm="pickRecallLocation" />
   </section>
 </template>
 
@@ -224,14 +230,17 @@
 import { listPendingDeliveries, listMaterialDeliveries, previewMaterialDelivery, createMaterialDelivery, materialDeliveryAction } from '../../../api/erp/production'
 import { qty, errorText } from '../production/mfg-helpers'
 import StocktakeFreezeAlert from '@/components/common/StocktakeFreezeAlert.vue'
+import SystemRecordPicker from '@/components/system/SystemRecordPicker.vue'
+import { pendingWarehouseCommands, submitWarehouseCommand, getWarehouseLocators } from '@/api/erp/warehouse'
 
 const CHIP = { prepared: 'c-o', dispatched: 'c-b', signed: 'c-g', rejected: 'c-r', recalled: 'c-n', cancelled: 'c-n' }
 
 export default {
   name: 'ProductionMaterialDeliveryList',
-  components: { StocktakeFreezeAlert },
+  components: { StocktakeFreezeAlert, SystemRecordPicker },
   data: () => ({
     loading: false,
+    pendingRecalls: [], recallForm: { visible: false, row: null, reason: '', confirmInbound: false, warehouse_id: null, warehouse_name: '', location_id: null, location_name: '' }, recallPicker: { visible: false, mode: 'warehouse' }, recallChecked: {}, recallSerialCode: '',
     saving: false,
     rows: [],
     total: 0,
@@ -251,6 +260,7 @@ export default {
     prep: { visible: false, loading: false, row: null, units: undefined, preview: null, remark: '' }
   }),
   computed: {
+    recallSerials() { return Array.from(new Set((this.recallForm.row?.lines || []).flatMap(line => (line.picks || []).flatMap(pick => pick.serial_nos || [])))) },
     dialogWidth() { return window.innerWidth < 768 ? '94%' : '760px' },
     canSubmitPrep() { const p = this.prep.preview; return !!(p && p.lines.length && !p.short.length) }
   },
@@ -263,6 +273,7 @@ export default {
     chip(s) { return CHIP[s] || 'c-n' },
     async load() {
       this.loading = true
+      this.pendingRecalls = pendingWarehouseCommands('material_delivery.recall')
       try {
         const params = { page: this.page, per_page: 10, keyword: this.keyword || undefined }
         if (this.status === 'pending') {
@@ -342,15 +353,19 @@ export default {
       } catch (e) { return }
       this.act(d, 'redeliver', null, { remark: remark || undefined })
     },
-    async recall(d) {
-      let reason
+    recall(d) { this.recallForm = { visible: true, row: d, reason: '', confirmInbound: false, warehouse_id: null, warehouse_name: '', location_id: null, location_name: '' }; this.recallChecked = {}; this.recallSerialCode = '' },
+    requestRecallLocators: getWarehouseLocators,
+    pickRecallLocation(rows) { const row = rows[0]; if (!row) return; if (this.recallPicker.mode === 'warehouse') Object.assign(this.recallForm, { warehouse_id: row.id, warehouse_name: row.name, location_id: null, location_name: '' }); else Object.assign(this.recallForm, { location_id: row.id, location_name: [row.code, row.name].filter(Boolean).join(' ') }) },
+    checkRecallSerial() { const code = this.recallSerialCode.trim().replace(/^ERP:SN:/i, ''); if (!this.recallSerials.includes(code)) return this.$message.error('该序列号不属于本单'); if (this.recallChecked[code]) return this.$message.warning('该序列号已核对'); this.$set(this.recallChecked, code, true); this.recallSerialCode = '' },
+    async submitRecall() {
+      const form = this.recallForm; this.saving = true
       try {
-        reason = (await this.$prompt(`把 ${d.delivery_no} 的料整单收回入库（按原库位、原批次冲回，冲减已领）。原因：`, '收回入库', {
-          inputValidator: v => !!(v && v.trim()) || '请填写原因'
-        })).value.trim()
-      } catch (e) { return }
-      this.act(d, 'recall', null, { reason })
-    }
+        const { data } = await materialDeliveryAction(form.row.id, 'recall', { reason: form.reason.trim(), confirm_inbound: form.confirmInbound, location_id: form.confirmInbound ? form.location_id : undefined, serial_nos: form.confirmInbound ? Object.keys(this.recallChecked) : undefined })
+        this.$message.success(data.return_status === 'approved' ? '已收回并接收入库' : '已收回，等待仓库确认'); form.visible = false; await this.load()
+      } catch (e) { this.$message.error(errorText(e, '收回结果待核对')); this.pendingRecalls = pendingWarehouseCommands('material_delivery.recall'); if (e.pendingCommand) form.visible = false }
+      finally { this.saving = false }
+    },
+    async recoverRecall(job) { this.saving = true; try { const result = await submitWarehouseCommand('material_delivery.recall', job.id); this.$message.success(result.return_status === 'approved' ? '已收回并接收入库' : '已收回，等待仓库确认'); await this.load() } catch (e) { this.$message.error(errorText(e, '收回结果核对失败')); this.pendingRecalls = pendingWarehouseCommands('material_delivery.recall') } finally { this.saving = false } }
   }
 }
 </script>

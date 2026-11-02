@@ -20,7 +20,7 @@ class MfgCuttingRunController extends Controller
     public function index(Request $request, CuttingRunService $runs)
     {
         $this->user($request, false);
-        $data = $request->validate(['status' => 'nullable|in:running,finished,cancelled', 'output_item_id' => 'nullable|integer|min:1', 'only_left' => 'nullable|boolean',
+        $data = $request->validate(['status' => 'nullable|in:running,awaiting_confirm,finished,cancelled', 'output_item_id' => 'nullable|integer|min:1', 'only_left' => 'nullable|boolean',
             'page' => 'nullable|integer|min:1', 'per_page' => 'nullable|integer|min:1|max:50']);
         return response()->json($runs->index($data));
     }
@@ -43,9 +43,14 @@ class MfgCuttingRunController extends Controller
         $user = $this->user($request, true);
         $action = $request->validate(['action' => 'required|in:start,pause,finish,cancel'])['action'];
         if ($action === 'finish') {
-            $data = $request->validate(['expected_version' => 'required|integer|min:1', 'remark' => 'nullable|string|max:500',
-                'lines' => 'required|array|min:1|max:200', 'lines.*.line_key' => 'required|string|max:160', 'lines.*.actual_pieces' => 'required|integer|min:0|max:100000']);
-            return response()->json(['message' => '已结束，切好的件在各工单下料点「已备料」领走，工时按件数带过去。', 'data' => $runs->finish($id, $data, $user)]);
+            $data = $request->validate(['client_command_id' => 'required|string|max:120', 'expected_version' => 'required|integer|min:1', 'remark' => 'nullable|string|max:500',
+                'lines' => 'required|array|min:1|max:200', 'lines.*.line_key' => 'required|string|max:160|distinct', 'lines.*.actual_pieces' => 'required|integer|min:0|max:100000']);
+            $commandId = $data['client_command_id']; unset($data['client_command_id']);
+            $auth = app(AuthContextService::class);
+            $result = app(\App\Services\Erp\WarehouseCommandService::class)->run('cutting_run.finish', $id, $commandId, $data,
+                $user, $auth->permissionCodes($user), $auth->isSuperAdmin($user))['result'];
+            return response()->json(['message' => $result['status'] === 'awaiting_confirm' ? '实际件数已登记并停止计时，余料确认后自动完成成本阶段。'
+                : '已结束，切好的件和实际工时可以按工单领用。', 'data' => $result]);
         }
         if ($action === 'cancel') return response()->json(['message' => '已作废。', 'data' => $runs->cancel($id, $user)]);
         return response()->json(['message' => $action === 'start' ? '开始计时。' : '已暂停计时。', 'data' => $runs->timing($id, $action, $user)]);

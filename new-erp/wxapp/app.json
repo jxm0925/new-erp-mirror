@@ -14,6 +14,8 @@
     "pages/warehouse/document/index",
     "pages/warehouse/deliveries/index",
     "pages/warehouse/material/index",
+    "pages/warehouse/inbound/index",
+    "pages/warehouse/transfer/index",
     "pages/warehouse/inventory/index",
     "pages/warehouse/stocktake/index",
     "pages/production/tasks/index",

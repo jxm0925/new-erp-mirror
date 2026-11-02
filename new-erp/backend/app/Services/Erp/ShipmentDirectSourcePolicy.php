@@ -21,7 +21,7 @@ final class ShipmentDirectSourcePolicy
         $type = $fact['transaction_type'] ?? '';
         if ($source === 'purchase_receipt' && in_array($type, ['purchase_receipt_posting', 'purchase_receipt_quality_release'], true)) return 'purchase';
         if ($source === 'inventory_adjustment' && $type === 'manual_adjustment') return 'stock';
-        if ($source === 'inventory_transfer' && $type === 'inventory_transfer') {
+        if ($source === 'inventory_transfer' && in_array($type, ['inventory_transfer', 'inventory_transfer_inbound'], true)) {
             return match ($fact['cost_source_type'] ?? null) { self::TRANSFER_PURCHASE => 'purchase', self::TRANSFER_STOCK => 'stock', default => null };
         }
         return null;

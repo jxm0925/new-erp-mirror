@@ -14,10 +14,12 @@
       <view class="wo-hero-meta">
         <text class="mono">{{wo.work_order_no}}<text wx:if="{{wo.item_code}}"> · {{wo.item_code}}</text><text wx:if="{{wo.sales_order_no}}"> · {{wo.sales_order_no}}</text><text wx:if="{{wo.customer_name}}"> · {{wo.customer_name}}</text></text>
         <text>交期 {{wo.dueText || '-'}} · 已入库 {{wo.storedText}} / {{wo.plannedText}}</text>
+        <text wx:if="{{wo.pending_receipt_qty > 0}}" bindtap="openReceiptRequests">待仓库确认 {{wo.pending_receipt_qty}} {{wo.unit_name || '台'}} · 查看申请 ›</text>
       </view>
     </view>
 
     <view wx:if="{{wo.special_requirement}}" class="mt-note" style="margin-bottom: 18rpx;">工艺与特殊要求：{{wo.special_requirement}}</view>
+    <view wx:for="{{wo.completion_blockers}}" wx:key="type" class="mt-note">{{item.text}}</view>
 
     <!-- 所属主工单（如果是子工单） -->
     <view wx:if="{{wo.parent_work_order}}" class="mt-card wo-link-card" data-id="{{wo.parent_work_order.id}}" bindtap="openWorkOrder">

@@ -1,0 +1,21 @@
+@import "../shared.wxss";
+
+.trf-mode-tabs {
+  margin-top: 4rpx;
+}
+
+.trf-empty-title {
+  font-size: 29rpx;
+  font-weight: 800;
+  color: #1f2329;
+}
+
+.trf-choose-bal-btn,
+.trf-add-line-btn,
+.trf-remove-line-btn {
+  margin-top: 14rpx;
+}
+
+.trf-target-head {
+  margin-top: 22rpx;
+}

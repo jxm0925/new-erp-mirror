@@ -23,6 +23,7 @@ CREATE TABLE `erp_mfg_material_returns` (
   `work_order_operation_id` bigint(20) unsigned NOT NULL,
   `return_type` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
   `status` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `business_version` int(10) unsigned NOT NULL DEFAULT '1',
   `reason` varchar(500) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `target_warehouse_id` bigint(20) unsigned DEFAULT NULL,
   `target_location_id` bigint(20) unsigned DEFAULT NULL,

@@ -4,6 +4,11 @@ const { getErpApiBaseUrl } = require('../config/erp');
 const inflight = new Map();
 const clone = value => JSON.parse(JSON.stringify(value));
 const get = (path, query) => request.request({ path, query: query || {}, loading: false });
+function locators(query) {
+  const params = Object.assign({}, query); const purposes = params.location_purposes; delete params.location_purposes;
+  (purposes || []).forEach((purpose, index) => { params['location_purposes[' + index + ']'] = purpose; });
+  return get('inventory/warehouse-workspace/locators', params);
+}
 
 function actor() {
   const user = wx.getStorageSync('erp_user') || {};
@@ -13,6 +18,10 @@ function actor() {
 }
 function key(action, id) { return `erp_warehouse_pending:${encodeURIComponent(getErpApiBaseUrl())}:${actor()}:${action}:${id}`; }
 function pending(action, id) { try { return wx.getStorageSync(key(action, id)) || null; } catch (_) { return null; } }
+function pendingJobs(action) {
+  const prefix = `erp_warehouse_pending:${encodeURIComponent(getErpApiBaseUrl())}:${actor()}:${action}:`;
+  return (wx.getStorageInfoSync().keys || []).filter(name => name.startsWith(prefix)).map(name => wx.getStorageSync(name)).filter(Boolean);
+}
 
 function submit(action, id, payload) {
   let storageKey;
@@ -63,13 +72,18 @@ function submit(action, id, payload) {
 }
 
 module.exports = {
-  get, submit, pending,
+  get, submit, pending, pendingJobs,
   resolveScan: code => get('inventory/scan/resolve', { code: String(code || '').trim() }),
   summary: () => get('inventory/warehouse-workspace/summary'),
   queue: query => get('inventory/warehouse-workspace', query),
-  locators: query => get('inventory/warehouse-workspace/locators', query),
+  locators,
   document: (kind, id, query) => get(`inventory/warehouse-workspace/documents/${kind}/${id}`, query),
   balances: query => get('inventory/balances', query),
+  transit: query => get('inventory/transit', query),
+  transfers: query => get('inventory/transfers', query),
+  transfer: id => get(`inventory/transfers/${Number(id)}`),
+  transferBalances: query => get('inventory/transfers/balances', query),
+  physicalTransfers: query => get('inventory/material-physical-transfers', query),
   itemBatches: (itemId, query) => get(`inventory/balances/items/${Number(itemId)}/batches`, query),
   batchContext: (itemId, query) => get(`inventory/balances/items/${Number(itemId)}/batch-context`, query),
   balanceSerials: (balanceId, query) => get(`inventory/balances/${Number(balanceId)}/serials`, query),

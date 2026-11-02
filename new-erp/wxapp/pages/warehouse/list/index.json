@@ -1,1 +1,12 @@
-{"navigationBarTitleText":"入库办理","navigationBarBackgroundColor":"#ffffff","navigationBarTextStyle":"black","enablePullDownRefresh":true,"usingComponents":{"van-icon":"@vant/weapp/icon/index","van-loading":"@vant/weapp/loading/index"}}
+{
+  "navigationBarTitleText": "入库办理",
+  "navigationBarBackgroundColor": "#d81e06",
+  "navigationBarTextStyle": "white",
+  "enablePullDownRefresh": true,
+  "usingComponents": {
+    "van-icon": "@vant/weapp/icon/index",
+    "van-loading": "@vant/weapp/loading/index",
+    "warehouse-context": "/components/warehouse-context/index",
+    "production-select": "/components/production-select/index"
+  }
+}

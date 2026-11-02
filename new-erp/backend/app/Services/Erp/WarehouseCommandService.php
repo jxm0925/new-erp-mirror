@@ -76,11 +76,12 @@ final class WarehouseCommandService
 
     private function present(array $response, string $action, array $permissions, bool $super): array
     {
+        if (! in_array('inventory.amount.view', $permissions, true))
+            $response = app(InventoryAmountVisibilityService::class)->redact($response, false, false, false, false, true);
         if (str_starts_with($action, 'sales_')) {
             // Apply today's visibility to both new results and stored command replays.
             // The immutable ledger retains its original costing facts for internal audit.
             $inventoryAmounts = in_array('inventory.amount.view', $permissions, true);
-            if (! $inventoryAmounts) $response = app(InventoryAmountVisibilityService::class)->redact($response, false, false, false, false, true);
             if (! $super && ! in_array('sales_order.amount.view', $permissions, true)) {
                 $response = app(SalesAmountVisibilityService::class)->redact($response, $inventoryAmounts);
             }

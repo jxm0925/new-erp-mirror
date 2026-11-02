@@ -5,7 +5,7 @@ namespace App\Models\Erp;
 class InventoryTransferLine extends MasterModel
 {
     protected $table = 'erp_inventory_transfer_lines';
-    protected $casts = ['serial_ids' => 'array'];
+    protected $casts = ['serial_ids' => 'array', 'source_snapshot' => 'array', 'quantity' => 'decimal:4', 'cost_amount' => 'decimal:4'];
 
     public function transfer() { return $this->belongsTo(InventoryTransfer::class, 'transfer_id'); }
     public function item() { return $this->belongsTo(Item::class); }

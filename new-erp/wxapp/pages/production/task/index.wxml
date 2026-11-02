@@ -21,6 +21,7 @@
       <view class="wo-hero-meta">
         <text class="mono">{{task.work_order.work_order_no}}<text wx:if="{{task.work_order.item_code}}"> · {{task.work_order.item_code}}</text><text wx:if="{{task.dueText}}"> · 交期 {{task.dueText}}</text></text>
         <text class="wo-hero-link" data-id="{{task.work_order.id}}" bindtap="openWorkOrder">工单详情 ›</text>
+        <text wx:if="{{task.work_order.pending_receipt_qty > 0}}" class="wo-hero-link" bindtap="openReceiptRequests">待仓库确认 {{task.work_order.pending_receipt_qty}} · 查看申请 ›</text>
       </view>
     </view>
 

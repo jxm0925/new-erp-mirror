@@ -5,10 +5,10 @@
         <span class="head-icon"><i class="el-icon-sold-out" /></span>
         <div class="head-title-wrap">
           <div class="title-row">
-            <h1 class="page-title">生产退料审核</h1>
+            <h1 class="page-title">生产退料接收</h1>
             <el-tag size="small" type="success" effect="plain" class="head-tag total-tag">共 {{ total }} 张退料单</el-tag>
             <el-tag v-if="summary.pending > 0" size="small" type="warning" effect="plain" class="sub-total-tag">
-              {{ summary.pending }} 张待审核
+              {{ summary.pending }} 张待仓库接收
             </el-tag>
             <el-tag v-if="summary.holding > 0" size="small" type="danger" effect="plain" class="sub-total-tag">
               {{ summary.holding }} 张不良待处置
@@ -20,17 +20,18 @@
         <el-button size="small" icon="el-icon-refresh" class="btn-refresh" :loading="loading" @click="load">刷新</el-button>
       </div>
     </header>
+    <el-alert v-for="job in pendingReturns" :key="job.action + job.id" title="退料操作结果待核对" type="warning" :closable="false"><el-button type="text" :disabled="saving" @click="recoverReturn(job)">核对上次退料操作结果</el-button></el-alert>
 
     <div class="erp-page-tip">
       <i class="el-icon-info" />
-      <span>业务说明：余料退回审核后直接回归可用库存；不良品退回入库后处于“不良冻结”状态（不计入可用库存），可在当前页弹窗直接完成判定可用、报废或生成退供应商单。</span>
+      <span>业务说明：退料经仓库确认后回归库存；不良品退回入库后处于“不良冻结”状态（不计入可用库存），可在当前页弹窗直接完成判定可用、报废或生成退供应商单。</span>
     </div>
 
     <div class="metric-overview-grid">
       <article class="metric-card" :class="{ active: filters.status === 'pending' }" @click="pickTab('pending')">
         <div class="metric-icon amber"><i class="el-icon-Bell" /></div>
         <div class="metric-copy">
-          <span>待审核退料单</span>
+          <span>待仓库接收退料单</span>
           <strong class="warning-num">{{ summary.pending || 0 }}</strong>
           <small>待库管核对实物入库</small>
         </div>
@@ -46,7 +47,7 @@
       <article class="metric-card" :class="{ active: filters.status === 'approved' }" @click="pickTab('approved')">
         <div class="metric-icon primary"><i class="el-icon-circle-check" /></div>
         <div class="metric-copy">
-          <span>已审核入库</span>
+          <span>已确认入库</span>
           <strong>{{ filters.status === 'approved' ? total : (summary.approved !== undefined ? summary.approved : '--') }}</strong>
           <small>点击查看已入库退料单</small>
         </div>
@@ -111,27 +112,28 @@
               <div class="sub">{{ s.row.requested_at }}</div>
             </template>
           </el-table-column>
-          <el-table-column label="审核状态 / 成本与处置" min-width="185">
+          <el-table-column label="接收状态 / 成本与处置" min-width="185">
             <template slot-scope="s">
               <div class="status-wrap">
                 <span :class="['chip', chip(s.row.status)]">{{ s.row.status_label }}</span>
                 <span v-if="s.row.held_qty > 0" class="chip c-o">不良冻结 {{ qty(s.row.held_qty) }}</span>
               </div>
-              <div v-if="s.row.reviewed_by_name" class="sub">审核：{{ s.row.reviewed_by_name }} {{ s.row.reviewed_at }}</div>
+              <div v-if="s.row.reviewed_by_name" class="sub">接收：{{ s.row.reviewed_by_name }} {{ s.row.reviewed_at }}</div>
               <div v-if="s.row.review_remark" class="sub">备注：{{ s.row.review_remark }}</div>
-              <div v-if="$can('inventory.amount.view') && s.row.cost_amount != null" class="sub cost-sub">冲回成本：<b>{{ money(s.row.cost_amount) }}</b></div>
+              <div v-if="$can('inventory.amount.view')" class="sub cost-sub">冲回成本：<b>{{ s.row.status === 'approved' ? money(s.row.cost_amount) : '待确认' }}</b></div>
+              <div v-if="s.row.disposition_plan" class="sub">处置方案：{{ planStatus(s.row) }}</div>
             </template>
           </el-table-column>
           <el-table-column label="操作" width="185" fixed="right">
             <template slot-scope="s">
               <div class="op-actions" @click.stop>
                 <template v-if="s.row.status === 'pending'">
-                  <el-button v-if="canApprove" type="text" size="mini" class="lk-green" @click="openApprove(s.row)">审核入库</el-button>
-                  <el-button v-if="canApprove" type="text" size="mini" class="lk-danger" @click="reject(s.row)">驳回</el-button>
-                  <el-button type="text" size="mini" class="lk-muted" @click="cancel(s.row)">撤回</el-button>
+                  <el-button v-if="canApprove && s.row.receipt_ready" type="text" size="mini" class="lk-green" @click="openApprove(s.row)">确认接收</el-button>
+                  <el-button v-if="canApprove && s.row.receipt_ready" type="text" size="mini" class="lk-danger" @click="reject(s.row)">驳回</el-button>
+                  <el-button v-if="canCancel(s.row)" type="text" size="mini" class="lk-muted" @click="cancel(s.row)">撤回</el-button>
                 </template>
                 <el-button v-else type="text" size="mini" class="lk-green" @click="openApprove(s.row)">
-                  {{ s.row.held_qty > 0 && canApprove ? '不良处置' : '查看明细' }}
+                  {{ s.row.held_qty > 0 && canDispose ? '不良处置' : '查看明细' }}
                 </el-button>
               </div>
             </template>
@@ -146,15 +148,15 @@
           <div class="sub"><span class="lk" @click="openWorkOrder(row)">{{ row.work_order_no }}</span> · {{ row.operation_name }} · {{ row.return_type_label }}</div>
           <div>{{ row.summary }}</div>
           <div class="sub">原因：{{ row.reason || '-' }} · {{ row.requested_by_name || '' }} {{ row.requested_at }}</div>
-          <div v-if="row.review_remark" class="sub">审核：{{ row.review_remark }}</div>
+          <div v-if="row.review_remark" class="sub">接收：{{ row.review_remark }}</div>
           <div v-if="row.held_qty > 0"><span class="chip c-o">不良冻结待处置 {{ qty(row.held_qty) }}</span></div>
           <div class="m-foot">
             <template v-if="row.status === 'pending'">
-              <span v-if="canApprove" class="lk" @click="openApprove(row)">审核入库</span>
-              <span v-if="canApprove" class="lk danger" @click="reject(row)">驳回</span>
-              <span class="lk muted" @click="cancel(row)">撤回</span>
+              <span v-if="canApprove && row.receipt_ready" class="lk" @click="openApprove(row)">确认接收</span>
+              <span v-if="canApprove && row.receipt_ready" class="lk danger" @click="reject(row)">驳回</span>
+              <span v-if="canCancel(row)" class="lk muted" @click="cancel(row)">撤回</span>
             </template>
-            <span v-else class="lk" @click="openApprove(row)">{{ row.held_qty > 0 && canApprove ? '不良处置' : '查看明细' }}</span>
+            <span v-else class="lk" @click="openApprove(row)">{{ row.held_qty > 0 && canDispose ? '不良处置' : '查看明细' }}</span>
           </div>
         </div>
       </div>
@@ -166,7 +168,7 @@
     </div>
 
     <el-dialog
-      :title="approve.row ? (approve.row.status === 'pending' ? '审核生产退料 · ' : '生产退料详情 · ') + approve.row.return_no : ''"
+      :title="approve.row ? (approve.row.status === 'pending' ? '接收生产退料 · ' : '生产退料详情 · ') + approve.row.return_no : ''"
       :visible.sync="approve.visible"
       width="760px"
       custom-class="master-style-dialog"
@@ -179,6 +181,7 @@
           <span>类型：<b>{{ approve.row.return_type_label }}</b></span>
           <span>退料原因：<b>{{ approve.row.reason || '-' }}</b></span>
         </div>
+        <div v-if="approve.row.disposition_plan" class="sub">处置方案：{{ planStatus(approve.row) }}<div>{{ approve.row.disposition_plan.reviewed_by_name }} {{ approve.row.disposition_plan.reviewed_at }} {{ approve.row.disposition_plan.review_remark }}</div></div>
         <div v-if="approveMedia.length" class="return-media">
           <template v-for="(media, index) in approveMedia">
             <el-image v-if="media.type === 'image'" :key="`image-${index}`" :src="media.url" :preview-src-list="approveMedia.filter(item => item.type === 'image').map(item => item.url)" fit="cover" />
@@ -214,24 +217,21 @@
             </template>
           </el-table-column>
         </el-table>
-        <template v-if="isDefect && approve.row.held_qty > 0 && canApprove">
+        <template v-if="isDefect && approve.row.held_qty > 0 && canDispose">
           <div class="defect-tip-box">
             不良退回的物料已冻结（不计入可用库存、编号不可领用）。<b>判定可用</b> = 解冻回可用库存；<b>报废</b> = 按退料单价报废出库；<b>退供应商</b> = 按原批次追溯采购到货，生成退供应商单。
           </div>
           <el-input v-model="approve.remark" size="small" maxlength="500" placeholder="填写处置备注（选填）" />
         </template>
-        <el-form v-if="approve.row.status === 'pending' && canApprove" label-position="top" size="small" class="approve-form">
-          <el-form-item label="退入目标库位">
-            <el-radio-group v-model="approve.original">
-              <el-radio :label="true">默认退回原领用库位</el-radio>
-              <el-radio :label="false">指定其他退入库位</el-radio>
-            </el-radio-group>
-            <div v-if="!approve.original" class="picker-row">
+        <el-form v-if="approve.row.status === 'pending' && canApprove && approve.row.receipt_ready" label-position="top" size="small" class="approve-form" :disabled="saving">
+          <el-form-item label="实际接收库位" required>
+            <div class="picker-row">
               <el-button size="small" @click="openPicker('warehouses')">{{ approve.warehouse_name || '选择仓库' }} <i class="el-icon-search" /></el-button>
               <el-button size="small" :disabled="!approve.warehouse_id" @click="openPicker('locations')">{{ approve.location_name || '选择库位' }} <i class="el-icon-search" /></el-button>
             </div>
           </el-form-item>
-          <el-form-item label="审核入库备注">
+          <el-form-item v-if="expectedSerials.length" :label="'逐个核对序列号 · 已核对 ' + Object.keys(checkedSerials).length + ' / ' + expectedSerials.length" required><el-input v-model="serialCode" placeholder="扫描或输入序列号后回车" @keyup.enter.native="checkSerial"><el-button slot="append" @click="checkSerial">核对</el-button></el-input><span v-for="sn in expectedSerials" :key="sn" class="chip" :class="checkedSerials[sn] ? 'c-g' : 'c-n'">{{ sn }} · {{ checkedSerials[sn] ? '已核对' : '未核对' }}</span></el-form-item>
+          <el-form-item label="接收入库备注">
             <el-input v-model="approve.remark" maxlength="500" placeholder="选填，记录实物清点情况" />
           </el-form-item>
         </el-form>
@@ -239,16 +239,16 @@
       <span slot="footer">
         <el-button size="small" @click="approve.visible = false">关闭</el-button>
         <el-button
-          v-if="approve.row && approve.row.status === 'pending' && canApprove"
+          v-if="approve.row && approve.row.status === 'pending' && canApprove && approve.row.receipt_ready"
           size="small"
           type="success"
           class="btn-theme-create"
           :loading="saving"
-          :disabled="!approve.original && !approve.location_id"
+          :disabled="!approve.location_id || Object.keys(checkedSerials).length !== expectedSerials.length"
           @click="submitApprove"
-        >确认实物已收到，审核入库</el-button>
+        >确认接收入库</el-button>
         <el-button
-          v-if="isDefect && approve.row.held_qty > 0 && canApprove"
+          v-if="isDefect && approve.row.held_qty > 0 && canDispose"
           size="small"
           type="success"
           class="btn-theme-create"
@@ -259,7 +259,7 @@
       </span>
     </el-dialog>
     <el-dialog title="不良处置影像" :visible.sync="videoVisible" width="min(960px, calc(100vw - 48px))" top="6vh" append-to-body destroy-on-close @closed="videoMedia = null"><div v-if="videoMedia" class="return-video-preview"><video :src="videoMedia.url" :poster="videoMedia.poster_url || undefined" controls autoplay /></div></el-dialog>
-    <system-record-picker :visible.sync="picker.visible" :type="picker.type" :multiple="false" :value="[]" :warehouse-id="Number(approve.warehouse_id || 0)" :location-purposes="['general']" management-scope="factory" @confirm="pick" />
+    <system-record-picker :visible.sync="picker.visible" :request="requestLocators" :params="{ mode: picker.type === 'warehouses' ? 'warehouse' : 'location', warehouse_id: picker.type === 'locations' ? approve.warehouse_id : undefined, location_purpose: picker.type === 'locations' ? 'general' : undefined }" :multiple="false" :value="[]" :config="{ title: picker.type === 'warehouses' ? '选择接收仓库' : '选择实际接收库位' }" :columns="[{ prop: 'code', label: '编码' }, { prop: 'name', label: '名称' }]" @confirm="pick" />
   </section>
 </template>
 
@@ -267,6 +267,7 @@
 import { listMaterialReturns, approveMaterialReturn, rejectMaterialReturn, cancelMaterialReturn, disposeMaterialReturn } from '../../../api/erp/production'
 import SystemRecordPicker from '../../../components/system/SystemRecordPicker.vue'
 import { qty, money, errorText, isCancel } from '../production/mfg-helpers'
+import { submitWarehouseCommand, pendingWarehouseCommands, getWarehouseLocators } from '@/api/erp/warehouse'
 
 const CHIP = { pending: 'c-o', approved: 'c-g', rejected: 'c-r', cancelled: 'c-n' }
 
@@ -281,11 +282,15 @@ export default {
     page: 1,
     summary: {},
     canApprove: false,
+    canDispose: false,
+    pendingReturns: [],
+    checkedSerials: {},
+    serialCode: '',
     videoVisible: false,
     videoMedia: null,
     filters: { status: 'pending', keyword: '' },
     tabs: [
-      { value: 'pending', label: '待审核' },
+      { value: 'pending', label: '待仓库接收' },
       { value: 'holding', label: '不良待处置' },
       { value: 'approved', label: '已入库' },
       { value: 'rejected', label: '已驳回' },
@@ -297,6 +302,7 @@ export default {
     picker: { visible: false, type: 'warehouses' }
   }),
   computed: {
+    expectedSerials() { return (this.approve.row?.lines || []).map(line => line.serial_no).filter(Boolean) },
     approveMedia() {
       const row = this.approve.row || {}
       return Array.from(new Map([
@@ -321,6 +327,10 @@ export default {
       return seconds == null ? '视频' : `${Math.floor(seconds / 60).toString().padStart(2, '0')}:${Math.floor(seconds % 60).toString().padStart(2, '0')}`
     },
     chip(status) { return CHIP[status] || 'c-n' },
+    planStatus(row) { const plan = row.disposition_plan; return !plan ? '' : plan.review_status === 'approved' ? (row.status === 'approved' ? '已通过并执行' : '已通过，待仓库接收') : plan.review_status === 'rejected' ? '已驳回' : '待负责人审核' },
+    canCancel(row) { const user = JSON.parse(localStorage.getItem('erp_user') || '{}'); return row.status === 'pending' && Number(row.requested_by_legacy_id) === Number(user.legacy_id || user.id) },
+    requestLocators: getWarehouseLocators,
+    checkSerial() { const code = this.serialCode.trim().replace(/^ERP:SN:/i, ''); if (!this.expectedSerials.includes(code)) return this.$message.error('该序列号不属于本单'); if (this.checkedSerials[code]) return this.$message.warning('该序列号已核对'); this.$set(this.checkedSerials, code, true); this.serialCode = '' },
     async load() {
       this.loading = true
       try {
@@ -330,6 +340,8 @@ export default {
         this.total = data.total || 0
         this.summary = data.summary || {}
         this.canApprove = !!data.can_approve
+        this.canDispose = !!data.can_dispose
+        this.pendingReturns = ['request', 'approve', 'reject', 'cancel', 'dispose'].flatMap(action => pendingWarehouseCommands('material_return.' + action))
       } catch (e) {
         this.$message.error(errorText(e, '退料单加载失败'))
       } finally {
@@ -345,6 +357,7 @@ export default {
       const dispose = {}
       for (const l of row.lines || []) if (l.held_qty > 0) dispose[l.id] = { action: '', qty: l.held_qty }
       this.approve = { visible: true, row, original: true, warehouse_id: null, warehouse_name: '', location_id: null, location_name: '', remark: '', dispose }
+      this.checkedSerials = {}; this.serialCode = ''
     },
     openPicker(type) { this.picker = { visible: true, type } },
     pick(rows) {
@@ -354,19 +367,19 @@ export default {
       if (this.picker.type === 'warehouses') {
         if (Number(a.warehouse_id) !== Number(row.id)) { a.location_id = null; a.location_name = '' }
         a.warehouse_id = row.id
-        a.warehouse_name = row.warehouse_name
+        a.warehouse_name = row.warehouse_name || row.name
       } else {
         a.location_id = row.id
-        a.location_name = [row.location_code, row.location_name].filter(Boolean).join(' ')
+        a.location_name = [row.location_code || row.code, row.location_name || row.name].filter(Boolean).join(' ')
       }
     },
     async submitApprove() {
       const a = this.approve
-      if (await this.act(() => approveMaterialReturn(a.row.id, { location_id: a.original ? undefined : a.location_id, remark: a.remark || undefined }), '已入库')) a.visible = false
+      if (await this.act(() => approveMaterialReturn(a.row.id, { expected_version: a.row.business_version, location_id: a.location_id, serial_nos: Object.keys(this.checkedSerials), remark: a.remark || undefined }), '已接收入库')) a.visible = false
     },
     async submitDispose() {
       const a = this.approve
-      if (await this.act(() => disposeMaterialReturn(a.row.id, { lines: this.disposeLines, remark: a.remark || undefined }), '已处置')) a.visible = false
+      if (await this.act(() => disposeMaterialReturn(a.row.id, { expected_version: a.row.business_version, lines: this.disposeLines, remark: a.remark || undefined }), '已处置')) a.visible = false
     },
     async reject(row) {
       let remark
@@ -379,7 +392,7 @@ export default {
         if (isCancel(e)) return
         return
       }
-      await this.act(() => rejectMaterialReturn(row.id, { remark }), '已驳回')
+      await this.act(() => rejectMaterialReturn(row.id, { expected_version: row.business_version, remark }), '已驳回')
     },
     async cancel(row) {
       try {
@@ -387,7 +400,7 @@ export default {
       } catch (e) {
         return
       }
-      await this.act(() => cancelMaterialReturn(row.id), '已撤回')
+      await this.act(() => cancelMaterialReturn(row.id, { expected_version: row.business_version }), '已撤回')
     },
     async act(fn, okText) {
       this.saving = true
@@ -398,11 +411,13 @@ export default {
         return true
       } catch (e) {
         this.$message.error(errorText(e, '操作失败'))
+        this.pendingReturns = ['request', 'approve', 'reject', 'cancel', 'dispose'].flatMap(action => pendingWarehouseCommands('material_return.' + action))
         return false
       } finally {
         this.saving = false
       }
-    }
+    },
+    async recoverReturn(job) { await this.act(() => submitWarehouseCommand(job.action, job.id).then(result => ({ data: result })), '原操作结果已核对') }
   }
 }
 </script>

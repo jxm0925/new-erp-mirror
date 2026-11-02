@@ -1,7 +1,560 @@
 @import "../shared.wxss";
-.warehouse-workbench { padding-top: 24rpx; }.workspace-scan-tip { color: #8a95aa; margin-top: 14rpx; font-size: 25rpx; }
-.workspace-shortcuts { display: flex; flex-wrap: wrap; margin: 8rpx -10rpx -12rpx; }.workspace-shortcut { width: 33.333%; padding: 18rpx 6rpx 24rpx; display: flex; flex-direction: column; align-items: center; gap: 14rpx; font-size: 27rpx; font-weight: 600; text-align: center; border-right: 1rpx solid #edf0f5; border-bottom: 1rpx solid #edf0f5; }.workspace-shortcut:nth-child(3n) { border-right: 0; }
-.workspace-icon { width: 82rpx; height: 82rpx; flex-shrink: 0; background: #fff1f0; border-radius: 18rpx; display: flex; align-items: center; justify-content: center; }
-.workspace-section { display: flex; justify-content: space-between; align-items: baseline; color: #8995a9; }.workspace-section .phase-heading { color: #10223e; }
-.workspace-todo { display: flex; align-items: center; gap: 16rpx; padding: 20rpx 0; border-bottom: 1rpx solid #e9edf4; }.workspace-todo:last-child { border: 0; }.workspace-todo-main { flex: 1; min-width: 0; color: #8794aa; font-size: 24rpx; line-height: 1.6; word-break: break-all; }.workspace-todo-title { color: #10223e; font-size: 27rpx; font-weight: 600; margin: 5rpx 0; }.workspace-todo-button { background: #ee1908; color: #fff; padding: 16rpx 18rpx; font-size: 24rpx; flex-shrink: 0; }
-.workspace-freeze { background: #fff6e8; color: #b86d1f; padding: 18rpx; border-radius: 12rpx; margin-bottom: 18rpx; font-size: 24rpx; line-height: 1.7; }.workspace-freeze.overdue { background: #fff0ed; color: #da2815; }.workspace-freeze-title { font-weight: 600; }
+
+.wb-page {
+  min-height: 100vh;
+  background: #f5f6f8;
+}
+
+/* 顶部红色概览区 */
+.wb-hero {
+  position: relative;
+  overflow: hidden;
+  padding: 22rpx 28rpx 38rpx;
+  background: linear-gradient(135deg, #d81e06 0%, #ef1008 60%, #ff4d3a 100%);
+  border-bottom-left-radius: 36rpx;
+  border-bottom-right-radius: 36rpx;
+  color: #ffffff;
+  box-shadow: 0 12rpx 32rpx rgba(216, 30, 6, 0.22);
+}
+
+.wb-hero-circle {
+  position: absolute;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.08);
+  pointer-events: none;
+}
+
+.wb-hero-circle-1 {
+  width: 260rpx;
+  height: 260rpx;
+  top: -80rpx;
+  right: -60rpx;
+}
+
+.wb-hero-circle-2 {
+  width: 160rpx;
+  height: 160rpx;
+  bottom: -50rpx;
+  left: 36rpx;
+}
+
+.wb-hero-top {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16rpx;
+  margin-bottom: 22rpx;
+}
+
+.wb-user-chip {
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+  min-width: 0;
+  flex: 1;
+}
+
+.wb-user-avatar {
+  width: 68rpx;
+  height: 68rpx;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.22);
+  border: 2rpx solid rgba(255, 255, 255, 0.48);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 28rpx;
+  font-weight: 800;
+  color: #ffffff;
+  flex-shrink: 0;
+}
+
+.wb-user-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 4rpx;
+  min-width: 0;
+}
+
+.wb-user-name-row {
+  display: flex;
+  align-items: center;
+  gap: 10rpx;
+  flex-wrap: wrap;
+}
+
+.wb-user-name {
+  font-size: 30rpx;
+  font-weight: 800;
+  color: #ffffff;
+}
+
+.wb-user-role {
+  font-size: 20rpx;
+  font-weight: 600;
+  padding: 2rpx 12rpx;
+  border-radius: 999rpx;
+  background: rgba(255, 255, 255, 0.2);
+  color: #ffffff;
+}
+
+.wb-user-sub {
+  font-size: 22rpx;
+  color: rgba(255, 255, 255, 0.86);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.wb-refresh-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6rpx;
+  padding: 10rpx 20rpx;
+  border-radius: 999rpx;
+  background: rgba(255, 255, 255, 0.18);
+  border: 1rpx solid rgba(255, 255, 255, 0.34);
+  font-size: 23rpx;
+  font-weight: 700;
+  color: #ffffff;
+  flex-shrink: 0;
+}
+
+.wb-hero-metrics {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  gap: 10rpx;
+  background: rgba(255, 255, 255, 0.14);
+  border: 1rpx solid rgba(255, 255, 255, 0.22);
+  border-radius: 22rpx;
+  padding: 16rpx 10rpx;
+}
+
+.wb-metric-item {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 4rpx;
+}
+
+.wb-metric-val {
+  font-size: 34rpx;
+  font-weight: 800;
+  line-height: 1.15;
+  color: #ffffff;
+}
+
+.wb-metric-lbl {
+  font-size: 20rpx;
+  color: rgba(255, 255, 255, 0.88);
+}
+
+/* 主体内容 */
+.wb-body {
+  margin-top: -16rpx;
+  position: relative;
+  z-index: 2;
+}
+
+/* 扫码快查卡片 */
+.workspace-scan {
+  padding: 24rpx;
+  margin-bottom: 18rpx;
+}
+
+.wb-scan-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16rpx;
+}
+
+.wb-scan-title-row {
+  display: flex;
+  align-items: center;
+  gap: 10rpx;
+}
+
+.wb-scan-dot {
+  width: 7rpx;
+  height: 24rpx;
+  border-radius: 4rpx;
+  background: #d81e06;
+}
+
+.wb-scan-title {
+  font-size: 28rpx;
+  font-weight: 800;
+  color: #1f2329;
+}
+
+.wb-scan-tip {
+  font-size: 22rpx;
+  color: #64748b;
+  margin-top: 0;
+}
+
+.wb-scan-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10rpx;
+  margin-top: 16rpx;
+}
+
+.wb-scan-tag {
+  font-size: 21rpx;
+  color: #64748b;
+  background: #f8fafc;
+  border: 1rpx solid #e2e8f0;
+  padding: 4rpx 14rpx;
+  border-radius: 999rpx;
+}
+
+/* 盘点冻结提醒 */
+.workspace-freeze {
+  display: flex;
+  align-items: flex-start;
+  gap: 16rpx;
+  padding: 20rpx 22rpx;
+  margin-bottom: 18rpx;
+  border-radius: 22rpx;
+  background: linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%);
+  border: 1rpx solid #fcd34d;
+  color: #92400e;
+  box-shadow: 0 6rpx 18rpx rgba(217, 119, 6, 0.08);
+}
+
+.workspace-freeze.overdue {
+  background: linear-gradient(135deg, #fff1f0 0%, #ffe4e6 100%);
+  border-color: #fca5a5;
+  color: #da2815;
+}
+
+.wb-freeze-icon {
+  width: 60rpx;
+  height: 60rpx;
+  border-radius: 16rpx;
+  background: rgba(245, 158, 11, 0.16);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.workspace-freeze.overdue .wb-freeze-icon {
+  background: rgba(218, 40, 21, 0.12);
+}
+
+.wb-freeze-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6rpx;
+}
+
+.wb-freeze-title {
+  font-size: 26rpx;
+  font-weight: 800;
+}
+
+.wb-freeze-desc {
+  font-size: 23rpx;
+  line-height: 1.5;
+  opacity: 0.92;
+}
+
+/* 分区标题栏 */
+.wb-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 0 18rpx;
+}
+
+.wb-card-section-head {
+  border-bottom: 1rpx solid #f1f5f9;
+  margin-bottom: 18rpx;
+}
+
+.wb-section-title-group {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+}
+
+.wb-section-dot {
+  width: 8rpx;
+  height: 28rpx;
+  border-radius: 4rpx;
+  background: #d81e06;
+}
+
+.wb-section-title {
+  font-size: 29rpx;
+  font-weight: 800;
+  color: #1f2329;
+}
+
+.wb-section-sub {
+  font-size: 22rpx;
+  color: #8c95a6;
+}
+
+.wb-section-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4rpx;
+  font-size: 24rpx;
+  font-weight: 700;
+  color: #d81e06;
+}
+
+.wb-todo-count-badge {
+  padding: 2rpx 14rpx;
+  border-radius: 999rpx;
+  background: #fff1f0;
+  color: #d81e06;
+  font-size: 22rpx;
+  font-weight: 800;
+}
+
+/* 快捷作业卡片网格 */
+.wb-shortcuts-card {
+  padding: 24rpx;
+}
+
+.workspace-shortcuts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14rpx;
+}
+
+.workspace-shortcut {
+  background: #f8fafc;
+  border-radius: 20rpx;
+  padding: 20rpx 10rpx 18rpx;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  border: 1rpx solid #eef2f6;
+  transition: transform 0.15s ease, background 0.15s ease;
+}
+
+.workspace-shortcut:active {
+  transform: scale(0.97);
+  background: #fff1f0;
+}
+
+.shortcut-icon-wrap {
+  width: 76rpx;
+  height: 76rpx;
+  border-radius: 22rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 10rpx;
+  flex-shrink: 0;
+}
+
+.icon-theme-red {
+  background: linear-gradient(135deg, #fff1f0, #ffccc7);
+  color: #d81e06;
+}
+
+.icon-theme-orange {
+  background: linear-gradient(135deg, #fff7ed, #fed7aa);
+  color: #ea580c;
+}
+
+.icon-theme-amber {
+  background: linear-gradient(135deg, #fffbeb, #fde68a);
+  color: #d97706;
+}
+
+.icon-theme-blue {
+  background: linear-gradient(135deg, #f0f9ff, #bae6fd);
+  color: #0284c7;
+}
+
+.icon-theme-purple {
+  background: linear-gradient(135deg, #f5f3ff, #ddd6fe);
+  color: #7c3aed;
+}
+
+.icon-theme-green {
+  background: linear-gradient(135deg, #ecfdf5, #a7f3d0);
+  color: #059669;
+}
+
+.shortcut-title {
+  font-size: 26rpx;
+  font-weight: 800;
+  color: #1f2329;
+  line-height: 1.3;
+}
+
+.shortcut-sub {
+  font-size: 20rpx;
+  color: #64748b;
+  margin-top: 4rpx;
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+/* 待办队列卡片 */
+.wb-todos-card {
+  padding: 24rpx;
+}
+
+.wb-inline-empty {
+  padding: 48rpx 20rpx;
+}
+
+.wb-todo-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.workspace-todo {
+  padding: 22rpx 0;
+  border-bottom: 1rpx solid #edf2f7;
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+}
+
+.workspace-todo:first-child {
+  padding-top: 4rpx;
+}
+
+.workspace-todo:last-child {
+  border-bottom: 0;
+  padding-bottom: 4rpx;
+}
+
+.wb-todo-icon {
+  width: 72rpx;
+  height: 72rpx;
+  border-radius: 20rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.workspace-todo-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8rpx;
+}
+
+.workspace-todo-head {
+  display: flex;
+  align-items: center;
+  gap: 10rpx;
+  flex-wrap: wrap;
+}
+
+.workspace-tag {
+  flex-shrink: 0;
+  padding: 4rpx 14rpx;
+  border-radius: 8rpx;
+  font-size: 21rpx;
+  font-weight: 700;
+}
+
+.tag-red {
+  background: #fff1f0;
+  color: #d81e06;
+}
+
+.tag-orange {
+  background: #fff7ed;
+  color: #c2410c;
+}
+
+.tag-amber {
+  background: #fffbeb;
+  color: #b45309;
+}
+
+.tag-blue {
+  background: #f0f9ff;
+  color: #0369a1;
+}
+
+.tag-purple {
+  background: #f5f3ff;
+  color: #6d28d9;
+}
+
+.workspace-todo-title {
+  font-size: 27rpx;
+  font-weight: 800;
+  color: #10223e;
+  word-break: break-all;
+}
+
+.workspace-todo-detail {
+  font-size: 24rpx;
+  color: #64748b;
+  line-height: 1.5;
+  word-break: break-all;
+}
+
+.workspace-todo-side {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 8rpx;
+}
+
+.workspace-todo-button {
+  width: auto !important;
+  min-width: 124rpx;
+  height: 60rpx;
+  min-height: 60rpx;
+  padding: 0 22rpx;
+  margin: 0;
+  border-radius: 999rpx;
+  background: linear-gradient(135deg, #d81e06 0%, #ef1008 100%);
+  color: #ffffff;
+  font-size: 24rpx;
+  font-weight: 700;
+  line-height: 1.2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 6rpx 14rpx rgba(216, 30, 6, 0.2);
+  box-sizing: border-box;
+}
+
+.workspace-todo-button::after {
+  border: 0;
+}
+
+.wb-empty-title {
+  font-size: 29rpx;
+  font-weight: 800;
+  color: #1f2329;
+  margin-top: 8rpx;
+}
+
+.wb-login-btn,
+.wb-retry-btn {
+  margin-top: 12rpx;
+  max-width: 420rpx;
+}

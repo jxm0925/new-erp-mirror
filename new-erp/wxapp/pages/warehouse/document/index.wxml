@@ -1,68 +1,532 @@
+<warehouse-context />
+
 <view class="warehouse-page">
-  <view wx:if="{{loading}}" class="warehouse-empty"><van-loading color="#ef1008"/></view>
+  <view wx:if="{{loading}}" class="warehouse-empty">
+    <van-loading color="#d81e06" size="44rpx" />
+    <text class="warehouse-muted">正在加载单据详情...</text>
+  </view>
+
   <block wx:else>
     <view wx:if="{{error}}" class="warehouse-error">{{error}}</view>
     <button wx:if="{{!header.id && error}}" class="warehouse-secondary" bindtap="load">重新加载</button>
+
     <block wx:if="{{header.id}}">
       <view wx:if="{{readonly && !receipt}}" class="warehouse-note">当前单据暂无可办理操作，可查看以下信息。</view>
-      <view class="warehouse-card"><view wx:for="{{headerFields}}" wx:key="label" class="warehouse-field"><text class="warehouse-label">{{item.label}}</text><text class="warehouse-value {{item.label === '单据状态' || item.label === '工单状态' ? 'warehouse-danger' : ''}}">{{item.value}}</text></view></view>
-      <view wx:if="{{actionChoices.length}}" class="warehouse-card"><view class="warehouse-card-title">本次办理</view><view class="document-action-switch"><button wx:for="{{actionChoices}}" wx:key="value" class="{{mainAction === item.value ? 'warehouse-primary' : 'warehouse-secondary'}} document-small-button" data-action="{{item.value}}" disabled="{{busy || pendingAction}}" bindtap="chooseAction">{{item.label}}</button></view><view class="warehouse-muted">有新追加的明细还没移至待发区；已就绪的包裹可以先发。</view></view>
-      <view wx:if="{{mainAction === 'sales_shipment.post'}}" class="warehouse-card">
-        <view class="warehouse-card-title">移至待发区</view>
-        <button class="warehouse-secondary" disabled="{{busy || pendingAction}}" bindtap="openLocator">{{locator.location_id ? locator.warehouse_name + ' / ' + locator.location_name : '选择待发仓库和库位'}}</button>
+
+      <!-- 单据抬头信息卡 -->
+      <view class="warehouse-card">
+        <view class="phase-heading">单据信息</view>
+        <view wx:for="{{headerFields}}" wx:key="label" class="warehouse-field">
+          <text class="warehouse-label">{{item.label}}</text>
+          <text class="warehouse-value {{item.label === '单据状态' || item.label === '工单状态' ? 'warehouse-danger' : ''}}">{{item.value}}</text>
+        </view>
       </view>
+
+      <!-- 多动作切换卡 -->
+      <view wx:if="{{actionChoices.length}}" class="warehouse-card">
+        <view class="phase-heading">本次办理</view>
+        <view class="document-action-switch">
+          <button
+            wx:for="{{actionChoices}}"
+            wx:key="value"
+            class="{{mainAction === item.value ? 'warehouse-primary' : 'warehouse-secondary'}} document-small-button"
+            data-action="{{item.value}}"
+            disabled="{{busy || pendingAction}}"
+            bindtap="chooseAction"
+          >{{item.label}}</button>
+        </view>
+        <view class="warehouse-muted">有新追加的明细还没移至待发区；已就绪的包裹可以先发。</view>
+      </view>
+
+      <!-- 销售出库：移至待发区 -->
+      <view wx:if="{{mainAction === 'sales_shipment.post'}}" class="warehouse-card">
+        <view class="phase-heading">移至待发区</view>
+        <button class="warehouse-secondary" disabled="{{busy || pendingAction}}" bindtap="openLocator">
+          <van-icon name="location-o" size="30rpx" />
+          <text>{{locator.location_id ? locator.warehouse_name + ' / ' + locator.location_name : '选择待发仓库和库位'}}</text>
+        </button>
+      </view>
+
+      <!-- 销售发运 / 提货 -->
       <view wx:if="{{mainAction === 'sales_shipment.dispatch'}}" class="warehouse-card">
-        <view class="warehouse-card-title">本次发运 / 提货</view>
-        <radio-group bindchange="chooseDeliveryMode"><label class="warehouse-field"><radio value="dispatch" checked="{{deliveryMode === 'dispatch'}}" color="#008b4b"/>公司发运</label><label class="warehouse-field"><radio value="pickup" checked="{{deliveryMode === 'pickup'}}" color="#008b4b"/>客户提货</label></radio-group>
+        <view class="phase-heading">本次发运 / 提货</view>
+        <radio-group class="doc-radio-group" bindchange="chooseDeliveryMode">
+          <label class="doc-radio-pill {{deliveryMode === 'dispatch' ? 'is-checked' : ''}}">
+            <radio value="dispatch" checked="{{deliveryMode === 'dispatch'}}" color="#d81e06" />
+            <text>公司发运</text>
+          </label>
+          <label class="doc-radio-pill {{deliveryMode === 'pickup' ? 'is-checked' : ''}}">
+            <radio value="pickup" checked="{{deliveryMode === 'pickup'}}" color="#d81e06" />
+            <text>客户提货</text>
+          </label>
+        </radio-group>
+
         <block wx:if="{{deliveryMode === 'dispatch'}}">
-          <view class="warehouse-field"><text class="warehouse-label">快递公司</text><input class="warehouse-input warehouse-value" value="{{carrierName}}" data-field="carrierName" bindinput="dispatchInput" maxlength="120" placeholder="如：顺丰速运" disabled="{{busy || pendingAction}}"/></view>
-          <view class="warehouse-field"><text class="warehouse-label">运单号</text><input class="warehouse-input warehouse-value" value="{{trackingNo}}" data-field="trackingNo" bindinput="dispatchInput" maxlength="120" placeholder="选中的包裹共用这个单号" disabled="{{busy || pendingAction}}"/></view>
+          <view class="warehouse-field">
+            <text class="warehouse-label">快递公司</text>
+            <input
+              class="warehouse-input warehouse-value"
+              value="{{carrierName}}"
+              data-field="carrierName"
+              bindinput="dispatchInput"
+              maxlength="120"
+              placeholder="如：顺丰速运"
+              disabled="{{busy || pendingAction}}"
+            />
+          </view>
+          <view class="warehouse-field">
+            <text class="warehouse-label">运单号</text>
+            <input
+              class="warehouse-input warehouse-value"
+              value="{{trackingNo}}"
+              data-field="trackingNo"
+              bindinput="dispatchInput"
+              maxlength="120"
+              placeholder="选中的包裹共用这个单号"
+              disabled="{{busy || pendingAction}}"
+            />
+          </view>
         </block>
-        <view class="document-section-heading"><text>选择本次发出的包裹（已选 {{selectedPackageIds.length}} 件）</text><button class="warehouse-secondary document-small-button" disabled="{{busy || pendingAction}}" bindtap="selectAllReady">全选就绪</button></view>
+
+        <view class="document-section-heading">
+          <text>选择本次发出的包裹（已选 {{selectedPackageIds.length}} 件）</text>
+          <button
+            class="warehouse-secondary document-small-button"
+            disabled="{{busy || pendingAction}}"
+            bindtap="selectAllReady"
+          >全选就绪</button>
+        </view>
+
         <checkbox-group bindchange="chooseDispatchPackages">
-          <label wx:for="{{dispatchPackages}}" wx:key="id" class="warehouse-field"><checkbox value="{{item.id}}" checked="{{item.selected}}" disabled="{{busy || pendingAction || !item.ready}}" color="#008b4b"/><view>{{item.package_no}}<view wx:if="{{item.contents_text}}" class="warehouse-muted">{{item.contents_text}}</view><view class="warehouse-muted">{{item.ready ? '已就绪' : item.blockerText}}</view></view></label>
+          <label
+            wx:for="{{dispatchPackages}}"
+            wx:key="id"
+            class="doc-pkg-check {{item.selected ? 'is-selected' : ''}}"
+          >
+            <checkbox
+              value="{{item.id}}"
+              checked="{{item.selected}}"
+              disabled="{{busy || pendingAction || !item.ready}}"
+              color="#d81e06"
+            />
+            <view class="doc-pkg-main">
+              <view class="doc-pkg-no">{{item.package_no}}</view>
+              <view wx:if="{{item.contents_text}}" class="warehouse-muted">{{item.contents_text}}</view>
+              <view class="{{item.ready ? 'doc-pkg-ready' : 'warehouse-danger'}}">{{item.ready ? '✓ 已就绪' : item.blockerText}}</view>
+            </view>
+          </label>
         </checkbox-group>
         <view wx:if="{{!dispatchPackages.length}}" class="warehouse-muted">没有待发出的包裹</view>
       </view>
-      <view wx:if="{{receipt}}" class="warehouse-card document-result"><view class="warehouse-card-title document-success">已办理</view><view class="warehouse-field"><text class="warehouse-label">凭证单号</text><text class="warehouse-value">{{receipt.receipt_no || receipt.transaction_no}}</text></view><view wx:if="{{receipt.posted_at || receipt.created_at}}" class="warehouse-field"><text class="warehouse-label">办理时间</text><text class="warehouse-value">{{receipt.posted_at || receipt.created_at}}</text></view><view wx:if="{{receipt.posted_base_qty || receipt.posted_qty}}" class="warehouse-field"><text class="warehouse-label">入库数量</text><text class="warehouse-value">{{receipt.posted_base_qty || receipt.posted_qty}} {{item.unit.unit_name}}</text></view><view wx:if="{{receipt.warehouse_name}}" class="warehouse-field"><text class="warehouse-label">仓库 / 库位</text><text class="warehouse-value">{{receipt.warehouse_name}} / {{receipt.location_name}}</text></view><view wx:if="{{receipt.batch_no}}" class="warehouse-field"><text class="warehouse-label">批次</text><text class="warehouse-value">{{receipt.batch_no}}</text></view></view>
-      <block wx:for="{{lines}}" wx:for-item="line" wx:key="id">
-        <view class="document-section-heading"><text>{{kind === 'sales_return' ? '退货物品' : kind === 'sales_shipment' ? '出库物料' : kind === 'purchase_return' ? '退货物料' : '物料信息'}}</text></view>
-        <view class="warehouse-card"><view class="warehouse-field"><text class="warehouse-label">物料编码</text><text class="warehouse-value">{{line.itemCode}}</text></view><view class="warehouse-field"><text class="warehouse-label">物料名称</text><text class="warehouse-value">{{line.itemName}}</text></view><view class="warehouse-field"><text class="warehouse-label">规格说明</text><text class="warehouse-value">{{line.spec}}</text></view><view class="warehouse-field"><text class="warehouse-label">计量单位</text><text class="warehouse-value">{{line.unit}}</text></view>
-          <view wx:if="{{line.sourceShipments}}" class="warehouse-field"><text class="warehouse-label">原发货单号</text><text class="warehouse-value">{{line.sourceShipments}}</text></view>
-          <view wx:for="{{line.costFields}}" wx:key="label" class="warehouse-field"><text class="warehouse-label">{{item.label}}</text><text class="warehouse-value">{{item.value}}</text></view>
-          <view wx:for="{{line.sourceCosts}}" wx:key="key" class="warehouse-field"><text class="warehouse-label">原批次 {{item.batch_no || '—'}}</text><view class="warehouse-value"><view wx:if="{{item.unitCost}}">成本单价 {{item.unitCost}}</view><view wx:if="{{item.amount}}">成本金额 {{item.amount}}</view></view></view>
-          <view wx:if="{{kind === 'purchase_receipt'}}" class="document-stats"><view>验收数量 <text class="warehouse-danger">{{line.qualified_base_qty}} {{line.unit}}</text></view><view>可入库数量 <text class="warehouse-danger">{{line.final_stockable_base_qty}} {{line.unit}}</text></view></view>
-          <block wx:if="{{kind === 'sales_return' && stage === 'post'}}"><view class="warehouse-field"><text class="warehouse-label">已收货数量</text><text class="warehouse-value">{{line.received_base_qty}} {{line.unit}}</text></view><view class="warehouse-field"><text class="warehouse-label">生产批次</text><text class="warehouse-value">{{line.batch_no || '—'}}</text></view></block>
+
+      <!-- 已办理凭证 -->
+      <view wx:if="{{receipt}}" class="warehouse-card document-result">
+        <view class="phase-heading document-success">已办理凭证</view>
+        <view class="warehouse-field">
+          <text class="warehouse-label">凭证单号</text>
+          <text class="warehouse-value">{{receipt.receipt_no || receipt.transaction_no}}</text>
         </view>
+        <view wx:if="{{receipt.posted_at || receipt.created_at}}" class="warehouse-field">
+          <text class="warehouse-label">办理时间</text>
+          <text class="warehouse-value">{{receipt.posted_at || receipt.created_at}}</text>
+        </view>
+        <view wx:if="{{receipt.posted_base_qty || receipt.posted_qty}}" class="warehouse-field">
+          <text class="warehouse-label">入库数量</text>
+          <text class="warehouse-value warehouse-danger">{{receipt.posted_base_qty || receipt.posted_qty}} {{item.unit.unit_name}}</text>
+        </view>
+        <view wx:if="{{receipt.warehouse_name}}" class="warehouse-field">
+          <text class="warehouse-label">仓库 / 库位</text>
+          <text class="warehouse-value">{{receipt.warehouse_name}} / {{receipt.location_name}}</text>
+        </view>
+        <view wx:if="{{receipt.batch_no}}" class="warehouse-field">
+          <text class="warehouse-label">批次</text>
+          <text class="warehouse-value">{{receipt.batch_no}}</text>
+        </view>
+      </view>
+
+      <!-- 明细行循环 -->
+      <block wx:for="{{lines}}" wx:for-item="line" wx:key="id">
+        <view class="document-section-heading">
+          <text>{{kind === 'sales_return' ? '退货物品' : kind === 'sales_shipment' ? '出库物料' : kind === 'purchase_return' ? '退货物料' : '物料信息'}}</text>
+        </view>
+
+        <view class="warehouse-card">
+          <view class="warehouse-field">
+            <text class="warehouse-label">物料编码</text>
+            <text class="warehouse-value">{{line.itemCode}}</text>
+          </view>
+          <view class="warehouse-field">
+            <text class="warehouse-label">物料名称</text>
+            <text class="warehouse-value">{{line.itemName}}</text>
+          </view>
+          <view class="warehouse-field">
+            <text class="warehouse-label">规格说明</text>
+            <text class="warehouse-value">{{line.spec}}</text>
+          </view>
+          <view class="warehouse-field">
+            <text class="warehouse-label">计量单位</text>
+            <text class="warehouse-value">{{line.unit}}</text>
+          </view>
+          <view wx:if="{{line.sourceShipments}}" class="warehouse-field">
+            <text class="warehouse-label">原发货单号</text>
+            <text class="warehouse-value">{{line.sourceShipments}}</text>
+          </view>
+          <view wx:for="{{line.costFields}}" wx:key="label" class="warehouse-field">
+            <text class="warehouse-label">{{item.label}}</text>
+            <text class="warehouse-value">{{item.value}}</text>
+          </view>
+          <view wx:for="{{line.sourceCosts}}" wx:key="key" class="warehouse-field">
+            <text class="warehouse-label">原批次 {{item.batch_no || '—'}}</text>
+            <view class="warehouse-value">
+              <view wx:if="{{item.unitCost}}">成本单价 {{item.unitCost}}</view>
+              <view wx:if="{{item.amount}}">成本金额 {{item.amount}}</view>
+            </view>
+          </view>
+          <view wx:if="{{kind === 'purchase_receipt'}}" class="document-stats">
+            <view>验收数量 <text class="warehouse-danger">{{line.qualified_base_qty}} {{line.unit}}</text></view>
+            <view>可入库数量 <text class="warehouse-danger">{{line.final_stockable_base_qty}} {{line.unit}}</text></view>
+          </view>
+          <block wx:if="{{kind === 'sales_return' && stage === 'post'}}">
+            <view class="warehouse-field">
+              <text class="warehouse-label">已收货数量</text>
+              <text class="warehouse-value">{{line.received_base_qty}} {{line.unit}}</text>
+            </view>
+            <view class="warehouse-field">
+              <text class="warehouse-label">生产批次</text>
+              <text class="warehouse-value">{{line.batch_no || '—'}}</text>
+            </view>
+          </block>
+        </view>
+
+        <!-- 采购收货分配明细 -->
         <block wx:if="{{kind === 'purchase_receipt'}}">
-          <view class="document-section-heading"><text>分配明细</text><button wx:if="{{canAllocate}}" class="warehouse-secondary document-small-button" data-id="{{line.id}}" bindtap="openAllocation" disabled="{{busy || pendingAction}}">调整分配</button></view>
-          <view wx:for="{{line.allocations}}" wx:for-item="allocation" wx:key="id" class="warehouse-card"><view class="warehouse-field"><text class="warehouse-label">仓库</text><text class="warehouse-value">{{allocation.warehouse.warehouse_name}}</text></view><view class="warehouse-field"><text class="warehouse-label">库位</text><text class="warehouse-value">{{allocation.location.location_name}}（{{allocation.location.location_code}}）</text></view><view class="warehouse-field"><text class="warehouse-label">本次入库数量</text><text class="warehouse-value">{{allocation.base_qty}} {{line.unit}}</text></view><view class="warehouse-field"><text class="warehouse-label">批次号</text><text class="warehouse-value">{{line.batch_no}}</text></view>
-            <view wx:if="{{allocation.physical_entries.length}}" class="warehouse-table-scroll"><view class="warehouse-table"><view class="warehouse-tr warehouse-th"><text class="warehouse-td">序号</text><text class="warehouse-td">尺寸（mm）</text><text class="warehouse-td">数量</text></view><view wx:for="{{allocation.physical_entries}}" wx:for-item="physical" wx:for-index="pi" wx:key="id" class="warehouse-tr"><text class="warehouse-td">{{pi + 1}}</text><text class="warehouse-td">{{physical.dimensionText}}</text><text class="warehouse-td">1 {{line.unit}}</text></view></view></view>
-            <view wx:if="{{allocation.serial_nos.length}}" class="warehouse-field"><text class="warehouse-label">序列号</text><view class="warehouse-value"><view wx:for="{{allocation.serial_nos}}" wx:key="*this">{{item}}</view></view></view>
-          </view><view wx:if="{{!line.allocations.length}}" class="warehouse-card warehouse-muted">尚未分配仓库和库位</view>
+          <view class="document-section-heading">
+            <text>分配明细</text>
+            <button
+              wx:if="{{canAllocate}}"
+              class="warehouse-secondary document-small-button"
+              data-id="{{line.id}}"
+              bindtap="openAllocation"
+              disabled="{{busy || pendingAction}}"
+            >调整分配</button>
+          </view>
+          <view wx:for="{{line.allocations}}" wx:for-item="allocation" wx:key="id" class="warehouse-card">
+            <view class="warehouse-field">
+              <text class="warehouse-label">仓库</text>
+              <text class="warehouse-value">{{allocation.warehouse.warehouse_name}}</text>
+            </view>
+            <view class="warehouse-field">
+              <text class="warehouse-label">库位</text>
+              <text class="warehouse-value">{{allocation.location.location_name}}（{{allocation.location.location_code}}）</text>
+            </view>
+            <view class="warehouse-field">
+              <text class="warehouse-label">本次入库数量</text>
+              <text class="warehouse-value warehouse-danger">{{allocation.base_qty}} {{line.unit}}</text>
+            </view>
+            <view class="warehouse-field">
+              <text class="warehouse-label">批次号</text>
+              <text class="warehouse-value">{{line.batch_no}}</text>
+            </view>
+            <view wx:if="{{allocation.physical_entries.length}}" class="warehouse-table-scroll">
+              <view class="warehouse-table">
+                <view class="warehouse-tr warehouse-th">
+                  <text class="warehouse-td">序号</text>
+                  <text class="warehouse-td">尺寸（mm）</text>
+                  <text class="warehouse-td">数量</text>
+                </view>
+                <view
+                  wx:for="{{allocation.physical_entries}}"
+                  wx:for-item="physical"
+                  wx:for-index="pi"
+                  wx:key="id"
+                  class="warehouse-tr"
+                >
+                  <text class="warehouse-td">{{pi + 1}}</text>
+                  <text class="warehouse-td">{{physical.dimensionText}}</text>
+                  <text class="warehouse-td">1 {{line.unit}}</text>
+                </view>
+              </view>
+            </view>
+            <view wx:if="{{allocation.serial_nos.length}}" class="warehouse-field">
+              <text class="warehouse-label">序列号</text>
+              <view class="warehouse-value">
+                <view wx:for="{{allocation.serial_nos}}" wx:key="*this">{{item}}</view>
+              </view>
+            </view>
+          </view>
+          <view wx:if="{{!line.allocations.length}}" class="warehouse-card warehouse-muted">尚未分配仓库和库位</view>
         </block>
+
+        <!-- 销售退货收货 -->
         <block wx:if="{{kind === 'sales_return' && stage === 'receive'}}">
-          <view class="warehouse-card"><view class="warehouse-field"><text class="warehouse-label">应退数量</text><text class="warehouse-value">{{line.requested_base_qty}} {{line.unit}}</text></view><view class="warehouse-field"><text class="warehouse-label">待收数量</text><text class="warehouse-value">{{line.remaining_receivable_qty}} {{line.unit}}</text></view>
-            <view class="warehouse-field" data-id="{{line.id}}" bindtap="openReturnSerial"><text class="warehouse-label">本次实收数量</text><view wx:if="{{line.serialTracked}}" class="warehouse-input warehouse-value warehouse-readonly">{{line.draft.received_base_qty || '0'}}</view><input wx:else class="warehouse-input warehouse-value" type="digit" value="{{line.draft.received_base_qty}}" data-id="{{line.id}}" data-field="received_base_qty" bindinput="returnInput" disabled="{{busy || pendingAction || !mainAction}}"/><text>{{line.unit}}</text></view></view>
-          <view class="warehouse-card"><view class="warehouse-card-title">处理去向</view><view class="warehouse-muted">各处理数量合计须等于本次实收数量</view>
-            <view class="warehouse-field" data-id="{{line.id}}" bindtap="openReturnSerial"><text class="warehouse-label">可重新入库</text><view wx:if="{{line.serialTracked}}" class="warehouse-input warehouse-value warehouse-readonly">{{line.draft.restock_base_qty || '0'}}</view><input wx:else class="warehouse-input warehouse-value" type="digit" value="{{line.draft.restock_base_qty}}" data-id="{{line.id}}" data-field="restock_base_qty" bindinput="returnInput" disabled="{{busy || pendingAction || !mainAction}}"/><text>{{line.unit}}</text></view>
-            <view class="warehouse-field" data-id="{{line.id}}" bindtap="openReturnSerial"><text class="warehouse-label">待检</text><view wx:if="{{line.serialTracked}}" class="warehouse-input warehouse-value warehouse-readonly">{{line.draft.pending_base_qty || '0'}}</view><input wx:else class="warehouse-input warehouse-value" type="digit" value="{{line.draft.pending_base_qty}}" data-id="{{line.id}}" data-field="pending_base_qty" bindinput="returnInput" disabled="{{busy || pendingAction || !mainAction}}"/><text>{{line.unit}}</text></view>
-            <view class="warehouse-field" data-id="{{line.id}}" bindtap="openReturnSerial"><text class="warehouse-label">报废</text><view wx:if="{{line.serialTracked}}" class="warehouse-input warehouse-value warehouse-readonly">{{line.draft.scrap_base_qty || '0'}}</view><input wx:else class="warehouse-input warehouse-value" type="digit" value="{{line.draft.scrap_base_qty}}" data-id="{{line.id}}" data-field="scrap_base_qty" bindinput="returnInput" disabled="{{busy || pendingAction || !mainAction}}"/><text>{{line.unit}}</text></view>
-            <view class="warehouse-field" data-id="{{line.id}}" bindtap="openReturnSerial"><text class="warehouse-label">拒收</text><view wx:if="{{line.serialTracked}}" class="warehouse-input warehouse-value warehouse-readonly">{{line.draft.rejected_base_qty || '0'}}</view><input wx:else class="warehouse-input warehouse-value" type="digit" value="{{line.draft.rejected_base_qty}}" data-id="{{line.id}}" data-field="rejected_base_qty" bindinput="returnInput" disabled="{{busy || pendingAction || !mainAction}}"/><text>{{line.unit}}</text></view>
-            <view class="warehouse-field"><text class="warehouse-label">仓库 / 库位</text><view class="warehouse-value warehouse-input warehouse-kv-select" data-target="return" data-id="{{line.id}}" bindtap="openLocator"><text>{{line.draft.locator.location_id ? line.draft.locator.warehouse_name + ' / ' + line.draft.locator.location_name : '请选择'}}</text><van-icon name="arrow"/></view></view>
-            <view class="warehouse-field"><text class="warehouse-label">生产批次</text><view wx:if="{{line.serialTracked}}" class="warehouse-input warehouse-value warehouse-readonly">{{line.draft.batch_no || '—'}}</view><input wx:else class="warehouse-input warehouse-value" value="{{line.draft.batch_no}}" data-id="{{line.id}}" data-field="batch_no" bindinput="returnInput" disabled="{{busy || pendingAction || !mainAction}}"/></view><view class="warehouse-field"><text class="warehouse-label">检验说明</text><textarea class="warehouse-input warehouse-value" value="{{line.draft.inspection_remark}}" data-id="{{line.id}}" data-field="inspection_remark" bindinput="returnInput" maxlength="1000" disabled="{{busy || pendingAction || !mainAction}}"/></view>
+          <view class="warehouse-card">
+            <view class="warehouse-field">
+              <text class="warehouse-label">应退数量</text>
+              <text class="warehouse-value">{{line.requested_base_qty}} {{line.unit}}</text>
+            </view>
+            <view class="warehouse-field">
+              <text class="warehouse-label">待收数量</text>
+              <text class="warehouse-value warehouse-danger">{{line.remaining_receivable_qty}} {{line.unit}}</text>
+            </view>
+            <view class="warehouse-field" data-id="{{line.id}}" bindtap="openReturnSerial">
+              <text class="warehouse-label">本次实收数量</text>
+              <view wx:if="{{line.serialTracked}}" class="warehouse-input warehouse-value warehouse-readonly">{{line.draft.received_base_qty || '0'}}</view>
+              <input
+                wx:else
+                class="warehouse-input warehouse-value"
+                type="digit"
+                value="{{line.draft.received_base_qty}}"
+                data-id="{{line.id}}"
+                data-field="received_base_qty"
+                bindinput="returnInput"
+                disabled="{{busy || pendingAction || !mainAction}}"
+              />
+              <text>{{line.unit}}</text>
+            </view>
+          </view>
+
+          <view class="warehouse-card">
+            <view class="phase-heading">处理去向</view>
+            <view class="warehouse-muted">各处理数量合计须等于本次实收数量</view>
+            <view class="warehouse-field" data-id="{{line.id}}" bindtap="openReturnSerial">
+              <text class="warehouse-label">可重新入库</text>
+              <view wx:if="{{line.serialTracked}}" class="warehouse-input warehouse-value warehouse-readonly">{{line.draft.restock_base_qty || '0'}}</view>
+              <input
+                wx:else
+                class="warehouse-input warehouse-value"
+                type="digit"
+                value="{{line.draft.restock_base_qty}}"
+                data-id="{{line.id}}"
+                data-field="restock_base_qty"
+                bindinput="returnInput"
+                disabled="{{busy || pendingAction || !mainAction}}"
+              />
+              <text>{{line.unit}}</text>
+            </view>
+            <view class="warehouse-field" data-id="{{line.id}}" bindtap="openReturnSerial">
+              <text class="warehouse-label">待检</text>
+              <view wx:if="{{line.serialTracked}}" class="warehouse-input warehouse-value warehouse-readonly">{{line.draft.pending_base_qty || '0'}}</view>
+              <input
+                wx:else
+                class="warehouse-input warehouse-value"
+                type="digit"
+                value="{{line.draft.pending_base_qty}}"
+                data-id="{{line.id}}"
+                data-field="pending_base_qty"
+                bindinput="returnInput"
+                disabled="{{busy || pendingAction || !mainAction}}"
+              />
+              <text>{{line.unit}}</text>
+            </view>
+            <view class="warehouse-field" data-id="{{line.id}}" bindtap="openReturnSerial">
+              <text class="warehouse-label">报废</text>
+              <view wx:if="{{line.serialTracked}}" class="warehouse-input warehouse-value warehouse-readonly">{{line.draft.scrap_base_qty || '0'}}</view>
+              <input
+                wx:else
+                class="warehouse-input warehouse-value"
+                type="digit"
+                value="{{line.draft.scrap_base_qty}}"
+                data-id="{{line.id}}"
+                data-field="scrap_base_qty"
+                bindinput="returnInput"
+                disabled="{{busy || pendingAction || !mainAction}}"
+              />
+              <text>{{line.unit}}</text>
+            </view>
+            <view class="warehouse-field" data-id="{{line.id}}" bindtap="openReturnSerial">
+              <text class="warehouse-label">拒收</text>
+              <view wx:if="{{line.serialTracked}}" class="warehouse-input warehouse-value warehouse-readonly">{{line.draft.rejected_base_qty || '0'}}</view>
+              <input
+                wx:else
+                class="warehouse-input warehouse-value"
+                type="digit"
+                value="{{line.draft.rejected_base_qty}}"
+                data-id="{{line.id}}"
+                data-field="rejected_base_qty"
+                bindinput="returnInput"
+                disabled="{{busy || pendingAction || !mainAction}}"
+              />
+              <text>{{line.unit}}</text>
+            </view>
+            <view class="warehouse-field">
+              <text class="warehouse-label">仓库 / 库位</text>
+              <view
+                class="warehouse-value warehouse-input warehouse-kv-select"
+                data-target="return"
+                data-id="{{line.id}}"
+                bindtap="openLocator"
+              >
+                <text>{{line.draft.locator.location_id ? line.draft.locator.warehouse_name + ' / ' + line.draft.locator.location_name : '请选择'}}</text>
+                <van-icon name="arrow" />
+              </view>
+            </view>
+            <view class="warehouse-field">
+              <text class="warehouse-label">生产批次</text>
+              <view wx:if="{{line.serialTracked}}" class="warehouse-input warehouse-value warehouse-readonly">{{line.draft.batch_no || '—'}}</view>
+              <input
+                wx:else
+                class="warehouse-input warehouse-value"
+                value="{{line.draft.batch_no}}"
+                data-id="{{line.id}}"
+                data-field="batch_no"
+                bindinput="returnInput"
+                disabled="{{busy || pendingAction || !mainAction}}"
+              />
+            </view>
+            <view class="warehouse-field">
+              <text class="warehouse-label">检验说明</text>
+              <textarea
+                class="warehouse-input warehouse-value"
+                value="{{line.draft.inspection_remark}}"
+                data-id="{{line.id}}"
+                data-field="inspection_remark"
+                bindinput="returnInput"
+                maxlength="1000"
+                disabled="{{busy || pendingAction || !mainAction}}"
+              />
+            </view>
           </view>
         </block>
-        <view wx:if="{{kind === 'sales_return' && stage === 'post'}}" class="warehouse-card"><view class="warehouse-card-title">入库信息</view><view class="warehouse-field"><text class="warehouse-label">仓库及库位</text><text class="warehouse-value warehouse-readonly">{{line.warehouseName || '—'}} / {{line.locationName || '—'}}</text></view><block wx:if="{{kind === 'sales_return'}}"><view class="warehouse-field"><text class="warehouse-label">可重新入库</text><text class="warehouse-value">{{line.restock_base_qty}} {{line.unit}}</text></view><view class="warehouse-field"><text class="warehouse-label">待检 / 报废 / 拒收</text><text class="warehouse-value">{{line.pending_base_qty}} / {{line.scrap_base_qty}} / {{line.rejected_base_qty}} {{line.unit}}</text></view></block></view>
+
+        <view wx:if="{{kind === 'sales_return' && stage === 'post'}}" class="warehouse-card">
+          <view class="phase-heading">入库信息</view>
+          <view class="warehouse-field">
+            <text class="warehouse-label">仓库及库位</text>
+            <text class="warehouse-value warehouse-readonly">{{line.warehouseName || '—'}} / {{line.locationName || '—'}}</text>
+          </view>
+          <block wx:if="{{kind === 'sales_return'}}">
+            <view class="warehouse-field">
+              <text class="warehouse-label">可重新入库</text>
+              <text class="warehouse-value">{{line.restock_base_qty}} {{line.unit}}</text>
+            </view>
+            <view class="warehouse-field">
+              <text class="warehouse-label">待检 / 报废 / 拒收</text>
+              <text class="warehouse-value">{{line.pending_base_qty}} / {{line.scrap_base_qty}} / {{line.rejected_base_qty}} {{line.unit}}</text>
+            </view>
+          </block>
+        </view>
+
         <block wx:if="{{kind === 'sales_shipment' || kind === 'purchase_return'}}">
-          <view class="warehouse-card"><view class="warehouse-card-title">{{kind === 'sales_shipment' ? '出库明细' : '物料明细'}}</view><view class="warehouse-field"><text class="warehouse-label">批次号</text><text class="warehouse-value">{{line.batch_no}}</text></view><view wx:if="{{line.serialNos}}" class="warehouse-field"><text class="warehouse-label">序列号</text><text class="warehouse-value">{{line.serialNos}}</text></view><view wx:for="{{line.physicals}}" wx:for-item="physical" wx:key="id" class="warehouse-field"><text class="warehouse-value">{{physical.physical_no}}</text><text class="warehouse-value">{{physical.dimensionText}} mm<text wx:if="{{physical.costText}}"> · 成本 {{physical.costText}}</text></text></view></view>
-          <view class="warehouse-card"><view class="warehouse-card-title">仓库信息</view><view class="warehouse-field"><text class="warehouse-label">仓库</text><text class="warehouse-value">{{line.warehouseName}}</text></view><view class="warehouse-field"><text class="warehouse-label">库位</text><text class="warehouse-value">{{line.locationName}}</text></view></view>
-          <view class="warehouse-card"><view class="warehouse-card-title">数量信息</view><view class="document-stats"><view wx:if="{{kind === 'sales_shipment'}}">已预留数量 <text>{{line.reservation.reserved_qty}} {{line.unit}}</text></view><view>{{kind === 'sales_shipment' ? '本次出库数量' : '本次退货数量'}} <text>{{kind === 'sales_shipment' ? line.base_qty : line.approved_base_qty}} {{line.unit}}</text></view></view></view>
+          <view class="warehouse-card">
+            <view class="phase-heading">{{kind === 'sales_shipment' ? '出库明细' : '物料明细'}}</view>
+            <view class="warehouse-field">
+              <text class="warehouse-label">批次号</text>
+              <text class="warehouse-value">{{line.batch_no}}</text>
+            </view>
+            <view wx:if="{{line.serialNos}}" class="warehouse-field">
+              <text class="warehouse-label">序列号</text>
+              <text class="warehouse-value">{{line.serialNos}}</text>
+            </view>
+            <view wx:for="{{line.physicals}}" wx:for-item="physical" wx:key="id" class="warehouse-field">
+              <text class="warehouse-value">{{physical.physical_no}}</text>
+              <text class="warehouse-value">{{physical.dimensionText}} mm<text wx:if="{{physical.costText}}"> · 成本 {{physical.costText}}</text></text>
+            </view>
+          </view>
+          <view class="warehouse-card">
+            <view class="phase-heading">仓库信息</view>
+            <view class="warehouse-field">
+              <text class="warehouse-label">仓库</text>
+              <text class="warehouse-value">{{line.warehouseName}}</text>
+            </view>
+            <view class="warehouse-field">
+              <text class="warehouse-label">库位</text>
+              <text class="warehouse-value">{{line.locationName}}</text>
+            </view>
+          </view>
+          <view class="warehouse-card">
+            <view class="phase-heading">数量信息</view>
+            <view class="document-stats">
+              <view wx:if="{{kind === 'sales_shipment'}}">已预留数量 <text>{{line.reservation.reserved_qty}} {{line.unit}}</text></view>
+              <view>{{kind === 'sales_shipment' ? '本次出库数量' : '本次退货数量'}} <text class="warehouse-danger">{{kind === 'sales_shipment' ? line.base_qty : line.approved_base_qty}} {{line.unit}}</text></view>
+            </view>
+          </view>
         </block>
       </block>
-      <view wx:if="{{total > 10}}" class="warehouse-pager"><text>共 {{total}} 项</text><button disabled="{{page <= 1 || busy}}" data-delta="-1" bindtap="turnPage">上一页</button><text>{{page}} / {{lastPage}}</text><button disabled="{{page >= lastPage || busy}}" data-delta="1" bindtap="turnPage">下一页</button></view>
-      <block wx:if="{{kind === 'sales_shipment'}}"><view class="warehouse-title">物流信息</view><view class="warehouse-card"><view class="warehouse-field"><text class="warehouse-label">包裹数量</text><text class="warehouse-value">{{packagesTotal}} 件（已发 {{shippedPackages.length}} 件）</text></view></view><view wx:for="{{dispatches}}" wx:key="id" class="warehouse-card"><view class="warehouse-card-title">第 {{index + 1}} 次{{item.modeText}}</view><view class="warehouse-field"><text class="warehouse-label">快递公司</text><text class="warehouse-value">{{item.carrier_name || '—'}}</text></view><view class="warehouse-field"><text class="warehouse-label">运单号</text><text class="warehouse-value">{{item.tracking_no || '—'}}</text></view><view class="warehouse-field"><text class="warehouse-label">包裹</text><text class="warehouse-value">{{item.packageCount}} 件</text></view><view class="warehouse-field"><text class="warehouse-label">发出时间</text><text class="warehouse-value">{{item.dispatched_at}}　{{item.operator_name || ''}}</text></view></view><view wx:for="{{packages}}" wx:key="id" class="warehouse-card"><view class="warehouse-field"><text class="warehouse-label">包裹编号</text><text class="warehouse-value">{{item.package_no}}</text></view><view wx:if="{{item.contents_text}}" class="warehouse-field"><text class="warehouse-label">内容</text><text class="warehouse-value">{{item.contents_text}}</text></view><view class="warehouse-field"><text class="warehouse-label">快递公司</text><text class="warehouse-value">{{item.carrier_name || header.carrier_name_snapshot || '—'}}</text></view><view class="warehouse-field"><text class="warehouse-label">运单号</text><text class="warehouse-value">{{item.tracking_no || '—'}}</text></view></view><view wx:if="{{packagesLast > 1}}" class="warehouse-pager"><button disabled="{{packagesPage <= 1}}" data-delta="-1" bindtap="turnPackages">上一页</button><text>{{packagesPage}} / {{packagesLast}}</text><button disabled="{{packagesPage >= packagesLast}}" data-delta="1" bindtap="turnPackages">下一页</button></view><view class="warehouse-card"><view class="warehouse-card-title">发运进度</view><view wx:if="{{header.confirmed_at}}" class="document-timeline">已确认<view class="warehouse-muted">{{header.confirmed_at}}　{{header.confirmed_by}}</view></view><view wx:if="{{header.outbound_posted_at}}" class="document-timeline">已出库<view class="warehouse-muted">{{header.outbound_posted_at}}　{{header.outbound_posted_by}}</view></view><view wx:if="{{header.shipped_at}}" class="document-timeline">已发运<view class="warehouse-muted">{{header.shipped_at}}　{{header.shipped_by}}</view></view></view></block>
-      <block wx:if="{{kind === 'purchase_receipt' && header.order}}"><view class="warehouse-title">相关单据</view><view class="warehouse-card document-related" bindtap="openRelated"><text>采购订单</text><text>{{header.order.purchase_order_no}}</text><van-icon name="arrow"/></view></block>
+
+      <view wx:if="{{total > 10}}" class="warehouse-pager">
+        <text>共 {{total}} 项</text>
+        <button disabled="{{page <= 1 || busy}}" data-delta="-1" bindtap="turnPage">上一页</button>
+        <text>{{page}} / {{lastPage}}</text>
+        <button disabled="{{page >= lastPage || busy}}" data-delta="1" bindtap="turnPage">下一页</button>
+      </view>
+
+      <!-- 销售发货物流与进度 -->
+      <block wx:if="{{kind === 'sales_shipment'}}">
+        <view class="warehouse-title">物流信息</view>
+        <view class="warehouse-card">
+          <view class="warehouse-field">
+            <text class="warehouse-label">包裹数量</text>
+            <text class="warehouse-value">{{packagesTotal}} 件（已发 {{shippedPackages.length}} 件）</text>
+          </view>
+        </view>
+        <view wx:for="{{dispatches}}" wx:key="id" class="warehouse-card">
+          <view class="phase-heading">第 {{index + 1}} 次{{item.modeText}}</view>
+          <view class="warehouse-field">
+            <text class="warehouse-label">快递公司</text>
+            <text class="warehouse-value">{{item.carrier_name || '—'}}</text>
+          </view>
+          <view class="warehouse-field">
+            <text class="warehouse-label">运单号</text>
+            <text class="warehouse-value">{{item.tracking_no || '—'}}</text>
+          </view>
+          <view class="warehouse-field">
+            <text class="warehouse-label">包裹</text>
+            <text class="warehouse-value">{{item.packageCount}} 件</text>
+          </view>
+          <view class="warehouse-field">
+            <text class="warehouse-label">发出时间</text>
+            <text class="warehouse-value">{{item.dispatched_at}}　{{item.operator_name || ''}}</text>
+          </view>
+        </view>
+        <view wx:for="{{packages}}" wx:key="id" class="warehouse-card">
+          <view class="warehouse-field">
+            <text class="warehouse-label">包裹编号</text>
+            <text class="warehouse-value">{{item.package_no}}</text>
+          </view>
+          <view wx:if="{{item.contents_text}}" class="warehouse-field">
+            <text class="warehouse-label">内容</text>
+            <text class="warehouse-value">{{item.contents_text}}</text>
+          </view>
+          <view class="warehouse-field">
+            <text class="warehouse-label">快递公司</text>
+            <text class="warehouse-value">{{item.carrier_name || header.carrier_name_snapshot || '—'}}</text>
+          </view>
+          <view class="warehouse-field">
+            <text class="warehouse-label">运单号</text>
+            <text class="warehouse-value">{{item.tracking_no || '—'}}</text>
+          </view>
+        </view>
+        <view wx:if="{{packagesLast > 1}}" class="warehouse-pager">
+          <button disabled="{{packagesPage <= 1}}" data-delta="-1" bindtap="turnPackages">上一页</button>
+          <text>{{packagesPage}} / {{packagesLast}}</text>
+          <button disabled="{{packagesPage >= packagesLast}}" data-delta="1" bindtap="turnPackages">下一页</button>
+        </view>
+        <view class="warehouse-card">
+          <view class="phase-heading">发运进度</view>
+          <view wx:if="{{header.confirmed_at}}" class="document-timeline">
+            <text class="doc-timeline-title">已确认</text>
+            <view class="warehouse-muted">{{header.confirmed_at}}　{{header.confirmed_by}}</view>
+          </view>
+          <view wx:if="{{header.outbound_posted_at}}" class="document-timeline">
+            <text class="doc-timeline-title">已出库</text>
+            <view class="warehouse-muted">{{header.outbound_posted_at}}　{{header.outbound_posted_by}}</view>
+          </view>
+          <view wx:if="{{header.shipped_at}}" class="document-timeline">
+            <text class="doc-timeline-title">已发运</text>
+            <view class="warehouse-muted">{{header.shipped_at}}　{{header.shipped_by}}</view>
+          </view>
+        </view>
+      </block>
+
+      <block wx:if="{{kind === 'purchase_receipt' && header.order}}">
+        <view class="warehouse-title">相关单据</view>
+        <view class="warehouse-card document-related" bindtap="openRelated">
+          <text class="warehouse-label">采购订单</text>
+          <text class="warehouse-value">{{header.order.purchase_order_no}}</text>
+          <van-icon name="arrow" color="#64748b" />
+        </view>
+      </block>
+
       <button wx:if="{{canPacking}}" class="warehouse-secondary document-packing-entry" bindtap="openPacking" disabled="{{busy}}">包装作业</button>
       <view wx:if="{{postingEligibility && !postingEligibility.can_post}}" class="warehouse-error">{{postingEligibility.reason_text}}</view>
       <button wx:if="{{mainAction || pendingAction}}" class="warehouse-primary" loading="{{busy}}" disabled="{{busy}}" bindtap="submit">{{pendingAction ? '查询原操作结果' : mainLabel}}</button>
@@ -70,13 +534,115 @@
     </block>
   </block>
 </view>
-<view wx:if="{{allocationOpen}}" class="warehouse-overlay" catchtouchmove="stop"><view class="warehouse-dialog"><view class="warehouse-dialog-header"><text>补充分配</text><button class="warehouse-close" disabled="{{busy}}" bindtap="closeAllocation"><van-icon name="cross"/></button></view><scroll-view scroll-y class="warehouse-dialog-body">
-  <view wx:for="{{allocations}}" wx:for-item="allocation" wx:for-index="ai" wx:key="uid" class="document-allocation"><view class="warehouse-field"><text class="warehouse-label">选择仓库及库位</text><view class="warehouse-value warehouse-input warehouse-kv-select" data-target="allocation" data-index="{{ai}}" bindtap="openLocator"><text>{{allocation.locator.location_id ? allocation.locator.warehouse_name + ' / ' + allocation.locator.location_name : '请选择'}}</text><van-icon name="arrow"/></view></view><view class="warehouse-field"><text class="warehouse-label">本次入库数量</text><input class="warehouse-input warehouse-value" type="digit" value="{{allocation.base_qty}}" data-index="{{ai}}" data-field="base_qty" bindinput="allocationInput" disabled="{{busy}}"/><text>{{allocationLine.unit}}</text></view>
-    <block wx:if="{{allocationLine.physical}}"><view class="warehouse-title">实物明细</view><view wx:for="{{allocation.physical_entries}}" wx:for-item="physical" wx:for-index="pi" wx:key="uid" class="document-allocation"><view class="document-section-heading"><text>实物 {{pi + 1}}</text><button class="warehouse-secondary document-small-button" disabled="{{busy}}" data-index="{{ai}}" data-piece="{{pi}}" bindtap="removePhysical">移除</button></view><view class="document-piece-fields"><view>长度（mm）<input class="warehouse-input" type="digit" value="{{physical.dimensions.length_mm}}" data-index="{{ai}}" data-piece="{{pi}}" data-field="length_mm" bindinput="allocationInput" disabled="{{busy}}"/></view><view>宽度（mm）<input class="warehouse-input" type="digit" value="{{physical.dimensions.width_mm}}" data-index="{{ai}}" data-piece="{{pi}}" data-field="width_mm" bindinput="allocationInput" disabled="{{busy}}"/></view><view>厚度（mm）<input class="warehouse-input" type="digit" value="{{physical.dimensions.thickness_mm}}" data-index="{{ai}}" data-piece="{{pi}}" data-field="thickness_mm" bindinput="allocationInput" disabled="{{busy}}"/></view><view>数量<view class="warehouse-readonly">1</view></view></view></view><button class="warehouse-secondary" disabled="{{busy}}" data-index="{{ai}}" bindtap="addPhysical">＋ 添加实物</button></block>
-    <view wx:if="{{allocationLine.serialTracked}}" class="warehouse-field"><text class="warehouse-label">序列号</text><textarea class="warehouse-input warehouse-value document-serials" value="{{allocation.serialText}}" data-index="{{ai}}" data-field="serialText" bindinput="allocationInput" placeholder="每行一个序列号" disabled="{{busy}}"/></view><button wx:if="{{allocations.length > 1}}" class="warehouse-secondary" disabled="{{busy}}" data-index="{{ai}}" bindtap="removeAllocation">移除此分配</button>
-  </view><button class="warehouse-secondary" disabled="{{busy}}" bindtap="addAllocation">＋ 添加库位分配</button><view class="warehouse-error">{{allocationError}}</view>
-</scroll-view><view class="warehouse-dialog-footer"><button class="warehouse-secondary" disabled="{{busy}}" bindtap="closeAllocation">取消</button><button class="warehouse-primary" disabled="{{busy}}" loading="{{busy}}" bindtap="saveAllocation">保存分配</button></view></view></view>
-<warehouse-locator open="{{locatorOpen}}" value="{{locatorValue}}" location-purpose="{{locatorPurpose}}" bind:confirm="chooseLocator" bind:cancel="closeLocator"/>
-<warehouse-return-serial open="{{returnSerialOpen}}" return-id="{{id}}" line="{{returnSerialLine}}" value="{{returnSerialValue}}" excluded="{{returnSerialExcluded}}" locked="{{busy || pendingAction}}" conflict="{{returnSerialConflict}}" bind:confirm="confirmReturnSerial" bind:cancel="cancelReturnSerial"/>
-<view wx:if="{{conflictOpen}}" class="warehouse-overlay" catchtouchmove="stop"><view class="warehouse-dialog"><view class="warehouse-dialog-header">{{pendingAction ? '操作结果待确认' : '单据或库存已变化'}}</view><view class="warehouse-dialog-body">{{error}}</view><view class="warehouse-dialog-footer"><button class="warehouse-secondary" bindtap="closeConflict">返回核对</button><button class="warehouse-primary" loading="{{busy}}" bindtap="refreshConflict">{{pendingAction ? '查询结果' : '刷新单据'}}</button></view></view></view>
-<view wx:if="{{relatedOpen}}" class="warehouse-overlay" catchtouchmove="stop"><view class="warehouse-dialog"><view class="warehouse-dialog-header"><text>采购订单</text><button class="warehouse-close" bindtap="closeRelated"><van-icon name="cross"/></button></view><view class="warehouse-dialog-body"><view class="warehouse-field"><text class="warehouse-label">订单编号</text><text class="warehouse-value">{{header.order.purchase_order_no}}</text></view><view class="warehouse-field"><text class="warehouse-label">供应商</text><text class="warehouse-value">{{header.supplier.supplier_name}}</text></view><view class="warehouse-field"><text class="warehouse-label">备注</text><text class="warehouse-value">{{header.order.remark || '—'}}</text></view></view></view></view>
+
+<!-- 补充分配弹窗 -->
+<view wx:if="{{allocationOpen}}" class="warehouse-overlay" catchtouchmove="stop">
+  <view class="warehouse-dialog">
+    <view class="warehouse-dialog-header">
+      <text>补充分配</text>
+      <button class="warehouse-close" disabled="{{busy}}" bindtap="closeAllocation">
+        <van-icon name="cross" />
+      </button>
+    </view>
+    <scroll-view scroll-y class="warehouse-dialog-body">
+      <view wx:for="{{allocations}}" wx:for-item="allocation" wx:for-index="ai" wx:key="uid" class="document-allocation">
+        <view class="warehouse-field">
+          <text class="warehouse-label">选择仓库及库位</text>
+          <view class="warehouse-value warehouse-input warehouse-kv-select" data-target="allocation" data-index="{{ai}}" bindtap="openLocator">
+            <text>{{allocation.locator.location_id ? allocation.locator.warehouse_name + ' / ' + allocation.locator.location_name : '请选择'}}</text>
+            <van-icon name="arrow" />
+          </view>
+        </view>
+        <view class="warehouse-field">
+          <text class="warehouse-label">本次入库数量</text>
+          <input
+            class="warehouse-input warehouse-value"
+            type="digit"
+            value="{{allocation.base_qty}}"
+            data-index="{{ai}}"
+            data-field="base_qty"
+            bindinput="allocationInput"
+            disabled="{{busy}}"
+          />
+          <text>{{allocationLine.unit}}</text>
+        </view>
+        <block wx:if="{{allocationLine.physical}}">
+          <view class="warehouse-title">实物明细</view>
+          <view wx:for="{{allocation.physical_entries}}" wx:for-item="physical" wx:for-index="pi" wx:key="uid" class="document-allocation">
+            <view class="document-section-heading">
+              <text>实物 {{pi + 1}}</text>
+              <button class="warehouse-secondary document-small-button" disabled="{{busy}}" data-index="{{ai}}" data-piece="{{pi}}" bindtap="removePhysical">移除</button>
+            </view>
+            <view class="document-piece-fields">
+              <view>长度（mm）<input class="warehouse-input" type="digit" value="{{physical.dimensions.length_mm}}" data-index="{{ai}}" data-piece="{{pi}}" data-field="length_mm" bindinput="allocationInput" disabled="{{busy}}" /></view>
+              <view>宽度（mm）<input class="warehouse-input" type="digit" value="{{physical.dimensions.width_mm}}" data-index="{{ai}}" data-piece="{{pi}}" data-field="width_mm" bindinput="allocationInput" disabled="{{busy}}" /></view>
+              <view>厚度（mm）<input class="warehouse-input" type="digit" value="{{physical.dimensions.thickness_mm}}" data-index="{{ai}}" data-piece="{{pi}}" data-field="thickness_mm" bindinput="allocationInput" disabled="{{busy}}" /></view>
+              <view>数量<view class="warehouse-readonly">1</view></view>
+            </view>
+          </view>
+          <button class="warehouse-secondary" disabled="{{busy}}" data-index="{{ai}}" bindtap="addPhysical">＋ 添加实物</button>
+        </block>
+        <view wx:if="{{allocationLine.serialTracked}}" class="warehouse-field">
+          <text class="warehouse-label">序列号</text>
+          <textarea
+            class="warehouse-input warehouse-value document-serials"
+            value="{{allocation.serialText}}"
+            data-index="{{ai}}"
+            data-field="serialText"
+            bindinput="allocationInput"
+            placeholder="每行一个序列号"
+            disabled="{{busy}}"
+          />
+        </view>
+        <button wx:if="{{allocations.length > 1}}" class="warehouse-secondary doc-remove-alloc-btn" disabled="{{busy}}" data-index="{{ai}}" bindtap="removeAllocation">移除此分配</button>
+      </view>
+      <button class="warehouse-secondary" disabled="{{busy}}" bindtap="addAllocation">＋ 添加库位分配</button>
+      <view class="warehouse-error">{{allocationError}}</view>
+    </scroll-view>
+    <view class="warehouse-dialog-footer">
+      <button class="warehouse-secondary" disabled="{{busy}}" bindtap="closeAllocation">取消</button>
+      <button class="warehouse-primary" disabled="{{busy}}" loading="{{busy}}" bindtap="saveAllocation">保存分配</button>
+    </view>
+  </view>
+</view>
+
+<warehouse-locator open="{{locatorOpen}}" value="{{locatorValue}}" location-purpose="{{locatorPurpose}}" bind:confirm="chooseLocator" bind:cancel="closeLocator" />
+<warehouse-return-serial open="{{returnSerialOpen}}" return-id="{{id}}" line="{{returnSerialLine}}" value="{{returnSerialValue}}" excluded="{{returnSerialExcluded}}" locked="{{busy || pendingAction}}" conflict="{{returnSerialConflict}}" bind:confirm="confirmReturnSerial" bind:cancel="cancelReturnSerial" />
+
+<!-- 冲突确认弹窗 -->
+<view wx:if="{{conflictOpen}}" class="warehouse-overlay" catchtouchmove="stop">
+  <view class="warehouse-dialog">
+    <view class="warehouse-dialog-header">{{pendingAction ? '操作结果待确认' : '单据或库存已变化'}}</view>
+    <view class="warehouse-dialog-body">{{error}}</view>
+    <view class="warehouse-dialog-footer">
+      <button class="warehouse-secondary" bindtap="closeConflict">返回核对</button>
+      <button class="warehouse-primary" loading="{{busy}}" bindtap="refreshConflict">{{pendingAction ? '查询结果' : '刷新单据'}}</button>
+    </view>
+  </view>
+</view>
+
+<!-- 关联采购订单弹窗 -->
+<view wx:if="{{relatedOpen}}" class="warehouse-overlay" catchtouchmove="stop">
+  <view class="warehouse-dialog">
+    <view class="warehouse-dialog-header">
+      <text>采购订单</text>
+      <button class="warehouse-close" bindtap="closeRelated">
+        <van-icon name="cross" />
+      </button>
+    </view>
+    <view class="warehouse-dialog-body">
+      <view class="warehouse-field">
+        <text class="warehouse-label">订单编号</text>
+        <text class="warehouse-value">{{header.order.purchase_order_no}}</text>
+      </view>
+      <view class="warehouse-field">
+        <text class="warehouse-label">供应商</text>
+        <text class="warehouse-value">{{header.supplier.supplier_name}}</text>
+      </view>
+      <view class="warehouse-field">
+        <text class="warehouse-label">备注</text>
+        <text class="warehouse-value">{{header.order.remark || '—'}}</text>
+      </view>
+    </view>
+  </view>
+</view>

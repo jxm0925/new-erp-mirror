@@ -83,7 +83,7 @@
           <text class="mt-tag {{item.status === 'settled' ? 'green' : 'amber'}}">{{item.statusText}}</text>
         </view>
         <view class="mt-muted">{{item.status === 'settled' ? '实际完工 ' + item.completed_unit_qty : '计划开料 ' + item.unit_qty}} 套 · {{item.sourceText}}</view>
-        <view class="tk-link {{item.status === 'settled' ? '' : 'red'}} mt-gap">{{item.status === 'settled' ? '查看登记详情 ›' : '登记实际产出与余料 ›'}}</view>
+        <view class="tk-link {{item.status === 'settled' ? '' : 'red'}} mt-gap">{{item.status === 'settled' ? '查看登记详情 ›' : item.status === 'awaiting_confirm' ? '余料待仓库确认 ›' : '登记实际产出与余料 ›'}}</view>
       </view>
     </view>
     <view wx:if="{{!canIssue && remaining > 0}}" class="mt-note">当前工单未处于生产中状态，暂不可领料开料。</view>
@@ -147,7 +147,7 @@
 <!-- 登记产出与余料弹窗 -->
 <view wx:if="{{panel === 'batch'}}" class="tk-mask" catchtouchmove="stop">
   <view class="tk-sheet">
-    <view class="mt-row tk-sheet-head"><text class="mt-title">{{batch.status === 'settled' ? '开料登记详情' : '登记实际产出与余料'}}</text><text class="mt-muted mono">{{batch.batch_no}}</text></view>
+    <view class="mt-row tk-sheet-head"><text class="mt-title">{{batch.status === 'issued' ? '登记实际产出与余料' : '开料登记详情'}}</text><text class="mt-muted mono">{{batch.batch_no}}</text></view><view wx:if="{{batch.waiting_reason}}" class="mt-note">{{batch.waiting_reason}}</view><button wx:if="{{batch.remnant_receipt.id}}" class="mt-btn plain" data-id="{{batch.remnant_receipt.id}}" bindtap="openRemnantReceipt">查看余料入库申请</button>
     <scroll-view scroll-y class="tk-sheet-body">
       <view class="mt-kv">
         <text class="k">实际完成套数</text>

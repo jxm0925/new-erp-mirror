@@ -2,7 +2,7 @@ const warehouse = require('../../../services/warehouse');
 const page = require('../../../utils/warehouse-page');
 const document = require('../../../utils/warehouse-document');
 const production = require('../../../services/production');
-const STATUS = { available: '可用', reserved: '已占用', locked: '已占用', defective: '不良', pending: '待处理', pending_posting: '待入库', issued: '已领用', shipped: '已发货', outbound: '已出库', shipment_reserved: '发货占用', staged: '待发区', quality_hold: '质量冻结', repair: '返修中', production_consumed: '生产已领用', packing_consumed: '打包已耗用', adjusted_out: '已调整出库', returned: '已退回', scrapped: '已报废', sales_return_pending: '退货待处理', sales_return_scrapped: '退货已报废', sales_return_rejected: '退货已拒收', AVAILABLE: '可用', LOCKED: '已占用', CONSUMED: '已耗用', SCRAPPED: '已报废' };
+const STATUS = { in_transit: '调拨在途', IN_TRANSIT: '调拨在途', available: '可用', reserved: '已占用', locked: '已占用', defective: '不良', pending: '待处理', pending_posting: '待入库', issued: '已领用', shipped: '已发货', outbound: '已出库', shipment_reserved: '发货占用', staged: '待发区', quality_hold: '质量冻结', repair: '返修中', production_consumed: '生产已领用', packing_consumed: '打包已耗用', adjusted_out: '已调整出库', returned: '已退回', scrapped: '已报废', sales_return_pending: '退货待处理', sales_return_scrapped: '退货已报废', sales_return_rejected: '退货已拒收', AVAILABLE: '可用', LOCKED: '已占用', CONSUMED: '已耗用', SCRAPPED: '已报废' };
 function decorate(row) {
   const item = row.item || {};
   return Object.assign({}, row, { key: row.id ? 'id:' + row.id : 'batch:' + String(row.batch_no || ''), itemName: row.item_name || item.item_name || '', itemCode: row.item_code || item.item_code || '',
@@ -16,7 +16,7 @@ function decorate(row) {
 Page({
   data: { loading: true, error: '', keyword: '', rows: [], page: 1, lastPage: 1, total: 0, locator: {}, locatorOpen: false,
     selected: null, tab: 'batches', batch: '', balanceId: 0, balanceTitle: '', detailRows: [], detailPage: 1, detailLast: 1, detailTotal: 0,
-    detailKeyword: '', canAmount: false, scanInfo: null, scanPhysicalId: 0, scanSerialId: 0 },
+    detailKeyword: '', canAmount: false, scanInfo: null, scanPhysicalId: 0, scanSerialId: 0, stockMode: 'warehouse', onlyException: false, assetAmounts: [] },
   onLoad(options) { this.initialCode = options.code || ''; this.setData({ canAmount: page.permissions()('inventory.amount.view') }); },
   onShow() {
     if (page.resumingScan(this)) return;
@@ -27,10 +27,15 @@ Page({
   onPullDownRefresh() { (this.data.selected ? this.loadDetail() : this.load()).finally(() => wx.stopPullDownRefresh()); },
   load() {
     const sequence = this.sequence = (this.sequence || 0) + 1; this.setData({ loading: true, error: '' });
-    return warehouse.balances({ view: 'item', keyword: this.data.keyword.trim(), warehouse_id: this.data.locator.warehouse_id, location_id: this.data.locator.location_id, page: this.data.page, per_page: 10 }).then(response => {
+    const query = { view: 'item', keyword: this.data.keyword.trim(), warehouse_id: this.data.locator.warehouse_id, location_id: this.data.locator.location_id, page: this.data.page, per_page: 10 };
+    const request = this.data.stockMode === 'in_transit' ? warehouse.transit(Object.assign(query, { has_exception: this.data.onlyException ? 1 : undefined })) : warehouse.balances(query);
+    return request.then(response => {
       if (sequence !== this.sequence) return; const result = page.rows(response);
       if (result.page > result.lastPage) { this.setData({ page: result.lastPage }); return this.load(); }
-      this.setData({ rows: result.rows.map(decorate), page: result.page, total: result.total, lastPage: result.lastPage, loading: false });
+      const stats = response.stats || (response.data || {}).stats || {};
+      this.setData({ rows: result.rows.map(row => this.data.stockMode === 'in_transit' ? Object.assign({}, row, { key: row.kind + ':' + row.id + ':' + row.line_id,
+        qtyText: page.quantity(row.quantity), amountText: page.money(row.cost_amount), dispatchedText: page.dateTime(row.dispatched_at) }) : decorate(row)), page: result.page, total: result.total, lastPage: result.lastPage, loading: false,
+        assetAmounts: this.data.canAmount ? [['仓内金额', stats.warehouse_cost_amount], ['在途金额', stats.in_transit_cost_amount], ['资产合计', stats.asset_cost_amount]].filter(row => row[1] != null).map(row => ({ label: row[0], value: page.money(row[1]) })) : [] });
     }).catch(error => { if (sequence === this.sequence) this.setData({ loading: false, rows: [], error: page.errorText(error) }); });
   },
   loadDetail() {
@@ -51,6 +56,10 @@ Page({
     }).catch(error => { if (sequence === this.sequence) this.setData({ loading: false, detailRows: [], error: page.errorText(error) }); });
   },
   input(event) { this.setData({ [event.currentTarget.dataset.field || 'keyword']: event.detail.value }); },
+  switchStockMode(event) { this.setData({ stockMode: event.currentTarget.dataset.mode, page: 1, selected: null, rows: [], scanInfo: null }); this.load(); },
+  toggleException() { this.setData({ onlyException: !this.data.onlyException, stockMode: 'in_transit', page: 1 }); this.load(); },
+  openTransit(event) { const row = this.data.rows.find(row => row.key === event.currentTarget.dataset.key); if (row) page.openDocument(row); },
+  openScannedTransfer() { const row = this.data.scanInfo && this.data.scanInfo.transit_transfer; if (row) page.openDocument({ kind: row.kind, id: row.id }); },
   search() { this.setData({ page: 1, detailPage: 1, scanPhysicalId: 0, scanSerialId: 0 }); this.data.selected ? this.loadDetail() : this.load(); },
   reset() { this.setData({ keyword: '', locator: {}, page: 1, scanInfo: null }); this.load(); },
   turn(event) {
@@ -78,9 +87,10 @@ Page({
   scanned(event) { this.handleScan(event.detail.result).catch(error => this.setData({ loading: false, error: page.errorText(error) })); },
   async handleScan(result) {
     result = Object.assign({}, result, { statusText: result.status_label || STATUS[result.status] || '' });
+    if (result.in_transit) { this.setData({ scanInfo: result, selected: null, stockMode: 'in_transit', page: 1, keyword: (result.transit_transfer || {}).number || '', locator: {} }); return this.load(); }
     if (result.type === 'location') { this.setData({ locator: result, page: 1, detailPage: 1, balanceId: 0, scanPhysicalId: 0, scanSerialId: 0 }); return this.data.selected ? this.loadDetail() : this.load(); }
     if (result.type === 'document') {
-      if (['material_delivery', 'material_return', 'stocktake', 'purchase_receipt', 'purchase_return', 'sales_return', 'sales_return_receipt', 'sales_shipment'].includes(result.kind)) return page.openDocument({ kind: result.kind === 'sales_return_receipt' ? 'sales_return' : result.kind, id: result.id, stage: result.kind === 'sales_return' ? 'receive' : 'post' });
+      if (['mfg_receipt', 'cutting_remnant', 'inventory_transfer', 'material_physical_transfer', 'material_delivery', 'material_return', 'stocktake', 'purchase_receipt', 'purchase_return', 'sales_return', 'sales_return_receipt', 'sales_shipment'].includes(result.kind)) return page.openDocument({ kind: result.kind === 'sales_return_receipt' ? 'sales_return' : result.kind, id: result.id, stage: result.kind === 'sales_return' ? 'receive' : 'post' });
       this.setData({ loading: false, scanInfo: result }); return;
     }
     if (result.type === 'serial' && page.permissions()('production.serial.view')) {

@@ -1,6 +1,6 @@
 <template>
   <div class="inventory-page">
-    <stocktake-freeze-alert v-if="activeView === 'balances'" :value="stocktakeFreezes" @page-change="loadFreezePage" />
+    <stocktake-freeze-alert v-if="activeView === 'balances' && !showingTransit" :value="stocktakeFreezes" @page-change="loadFreezePage" />
     <stocktake-freeze-alert v-else-if="activeView === 'posting'" />
     <section v-if="activeView === 'posting'" class="inventory-view posting-view">
       <div class="page-head">
@@ -147,8 +147,8 @@
             <div class="head-title-wrap">
               <div class="title-row">
                 <h1 class="page-title">库存余额</h1>
-                <el-tag size="small" type="success" effect="plain" class="head-tag total-tag">共 {{ quantityNumber(balanceStats.item_count || balancePagination.total) }} 种物料</el-tag>
-                <el-tag size="small" type="info" effect="plain" class="sub-total-tag">{{ quantityNumber(balanceStats.batch_count) }} 个在库批次</el-tag>
+                <el-tag size="small" type="success" effect="plain" class="head-tag total-tag">共 {{ quantityNumber(showingTransit ? balanceStats.in_transit_item_count : balanceStats.item_count) }} 种物料</el-tag>
+                <el-tag size="small" :type="showingTransit ? 'warning' : 'info'" effect="plain" class="sub-total-tag">{{ quantityNumber(showingTransit ? balanceStats.in_transit_transfer_count : balanceStats.batch_count) }} {{ showingTransit ? '张在途调拨' : '个在库批次' }}</el-tag>
               </div>
             </div>
           </div>
@@ -156,7 +156,7 @@
         </div>
         <div class="head-actions">
           <el-button size="small" icon="el-icon-refresh" class="btn-refresh" @click="loadBalances()">刷新</el-button>
-          <el-button size="small" icon="el-icon-download" @click="exportBalances">导出余额</el-button>
+          <el-button v-if="!showingTransit" size="small" icon="el-icon-download" @click="exportBalances">导出余额</el-button>
           <el-button size="small" type="success" class="btn-theme-create" icon="el-icon-plus" @click="openAdjustmentDrawer()">新建手工调整</el-button>
         </div>
       </div>
@@ -169,11 +169,22 @@
         <i class="el-icon-info" />
         <span>库存余额按物料汇总展示，不合格与待处理数量不计入可用库存；点击下方统计卡片可快速筛选对应状态，点击物料行可查看批次、库位分布、设备编号与质量处理。</span>
       </div>
-      <div class="metric-grid four">
+      <div v-if="!showingTransit" class="metric-grid four">
         <article class="clickable-card" :class="{ 'active-metric': !balanceQuery.status }" @click="filterBalanceByStatus('')"><i class="el-icon-box green" /><span>物料总数 <i class="el-icon-info" /></span><strong>{{ quantityNumber(balanceStats.item_count) }} <small class="unit-text">个</small></strong></article>
         <article class="clickable-card" :class="{ 'active-metric': balanceQuery.status === 'has_stock' }" @click="filterBalanceByStatus('has_stock')"><i class="el-icon-coin green" /><span>有库存物料 <i class="el-icon-info" /></span><strong>{{ quantityNumber(balanceStats.stock_item_count) }} <small class="unit-text">个</small></strong></article>
-        <article class="clickable-card" @click="filterBalanceByStatus('')"><i class="el-icon-location-outline green" /><span>批次<template v-if="$can('inventory.amount.view')"> / 库存总价值</template></span><strong>{{ quantityNumber(balanceStats.batch_count) }} <small class="unit-text">批<template v-if="$can('inventory.amount.view')"> · ¥{{ money(balanceStats.inventory_value) }}</template></small></strong></article>
+        <article class="clickable-card" @click="filterBalanceByStatus('')"><i class="el-icon-location-outline green" /><span>批次<template v-if="$can('inventory.amount.view')"> / 仓内存货</template></span><strong>{{ quantityNumber(balanceStats.batch_count) }} <small class="unit-text">批<template v-if="$can('inventory.amount.view')"> · ¥{{ money(balanceStats.warehouse_cost_amount) }}</template></small></strong></article>
         <article class="clickable-card" :class="{ 'active-metric': balanceQuery.status === 'has_quality' }" @click="filterBalanceByStatus('has_quality')"><i class="el-icon-warning orange" /><span>不合格/待处理物料 <i class="el-icon-info" /></span><strong>{{ quantityNumber(balanceStats.quality_item_count) }} <small class="unit-text">个</small></strong></article>
+      </div>
+      <div v-else class="metric-grid four">
+        <article><i class="el-icon-box green" /><span>在途物料</span><strong>{{ quantityNumber(balanceStats.in_transit_item_count) }} <small class="unit-text">个</small></strong></article>
+        <article><i class="el-icon-truck blue" /><span>在途调拨</span><strong>{{ quantityNumber(balanceStats.in_transit_transfer_count) }} <small class="unit-text">张</small></strong></article>
+        <article><i class="el-icon-coin green" /><span>在途数量</span><strong class="transit-quantity">{{ transitQuantityText }}</strong></article>
+        <article><i class="el-icon-warning orange" /><span>有接收异常</span><strong>{{ quantityNumber(balanceStats.in_transit_exception_count) }} <small class="unit-text">张</small></strong></article>
+      </div>
+      <div class="balance-asset-summary">
+        <span v-if="$can('inventory.amount.view')">仓内存货 <b>¥{{ money(balanceStats.warehouse_cost_amount) }}</b></span>
+        <el-button size="small" type="text" @click="filterBalanceByStatus('in_transit')">调拨在途 {{ quantityNumber(balanceStats.in_transit_transfer_count) }} 张<template v-if="$can('inventory.amount.view')"> · ¥{{ money(balanceStats.in_transit_cost_amount) }}</template></el-button>
+        <span v-if="$can('inventory.amount.view')">资产合计 <b>¥{{ money(balanceStats.asset_cost_amount) }}</b></span>
       </div>
 
       <section class="filter-panel balance-filter">
@@ -182,7 +193,8 @@
         <label>仓库<paged-record-select v-model="balanceQuery.warehouse" entity="warehouses" :params="{ management_scope: balanceQuery.management_scope || undefined }" title="选择仓库" placeholder="全部" @change="balanceQuery.location = ''" /></label>
         <label>库位<paged-record-select v-model="balanceQuery.location" entity="locations" :params="{ warehouse_id: balanceQuery.warehouse || undefined, management_scope: balanceQuery.management_scope || undefined }" title="选择库位" placeholder="全部" /></label>
         <label>批次号<el-input v-model="balanceQuery.batch" size="small" placeholder="请输入批次号" /></label>
-        <label>库存状态<el-select v-model="balanceQuery.status" size="small" clearable placeholder="全部状态"><el-option label="有库存" value="has_stock" /><el-option label="有异常数量" value="has_quality" /></el-select></label>
+        <label>库存状态<el-select v-model="balanceQuery.status" size="small" clearable placeholder="全部状态" @change="changeBalanceStatus"><el-option label="有库存" value="has_stock" /><el-option label="有异常数量" value="has_quality" /><el-option label="调拨在途" value="in_transit" /></el-select></label>
+        <label>调拨接收异常<el-select v-model="balanceQuery.has_exception" size="small" clearable placeholder="全部" @change="filterTransitException"><el-option label="有接收异常" :value="1" /><el-option label="无接收异常" :value="0" /></el-select></label>
         <el-button size="small" type="success" class="btn-green-search" @click="searchBalances">查询</el-button>
         <el-button size="small" @click="resetBalanceQuery">重置</el-button>
         <el-button size="small" type="text" class="btn-expand-text">展开 <i class="el-icon-arrow-down" /></el-button>
@@ -194,7 +206,7 @@
       </div>
 
       <!-- Actions Toolbar above Table -->
-      <div class="balance-table-toolbar">
+      <div v-if="!showingTransit" class="balance-table-toolbar">
         <div class="toolbar-left">
           <span class="total-badge">共 {{ balancePagination.total }} 条</span>
           <el-button size="small" :disabled="!selectedBalance" @click="openBatchDialog(selectedBalance)"><i class="el-icon-box" /> 查看批次</el-button>
@@ -208,7 +220,7 @@
       </div>
 
       <!-- Main Balance Layout (Table + Side Detail Drawer) -->
-      <div class="balance-main-layout" :class="{ 'with-drawer': balanceDetailVisible && selectedBalance }">
+      <div v-if="!showingTransit" class="balance-main-layout" :class="{ 'with-drawer': balanceDetailVisible && selectedBalance }">
         <div class="table-card balance-item-table">
           <el-table
             ref="balanceTable"
@@ -382,6 +394,22 @@
             </div>
           </div>
         </aside>
+      </div>
+      <div v-else class="table-card">
+        <el-table :data="transitRows" size="mini" border empty-text="暂无在途调拨">
+          <el-table-column prop="number" label="调拨单号" min-width="155" />
+          <el-table-column label="物料" min-width="175"><template slot-scope="{ row }"><strong>{{ row.item_code }}</strong><div>{{ row.item_name }}</div><div>{{ row.spec }}</div></template></el-table-column>
+          <el-table-column label="类型" width="100"><template slot-scope="{ row }">{{ row.kind === 'material_physical_transfer' ? '实物调拨' : '数量调拨' }}</template></el-table-column>
+          <el-table-column prop="batch_no" label="批次号" min-width="160" />
+          <el-table-column label="调出仓库 / 库位" min-width="145"><template slot-scope="{ row }">{{ row.source_warehouse_name }} / {{ row.source_location_code }}</template></el-table-column>
+          <el-table-column label="目标仓库 / 库位" min-width="145"><template slot-scope="{ row }">{{ row.target_warehouse_name }} / {{ row.target_location_code }}</template></el-table-column>
+          <el-table-column label="在途数量" width="100" align="right"><template slot-scope="{ row }">{{ quantityNumber(row.quantity) }} {{ row.unit_name }}</template></el-table-column>
+          <el-table-column v-if="$can('inventory.amount.view')" label="在途成本" min-width="100" align="right"><template slot-scope="{ row }">¥{{ money(row.cost_amount) }}</template></el-table-column>
+          <el-table-column label="调出时间" min-width="145"><template slot-scope="{ row }">{{ dateTime(row.dispatched_at) }}</template></el-table-column>
+          <el-table-column label="接收异常" min-width="150"><template slot-scope="{ row }"><span :class="{ 'text-orange': row.receipt_exception }">{{ row.receipt_exception || '无' }}</span></template></el-table-column>
+          <el-table-column v-if="$can('inventory.inbound.confirm') || $can('inventory.transfer.view')" label="操作" width="90" fixed="right"><template slot-scope="{ row }"><el-button v-if="canViewTransit(row)" size="mini" type="text" @click="viewTransit(row)">查看调拨</el-button></template></el-table-column>
+        </el-table>
+        <div class="table-footer"><span>共 {{ balancePagination.total }} 条</span><el-pagination small layout="sizes, prev, pager, next" :page-sizes="[10,20,50,100]" :current-page.sync="balancePagination.page" :page-size.sync="balancePagination.per_page" :total="balancePagination.total" @current-change="loadBalances()" @size-change="handleBalanceSizeChange" /></div>
       </div>
     </section>
 
@@ -1184,7 +1212,8 @@ export default {
       postingRepairVisible: false,
       postingRepairCandidate: null,
       postingRepairSaving: false,
-      balanceQuery: { management_scope: '', keyword: '', warehouse: '', location: '', batch: '', status: '' },
+      balanceQuery: { management_scope: '', keyword: '', warehouse: '', location: '', batch: '', status: '', has_exception: '' },
+      transitRows: [],
       balanceRequestSeq: 0,
       balancePagination: { page: 1, per_page: 10, total: 0 },
       selectedBalance: null,
@@ -1261,6 +1290,8 @@ export default {
     }
   },
   computed: {
+    showingTransit() { return this.balanceQuery.status === 'in_transit' },
+    transitQuantityText() { return (this.balanceStats.in_transit_quantity_by_unit || []).map(row => `${this.quantityNumber(row.quantity)} ${row.unit_name}`).join(' / ') || '0' },
     filteredPostingRows() {
       return this.postingRows
     },
@@ -1453,7 +1484,8 @@ export default {
       const seq = ++this.balanceRequestSeq
       const res = await listInventoryBalances({ ...this.balanceParams(), freeze_page: freezePage })
       if (seq !== this.balanceRequestSeq) return
-      this.balanceRows = (res.data.data || []).map(this.mapBalance)
+      this.transitRows = this.showingTransit ? res.data.data || [] : []
+      this.balanceRows = this.showingTransit ? [] : (res.data.data || []).map(this.mapBalance)
       this.balanceStats = res.data.stats || this.balanceStats
       this.stocktakeFreezes = res.data.stocktake_freezes || { data: [], total: 0, current_page: 1, overdue: false }
       this.applyPagination(this.balancePagination, res.data)
@@ -1580,6 +1612,7 @@ export default {
         location_id: this.balanceQuery.location,
         batch_no: this.balanceQuery.batch,
         inventory_status: this.balanceQuery.status,
+        has_exception: this.showingTransit && this.balanceQuery.has_exception !== '' ? this.balanceQuery.has_exception : undefined,
         management_scope: this.balanceQuery.management_scope || undefined
       }
     },
@@ -1614,7 +1647,19 @@ export default {
     scopeLabel(scope) { return scope === 'office' ? '办公用品' : '工厂物料' },
     filterBalanceByStatus(status) {
       this.balanceQuery.status = this.balanceQuery.status === status ? '' : status
+      this.changeBalanceStatus()
+    },
+    changeBalanceStatus() {
+      if (!this.showingTransit) this.balanceQuery.has_exception = ''
+      this.selectedBalance = null; this.balanceDetailVisible = false; this.balanceSelectedRows = []
+      this.batchDialogVisible = false; this.$refs.balanceTable?.clearSelection()
       this.searchBalances()
+    },
+    filterTransitException() { this.balanceQuery.status = 'in_transit'; this.changeBalanceStatus() },
+    canViewTransit(row) { return this.$can('inventory.inbound.confirm') || (row.kind === 'inventory_transfer' && this.$can('inventory.transfer.view')) },
+    viewTransit(row) {
+      if (this.$can('inventory.inbound.confirm')) this.$router.push({ path: '/inventory/inbound-confirmations', query: { kind: row.kind, id: row.id } })
+      else if (row.kind === 'inventory_transfer' && this.$can('inventory.transfer.view')) this.$router.push({ path: '/inventory/transfers', query: { id: row.id } })
     },
     filterAdjustmentByStatus(status) {
       this.adjustmentQuery.status = this.adjustmentQuery.status === status ? '' : status
@@ -1641,7 +1686,7 @@ export default {
       this.searchBalances()
     },
     resetBalanceQuery() {
-      this.balanceQuery = { management_scope: '', keyword: '', warehouse: '', location: '', batch: '', status: '' }
+      this.balanceQuery = { management_scope: '', keyword: '', warehouse: '', location: '', batch: '', status: '', has_exception: '' }
       this.changeBalanceScope()
     },
     handleBalanceSizeChange(size) {
@@ -2761,6 +2806,10 @@ export default {
 .metric-grid > article > span > i { display: inline; width: auto; height: auto; margin-left: 4px; border-radius: 0; background: transparent; color: #6b7280; font-size: 13px; line-height: 1; vertical-align: baseline; }
 .metric-grid span { color: #4b5563; }
 .metric-grid strong { font-size: 24px; color: #111827; }
+.metric-grid strong.transit-quantity { font-size: 16px; line-height: 1.4; }
+.balance-asset-summary { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 28px; margin-bottom: 14px; padding: 8px 16px; background: #fff; border: 1px solid #e5e7eb; border-radius: 4px; color: #4b5563; }
+.balance-asset-summary b { margin-left: 8px; color: #111827; }
+.balance-asset-summary .el-button { padding: 5px 0; color: #008b4b; }
 .green, .green-text { color: #059669; }
 .blue { color: #2563eb; background: #eff6ff !important; }
 .orange, .orange-text { color: #d97706; }

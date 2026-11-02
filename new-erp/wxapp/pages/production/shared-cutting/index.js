@@ -23,6 +23,7 @@ function batchView(batch) {
 }
 
 Page({
+  openRemnantReceipt(event) { const id = Number(event.currentTarget.dataset.id); if (id) wx.navigateTo({ url: '/pages/warehouse/inbound/index?kind=cutting_remnant&id=' + id }); },
   data: {
     tab: 'demand', loading: true, busy: false, error: '', items: [], batches: [], openCount: 0, page: 1, lastPage: 1,
     panel: '', current: null, keyword: '', rows: [], sourcePage: 1, sourceLastPage: 1, sourceLoading: false, sourceError: '',
@@ -185,7 +186,7 @@ Page({
     this.setData({ busy: true });
     production.sharedCuttingSettle(batch.id, payload).then(() => {
       this.commands.settle = null;
-      wx.showToast({ title: '余料已登记，各工单可执行备料交接', icon: 'none', duration: 2500 });
+      wx.showToast({ title: rows.some(row => Number(row.measure_qty) > 0) ? '余料待仓库确认，确认后可备料' : '零余料已登记并结算', icon: 'none', duration: 2500 });
       this.setData({ panel: '' });
       return this.load();
     }).catch(error => view.modal(this, { theme: 'warn', title: '登记失败', content: view.errorText(error), showCancel: false }))

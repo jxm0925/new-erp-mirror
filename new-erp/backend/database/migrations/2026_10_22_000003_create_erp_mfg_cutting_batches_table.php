@@ -10,6 +10,7 @@ require_once __DIR__.'/../schema/InitialTableMigration.php';
  * 开料批次。batch_scope=work_order：随单开料（属于某工单某道工序）；
  * batch_scope=shared：集中开料（不属于任何工单，work_order_id 为空，只开一种板材 item_id；cutting_run_id 为所属的开料记录，一次只开一个 BOM），
  * 结算后净耗进开料池（pool_measure），工单下料点「已备料」时按定额从池里先进先出扣（allocated_*，明细见 erp_mfg_cutting_allocations）。
+ * awaiting_confirm 仅登记产出和余料申请，数量满足事实可供加工，最终净耗/开料池与余料入库等待仓库确认。
  */
 return new class extends InitialTableMigration
 {

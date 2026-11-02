@@ -42,8 +42,8 @@ final class MaterialDeliveryService
     /** 本道仓库正在配、还没发出的数量（按物料行）。 */
     public static function preparedQty(int $operationId): array { return self::sumLines($operationId, ['prepared']); }
 
-    /** 本道已发出还没签收（含拒收待处理）的数量（按物料行）。 */
-    public static function unsignedQty(int $operationId): array { return self::sumLines($operationId, ['dispatched', 'rejected']); }
+    /** 收回但尚待确认的物料也不在车间，不能在冲减已领前被误当作已签收可加工。 */
+    public static function unsignedQty(int $operationId): array { return self::sumLines($operationId, ['dispatched', 'rejected'], true); }
 
     /**
      * 待发出配料单占住的拣货来源：库存行 ID => 数量，编号 ID => true。只算还在生产中的工单；$exceptId 为排除的配料单。
@@ -61,11 +61,13 @@ final class MaterialDeliveryService
         return $out;
     }
 
-    private static function sumLines(int $operationId, array $statuses): array
+    private static function sumLines(int $operationId, array $statuses, bool $includePendingRecalls = false): array
     {
         $out = [];
         // 事务内等过工单/用料锁后必须读最新配送状态，避免旧快照漏掉并发配料而重复收料。
-        foreach (MfgMaterialDelivery::query()->where('work_order_operation_id', $operationId)->whereIn('status', $statuses)
+        foreach (MfgMaterialDelivery::query()->where('work_order_operation_id', $operationId)
+            ->where(fn ($q) => $q->whereIn('status', $statuses)->when($includePendingRecalls,
+                fn ($w) => $w->orWhere(fn ($r) => $r->where('status', 'recalled')->whereIn('material_return_id', MfgMaterialReturn::query()->where('status', 'pending')->select('id')))))
             ->when(DB::transactionLevel() > 0, fn ($q) => $q->lockForUpdate())->get(['lines']) as $d) {
             foreach ((array) $d->lines as $l) $out[(int) $l['material_id']] = round(($out[(int) $l['material_id']] ?? 0) + (float) $l['qty'], 4);
         }
@@ -285,19 +287,20 @@ final class MaterialDeliveryService
         }, 5);
     }
 
-    /** 整单收回入库：按原领料单批次、单价、库位冲回，冲减已领，编号从设备上拆下。 */
-    public function recall(int $id, string $reason, object $actor): MfgMaterialDelivery
+    /** 整单收回默认待仓库接收；显式核对库位/SN且有确认权限才同动作入库。 */
+    public function recall(int $id, string $reason, object $actor, array $confirmation = []): MfgMaterialDelivery
     {
-        return DB::transaction(function () use ($id, $reason, $actor) {
+        return DB::transaction(function () use ($id, $reason, $actor, $confirmation) {
             $delivery = $this->locked($id, ['dispatched', 'rejected']);
             // 历史已结束工单仍可能遗留未签收配送，能否冲回由原领料、加工事实和成本校验决定。
             [$wo, $op] = $this->context((int) $delivery->work_order_id, (int) $delivery->work_order_operation_id, true, true);
             $issue = MfgMaterialIssue::query()->lockForUpdate()->findOrFail($delivery->material_issue_id);
-            $return = $this->returns->recallIssue($wo, $op, $issue, '配料单 '.$delivery->delivery_no.' 收回：'.trim($reason), $actor);
+            $return = $this->returns->recallIssue($wo, $op, $issue, '配料单 '.$delivery->delivery_no.' 收回：'.trim($reason), $actor, $confirmation);
             $delivery->update(['status' => 'recalled', 'material_return_id' => $return->id, 'close_remark' => mb_substr(trim($reason), 0, 500),
                 'closed_by_name' => $this->actorName($actor), 'closed_at' => now()]);
             $this->workOrders->log($wo, 'material_delivery_recalled', $wo->status, $wo->status,
-                "配料单 {$delivery->delivery_no} 已收回入库（退料单 {$return->return_no}）：".trim($reason), $actor, ['delivery_id' => $delivery->id, 'return_id' => $return->id]);
+                "配料单 {$delivery->delivery_no} 已收回".($return->status === 'approved' ? '并确认入库' : '，待仓库确认入库')."（退料单 {$return->return_no}）：".trim($reason),
+                $actor, ['delivery_id' => $delivery->id, 'return_id' => $return->id]);
             $this->workOrders->refreshCompletion($wo, $actor);
             return $delivery->fresh();
         }, 5);
@@ -344,7 +347,7 @@ final class MaterialDeliveryService
     public function row(MfgMaterialDelivery $d): array
     {
         $issueNo = $d->material_issue_id ? MfgMaterialIssue::query()->whereKey($d->material_issue_id)->value('issue_no') : null;
-        $returnNo = $d->material_return_id ? MfgMaterialReturn::query()->whereKey($d->material_return_id)->value('return_no') : null;
+        $materialReturn = $d->material_return_id ? MfgMaterialReturn::query()->find($d->material_return_id, ['id', 'return_no', 'status', 'business_version']) : null;
         return [
             'id' => $d->id, 'delivery_no' => $d->delivery_no, 'status' => $d->status, 'status_label' => self::STATUS_LABELS[$d->status] ?? $d->status,
             'work_order_id' => (int) $d->work_order_id, 'work_order_no' => $d->workOrder?->work_order_no,
@@ -356,7 +359,9 @@ final class MaterialDeliveryService
             'signed_by_name' => $d->signed_by_name, 'signed_at' => $d->signed_at?->toDateTimeString(),
             'reject_reason' => $d->reject_reason, 'rejected_by_name' => $d->rejected_by_name, 'rejected_at' => $d->rejected_at?->toDateTimeString(),
             'close_remark' => $d->close_remark, 'closed_by_name' => $d->closed_by_name, 'closed_at' => $d->closed_at?->toDateTimeString(),
-            'issue_no' => $issueNo, 'return_no' => $returnNo,
+            'issue_no' => $issueNo, 'return_no' => $materialReturn?->return_no,
+            'material_return_id' => $materialReturn?->id, 'return_status' => $materialReturn?->status,
+            'return_business_version' => $materialReturn ? (int) $materialReturn->business_version : null,
             'source_problems' => $d->status === 'prepared' ? $this->sourceProblems($d) : [],
         ];
     }

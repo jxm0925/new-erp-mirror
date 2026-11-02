@@ -85,7 +85,9 @@
     </el-dialog>
 
     <el-dialog :title="batch.status === 'issued' ? '登记产出与余料' : '用料结果'" :visible.sync="batchOpen" append-to-body top="5vh" width="min(960px, calc(100vw - 32px))" custom-class="mfg-cutting-dialog" :close-on-click-modal="false" :show-close="!busy" :close-on-press-escape="!busy">
-      <div class="cutting-summary"><strong>{{ batch.batch_no }}</strong><el-tag size="small">{{ batch.status === 'settled' ? '已确认' : '待确认结果' }}</el-tag></div>
+      <div class="cutting-summary"><strong>{{ batch.batch_no }}</strong><el-tag size="small">{{ batch.status === 'settled' ? '已结算' : batch.status === 'awaiting_confirm' ? '余料待仓库确认' : '待登记结果' }}</el-tag></div>
+      <el-alert v-if="batch.waiting_reason" :title="batch.waiting_reason" type="warning" :closable="false" />
+      <el-button v-if="batch.remnant_receipt && batch.remnant_receipt.id" size="small" type="text" @click="$router.push({ path: '/inventory/inbound-confirmations', query: { kind: 'cutting_remnant', id: batch.remnant_receipt.id } })">查看余料入库申请</el-button>
       <el-alert v-if="batchError" :title="batchError" type="error" show-icon :closable="false" />
       <div class="cutting-form"><label>实际加工套数<el-input-number v-model="actualUnits" size="small" :min="1" :max="Number(batch.unit_qty || 1)" :step="1" step-strictly :disabled="batchLocked" @change="batchConfirmed = false" /></label></div>
       <h4>本批加工结果</h4>
@@ -105,7 +107,7 @@
       </div>
       <el-input v-if="batch.status === 'issued'" v-model.trim="batchRemark" type="textarea" :rows="2" maxlength="500" :disabled="batchLocked" placeholder="现场说明（选填）" />
       <div v-if="batch.status === 'issued'" class="cutting-actions"><el-checkbox v-model="batchConfirmed" :disabled="batchLocked">已核对实际产出和余料；板材余料按面积确认</el-checkbox></div>
-      <span slot="footer"><el-button size="small" :disabled="busy" @click="batchOpen = false">关闭</el-button><el-button v-if="canExecute && batch.status === 'issued'" type="success" size="small" :loading="busy" :disabled="!pendingSettle && !batchConfirmed" @click="settle">{{ pendingSettle ? '重试原确认操作' : '确认产出与余料入库' }}</el-button></span>
+      <span slot="footer"><el-button size="small" :disabled="busy" @click="batchOpen = false">关闭</el-button><el-button v-if="canExecute && batch.status === 'issued'" type="success" size="small" :loading="busy" :disabled="!pendingSettle && !batchConfirmed" @click="settle">{{ pendingSettle ? '核对上次登记结果' : '登记产出并提交余料确认' }}</el-button></span>
     </el-dialog>
     <system-record-picker :visible.sync="locator.visible" :type="locator.type" :multiple="false" :value="locatorValue" :warehouse-id="locator.row ? Number(locator.row.warehouse_id || 0) : 0" :location-purposes="['general']" :management-scope="workOrder.management_scope || 'factory'" @confirm="selectLocator" />
   </div>
@@ -114,6 +116,7 @@
 <script>
 import { getWorkOrderCutting, listWorkOrderCuttingSources, previewWorkOrderCutting, issueWorkOrderCutting, settleWorkOrderCutting } from '@/api/erp/production'
 import { executeProductionDecision, pendingProductionDecision } from '@/api/erp/production-decisions'
+import { pendingWarehouseCommand } from '@/api/erp/warehouse'
 import SystemRecordPicker from '@/components/system/SystemRecordPicker.vue'
 import { errorText } from './mfg-helpers'
 
@@ -261,9 +264,9 @@ export default {
     },
     openBatch(row) {
       this.batch = clone(row); this.batchError = ''; this.batchOpen = true; this.actualUnits = Number(row.completed_unit_qty || row.unit_qty)
-      this.actualAssignments = clone(row.status === 'settled' ? row.actual_outputs || [] : row.planned_outputs || [])
-      this.batchConfirmed = false; this.batchRemark = ''; this.pendingSettle = Boolean(pendingProductionDecision('cutting_settle_' + row.id))
-      if (row.status === 'settled') { this.remnants = clone(row.remnants || []); return }
+      this.actualAssignments = clone(['settled', 'awaiting_confirm'].includes(row.status) ? row.actual_outputs || [] : row.planned_outputs || [])
+      this.batchConfirmed = false; this.batchRemark = ''; this.pendingSettle = Boolean(pendingWarehouseCommand('cutting_batch.request', row.id))
+      if (['settled', 'awaiting_confirm'].includes(row.status)) { this.remnants = clone(row.remnants || row.remnant_receipt?.requested_lines || []); return }
       this.remnants = (row.summaries || row.input_lines || []).map(summary => {
         const source = row.input_lines.find(line => line.source_key === summary.source_key)
         return { source_key: summary.source_key, measure_unit: summary.measure_unit, measure_qty: String(summary.suggested_remnant), warehouse_id: source.warehouse_id, warehouse_name: source.warehouse_name, location_id: source.location_id, location_name: source.location_name }
@@ -297,8 +300,8 @@ export default {
       if (!this.pendingSettle && this.remnants.some(row => !/^\d+(?:\.\d+)?$/.test(String(row.measure_qty)) || Number(row.measure_qty) > 0 && (!row.warehouse_id || !row.location_id))) return this.$message.warning('请填写非负余料数量及余料回库位置')
       this.busy = true; this.batchError = ''
       try {
-        await executeProductionDecision('cutting_settle_' + batch.id, { expected_version: batch.business_version, idempotency_key: uuid(), unit_qty: this.actualUnits, assignments: this.actualAssignments.map(row => ({ source_key: row.source_key, part_key: row.part_key, qty: String(row.qty) })), remnants: this.remnants.map(row => ({ source_key: row.source_key, measure_qty: String(row.measure_qty), warehouse_id: row.warehouse_id, location_id: row.location_id })), confirmed: true, remark: this.batchRemark || undefined }, payload => settleWorkOrderCutting(batch.id, payload))
-        this.pendingSettle = false; this.batchOpen = false; this.$message.success('产出与余料已确认'); await this.load(); this.$emit('refresh')
+        const { data } = await settleWorkOrderCutting(batch.id, { expected_version: batch.business_version, unit_qty: this.actualUnits, assignments: this.actualAssignments.map(row => ({ source_key: row.source_key, part_key: row.part_key, qty: String(row.qty) })), remnants: this.remnants.map(row => ({ source_key: row.source_key, measure_qty: String(row.measure_qty), warehouse_id: row.warehouse_id, location_id: row.location_id })), confirmed: true, remark: this.batchRemark || undefined })
+        this.pendingSettle = false; this.batchOpen = false; this.$message.success(data.status === 'awaiting_confirm' ? '产出已登记，余料待仓库确认' : '零余料已登记并结算'); await this.load(); this.$emit('refresh')
       } catch (e) { this.pendingSettle = Boolean(e.pendingCommand); this.batchError = errorText(e, '用料结果确认失败') }
       finally { this.busy = false }
     }

@@ -48,7 +48,7 @@ final class CuttingRunService
             ->orderBy('i.item_name')->orderBy('b.id')->limit(100)
             ->get(['b.id', 'b.bom_no', 'b.bom_name', 'b.version', 'b.output_item_id', 'i.item_name', 'i.item_code', 'i.spec', 'i.model']);
         $demand = $this->demandByItem($boms->pluck('output_item_id')->unique()->all());
-        $runs = MfgCuttingRun::query()->whereIn('output_item_id', $boms->pluck('output_item_id')->unique()->all() ?: [0])->whereIn('status', ['running', 'finished'])->get();
+        $runs = MfgCuttingRun::query()->whereIn('output_item_id', $boms->pluck('output_item_id')->unique()->all() ?: [0])->whereIn('status', ['running', 'awaiting_confirm', 'finished'])->get();
         $out = [];
         foreach ($boms as $b) {
             $lines = $this->bomLines((int) $b->id);
@@ -59,7 +59,7 @@ final class CuttingRunService
                 'lines' => array_values($lines), 'pieces_per_set' => array_sum(array_column($lines, 'per_set')),
                 'need_sets' => (int) ($demand[$b->output_item_id] ?? 0),
                 'stock_sets' => $this->availableSets($mine->where('status', 'finished')),
-                'running' => $mine->where('status', 'running')->count()];
+                'running' => $mine->whereIn('status', ['running', 'awaiting_confirm'])->count()];
         }
         usort($out, fn ($a, $b) => [$b['need_sets'] > 0, $b['need_sets']] <=> [$a['need_sets'] > 0, $a['need_sets']]);
         return ['items' => $out];
@@ -73,7 +73,7 @@ final class CuttingRunService
             ->when(! empty($filters['output_item_id']), fn ($q) => $q->where('output_item_id', (int) $filters['output_item_id']))
             ->when(! empty($filters['only_left']), fn ($q) => $q->whereColumn('allocated_pieces', '<', 'total_pieces'))
             ->orderByRaw("status = 'running' DESC")->orderByDesc('id')
-            ->paginate(min(50, max(1, (int) ($filters['per_page'] ?? 20))), ['*'], 'page', max(1, (int) ($filters['page'] ?? 1)));
+            ->paginate(min(50, max(1, (int) ($filters['per_page'] ?? 10))), ['*'], 'page', max(1, (int) ($filters['page'] ?? 1)));
         $timing = MfgCuttingRunSession::query()->whereIn('cutting_run_id', $page->getCollection()->pluck('id') ?: [0])->where('status', 'active')
             ->get(['cutting_run_id', 'employee_name'])->groupBy('cutting_run_id');
         $page->getCollection()->transform(fn ($run) => $this->summary($run) + ['timing_names' => $timing->get($run->id, collect())->pluck('employee_name')->values()->all()]);
@@ -138,34 +138,73 @@ final class CuttingRunService
         }, 5);
     }
 
-    /** 切完结束：停掉所有人的计时，登记每种料实际切了多少件。 */
+    /** 登记实际件数并停止实际加工工时；余料待确认期间保留产出事实，暂不形成可分配成本。 */
     public function finish(int $id, array $data, object $actor): array
     {
         return DB::transaction(function () use ($id, $data, $actor) {
             $run = MfgCuttingRun::query()->lockForUpdate()->findOrFail($id);
-            if ($run->status !== 'running') $this->fail('status_invalid', '这批开料已经结束。');
+            if ($run->status !== 'running') $this->fail('status_invalid', '这批已经登记实际产出；余料待确认时无需再次登记或继续计时。');
             if ((int) $run->business_version !== (int) $data['expected_version']) $this->fail('version_conflict', '这批开料有变化，请刷新后再确认。', 409);
-            if (MfgCuttingBatch::query()->where('cutting_run_id', $run->id)->where('status', 'issued')->exists())
-                $this->fail('sheet_not_settled', '这批领的板还没登记余料，请先在「领板／登记余料」里登记完再结束。');
-            $counts = collect($data['lines'] ?? [])->mapWithKeys(fn ($l) => [(string) $l['line_key'] => (int) $l['actual_pieces']]);
-            $lines = $run->lines;
-            $total = 0;
+            $rows = collect($data['lines'] ?? []);
+            $counts = $rows->mapWithKeys(fn ($l) => [(string) $l['line_key'] => (int) $l['actual_pieces']]);
+            if ($counts->count() !== $rows->count() || $counts->count() !== count($run->lines)
+                || $counts->keys()->diff(collect($run->lines)->pluck('line_key'))->isNotEmpty()) $this->fail('output_lines_invalid', '请逐一确认本批全部板件和管件的实际件数，不能重复或遗漏。');
+            $lines = $run->lines; $total = 0;
             foreach ($lines as &$line) {
-                if ($counts->has($line['line_key'])) $line['actual_pieces'] = max(0, min(100000, $counts[$line['line_key']]));
-                $total += (int) $line['actual_pieces'];
+                $pieces = $counts[$line['line_key']];
+                if ($pieces < 0 || $pieces > 100000) $this->fail('pieces_invalid', '实际件数必须是0至100000的整数。');
+                $line['actual_pieces'] = $pieces;
+                $total += $pieces;
             }
             unset($line);
             if ($total <= 0) $this->fail('pieces_required', '请填实际切了多少件。');
-            foreach (MfgCuttingRunSession::query()->where('cutting_run_id', $run->id)->where('status', 'active')->lockForUpdate()->get() as $s) $this->close($s, 'closed');
+            $this->assertOutputConservation($run, $lines);
+            foreach (MfgCuttingRunSession::query()->where('cutting_run_id', $run->id)->where('status', 'active')->lockForUpdate()->get() as $session) $this->close($session, 'closed');
             $minutes = round((float) MfgCuttingRunSession::query()->where('cutting_run_id', $run->id)->sum('labor_minutes'), 2);
             if ($minutes <= 0) $this->fail('labor_required', '这批开料没有计时记录，请先点开始计时。');
+            // 数量料已经实际加工，照原规则立即扣库；等待板材余料只冻结可分配资格，不能让实耗继续虚占可用库存。
             [$lines, $materialCost, $transactionId] = $this->issueMaterials($run, $lines, $actor);
-            $run->update(['status' => 'finished', 'lines' => $lines, 'total_pieces' => $total, 'labor_minutes' => $minutes,
+            $run->update(['status' => 'awaiting_confirm', 'lines' => $lines, 'total_pieces' => $total, 'labor_minutes' => $minutes,
                 'material_cost_amount' => $materialCost, 'inventory_issue_transaction_id' => $transactionId,
-                'business_version' => (int) $run->business_version + 1, 'finished_by_legacy_id' => $this->actorId($actor), 'finished_by_name' => $this->actorName($actor),
-                'finished_at' => now(), 'remark' => array_key_exists('remark', $data) ? (mb_substr(trim((string) $data['remark']), 0, 500) ?: null) : $run->remark]);
+                'business_version' => (int) $run->business_version + 1, 'finished_by_legacy_id' => $this->actorId($actor),
+                'finished_by_name' => $this->actorName($actor), 'finished_at' => now(),
+                'remark' => array_key_exists('remark', $data) ? (mb_substr(trim((string) $data['remark']), 0, 500) ?: null) : $run->remark]);
+            $this->finalizeAwaitingRun((int) $run->id, $actor);
             return $this->detail($run->fresh(), $actor);
         }, 5);
+    }
+
+    /** 最后一张余料确认后只补成本阶段，不重报件数、不重记加工时间。 */
+    public function finalizeAwaitingRun(int $id, object $actor): void
+    {
+        DB::transaction(function () use ($id, $actor) {
+            $run = MfgCuttingRun::query()->lockForUpdate()->findOrFail($id);
+            if ($run->status !== 'awaiting_confirm') return;
+            if (MfgCuttingBatch::query()->where('cutting_run_id', $run->id)->whereIn('status', ['issued', 'awaiting_confirm'])->lockForUpdate()->first(['id'])) return;
+            $this->assertOutputConservation($run, $run->lines);
+            $run->update(['status' => 'finished', 'business_version' => (int) $run->business_version + 1]);
+        }, 5);
+    }
+
+    /** 只核全批实际几何和真实投入，不替车间猜每张板的产出分配。 */
+    private function assertOutputConservation(MfgCuttingRun $run, array $lines): void
+    {
+        $batches = MfgCuttingBatch::query()->where('cutting_run_id', $run->id)->orderBy('id')->lockForUpdate()->get();
+        $inputs = []; $remnants = []; $outputs = [];
+        foreach ($batches as $batch) {
+            foreach ($batch->input_lines as $input) $inputs[$input['item_id']] = bcadd($inputs[$input['item_id']] ?? '0', (string) $input['input_measure'], 8);
+            foreach ($batch->remnants ?? [] as $line) $remnants[$line['item_id']] = bcadd($remnants[$line['item_id']] ?? '0', (string) $line['measure_qty'], 8);
+        }
+        foreach ($lines as $line) {
+            if (empty($line['physical']) || (int) $line['actual_pieces'] <= 0) continue;
+            if ((float) ($line['length_mm'] ?? 0) <= 0 || (float) ($line['width_mm'] ?? 0) <= 0) $this->fail('cutting_dimensions_missing', '本批板件缺少冻结尺寸，不能登记实际产出。');
+            $measure = bcdiv(bcmul(bcmul((string) $line['length_mm'], (string) $line['width_mm'], 12), (string) $line['actual_pieces'], 12), '1000000', 8);
+            $outputs[$line['component_item_id']] = bcadd($outputs[$line['component_item_id']] ?? '0', $measure, 8);
+        }
+        foreach ($outputs as $itemId => $measure) if (bccomp(bcadd($measure, $remnants[$itemId] ?? '0', 8), $inputs[$itemId] ?? '0', 8) > 0) {
+            $nos = $batches->where('item_id', $itemId)->pluck('batch_no')->implode('、');
+            $this->fail('cutting_output_exceeds_input', '开料记录 '.$run->run_no.' 的实际板件加已登记余料超过真实领入面积，请核对批次 '.($nos ?: '尚未领板').' 的产出件数、余料或先补领真实板材。');
+        }
     }
 
     /** 开错了作废：还没结束、没有领板的才能作废，计时不再算。 */
@@ -201,6 +240,9 @@ final class CuttingRunService
         $prepared = MaterialDeliveryService::preparedQty((int) $op->id);
         $snap = collect(data_get($wo->bom_snapshot, 'items', []))->keyBy('id');
         $planned = (float) $wo->planned_qty;
+        $directUnits = (int) MfgCuttingBatch::query()->where('work_order_id', $wo->id)->where('work_order_operation_id', $op->id)
+            ->where('batch_scope', 'work_order')->whereIn('status', ['settled', 'awaiting_confirm'])->lockForUpdate()->sum('completed_unit_qty');
+        $poolUnits = max(0, $upTo - $directUnits) - max(0, $upTo - $units - $directUnits);
         $needs = [];
         foreach ($materials as $m) {
             $snapshot = $snap->get($m->bom_item_id)['cutting_quantity_snapshot'] ?? null;
@@ -208,7 +250,7 @@ final class CuttingRunService
             $per = self::perSet($snapshot) * (float) ($m->qty_ratio ?: 1);
             if ($per <= 0) continue;
             $qty = null;
-            if (in_array((int) $m->component_item_id, $physical, true)) $pieces = (int) round($per * $units);
+            if (in_array((int) $m->component_item_id, $physical, true)) $pieces = (int) round($per * $poolUnits);
             else {
                 // 已经从仓库收过的料不再领件，免得同一份料算两次。
                 $qty = round($issues->neededFor($m, $wo, $upTo) - (float) $m->issued_qty - (float) ($prepared[$m->id] ?? 0), 4);
@@ -274,9 +316,10 @@ final class CuttingRunService
             $n['m']->update(['issued_qty' => round((float) $n['m']->issued_qty + $inc, 4)]);
         }
         $short = array_filter($needs, fn ($n) => $n['left'] > 0);
-        if ($short && MfgCuttingRun::query()->where('output_item_id', $wo->item_id)->where('status', 'running')->exists())
-            $this->fail('cutting_run_open', '「集中开料」里这个产品还有没结束的开料记录，'.implode('、', array_map(fn ($n) => $n['name'].' 还差 '.$n['left'].' 件', $short))
-                .'。请开料的人先点「切完结束」登记件数，再来备料，这样开料的料和工时才能带过来。');
+        if ($short && ($waiting = MfgCuttingRun::query()->where('output_item_id', $wo->item_id)->whereIn('status', ['running', 'awaiting_confirm'])
+            ->orderByRaw("status = 'awaiting_confirm' DESC")->orderBy('id')->first()))
+            $this->fail('cutting_run_open', implode('、', array_map(fn ($n) => $n['name'].' 还差 '.$n['left'].' 件', $short)).'。'
+                .($waiting->status === 'awaiting_confirm' ? $this->waitingReason($waiting) : '开料记录 '.$waiting->run_no.' 还在加工，请开料人先「切完结束」登记实际件数。'));
         return $out;
     }
 
@@ -300,7 +343,9 @@ final class CuttingRunService
                 'left_pieces' => (int) $run->total_pieces - (int) $run->allocated_pieces, 'left_sets' => (int) ($sets ?? 0),
                 'minutes_per_set' => (int) $run->total_pieces > 0 ? round((float) $run->labor_minutes * $perSet / (int) $run->total_pieces, 1) : null];
         }
-        return ['runs' => $rows, 'running' => MfgCuttingRun::query()->where('output_item_id', $wo->item_id)->where('status', 'running')->count()];
+        $waitingRuns = MfgCuttingRun::query()->where('output_item_id', $wo->item_id)->where('status', 'awaiting_confirm')->orderBy('id')->get();
+        return ['runs' => $rows, 'running' => MfgCuttingRun::query()->where('output_item_id', $wo->item_id)->whereIn('status', ['running', 'awaiting_confirm'])->count(),
+            'awaiting_confirmation' => $waitingRuns->count(), 'waiting_reasons' => $waitingRuns->map(fn ($run) => $this->waitingReason($run))->values()->all()];
     }
 
     /** 某人有没有正在计时的开料记录（工单计时、打包计时开始前要查）。 */
@@ -432,7 +477,8 @@ final class CuttingRunService
             $line['physical'] = $item?->materialManagementMode() === 'physical';
             if ((int) $line['actual_pieces'] <= 0) continue;
             if ($line['physical']) {
-                if (! MfgCuttingBatch::query()->where('cutting_run_id', $run->id)->where('item_id', $line['component_item_id'])->where('status', 'settled')->exists())
+                if (! MfgCuttingBatch::query()->where('cutting_run_id', $run->id)->where('item_id', $line['component_item_id'])
+                    ->whereIn('status', ['issued', 'awaiting_confirm', 'settled'])->exists())
                     $short[$line['component_item_id']] = $line['component_item_name'].' 是逐张管理的板材，这批还没领板';
                 continue;
             }
@@ -488,13 +534,22 @@ final class CuttingRunService
         $minutes = $run->status === 'running' ? $this->liveMinutes($run) : (float) $run->labor_minutes;
         return ['id' => (int) $run->id, 'run_no' => $run->run_no, 'bom_id' => (int) $run->bom_id, 'bom_no' => $run->bom_no, 'bom_name' => $run->bom_name,
             'output_item_id' => (int) $run->output_item_id, 'output_item_name' => $run->output_item_name, 'status' => $run->status,
-            'status_label' => ['running' => '开料中', 'finished' => '已结束', 'cancelled' => '已作废'][$run->status] ?? $run->status,
+            'status_label' => ['running' => '开料中', 'awaiting_confirm' => '产出已登记，余料待确认', 'finished' => '已结束', 'cancelled' => '已作废'][$run->status] ?? $run->status,
             'business_version' => (int) $run->business_version, 'set_qty' => (int) $run->set_qty, 'total_pieces' => (int) $run->total_pieces,
             'allocated_pieces' => (int) $run->allocated_pieces, 'left_pieces' => max(0, (int) $run->total_pieces - (int) $run->allocated_pieces),
             'labor_minutes' => round($minutes, 1), 'allocated_minutes' => round((float) $run->allocated_minutes, 1),
             'minutes_per_piece' => (int) $run->total_pieces > 0 ? round((float) $run->labor_minutes / (int) $run->total_pieces, 3) : null,
             'started_by_name' => $run->started_by_name, 'started_at' => $run->started_at?->toDateTimeString(),
-            'finished_by_name' => $run->finished_by_name, 'finished_at' => $run->finished_at?->toDateTimeString(), 'remark' => $run->remark];
+            'finished_by_name' => $run->finished_by_name, 'finished_at' => $run->finished_at?->toDateTimeString(), 'remark' => $run->remark,
+            'waiting_reason' => $run->status === 'awaiting_confirm' ? $this->waitingReason($run) : null];
+    }
+
+    private function waitingReason(MfgCuttingRun $run): string
+    {
+        $batches = MfgCuttingBatch::query()->where('cutting_run_id', $run->id)->whereIn('status', ['issued', 'awaiting_confirm'])->orderBy('id')->get();
+        return '开料记录 '.$run->run_no.' 已登记实际产出并停止计时；'.($batches->isEmpty() ? '成本阶段待完成。' : $batches->map(fn ($batch) =>
+            $batch->status === 'issued' ? '批次 '.$batch->batch_no.' 尚未登记余料' : app(CuttingRemnantReceiptService::class)->waitingReason($batch))
+                ->implode('；').'确认前不能分配本批净耗和工时。');
     }
 
     private function liveMinutes(MfgCuttingRun $run): float
@@ -542,9 +597,11 @@ final class CuttingRunService
             ->get()->map(fn ($a) => ['work_order_id' => (int) $a->work_order_id, 'work_order_no' => $a->work_order_no, 'sales_order_no' => $a->sales_order_no,
                 'item_name' => $a->item_name, 'operation_name' => $a->operation_name, 'allocated_by_name' => $a->allocated_by_name, 'date' => $a->date,
                 'unit_qty' => (int) $a->unit_qty, 'pieces' => (int) $a->pieces, 'labor_minutes' => round((float) $a->labor_minutes, 1)])->values()->all();
-        $row['sheet_batches'] = MfgCuttingBatch::query()->where('cutting_run_id', $run->id)->orderBy('id')->get(['id', 'batch_no', 'item_id', 'status'])
+        $row['sheet_batches'] = MfgCuttingBatch::query()->where('cutting_run_id', $run->id)->orderBy('id')->get(['id', 'batch_no', 'item_id', 'cutting_run_id', 'status', 'business_version'])
             ->map(fn ($b) => ['id' => (int) $b->id, 'batch_no' => $b->batch_no, 'item_id' => (int) $b->item_id, 'status' => $b->status,
-                'status_label' => $b->status === 'issued' ? '切割中，待登记余料' : '已登记'])->values()->all();
+                'business_version' => (int) $b->business_version, 'waiting_reason' => app(CuttingRemnantReceiptService::class)->waitingReason($b),
+                'status_label' => ['issued' => '切割中，待登记余料', 'awaiting_confirm' => '余料待仓库确认', 'settled' => '已结算'][$b->status] ?? $b->status]
+                + app(CuttingRemnantReceiptService::class)->batchConfirmation($b, false, $actor))->values()->all();
         $row['sheet_items'] = array_values(array_map(fn ($l) => ['item_id' => $l['component_item_id'], 'item_name' => $l['component_item_name']],
             collect($run->lines)->filter(fn ($l) => $l['mode'] === 'sheet' && ! empty($l['physical']))->unique('component_item_id')->all()));
         return $row;

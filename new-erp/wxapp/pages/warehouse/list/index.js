@@ -5,7 +5,7 @@ Page({
     loading: false, error: '', filterOpen: false, dateFrom: '', dateTo: '', draftFrom: '', draftTo: '' },
   onLoad(options) {
     const direction = ['inbound', 'outbound', 'all'].includes(options.direction) ? options.direction : 'inbound';
-    this.setData({ direction, kind: options.kind || '' });
+    this.setData({ direction, kind: options.kind || '', keyword: options.keyword || '' });
     wx.setNavigationBarTitle({ title: options.kind === 'material_return' ? '退料接收' : direction === 'inbound' ? '入库办理' : direction === 'outbound' ? '出库办理' : '仓库待办' });
   },
   onShow() { if (!page.resumingScan(this)) this.load(); },

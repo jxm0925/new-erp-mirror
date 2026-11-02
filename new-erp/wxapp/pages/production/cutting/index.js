@@ -27,6 +27,7 @@ const partUnit = part => (part && part.quantity_basis === 'total_length' ? 'm' :
 const sourceName = row => (row ? row.physical_no || row.batch_no || row.source_key : '');
 
 Page({
+  openRemnantReceipt(event) { const id = Number(event.currentTarget.dataset.id); if (id) wx.navigateTo({ url: '/pages/warehouse/inbound/index?kind=cutting_remnant&id=' + id }); },
   data: {
     woId: 0, opId: 0, opName: '', loading: true, busy: false, error: '', ready: false,
     requirements: [], remaining: 0, canIssue: false, version: 0, batches: [],
@@ -53,7 +54,7 @@ Page({
       const items = [];
       requirements.forEach(row => { if (!items.some(item => item.item_id === row.item_id)) items.push({ item_id: row.item_id, label: [row.item_code, row.item_name, row.specification].filter(Boolean).join(' / ') }); });
       const batches = ((ctx.batches || {}).data || []).map(batch => Object.assign({}, batch, {
-        statusText: batch.status === 'settled' ? '已登记' : '待登记产出与余料',
+        statusText: batch.status === 'settled' ? '已结算' : batch.status === 'awaiting_confirm' ? '余料待仓库确认' : '待登记产出与余料',
         sourceText: (batch.input_lines || []).map(sourceName).join('、'),
       }));
       const unitQty = remaining > 0 ? Math.min(Math.max(1, this.data.unitQty), remaining) : 1;
@@ -226,7 +227,7 @@ Page({
   openBatchById(id) {
     const batch = this.data.batches.find(row => Number(row.id) === Number(id));
     if (!batch) return;
-    const settled = batch.status === 'settled';
+    const settled = ['settled', 'awaiting_confirm'].includes(batch.status);
     this.batchSource = {};
     (batch.input_lines || []).forEach(line => { this.batchSource[line.source_key] = line; });
     const actual = clone(settled ? batch.actual_outputs || [] : batch.planned_outputs || []).map(row => Object.assign({ rowKey: `${row.source_key}|${row.part_key}`, source_key: row.source_key, part_key: row.part_key, qty: String(Number(row.qty)), per_piece_measure: row.per_piece_measure },
@@ -289,7 +290,7 @@ Page({
     this.setData({ busy: true });
     production.cuttingSettle(batch.id, payload).then(() => {
       this.commands[`settle${batch.id}`] = null;
-      wx.showToast({ title: '产出与余料已登记', icon: 'none', duration: 2500 });
+      wx.showToast({ title: this.data.remnants.some(row => Number(row.measure_qty) > 0) ? '产出已登记，余料待仓库确认' : '零余料已登记并结算', icon: 'none', duration: 2500 });
       this.setData({ panel: '' });
       return this.load();
     }).catch(error => view.modal(this, { theme: 'warn', title: '登记失败', content: view.errorText(error), showCancel: false }))

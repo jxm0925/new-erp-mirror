@@ -34,7 +34,7 @@ final class InventoryAmountVisibilityService
     public function isCostField(string $key): bool
     {
         $name = $this->name($key);
-        if (in_array($name, ['cost_method', 'cost_status', 'cost_source', 'cost_source_type', 'cost_source_id',
+        if (in_array($name, ['cost_method', 'cost_status', 'cost_status_label', 'cost_source', 'cost_source_type', 'cost_source_id',
             'cost_source_complete', 'cost_collection_complete', 'material_cost_collection_complete', 'cost_allocation_method'], true)
             || in_array($key, ['成本方法', '成本状态', '成本来源', '成本归集状态'], true)) return false;
         return (bool) preg_match('/(^|_)(cost|costs|profit|profits|margin|margins)(_|$)/', $name)

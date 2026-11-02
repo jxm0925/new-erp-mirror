@@ -514,7 +514,7 @@ final class WorkOrderService
     public function refreshCompletion(MfgWorkOrder $wo, ?object $actor): void
     {
         if (! in_array($wo->status, ['released', 'in_progress', 'paused'], true)) return;
-        if (MfgCuttingBatch::query()->where('work_order_id', $wo->id)->where('status', 'issued')->lockForUpdate()->first(['id'])) return;
+        if (MfgCuttingBatch::query()->where('work_order_id', $wo->id)->whereIn('status', ['issued', 'awaiting_confirm'])->lockForUpdate()->first(['id'])) return;
         $units = MfgWorkOrderUnit::query()->where('work_order_id', $wo->id)->lockForUpdate()->pluck('status')->countBy();
         if ($units->isEmpty() || $units->keys()->diff(['stored', 'scrapped', 'cancelled'])->isNotEmpty()) return;
         if ($this->completionBlockers($wo, $units->all())) return;
@@ -539,6 +539,9 @@ final class WorkOrderService
     {
         $units ??= MfgWorkOrderUnit::query()->where('work_order_id', $wo->id)->pluck('status')->countBy()->all();
         $out = [];
+        if ($pending = (int) ($units['pending_receipt'] ?? 0)) $out[] = ['type' => 'receipt_confirmation', 'text' => '待仓库确认 '.$pending.' 台'];
+        $awaitingBatches = MfgCuttingBatch::query()->where('work_order_id', $wo->id)->where('status', 'awaiting_confirm')->orderBy('id')->pluck('batch_no')->all();
+        if ($awaitingBatches) $out[] = ['type' => 'cutting_remnant_confirmation', 'text' => '开料批次 '.implode('、', $awaitingBatches).' 余料待仓库确认'];
         $returns = \App\Models\Erp\MfgMaterialReturn::query()->where('work_order_id', $wo->id)->where('status', 'pending')->pluck('return_no')->all();
         if ($returns) $out[] = ['type' => 'material_return', 'text' => '退料单 '.implode('、', $returns).' 待库管审核'];
         $deliveries = \App\Models\Erp\MfgMaterialDelivery::query()->where('work_order_id', $wo->id)->whereIn('status', ['dispatched', 'rejected'])->pluck('delivery_no')->all();

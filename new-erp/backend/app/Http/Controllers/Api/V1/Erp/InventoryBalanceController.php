@@ -12,6 +12,9 @@ use App\Models\Erp\Item;
 use Illuminate\Http\Request;
 use App\Services\Erp\ItemManagementScopeService;
 use App\Services\Erp\Inventory\StockMeasureService;
+use App\Services\Erp\Inventory\InventoryTransferService;
+use App\Services\Erp\PhysicalInventoryApplicationService;
+use Illuminate\Support\Facades\DB;
 
 class InventoryBalanceController extends Controller
 {
@@ -21,6 +24,7 @@ class InventoryBalanceController extends Controller
     {
         $this->erpAuthorize($request, 'inventory.balance.view');
         $request->validate(['item_id' => 'nullable|integer|min:1', 'exact_batch' => 'nullable|boolean']);
+        if ($request->input('inventory_status') === 'in_transit') return $this->transit($request);
         if ($request->input('view') === 'item') {
             return $this->itemSummary($request);
         }
@@ -53,13 +57,15 @@ class InventoryBalanceController extends Controller
         }
 
         $statsQuery = clone $query;
+        $warehouseCost = (string) (clone $statsQuery)->sum('inventory_value');
         $stats = [
             'item_count' => (clone $statsQuery)->distinct()->count('item_id'),
             'stock_item_count' => (clone $statsQuery)->where('quantity_on_hand', '>', 0)->distinct()->count('item_id'),
             'balance_line_count' => (clone $statsQuery)->count(),
             'quality_line_count' => (clone $statsQuery)->where(fn ($q) => $q->where('quantity_defective', '>', 0)->orWhere('quantity_pending', '>', 0))->count(),
-            'inventory_value' => (float) (clone $statsQuery)->sum('inventory_value'),
+            'inventory_value' => (float) $warehouseCost,
         ];
+        $stats = $this->withTransitStats($request, $stats, $warehouseCost);
         if ($request->boolean('include_quantity_summary')) {
             // 不同库存单位不可直接相加；全量汇总后按余额快照单位返回，保留小数精度。
             $quantities = (clone $statsQuery)->toBase()->reorder()->select('unit_id')
@@ -85,11 +91,12 @@ class InventoryBalanceController extends Controller
     public function serials(Request $request, int $id)
     {
         $forTransfer = $request->boolean('for_transfer');
-        $this->erpAuthorize($request, $forTransfer ? 'inventory.transfer.create' : 'inventory.balance.view');
+        $user = $this->erpAuthorize($request, $forTransfer ? 'inventory.transfer.create' : 'inventory.balance.view');
         $data = $request->validate([
             'warehouse_id' => ($forTransfer ? 'required' : 'nullable').'|integer|min:1',
             'ids' => 'sometimes|required|array|min:1|max:500', 'ids.*' => 'required|integer|min:1|distinct',
         ]);
+        if ($forTransfer) InventoryTransferService::assertWarehouseScope((int) $data['warehouse_id'], $user);
         $balance = InventoryBalance::query()->with('item')
             ->when($forTransfer, fn ($q) => $q->whereIn('id', app(\App\Services\Erp\Inventory\InventoryTransferService::class)->transferableBalances()->select('erp_inventory_balances.id')))
             ->when($forTransfer, fn ($q) => $q->where('warehouse_id', $data['warehouse_id'])->where('quantity_available', '>', 0)
@@ -184,6 +191,79 @@ class InventoryBalanceController extends Controller
         ]);
     }
 
+    /** 在途是独立资产事实，不生成任何可用余额；实物只取当前 TRANSIT holding 一次。 */
+    public function transit(Request $request)
+    {
+        $this->erpAuthorize($request, 'inventory.balance.view');
+        $request->validate(['item_id' => 'nullable|integer|min:1', 'warehouse_id' => 'nullable|integer|min:1',
+            'location_id' => 'nullable|integer|min:1', 'has_exception' => 'nullable|boolean', 'per_page' => 'nullable|integer|min:1|max:100']);
+        $query = $this->transitBase($request);
+        $stats = $this->transitStats(clone $query);
+        $warehouseQuery = $this->activeBalanceQuery($request);
+        if ($request->filled('keyword')) {
+            $keyword = '%'.trim((string) $request->input('keyword')).'%';
+            $warehouseQuery->whereHas('item', fn ($q) => $q->where('item_code', 'like', $keyword)->orWhere('item_name', 'like', $keyword)
+                ->orWhere('spec', 'like', $keyword)->orWhere('model', 'like', $keyword));
+        }
+        $warehouseCost = (string) $warehouseQuery->sum('inventory_value');
+        $stats += ['warehouse_cost_amount' => $warehouseCost, 'asset_cost_amount' => bcadd($warehouseCost, $stats['in_transit_cost_amount'], 4)];
+        $query->leftJoin('erp_units as transit_unit', 'transit_unit.id', '=', 'transit.unit_id')
+            ->leftJoin('erp_warehouses as transit_source', 'transit_source.id', '=', 'transit.source_warehouse_id')
+            ->leftJoin('erp_warehouses as transit_target', 'transit_target.id', '=', 'transit.target_warehouse_id')
+            ->leftJoin('erp_locations as transit_source_location', 'transit_source_location.id', '=', 'transit.source_location_id')
+            ->leftJoin('erp_locations as transit_target_location', 'transit_target_location.id', '=', 'transit.target_location_id')
+            ->select('transit.*', 'transit_item.item_code', 'transit_item.item_name', 'transit_item.spec', 'transit_item.management_scope', 'transit_unit.unit_name',
+                'transit_source.warehouse_name as source_warehouse_name', 'transit_target.warehouse_name as target_warehouse_name',
+                'transit_source_location.location_code as source_location_code', 'transit_target_location.location_code as target_location_code')
+            ->orderBy('transit.dispatched_at')->orderBy('transit.kind')->orderBy('transit.id')->orderBy('transit.line_id');
+        return response()->json([...$query->paginate($this->perPage($request))->toArray(), 'stats' => $stats]);
+    }
+
+    private function transitBase(Request $request): \Illuminate\Database\Query\Builder
+    {
+        $ordinary = app(InventoryTransferService::class)->transitQuery();
+        $physical = app(PhysicalInventoryApplicationService::class)->transitQuery();
+        $query = DB::query()->fromSub($ordinary->unionAll($physical), 'transit')->join('erp_items as transit_item', 'transit_item.id', '=', 'transit.item_id');
+        if (($scope = $this->managementScope($request)) !== null) $query->where('transit_item.management_scope', $scope);
+        if ($request->filled('item_id')) $query->where('transit.item_id', $request->integer('item_id'));
+        if ($request->filled('warehouse_id')) $query->where(fn ($q) => $q->where('transit.source_warehouse_id', $request->integer('warehouse_id'))->orWhere('transit.target_warehouse_id', $request->integer('warehouse_id')));
+        if ($request->filled('location_id')) $query->where(fn ($q) => $q->where('transit.source_location_id', $request->integer('location_id'))->orWhere('transit.target_location_id', $request->integer('location_id')));
+        if ($request->filled('batch_no')) $query->where('transit.batch_no', $request->boolean('exact_batch') ? '=' : 'like',
+            $request->boolean('exact_batch') ? $request->input('batch_no') : '%'.$request->input('batch_no').'%');
+        foreach (['item_code', 'item_name'] as $field) if ($request->filled($field)) $query->where('transit_item.'.$field, 'like', '%'.$request->input($field).'%');
+        if ($request->filled('keyword')) {
+            $keyword = '%'.$request->input('keyword').'%';
+            $query->where(fn ($q) => $q->where('transit_item.item_code', 'like', $keyword)->orWhere('transit_item.item_name', 'like', $keyword)
+                ->orWhere('transit_item.spec', 'like', $keyword)->orWhere('transit_item.model', 'like', $keyword)
+                ->orWhere('transit.number', 'like', $keyword)->orWhere('transit.batch_no', 'like', $keyword));
+        }
+        if ($request->has('has_exception')) $request->boolean('has_exception')
+            ? $query->whereNotNull('transit.receipt_exception')->where('transit.receipt_exception', '!=', '')
+            : $query->where(fn ($q) => $q->whereNull('transit.receipt_exception')->orWhere('transit.receipt_exception', ''));
+        // 质量/在库筛选的资产范围仍只含对应仓内事实，不把在途伪装成不良或可用库存。
+        if (in_array($request->input('inventory_status'), ['has_stock', 'has_quality'], true)) $query->whereRaw('1 = 0');
+        return $query;
+    }
+
+    private function transitStats(\Illuminate\Database\Query\Builder $query): array
+    {
+        $row = (clone $query)->selectRaw('COALESCE(SUM(transit.cost_amount), 0) AS cost_amount, COUNT(DISTINCT transit.item_id) AS item_count,
+            COUNT(DISTINCT CONCAT(transit.kind, ":", transit.id)) AS transfer_count,
+            COUNT(DISTINCT CASE WHEN transit.receipt_exception IS NOT NULL AND transit.receipt_exception <> "" THEN CONCAT(transit.kind, ":", transit.id) END) AS exception_count')->first();
+        $quantities = (clone $query)->select('transit.unit_id')->selectRaw('SUM(transit.quantity) AS quantity')->groupBy('transit.unit_id')->get();
+        $units = \App\Models\Erp\Unit::query()->whereIn('id', $quantities->pluck('unit_id')->filter())->pluck('unit_name', 'id');
+        return ['in_transit_cost_amount' => (string) $row->cost_amount, 'in_transit_item_count' => (int) $row->item_count,
+            'in_transit_transfer_count' => (int) $row->transfer_count, 'in_transit_exception_count' => (int) $row->exception_count, 'in_transit_quantity_by_unit' => $quantities->map(fn ($q) => [
+                'unit_id' => $q->unit_id, 'unit_name' => $units[$q->unit_id] ?? '未指定单位', 'quantity' => (string) $q->quantity])->all()];
+    }
+
+    private function withTransitStats(Request $request, array $stats, string $warehouseCost): array
+    {
+        $transit = $this->transitStats($this->transitBase($request));
+        return $stats + $transit + ['warehouse_cost_amount' => $warehouseCost,
+            'asset_cost_amount' => bcadd($warehouseCost, $transit['in_transit_cost_amount'], 4)];
+    }
+
     private function itemSummary(Request $request)
     {
         $base = $this->activeBalanceQuery($request);
@@ -193,13 +273,15 @@ class InventoryBalanceController extends Controller
                 ->orWhere('spec', 'like', "%{$keyword}%")->orWhere('model', 'like', "%{$keyword}%"));
         }
         $statsQuery = clone $base;
+        $warehouseCost = (string) (clone $statsQuery)->sum('inventory_value');
         $stats = [
             'item_count' => (clone $statsQuery)->distinct()->count('item_id'),
             'stock_item_count' => (clone $statsQuery)->where('quantity_on_hand', '>', 0)->distinct()->count('item_id'),
             'batch_count' => (clone $statsQuery)->selectRaw("COUNT(DISTINCT CONCAT(item_id, '|', COALESCE(batch_no, ''))) as aggregate")->value('aggregate'),
             'quality_item_count' => (clone $statsQuery)->where(fn ($q) => $q->where('quantity_defective', '>', 0)->orWhere('quantity_pending', '>', 0))->distinct()->count('item_id'),
-            'inventory_value' => (float) (clone $statsQuery)->sum('inventory_value'),
+            'inventory_value' => (float) $warehouseCost,
         ];
+        $stats = $this->withTransitStats($request, $stats, $warehouseCost);
         $query = $base->selectRaw('item_id, SUM(quantity_on_hand) as quantity_on_hand, SUM(quantity_available) as quantity_available, SUM(quantity_locked) as quantity_locked, SUM(quantity_defective) as quantity_defective, SUM(quantity_pending) as quantity_pending, SUM(inventory_value) as inventory_value, COUNT(DISTINCT batch_no) as batch_count, COUNT(*) as balance_count, MAX(last_transaction_at) as last_transaction_at')
             ->groupBy('item_id')->orderByDesc('last_transaction_at');
         $paginator = $query->paginate($this->perPage($request));

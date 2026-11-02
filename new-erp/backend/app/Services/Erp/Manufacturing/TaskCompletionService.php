@@ -135,16 +135,44 @@ final class TaskCompletionService
         if (! $location) $this->fail('completion_location_missing', $action === 'store' ? '请选择入库库位。' : '没有可用于交接记账的启用工厂库位，请先维护对应仓库及库位。');
         if ($action === 'store' && $location->location_purpose !== (ReceiptService::allowedLocationPurposes($wo) === ['general'] ? 'general' : 'finished'))
             $this->fail('completion_location_invalid', '请选择与该半成品或成品匹配的入库库位。');
-        $receipt = $receipts->receive((int) $wo->id, $unitIds, (int) $location->warehouse_id, (int) $location->id,
-            $target ? '完工直接交接给'.$target['operation_name'].'，系统自动记账' : '工序完工选择入库', $actor, $staging);
+        $handoff = $action === 'handoff'
+            ? $receipts->receiveForHandoff((int) $wo->id, (int) $op->id, $unitIds, (int) $target['operation_id'], $actor) : null;
+        $receipt = $handoff ? $handoff['receipt'] : $receipts->receive((int) $wo->id, $unitIds, (int) $location->warehouse_id,
+            (int) $location->id, '工序完工提交入库', $actor);
         $result = ['completion_action' => $action, 'receipt_no' => $receipt->receipt_no, 'received_qty' => count($unitIds),
-            'handoff_operation_name' => $target['operation_name'] ?? null];
-        if (($target['kind'] ?? null) === 'material') $this->handoffMaterial($wo, $receipt, $unitIds, $target, $actor);
-        elseif ($staging) $result['shipment_no'] = $this->handoffShipment($wo, $receipt, $unitIds, $target, $actor);
+            'receipt_id' => $receipt->id, 'receipt_status' => $receipt->status, 'handoff_operation_name' => $target['operation_name'] ?? null];
+        if (isset($handoff['shipment_no'])) $result['shipment_no'] = $handoff['shipment_no'];
         return $result;
     }
 
-    private function handoffLocation(MfgWorkOrder $wo): ?Location
+    /** 自动入库专用校验，接收方完全来自冻结路线和主工单缺口。 */
+    public function validatedHandoff(MfgWorkOrder $wo, MfgWorkOrderOperation $op, array $unitIds, int $targetOperationId): array
+    {
+        if ($wo->rework_of_work_order_id || $op->execution_context !== 'production' || $this->nextProduction($op)
+            || self::outputMode($op) === 'warehouse_required') $this->fail('handoff_not_allowed', '这道工序不能通过完工直接交接。');
+        $target = $this->target($wo, $op, true);
+        if (! $target || (int) $target['operation_id'] !== $targetOperationId)
+            $this->fail('handoff_changed', '下一道工序或待接收数量已变化，请刷新后重新选择交接去向。', 409);
+        if (! empty($target['blocked_reason'])) $this->fail('handoff_blocked', $target['blocked_reason']);
+        if ($target['kind'] === 'material' && count($unitIds) > $target['remaining_qty'] + 0.00001)
+            $this->fail('handoff_exceeds_demand', '交接数量超过主工单待收数量，多出的设备请提交入库。');
+        return $target;
+    }
+
+    /** 只接受已在当前事务记账的自动交接单；失败由外层连同库存、SN、报工一起回滚。 */
+    public function finishHandoff(MfgWorkOrder $wo, MfgReceipt $receipt, array $unitIds, array $target, object $actor): array
+    {
+        if (\Illuminate\Support\Facades\DB::transactionLevel() < 1 || $receipt->status !== 'confirmed'
+            || $receipt->confirmation_source !== 'auto_handoff' || ! $receipt->inventory_transaction_id)
+            $this->fail('handoff_receipt_invalid', '自动交接必须在同一正式完工事务内办理。');
+        if ($target['kind'] === 'material') {
+            $this->handoffMaterial($wo, $receipt, $unitIds, $target, $actor);
+            return [];
+        }
+        return ['shipment_no' => $this->handoffShipment($wo, $receipt, $unitIds, $target, $actor)];
+    }
+
+    public function handoffLocation(MfgWorkOrder $wo): ?Location
     {
         return Location::query()->where('location_purpose', 'general')->whereIn('status', ['enabled', 'active'])
             ->whereHas('warehouse', fn ($q) => $q->whereIn('status', ['enabled', 'active'])

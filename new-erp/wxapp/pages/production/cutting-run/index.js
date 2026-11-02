@@ -45,7 +45,7 @@ Page({
 
   load() {
     this.setData({ loading: true, error: '' });
-    return production.cuttingRuns({ page: this.data.page, per_page: 20 }).then(list => {
+    return production.cuttingRuns({ page: this.data.page, per_page: 10 }).then(list => {
       const runs = (list.data || []).map(runView);
       this.setData({ runs, lastPage: list.last_page || 1, loading: false });
     }).catch(error => this.setData({ loading: false, error: view.errorText(error) }));

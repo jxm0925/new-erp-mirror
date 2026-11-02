@@ -4,8 +4,8 @@ namespace App\Services\Erp;
 
 use App\Exceptions\Erp\WorkOrderDomainException;
 use App\Models\Erp\{InventoryTransaction, PurchaseReceipt, PurchaseReturn, SalesOrder, SalesReturn, SalesReturnReceipt, SalesShipment};
-use App\Models\Erp\{InventoryStocktake, Item, MfgMaterialDelivery, MfgMaterialReturn, MfgWorkOrderOperation};
-use App\Services\Erp\Manufacturing\{MaterialDeliveryService, MaterialReturnService};
+use App\Models\Erp\{InventoryStocktake, Item, MfgMaterialDelivery, MfgMaterialReturn, MfgReceipt, MfgWorkOrderUnit, MfgWorkOrderOperation};
+use App\Services\Erp\Manufacturing\{MaterialDeliveryService, MaterialReturnService, ReceiptService};
 use App\Services\Erp\Inventory\{InventoryStocktakeService, InventoryStocktakeEntryService};
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\DB;
@@ -15,6 +15,8 @@ final class WarehouseDocumentService
 {
     public function show(string $kind, int $id, array $filters, object $user, array $permissions, bool $super): array
     {
+        if (in_array($kind, ['cutting_remnant', 'inventory_transfer', 'material_physical_transfer'], true)) return $this->inboundDocument($kind, $id, $filters, $user, $permissions);
+        if ($kind === 'mfg_receipt') return $this->productionReceipt($id, $filters, $user, $permissions);
         if (in_array($kind, ['material_preparation', 'material_delivery', 'material_return', 'stocktake'], true))
             return $this->executionDocument($kind, $id, $filters, $user, $permissions);
         $permission = match ($kind) {
@@ -119,7 +121,7 @@ final class WarehouseDocumentService
         $required = match ($kind) {
             'material_preparation' => ['production.material_delivery.manage'],
             'material_delivery' => ['production.material_delivery.manage', 'production.work_order.view'],
-            'material_return' => ['production.material_return.request', 'production.material_return.approve'],
+            'material_return' => ['production.material_return.request', 'production.material_return.approve', 'inventory.inbound.confirm'],
             'stocktake' => ['inventory.stocktake.view'],
         };
         if (! array_intersect($required, $permissions)) throw new WorkOrderDomainException('permission_denied', '无权查看当前仓库单据。', 403);
@@ -169,16 +171,21 @@ final class WarehouseDocumentService
                 };
             } else {
                 $query = MfgMaterialReturn::query();
-                if (! in_array('production.material_return.approve', $permissions, true)) $query->where('requested_by_legacy_id', (int) ($user->legacy_id ?? $user->id ?? 0));
+                if (! array_intersect(['production.material_return.approve', 'inventory.inbound.confirm'], $permissions))
+                    $query->where('requested_by_legacy_id', (int) ($user->legacy_id ?? $user->id ?? 0));
                 $return = $query->findOrFail($id);
                 $header = app(MaterialReturnService::class)->detail($id, in_array('inventory.amount.view', $permissions, true));
                 $rows = $header['lines']; unset($header['lines']);
+                $header['serial_nos'] = array_values(array_unique(array_filter(array_column($rows, 'serial_no'))));
+                $header['requires_serial_check'] = $header['serial_nos'] !== [];
+                $header['allowed_location_purposes'] = ['general'];
+                $header['cost_status_label'] = $return->status === 'approved' ? '已确认' : '待确认';
                 $items = Item::query()->whereIn('id', array_column($rows, 'component_item_id'))->get(['id', 'item_code', 'spec'])->keyBy('id');
                 $rows = array_map(fn ($row) => $row + ['component_item_code' => $items->get($row['component_item_id'])?->item_code,
                     'component_item_spec' => $items->get($row['component_item_id'])?->spec, 'spec' => $items->get($row['component_item_id'])?->spec], $rows);
                 if ($return->status === 'pending') {
                     $actions = ['material_return.cancel'];
-                    if (! $return->disposition_plan) $actions = ['material_return.approve', 'material_return.reject', ...$actions];
+                    if (MaterialReturnService::receiptReady($return)) $actions = ['material_return.approve', 'material_return.reject', ...$actions];
                     else $extra['plan_review_required'] = true;
                 } elseif ($return->status === 'approved' && (float) $header['held_qty'] > 0) $actions = ['material_return.dispose'];
             }
@@ -187,6 +194,88 @@ final class WarehouseDocumentService
             $lines = new LengthAwarePaginator(array_slice($rows, ($page - 1) * $size, $size), count($rows), $size, $page);
         }
         return ['kind' => $kind, 'header' => $header, 'lines' => $lines->toArray(), 'actions' => $this->allowed($actions, $permissions), 'receipt' => null] + $extra;
+    }
+
+    private function productionReceipt(int $id, array $filters, object $user, array $permissions): array
+    {
+        if (! array_intersect(['inventory.inbound.confirm', 'production.receipt.execute', 'production.task.execute', 'production.work_order.view'], $permissions))
+            throw new WorkOrderDomainException('permission_denied', '没有查看生产入库申请的权限。', 403);
+        $receipt = MfgReceipt::with(['workOrder', 'warehouse', 'location', 'requestedWarehouse', 'requestedLocation'])->findOrFail($id);
+        $own = (int) $receipt->operator_legacy_id === (int) ($user->legacy_id ?? $user->id ?? 0);
+        if (! $own && ! array_intersect(['inventory.inbound.confirm', 'production.work_order.view'], $permissions))
+            throw new WorkOrderDomainException('permission_denied', '只能查看自己提交的入库申请。', 403);
+        $header = app(ReceiptService::class)->present($receipt, in_array('inventory.amount.view', $permissions, true), $user);
+        $header['confirmation_remark'] = $this->confirmationRemark('mfg_receipt', $id);
+        $header['units_total'] = count($receipt->serial_nos ?: []);
+        $lines = MfgWorkOrderUnit::query()->where('work_order_id', $receipt->work_order_id)->whereIn('serial_no', $receipt->serial_nos ?: [])
+            ->when(trim((string) ($filters['keyword'] ?? '')) !== '', fn ($q) => $q->where('serial_no', 'like', '%'.trim($filters['keyword']).'%'))
+            ->orderBy('unit_no')->orderBy('id')->paginate(min(100, max(1, (int) ($filters['per_page'] ?? 10))),
+                ['id', 'unit_no', 'serial_no', 'status', 'work_order_id'], 'page', max(1, (int) ($filters['page'] ?? 1)));
+        $lines->getCollection()->each(function ($unit) use ($header) {
+            $unit->setAttribute('status_label', \App\Services\Erp\Manufacturing\WorkOrderQueryService::UNIT_LABELS[$unit->status] ?? $unit->status);
+            if (empty($header['requires_serial_check'])) $unit->setAttribute('serial_no', null);
+        });
+        $actions = $receipt->status === 'pending' ? ['mfg_receipt.confirm', 'mfg_receipt.reject'] : [];
+        if ($receipt->status === 'pending' && $own) $actions[] = 'mfg_receipt.cancel';
+        return ['kind' => 'mfg_receipt', 'stage' => 'confirm', 'header' => $header, 'lines' => $lines->toArray(),
+            'actions' => $this->allowed($actions, $permissions), 'receipt' => $this->transaction('mfg_receipt', $id)];
+    }
+
+    private function inboundDocument(string $kind, int $id, array $filters, object $user, array $permissions): array
+    {
+        $actions = []; $receipt = null;
+        if ($kind === 'cutting_remnant') {
+            $header = app(\App\Services\Erp\Manufacturing\CuttingRemnantReceiptService::class)->show($id, $user);
+            $rows = $header['confirmed_lines'] ?: $header['requested_lines'];
+            foreach ($header['actions'] as $action => $allowed) if ($allowed) $actions[] = 'cutting_remnant.'.$action;
+            $header['allowed_location_purposes'] = ['general'];
+            if ($header['inventory_transaction_id']) $receipt = $this->transaction('mfg_cutting_batch', (int) $header['cutting_batch_id']);
+        } else {
+            $physical = $kind === 'material_physical_transfer';
+            $service = app(\App\Services\Erp\Inventory\InventoryTransferService::class);
+            if ($physical) {
+                $header = app(PhysicalInventoryApplicationService::class)->transferDetail($id, $user);
+                $rows = [$header];
+                $header['physical_ids'] = [(int) $header['physical_material_id']];
+                $inTransit = $header['status'] === 'IN_TRANSIT';
+            } else {
+                if (! array_intersect(['inventory.transfer.view', 'inventory.inbound.confirm'], $permissions))
+                    throw new WorkOrderDomainException('permission_denied', '没有查看调拨单的权限。', 403);
+                $header = $service->present(\App\Models\Erp\InventoryTransfer::findOrFail($id));
+                $rows = $header['lines'];
+                $inTransit = $header['transfer_status'] === 'in_transit';
+            }
+            $ids = $service::warehouseIds($user);
+            $source = $ids === null || in_array((int) $header['source_warehouse_id'], $ids, true);
+            $target = $ids === null || in_array((int) $header['target_warehouse_id'], $ids, true);
+            if (! $source && ! $target) throw new WorkOrderDomainException('permission_denied', '调拨单不在当前账号的仓库范围内。', 403);
+            $header['serial_nos'] = array_values(array_unique(array_merge(...array_map(fn ($row) => $row['serial_nos'] ?? [], $rows))));
+            $header['requires_serial_check'] = count($header['serial_nos']) > 0;
+            if ($inTransit && $target && in_array('inventory.inbound.confirm', $permissions, true)) $actions[] = $kind.'.confirm';
+            if ($inTransit && (($target && in_array('inventory.inbound.confirm', $permissions, true))
+                || ($source && in_array($physical ? 'inventory.physical.manage' : 'inventory.transfer.post', $permissions, true)))) $actions[] = $kind.'.exception';
+            $header['allowed_location_purposes'] = $physical ? [] : ['general', 'finished'];
+            $receipt = $inTransit ? null : $this->transaction($kind, $id);
+        }
+        $header['confirmation_remark'] = $this->confirmationRemark($kind, $id);
+        $header['lines_total'] = count($rows);
+        // 整单确认的明细保留在单头；展示页单独分页，不能把当页误作完整接收范围。
+        $header['confirmation_lines'] = $rows;
+        unset($header['lines']);
+        $size = min(100, max(1, (int) ($filters['per_page'] ?? 10))); $page = max(1, (int) ($filters['page'] ?? 1));
+        $lines = new LengthAwarePaginator(array_slice($rows, ($page - 1) * $size, $size), count($rows), $size, $page);
+        return ['kind' => $kind, 'stage' => 'confirm', 'header' => $header, 'lines' => $lines->toArray(),
+            'actions' => $actions, 'receipt' => $receipt];
+    }
+
+    /** 成功命令与确认同事务提交；只投影确认备注，申请备注仍保留原始事实。 */
+    private function confirmationRemark(string $kind, int $id): ?string
+    {
+        $payload = DB::table('erp_warehouse_commands')->where('action', $kind.'.confirm')->where('aggregate_id', $id)
+            ->where('status', 'SUCCEEDED')->orderByDesc('id')->value('request_payload');
+        if (! $payload) return null;
+        $remark = json_decode($payload, true, 512, JSON_THROW_ON_ERROR)['remark'] ?? null;
+        return is_string($remark) ? $remark : null;
     }
 
     private function transaction(string $type, int $id): ?array

@@ -1,0 +1,228 @@
+<warehouse-context />
+
+<view class="warehouse-page">
+  <view class="phase-tabs trf-mode-tabs">
+    <view
+      wx:if="{{canReadQuantity || canCreate}}"
+      class="{{!physicalMode ? 'active' : ''}}"
+      data-mode="quantity"
+      bindtap="switchMode"
+    >数量调拨</view>
+    <view
+      wx:if="{{canReadPhysical}}"
+      class="{{physicalMode ? 'active' : ''}}"
+      data-mode="physical"
+      bindtap="switchMode"
+    >实物调拨</view>
+  </view>
+
+  <view class="warehouse-card">
+    <view class="warehouse-search">
+      <van-icon name="search" color="#64748b" size="32rpx" />
+      <input
+        value="{{keyword}}"
+        data-field="keyword"
+        bindinput="input"
+        bindconfirm="search"
+        placeholder="输入单号 / 物料 / 批次"
+      />
+      <button bindtap="search">查询</button>
+    </view>
+    <view class="phase-tabs">
+      <view wx:if="{{!physicalMode}}" class="{{status === 'draft' ? 'active' : ''}}" data-status="draft" bindtap="switchStatus">待调出</view>
+      <view class="{{status === 'in_transit' ? 'active' : ''}}" data-status="in_transit" bindtap="switchStatus">在途待接收</view>
+      <view class="{{status === 'posted' ? 'active' : ''}}" data-status="posted" bindtap="switchStatus">已完成</view>
+    </view>
+    <button wx:if="{{physicalMode ? canPhysical : canCreate}}" class="warehouse-primary" bindtap="newTransfer">
+      ＋ 新建{{physicalMode ? '实物调拨' : '调拨单'}}
+    </button>
+  </view>
+
+  <view wx:for="{{pendingJobs}}" wx:key="client_command_id" class="warehouse-card">
+    <view class="warehouse-note">上次调拨操作结果待核对</view>
+    <button class="warehouse-secondary" data-index="{{index}}" bindtap="recover" disabled="{{saving}}">核对原操作结果</button>
+  </view>
+
+  <view wx:if="{{loading}}" class="warehouse-empty">
+    <van-loading color="#d81e06" size="44rpx" />
+    <text class="warehouse-muted">正在加载调拨单列表...</text>
+  </view>
+  <view wx:elif="{{error}}" class="warehouse-error">{{error}}</view>
+  <view wx:elif="{{!rows.length}}" class="warehouse-empty">
+    <van-icon name="exchange" size="84rpx" color="#cbd5e1" />
+    <view class="trf-empty-title">暂无调拨单</view>
+  </view>
+
+  <view wx:for="{{rows}}" wx:key="id" class="warehouse-card">
+    <view class="phase-heading">
+      <text>{{item.transfer_no}}</text>
+      <text class="phase-tag">{{item.status_label}}</text>
+    </view>
+    <view class="warehouse-field">
+      <text class="warehouse-label">来源仓库</text>
+      <text class="warehouse-value">{{item.sourceName}}</text>
+    </view>
+    <view class="warehouse-field">
+      <text class="warehouse-label">目标仓库</text>
+      <text class="warehouse-value">{{item.targetName}}</text>
+    </view>
+    <view class="phase-audit">创建时间 / 调出时间：{{item.dateText}}</view>
+    <view wx:if="{{item.receipt_exception}}" class="warehouse-error">接收异常：{{item.receipt_exception}}</view>
+    <view class="warehouse-actions">
+      <button class="warehouse-secondary" data-id="{{item.id}}" bindtap="open">查看{{item.transfer_status === 'draft' ? '明细' : '并接收'}}</button>
+      <button
+        wx:if="{{item.transfer_status === 'draft' && item.can_post && canPost}}"
+        class="warehouse-primary"
+        data-id="{{item.id}}"
+        bindtap="post"
+        disabled="{{saving}}"
+      >{{item.source_warehouse_id === item.target_warehouse_id ? '确认移库' : '确认调出'}}</button>
+    </view>
+  </view>
+
+  <view wx:if="{{!error}}" class="warehouse-pager">
+    <text>共 {{total}} 条</text>
+    <button disabled="{{page <= 1 || loading}}" data-delta="-1" bindtap="turn">上一页</button>
+    <text>{{page}} / {{lastPage}}</text>
+    <button disabled="{{page >= lastPage || loading}}" data-delta="1" bindtap="turn">下一页</button>
+  </view>
+</view>
+
+<!-- 新建调拨弹窗 -->
+<view wx:if="{{formOpen}}" class="warehouse-overlay" catchtouchmove="stop">
+  <view class="warehouse-dialog">
+    <view class="warehouse-dialog-header">
+      <text>新建{{physicalMode ? '实物调拨' : '调拨单'}}</text>
+      <button class="warehouse-close" bindtap="closeForm" disabled="{{saving}}">
+        <van-icon name="cross" />
+      </button>
+    </view>
+    <view class="warehouse-dialog-body">
+      <view class="phase-heading">调出来源</view>
+      <view class="phase-inline">
+        <scan-input
+          compact
+          placeholder="{{physicalMode ? '扫描实物编号' : '扫描来源库位 / 物料'}}"
+          bind:resolved="scanSource"
+          disabled="{{saving}}"
+        />
+        <button class="warehouse-secondary" data-side="source" bindtap="openLocator" disabled="{{saving || physicalMode}}">选择</button>
+      </view>
+      <view wx:if="{{source.warehouse_id}}" class="phase-audit">{{source.warehouse_name}} / {{source.location_code}}</view>
+      <view wx:if="{{physical}}" class="warehouse-note">{{physical.physical_no}} · {{physical.item_name}} · 可调出</view>
+
+      <block wx:if="{{!physicalMode}}">
+        <button class="warehouse-secondary trf-choose-bal-btn" bindtap="openBalances" disabled="{{saving || !source.warehouse_id}}">选择可用库存批次</button>
+        <view wx:if="{{selectedBalance}}" class="phase-line">
+          <view class="phase-line-title">{{selectedBalance.item_name}}</view>
+          <view class="phase-audit">批次 {{selectedBalance.batch_no}} · 可用 {{selectedBalance.quantity_available}} {{selectedBalance.unit_name}}</view>
+          <view class="warehouse-field">
+            <text class="warehouse-label">调拨数量</text>
+            <input
+              class="warehouse-input warehouse-value"
+              type="digit"
+              value="{{quantity}}"
+              data-field="quantity"
+              bindinput="input"
+              disabled="{{saving}}"
+            />
+          </view>
+          <scan-input
+            wx:if="{{selectedBalance.serial_tracking_mode !== 'none'}}"
+            compact
+            clear-after-resolve
+            placeholder="逐个扫描所调序列号"
+            types="{{['serial']}}"
+            bind:resolved="scanSerial"
+            disabled="{{saving}}"
+          />
+          <view wx:for="{{serials}}" wx:key="id" class="phase-audit">✓ {{item.serial_no}} · 已核对</view>
+          <button class="warehouse-secondary trf-add-line-btn" bindtap="addLine" disabled="{{saving}}">＋ 添加本项</button>
+        </view>
+        <view wx:for="{{lines}}" wx:key="inventory_balance_id" class="phase-line">
+          <view class="phase-line-title">
+            <text>{{item.item_name}}</text>
+            <text>{{item.quantity}} {{item.unit_name}}</text>
+          </view>
+          <view class="phase-audit">批次 {{item.batch_no}}</view>
+          <button class="warehouse-secondary trf-remove-line-btn" data-id="{{item.inventory_balance_id}}" bindtap="removeLine" disabled="{{saving}}">移除</button>
+        </view>
+      </block>
+
+      <view class="phase-heading trf-target-head">调入仓库与申请库位</view>
+      <view class="phase-inline">
+        <scan-input compact placeholder="扫描目标库位" types="{{['location']}}" bind:resolved="scanTarget" disabled="{{saving}}" />
+        <button class="warehouse-secondary" data-side="target" bindtap="openLocator" disabled="{{saving}}">选择</button>
+      </view>
+      <view wx:if="{{target.location_id}}" class="phase-audit">{{target.warehouse_name}} / {{target.location_code}}</view>
+      <view wx:if="{{physicalMode}}" class="warehouse-field">
+        <text class="warehouse-label">目标批次</text>
+        <input class="warehouse-input warehouse-value" value="{{targetBatch}}" data-field="targetBatch" bindinput="input" disabled="{{saving}}" />
+      </view>
+      <view class="warehouse-title">{{physicalMode ? '调拨原因（必填）' : '备注说明'}}</view>
+      <textarea class="warehouse-input" value="{{reason}}" maxlength="300" data-field="reason" bindinput="input" disabled="{{saving}}" />
+      <view class="warehouse-error">{{formError}}</view>
+    </view>
+    <view class="warehouse-dialog-footer">
+      <button wx:if="{{!physicalMode}}" class="warehouse-secondary" bindtap="save" disabled="{{saving}}">保存草稿</button>
+      <button
+        wx:if="{{physicalMode || canPost}}"
+        class="warehouse-primary"
+        data-post="true"
+        bindtap="save"
+        loading="{{saving}}"
+        disabled="{{saving}}"
+      >{{source.warehouse_id && source.warehouse_id === target.warehouse_id ? '确认移库' : '确认调出'}}</button>
+    </view>
+  </view>
+</view>
+
+<warehouse-locator
+  open="{{locatorOpen}}"
+  value="{{locatorValue}}"
+  location-purposes="{{physicalMode ? [] : ['general', 'finished']}}"
+  bind:confirm="chooseLocator"
+  bind:cancel="closeLocator"
+/>
+
+<!-- 选择可用库存批次弹窗 -->
+<view wx:if="{{balanceOpen}}" class="warehouse-overlay" catchtouchmove="stop">
+  <view class="warehouse-dialog">
+    <view class="warehouse-dialog-header">
+      <text>选择可用库存批次</text>
+      <button class="warehouse-close" bindtap="closeBalances">
+        <van-icon name="cross" />
+      </button>
+    </view>
+    <view class="warehouse-dialog-body">
+      <view class="warehouse-note">{{source.warehouse_name}} / {{source.location_code}}</view>
+      <view class="warehouse-search">
+        <van-icon name="search" color="#64748b" size="30rpx" />
+        <input
+          value="{{balanceKeyword}}"
+          data-field="balanceKeyword"
+          bindinput="input"
+          bindconfirm="searchBalances"
+          placeholder="物料编码 / 名称 / 规格 / 批次"
+        />
+        <button bindtap="searchBalances">查询</button>
+      </view>
+      <view wx:for="{{balanceRows}}" wx:key="id" class="phase-line" data-id="{{item.id}}" bindtap="chooseBalance">
+        <view class="phase-line-title">
+          <text>{{item.item_name}}</text>
+          <text>{{item.quantity_available}} {{item.unit_name}}</text>
+        </view>
+        <view class="phase-audit">
+          {{item.item_code}} · {{item.spec}}
+          <view>{{item.location_code}} · {{item.batch_no}}</view>
+        </view>
+      </view>
+      <view class="warehouse-pager">
+        <text>共 {{balanceTotal}} 条</text>
+        <button disabled="{{balancePage <= 1}}" data-delta="-1" bindtap="turnBalance">上一页</button>
+        <text>{{balancePage}} / {{balanceLast}}</text>
+        <button disabled="{{balancePage >= balanceLast}}" data-delta="1" bindtap="turnBalance">下一页</button>
+      </view>
+    </view>
+  </view>
+</view>

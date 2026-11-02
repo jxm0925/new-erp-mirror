@@ -92,6 +92,7 @@
     "erp_material_physicals": "2026_10_12_000154_create_erp_material_physicals_table",
     "erp_mfg_cutting_allocations": "2026_11_02_000001_create_erp_mfg_cutting_allocations_table",
     "erp_mfg_cutting_batches": "2026_10_22_000003_create_erp_mfg_cutting_batches_table",
+    "erp_mfg_cutting_remnant_receipts": "2026_11_04_000001_create_erp_mfg_cutting_remnant_receipts_table",
     "erp_mfg_cutting_run_allocations": "2026_11_03_000003_create_erp_mfg_cutting_run_allocations_table",
     "erp_mfg_cutting_run_sessions": "2026_11_03_000002_create_erp_mfg_cutting_run_sessions_table",
     "erp_mfg_cutting_runs": "2026_11_03_000001_create_erp_mfg_cutting_runs_table",

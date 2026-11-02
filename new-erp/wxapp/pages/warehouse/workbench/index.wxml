@@ -1,16 +1,179 @@
-<view wx:if="{{authenticated}}" class="phase-user"><text>{{actorName}} · 仓库</text><text>{{today}}</text></view>
-<view class="warehouse-page warehouse-workbench">
-  <view wx:if="{{!authenticated && !loading}}" class="warehouse-card warehouse-empty"><view>请先登录仓库账号</view><button class="warehouse-primary" bindtap="openLogin">立即登录</button></view>
-  <view wx:elif="{{loading}}" class="warehouse-empty"><van-loading color="#ee160b"/></view>
-  <view wx:elif="{{error}}" class="warehouse-empty"><text>{{error}}</text><button class="warehouse-secondary" bindtap="load">重新加载</button></view>
-  <block wx:elif="{{summary}}">
-    <view class="warehouse-card workspace-scan"><scan-input focus clear-after-resolve placeholder="扫码或输入编码" bind:resolved="resolved"/><view class="workspace-scan-tip">输入后回车查询</view></view>
-    <view class="warehouse-card"><view class="phase-heading">快速操作</view><view class="workspace-shortcuts"><view wx:for="{{shortcuts}}" wx:key="url" class="workspace-shortcut" data-url="{{item.url}}" bindtap="openShortcut"><view class="workspace-icon"><van-icon name="{{item.icon}}" size="48rpx" color="#e91a08"/></view><text>{{item.label}}</text></view></view></view>
-    <view wx:if="{{freezes.length}}" class="workspace-freeze {{freezeOverdue ? 'overdue' : ''}}"><view class="workspace-freeze-title">{{freezeOverdue ? '盘点已超期，请尽快完成' : '盘点范围暂停出入库'}}</view><view wx:for="{{freezes}}" wx:key="id" class="workspace-freeze-row">{{item.warehouse.warehouse_name}} · {{item.location ? item.location.location_name : '全仓'}} · {{item.stocktake_no}}</view></view>
-    <view class="warehouse-card"><view class="workspace-section"><view class="phase-heading">待办事项</view><view bindtap="openList">全部 <van-icon name="arrow"/></view></view>
-      <view wx:if="{{!todos.length}}" class="warehouse-empty">暂无待办理单据</view>
-      <view wx:for="{{todos}}" wx:key="key" class="workspace-todo" data-key="{{item.key}}" bindtap="openTodo"><view class="workspace-icon"><van-icon name="{{item.icon}}" size="42rpx" color="#e91a08"/></view><view class="workspace-todo-main"><text class="phase-tag">{{item.title}}</text><view class="workspace-todo-title">{{item.displayTitle}}</view><view>{{item.detailText}}<text wx:if="{{item.quantityText}}"> · {{item.quantityText}} {{item.unit_name}}</text></view></view><button class="workspace-todo-button">{{item.actionText}}</button><van-icon name="arrow" color="#8a98aa"/></view>
+<view class="wb-page">
+  <!-- 顶部红色概览区（对齐生产工作台视觉体系） -->
+  <view wx:if="{{authenticated}}" class="wb-hero">
+    <view class="wb-hero-circle wb-hero-circle-1"></view>
+    <view class="wb-hero-circle wb-hero-circle-2"></view>
+
+    <view class="wb-hero-top">
+      <view class="wb-user-chip">
+        <view class="wb-user-avatar">{{actorInitial}}</view>
+        <view class="wb-user-meta">
+          <view class="wb-user-name-row">
+            <text class="wb-user-name">{{actorName}} · 仓库</text>
+            <text class="wb-user-role">仓储工作台</text>
+          </view>
+          <text class="wb-user-sub">{{today}} · 实时同步出入库、配料与盘点作业</text>
+        </view>
+      </view>
+      <view class="wb-refresh-pill" bindtap="load">
+        <van-icon name="replay" size="26rpx" color="#ffffff" />
+        <text>{{loading ? '同步中' : '刷新'}}</text>
+      </view>
     </view>
-  </block>
+
+    <view class="wb-hero-metrics">
+      <view class="wb-metric-item" bindtap="openList">
+        <text class="wb-metric-val">{{heroMetrics.total}}</text>
+        <text class="wb-metric-lbl">待办总数</text>
+      </view>
+      <view class="wb-metric-item">
+        <text class="wb-metric-val">{{heroMetrics.inbound}}</text>
+        <text class="wb-metric-lbl">待入库/退料</text>
+      </view>
+      <view class="wb-metric-item">
+        <text class="wb-metric-val">{{heroMetrics.outbound}}</text>
+        <text class="wb-metric-lbl">待配料/出库</text>
+      </view>
+      <view class="wb-metric-item">
+        <text class="wb-metric-val">{{heroMetrics.stocktake}}</text>
+        <text class="wb-metric-lbl">盘点进行中</text>
+      </view>
+    </view>
+  </view>
+
+  <view class="warehouse-page warehouse-workbench wb-body">
+    <view wx:if="{{!authenticated && !loading}}" class="warehouse-card warehouse-empty">
+      <van-icon name="user-circle-o" size="88rpx" color="#d81e06" />
+      <view class="wb-empty-title">请先登录仓库账号</view>
+      <view class="warehouse-muted">登录后可办理入库确认、生产配料、出库发运与库存盘点</view>
+      <button class="warehouse-primary wb-login-btn" bindtap="openLogin">立即登录</button>
+    </view>
+
+    <view wx:elif="{{loading}}" class="warehouse-card warehouse-empty">
+      <van-loading color="#ee160b" size="44rpx" />
+      <text class="warehouse-muted">正在加载仓库工作台...</text>
+    </view>
+
+    <view wx:elif="{{error}}" class="warehouse-card warehouse-empty">
+      <van-icon name="warning-o" size="68rpx" color="#d81e06" />
+      <view class="warehouse-error">{{error}}</view>
+      <button class="warehouse-secondary wb-retry-btn" bindtap="load">重新加载</button>
+    </view>
+
+    <block wx:elif="{{summary}}">
+      <!-- 扫码快查区 -->
+      <view class="warehouse-card workspace-scan">
+        <view class="wb-scan-head">
+          <view class="wb-scan-title-row">
+            <view class="wb-scan-dot"></view>
+            <text class="wb-scan-title">条码 / 实物 / 库位快查</text>
+          </view>
+          <text class="wb-scan-tip workspace-scan-tip">输入后回车查询</text>
+        </view>
+        <scan-input
+          focus
+          clear-after-resolve
+          placeholder="扫码或输入编码"
+          bind:resolved="resolved"
+        />
+        <view class="wb-scan-tags">
+          <text class="wb-scan-tag">物料编码</text>
+          <text class="wb-scan-tag">序列号 SN</text>
+          <text class="wb-scan-tag">板管实物码</text>
+          <text class="wb-scan-tag">库位条码</text>
+          <text class="wb-scan-tag">业务单据号</text>
+        </view>
+      </view>
+
+      <!-- 盘点冻结预警横幅 -->
+      <view wx:if="{{freezes.length}}" class="workspace-freeze {{freezeOverdue ? 'overdue' : ''}}">
+        <view class="wb-freeze-icon">
+          <van-icon name="warning-o" size="38rpx" color="{{freezeOverdue ? '#da2815' : '#d97706'}}" />
+        </view>
+        <view class="wb-freeze-main">
+          <view class="workspace-freeze-title wb-freeze-title">
+            {{freezeOverdue ? '盘点已超期，请尽快完成' : '盘点范围暂停出入库'}}
+          </view>
+          <view wx:for="{{freezes}}" wx:key="id" class="workspace-freeze-row wb-freeze-desc">
+            {{item.warehouse.warehouse_name}} · {{item.location ? item.location.location_name : '全仓'}} · {{item.stocktake_no}}
+          </view>
+        </view>
+      </view>
+
+      <!-- 快速操作宫格 -->
+      <view class="warehouse-card wb-shortcuts-card">
+        <view class="wb-section-head wb-card-section-head">
+          <view class="wb-section-title-group">
+            <view class="wb-section-dot"></view>
+            <text class="wb-section-title">快速操作</text>
+          </view>
+          <text class="wb-section-sub">点击进入对应仓储模块</text>
+        </view>
+
+        <view class="workspace-shortcuts">
+          <view
+            wx:for="{{shortcuts}}"
+            wx:key="url"
+            class="workspace-shortcut"
+            data-url="{{item.url}}"
+            bindtap="openShortcut"
+          >
+            <view class="workspace-icon shortcut-icon-wrap icon-theme-{{item.theme || 'red'}}">
+              <van-icon name="{{item.icon}}" size="42rpx" />
+            </view>
+            <text class="shortcut-title">{{item.label}}</text>
+            <text wx:if="{{item.subtitle}}" class="shortcut-sub">{{item.subtitle}}</text>
+          </view>
+        </view>
+      </view>
+
+      <!-- 待办事项区 -->
+      <view class="warehouse-card wb-todos-card">
+        <view class="workspace-section wb-section-head wb-card-section-head">
+          <view class="wb-section-title-group">
+            <view class="wb-section-dot"></view>
+            <text class="wb-section-title">待办事项</text>
+            <text wx:if="{{heroMetrics.total}}" class="wb-todo-count-badge">{{heroMetrics.total}}</text>
+          </view>
+          <view class="wb-section-link" bindtap="openList">
+            全部 <van-icon name="arrow" size="24rpx" />
+          </view>
+        </view>
+
+        <view wx:if="{{!todos.length}}" class="warehouse-empty wb-inline-empty">
+          <van-icon name="passed" size="68rpx" color="#10b981" />
+          <view class="wb-empty-title">暂无待办理单据</view>
+        </view>
+
+        <view wx:else class="wb-todo-list">
+          <view
+            wx:for="{{todos}}"
+            wx:key="key"
+            class="workspace-todo"
+            data-key="{{item.key}}"
+            bindtap="openTodo"
+          >
+            <view class="workspace-icon wb-todo-icon icon-theme-{{item.kind === 'material_preparation' ? 'orange' : item.kind === 'material_return' ? 'amber' : 'red'}}">
+              <van-icon name="{{item.icon}}" size="40rpx" />
+            </view>
+            <view class="workspace-todo-main">
+              <view class="workspace-todo-head">
+                <text class="phase-tag workspace-tag {{item.tagClass}}">{{item.title}}</text>
+                <text class="workspace-todo-title">{{item.displayTitle}}</text>
+              </view>
+              <view class="workspace-todo-detail {{item.overdue ? 'warehouse-danger' : ''}}">
+                {{item.detailText}}<text wx:if="{{item.quantityText}}"> · {{item.quantityText}} {{item.unit_name}}</text>
+              </view>
+            </view>
+            <view class="workspace-todo-side">
+              <button class="workspace-todo-button">{{item.actionText}}</button>
+              <van-icon name="arrow" color="#94a3b8" size="26rpx" />
+            </view>
+          </view>
+        </view>
+      </view>
+    </block>
+  </view>
 </view>
-<LoginPopup class="LoginPopup" default-mode="production"></LoginPopup><van-notify id="van-notify"/>
+<LoginPopup class="LoginPopup" default-mode="production"></LoginPopup>
+<van-notify id="van-notify" />

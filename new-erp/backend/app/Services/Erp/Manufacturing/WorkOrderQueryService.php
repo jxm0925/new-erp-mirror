@@ -33,7 +33,7 @@ final class WorkOrderQueryService
         'completed' => '已完工', 'closed' => '已关闭', 'cancelled' => '已取消'];
     public const STOCK_REASONS = ['alert' => '库存预警', 'regular' => '常规备货', 'other' => '其他', 'order_released' => '订单取消/短交转备货'];
     public const UNIT_LABELS = ['waiting' => '未开工', 'in_progress' => '在制', 'rework' => '返工', 'completed' => '等入库',
-        'stored' => '已入库', 'scrapped' => '报废', 'cancelled' => '已取消'];
+        'pending_receipt' => '待仓库确认', 'stored' => '已入库', 'scrapped' => '报废', 'cancelled' => '已取消'];
 
     private array $funding = [];
 
@@ -57,7 +57,8 @@ final class WorkOrderQueryService
             });
         }
         $page = $query->with(['operations:id,work_order_id,operation_name,execution_context,sequence,completed_qty'])
-            ->withCount(['units', 'units as stored_units_count' => fn ($q) => $q->where('status', 'stored')])
+            ->withCount(['units', 'units as stored_units_count' => fn ($q) => $q->where('status', 'stored'),
+                'units as pending_receipt_units_count' => fn ($q) => $q->where('status', 'pending_receipt')])
             // 没做完的在前：按优先级（特急→可延后），同级先建的先做；做完的按新到旧。
             ->orderByRaw("CASE WHEN status IN ('completed', 'closed', 'cancelled') THEN 1 ELSE 0 END")->orderBy('priority')
             ->orderByRaw("CASE WHEN status IN ('completed', 'closed', 'cancelled') THEN -id ELSE id END")
@@ -77,7 +78,8 @@ final class WorkOrderQueryService
         $ids = array_column($rows, 'id');
         $links = MfgWorkOrderLink::query()->whereIn('parent_work_order_id', $ids)->orderBy('id')->get();
         $children = $links->isEmpty() ? collect() : MfgWorkOrder::query()->with(['operations:id,work_order_id,operation_name,execution_context,sequence,completed_qty'])
-            ->withCount(['units', 'units as stored_units_count' => fn ($q) => $q->where('status', 'stored')])
+            ->withCount(['units', 'units as stored_units_count' => fn ($q) => $q->where('status', 'stored'),
+                'units as pending_receipt_units_count' => fn ($q) => $q->where('status', 'pending_receipt')])
             ->whereIn('id', $links->pluck('child_work_order_id'))->where('status', '!=', 'cancelled')->get()->keyBy('id');
         $childRows = [];
         if ($tree && $depth < 4 && $children->isNotEmpty()) {
@@ -167,10 +169,12 @@ final class WorkOrderQueryService
                     ? bcdiv($row['actual_material_cost_amount'], (string) $wo->planned_qty, 4) : null;
                 $row['material_cost_collection_complete'] = ! $wo->materials->contains(fn ($m) => $m->participates_in_kitting
                     && bccomp((string) $m->issued_qty, (string) $m->required_qty, 4) < 0)
-                    && ! MfgCuttingBatch::query()->where('work_order_id', $wo->id)->where('status', 'issued')->exists();
+                    && ! MfgCuttingBatch::query()->where('work_order_id', $wo->id)->whereIn('status', ['issued', 'awaiting_confirm'])->exists();
             }
         }
         $row['material_returns'] = app(MaterialReturnService::class)->forWorkOrder((int) $wo->id, $inventoryAmounts);
+        $row['receipts'] = \App\Models\Erp\MfgReceipt::query()->where('work_order_id', $wo->id)->orderByDesc('id')->get()
+            ->map(fn ($receipt) => app(ReceiptService::class)->present($receipt, $inventoryAmounts))->values()->all();
         $row['purchase_demands'] = app(ShortageService::class)->forWorkOrder((int) $wo->id);
         // 外购件按全厂排队（加急→开工日→工单号）后本单的缺口；齐套看板只看本单能否用当前库存，两者可能不同。
         $queue = in_array($wo->status, ShortageService::WORK_ORDER_STATUSES, true) ? app(ShortageService::class)->forWorkOrderQueue((int) $wo->id) : [];
@@ -184,7 +188,7 @@ final class WorkOrderQueryService
         $unitCounts = $wo->units->pluck('status')->countBy()->all();
         $allClosed = $open && $unitCounts && ! array_diff(array_keys($unitCounts), ['stored', 'scrapped', 'cancelled']);
         $workOrders = app(WorkOrderService::class);
-        $row['completion_blockers'] = $allClosed ? $workOrders->completionBlockers($wo, $unitCounts) : [];
+        $row['completion_blockers'] = $open ? $workOrders->completionBlockers($wo, $unitCounts) : [];
         $row['scrap_settle_allowed'] = $allClosed && $workOrders->canSettleScrap($wo, $unitCounts);
         $row['sales_order'] = $this->salesOrderSummary($wo, $amounts);
         $row['attention'] = $this->attention($row, $kitting);
@@ -332,7 +336,8 @@ final class WorkOrderQueryService
     public function forSalesOrder(int $orderId, bool $amounts): array
     {
         return MfgWorkOrder::query()->with(['operations:id,work_order_id,operation_name,execution_context,sequence,completed_qty', 'item:id,item_type,spec,model,material_grade'])
-            ->withCount(['units', 'units as stored_units_count' => fn ($q) => $q->where('status', 'stored')])
+            ->withCount(['units', 'units as stored_units_count' => fn ($q) => $q->where('status', 'stored'),
+                'units as pending_receipt_units_count' => fn ($q) => $q->where('status', 'pending_receipt')])
             ->where('sales_order_id', $orderId)->orderBy('sales_order_line_no')->orderBy('id')->get()
             ->map(fn ($wo) => $this->row($wo, $amounts))->values()->all();
     }
@@ -394,6 +399,8 @@ final class WorkOrderQueryService
             'item_id' => $wo->item_id, 'item_code' => $wo->item_code, 'item_name' => $wo->item_name, 'unit_name' => $wo->unit_name,
             'item_spec' => $specInfo['item_spec'], 'material_grade' => $specInfo['material_grade'], 'specification' => $specInfo['specification'],
             'planned_qty' => $qty, 'completed_qty' => (float) $wo->completed_qty, 'stored_qty' => (float) $wo->stored_qty,
+            'pending_receipt_qty' => (int) ($wo->pending_receipt_units_count ?? ($wo->relationLoaded('units')
+                ? $wo->units->where('status', 'pending_receipt')->count() : $wo->units()->where('status', 'pending_receipt')->count())),
             'units_count' => (int) ($wo->units_count ?? $wo->units()->count()),
             'status' => $wo->status, 'status_label' => self::STATUS_LABELS[$wo->status] ?? $wo->status, 'is_urgent' => (bool) $wo->is_urgent, 'priority' => (int) ($wo->priority ?: 3), 'priority_label' => \App\Services\Erp\SalesOrderPriorityService::label((int) ($wo->priority ?: 3)),
             'owner_legacy_id' => $wo->owner_legacy_id, 'owner_name' => $wo->owner_name,
@@ -455,13 +462,16 @@ final class WorkOrderQueryService
             $items[] = ['type' => 'warning', 'title' => $op['operation_name'].'缺料', 'text' => $names.'。按当前可用库存算，'
                 .($advice !== '' ? $advice : '请采购跟进').'；料不齐不能开工。'];
         }
-        foreach ($row['completion_blockers'] ?? [] as $b) $items[] = ['type' => 'warning', 'title' => '所有设备已结束，工单还不能完工', 'text' => $b['text'].'。'];
+        foreach ($row['completion_blockers'] ?? [] as $b) $items[] = ['type' => 'warning', 'title' => '工单还有事项待处理', 'text' => $b['text'].'。'];
         // 做完的设备可以分批入库；只有最后一批要求开料批次都已登记，成本才能收口。
         if ($row['completed_qty'] > $row['stored_qty'] + 0.00001) {
             $open = MfgWorkOrderUnit::query()->where('work_order_id', $row['id'])->whereNotIn('status', ['stored', 'scrapped', 'cancelled'])->count();
             $waiting = MfgWorkOrderUnit::query()->where('work_order_id', $row['id'])->where('status', 'completed')->count();
-            if ($waiting >= $open && MfgCuttingBatch::query()->where('work_order_id', $row['id'])->where('status', 'issued')->exists())
-                $items[] = ['type' => 'warning', 'title' => '最后一批设备暂不能入库：开料未登记', 'text' => '还有开料批次没登记产出和余料，请先在开料页登记完再入库。'];
+            $batch = MfgCuttingBatch::query()->where('work_order_id', $row['id'])->where('status', 'awaiting_confirm')->first();
+            if (! $batch && $waiting >= $open) $batch = MfgCuttingBatch::query()->where('work_order_id', $row['id'])->where('status', 'issued')->first();
+            if ($batch)
+                $items[] = ['type' => 'warning', 'title' => $batch->status === 'awaiting_confirm' ? '本批设备暂不能确认入库' : '最后一批设备暂不能确认入库', 'text' => '开料批次 '.$batch->batch_no.($batch->status === 'awaiting_confirm'
+                    ? ' 余料待仓库确认，确认后才能结清本批材料净耗。' : ' 尚未登记产出和余料，请先返回开料页登记。')];
         }
         if (! empty($row['unbound_components'])) $items[] = ['type' => 'info', 'title' => '有部件编号待登记', 'text' => count($row['unbound_components']).' 个已收料的部件编号还没装到设备上，请在“部件编号”处登记到具体的设备。'];
         if ($row['overdue']) $items[] = ['type' => 'danger', 'title' => '已过计划完工日', 'text' => '计划 '.$row['planned_finish_date'].' 完工，请调整计划或加急。'];

@@ -1,4 +1,5 @@
 import api from './master'
+import { submitWarehouseCommand } from './warehouse'
 
 export const listPendingReceipts = params => api.get('/v1/erp/inventory/posting/pending-receipts', { params })
 export const getPostingReceipt = id => api.get(`/v1/erp/inventory/posting/receipts/${id}`)
@@ -53,12 +54,12 @@ export const listTransfers = params => api.get('/v1/erp/inventory/transfers', { 
 export const getTransferOptions = () => api.get('/v1/erp/inventory/transfers/options')
 export const listTransferBalances = params => api.get('/v1/erp/inventory/transfers/balances', { params })
 export const getTransfer = id => api.get(`/v1/erp/inventory/transfers/${id}`)
-export const saveTransfer = data => data.id
-  ? api.put(`/v1/erp/inventory/transfers/${data.id}`, data)
-  : api.post('/v1/erp/inventory/transfers', data)
-export const postTransfer = id => api.post(`/v1/erp/inventory/transfers/${id}/post`)
-export const cancelTransfer = id => api.post(`/v1/erp/inventory/transfers/${id}/cancel`)
-export const deleteTransfer = id => api.delete(`/v1/erp/inventory/transfers/${id}`)
+export const saveTransfer = data => submitWarehouseCommand(data.id ? 'inventory_transfer.update' : 'inventory_transfer.create', data.id || data.source_warehouse_id, data)
+export const postTransfer = (id, data) => submitWarehouseCommand('inventory_transfer.post', id, data)
+export const confirmTransfer = (id, data) => submitWarehouseCommand('inventory_transfer.confirm', id, data)
+export const recordTransferException = (id, data) => submitWarehouseCommand('inventory_transfer.exception', id, data)
+export const cancelTransfer = (id, data) => submitWarehouseCommand('inventory_transfer.cancel', id, data)
+export const deleteTransfer = (id, data) => submitWarehouseCommand('inventory_transfer.delete', id, data)
 // 管材米数／板材尺寸：仓库里的板材实物，修正入库录错的长宽厚、余料每根长度。
 export const listInventoryItemPhysicals = (itemId, params) => api.get(`/v1/erp/inventory/balances/items/${itemId}/physicals`, { params })
 export const updatePhysicalDimensions = (id, data) => api.post(`/v1/erp/inventory/material-physicals/${id}/dimensions`, data)

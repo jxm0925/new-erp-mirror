@@ -1,26 +1,181 @@
-<view class="warehouse-tabs"><view class="{{statusGroup === 'pending' ? 'selected' : ''}}" data-status="pending" bindtap="switchStatus">待办理</view><view class="{{statusGroup === 'completed' ? 'selected' : ''}}" data-status="completed" bindtap="switchStatus">已完成</view></view>
+<warehouse-context />
+
 <view class="warehouse-page">
-  <view class="warehouse-search"><van-icon name="search" color="#63718a"/><input value="{{keyword}}" placeholder="请输入单号 / 物料" bindinput="keywordInput" bindconfirm="search" confirm-type="search"/><button bindtap="search">搜索</button></view>
-  <view class="warehouse-filter"><text>业务类型</text><picker mode="selector" range="{{types}}" range-key="name" value="{{typeIndex}}" bindchange="changeType"><view>{{types[typeIndex].name}} <van-icon name="arrow-down"/></view></picker><view class="warehouse-filter-button" bindtap="openFilter"><van-icon name="filter-o"/> 筛选</view></view>
-  <view wx:if="{{loading}}" class="warehouse-empty"><van-loading color="#ed1609"/></view>
-  <view wx:elif="{{error}}" class="warehouse-empty"><text>{{error}}</text><button class="warehouse-secondary" bindtap="load">重新加载</button></view>
-  <view wx:elif="{{!rows.length}}" class="warehouse-empty"><van-icon name="records" size="84rpx" color="#bfc7d3"/><view>暂无{{statusGroup === 'completed' ? '已完成' : '待办理'}}单据</view></view>
-  <block wx:else><view wx:for="{{rows}}" wx:key="key" class="warehouse-card warehouse-document-card">
-    <view class="warehouse-document-heading"><text class="warehouse-type {{item.kind}}">{{item.title}}</text><text class="warehouse-danger">{{item.status_label}}</text></view>
-    <view class="warehouse-field"><text class="warehouse-label">单号</text><text class="warehouse-value">{{item.number}}</text></view>
-    <view wx:if="{{item.work_order_no}}" class="warehouse-field"><text class="warehouse-label">工单</text><text class="warehouse-value">{{item.work_order_no}}</text></view>
-    <view wx:if="{{item.related_number}}" class="warehouse-field"><text class="warehouse-label">来源单号</text><text class="warehouse-value">{{item.related_number}}</text></view>
-    <view wx:if="{{item.target_operation}}" class="warehouse-field"><text class="warehouse-label">目标工序</text><text class="warehouse-value">{{item.target_operation}}</text></view>
-    <view wx:if="{{item.warehouse_name}}" class="warehouse-field"><text class="warehouse-label">仓库</text><text class="warehouse-value">{{item.warehouse_name}}</text></view>
-    <view wx:if="{{item.party}}" class="warehouse-field"><text class="warehouse-label">{{item.kind === 'purchase_receipt' || item.kind === 'purchase_return' ? '供应商' : '客户'}}</text><text class="warehouse-value">{{item.party}}</text></view>
-    <view class="warehouse-field"><text class="warehouse-label">物料</text><text class="warehouse-value">{{item.item_name}}</text></view>
-    <view class="warehouse-field"><text class="warehouse-label">{{item.quantityText ? '数量' : '物料项数'}}</text><text class="warehouse-value">{{item.quantityText || item.item_count}} {{item.quantityText ? item.unit_name : '项'}}</text></view>
-    <view class="warehouse-field"><text class="warehouse-label">{{statusGroup === 'completed' ? '办理日期' : '单据日期'}}</text><text class="warehouse-value">{{item.dateText}}</text></view>
-    <button class="warehouse-primary" data-key="{{item.key}}" bindtap="openDocument">{{item.buttonText}}</button>
-  </view></block>
-  <view wx:if="{{!error}}" class="warehouse-pager"><text>共 {{total}} 条</text><button disabled="{{page <= 1 || loading}}" bindtap="previous">上一页</button><text class="warehouse-current-page">{{page}}</text><button disabled="{{page >= lastPage || loading}}" bindtap="next">下一页</button></view>
+  <!-- 顶部搜索与状态切换卡片 -->
+  <view class="warehouse-card list-filter-card">
+    <view class="warehouse-tabs">
+      <view
+        class="{{statusGroup === 'pending' ? 'selected' : ''}}"
+        data-status="pending"
+        bindtap="switchStatus"
+      >待办理</view>
+      <view
+        class="{{statusGroup === 'completed' ? 'selected' : ''}}"
+        data-status="completed"
+        bindtap="switchStatus"
+      >已完成</view>
+    </view>
+
+    <view class="warehouse-search">
+      <van-icon name="search" color="#64748b" size="32rpx" />
+      <input
+        value="{{keyword}}"
+        placeholder="请输入单号 / 工单 / 物料名称"
+        bindinput="keywordInput"
+        bindconfirm="search"
+        confirm-type="search"
+      />
+      <button bindtap="search">搜索</button>
+    </view>
+
+    <view class="warehouse-filter">
+      <view class="warehouse-filter-select">
+        <production-select
+          options="{{types}}"
+          label-key="name"
+          value="{{typeIndex}}"
+          prefix="业务类型："
+          icon="apps-o"
+          bind:change="changeType"
+        />
+      </view>
+      <view class="warehouse-filter-button {{(dateFrom || dateTo) ? 'has-date' : ''}}" bindtap="openFilter">
+        <van-icon name="filter-o" size="28rpx" />
+        <text>{{(dateFrom || dateTo) ? '已筛日期' : '日期筛选'}}</text>
+      </view>
+    </view>
+  </view>
+
+  <!-- 列表内容区 -->
+  <view wx:if="{{loading}}" class="warehouse-empty">
+    <van-loading color="#d81e06" size="44rpx" />
+    <text class="warehouse-muted">正在加载单据列表...</text>
+  </view>
+
+  <view wx:elif="{{error}}" class="warehouse-empty">
+    <van-icon name="warning-o" size="68rpx" color="#d81e06" />
+    <text class="warehouse-error">{{error}}</text>
+    <button class="warehouse-secondary list-retry-btn" bindtap="load">重新加载</button>
+  </view>
+
+  <view wx:elif="{{!rows.length}}" class="warehouse-empty">
+    <van-icon name="records" size="84rpx" color="#cbd5e1" />
+    <view class="list-empty-title">暂无{{statusGroup === 'completed' ? '已完成' : '待办理'}}单据</view>
+    <view class="warehouse-muted">可尝试切换业务类型或调整搜索关键词</view>
+  </view>
+
+  <block wx:else>
+    <view wx:for="{{rows}}" wx:key="key" class="warehouse-card warehouse-document-card">
+      <view class="warehouse-document-heading">
+        <view class="warehouse-doc-title-group">
+          <text class="warehouse-type {{item.kind}}">{{item.title}}</text>
+          <text class="warehouse-doc-no">{{item.number}}</text>
+        </view>
+        <text class="warehouse-status-badge {{statusGroup === 'completed' ? 'is-done' : ''}}">{{item.status_label}}</text>
+      </view>
+
+      <view class="warehouse-doc-body">
+        <view class="warehouse-field">
+          <text class="warehouse-label">物料名称</text>
+          <text class="warehouse-value warehouse-value-strong">{{item.item_name}}</text>
+        </view>
+        <view class="warehouse-field">
+          <text class="warehouse-label">{{item.quantityText ? '办理数量' : '物料项数'}}</text>
+          <text class="warehouse-value warehouse-danger">{{item.quantityText || item.item_count}} {{item.quantityText ? item.unit_name : '项'}}</text>
+        </view>
+        <view wx:if="{{item.work_order_no}}" class="warehouse-field">
+          <text class="warehouse-label">关联工单</text>
+          <text class="warehouse-value">{{item.work_order_no}}</text>
+        </view>
+        <view wx:if="{{item.related_number}}" class="warehouse-field">
+          <text class="warehouse-label">来源单号</text>
+          <text class="warehouse-value">{{item.related_number}}</text>
+        </view>
+        <view wx:if="{{item.target_operation}}" class="warehouse-field">
+          <text class="warehouse-label">目标工序</text>
+          <text class="warehouse-value">{{item.target_operation}}</text>
+        </view>
+        <view wx:if="{{item.warehouse_name}}" class="warehouse-field">
+          <text class="warehouse-label">目标仓库</text>
+          <text class="warehouse-value">{{item.warehouse_name}}</text>
+        </view>
+        <view wx:if="{{item.party}}" class="warehouse-field">
+          <text class="warehouse-label">{{item.kind === 'purchase_receipt' || item.kind === 'purchase_return' ? '供应商' : '客户'}}</text>
+          <text class="warehouse-value">{{item.party}}</text>
+        </view>
+        <view class="warehouse-field">
+          <text class="warehouse-label">{{statusGroup === 'completed' ? '办理日期' : '单据日期'}}</text>
+          <text class="warehouse-value warehouse-muted">{{item.dateText}}</text>
+        </view>
+        <view wx:if="{{item.kind === 'cutting_remnant' && item.status === 'pending'}}" class="warehouse-field">
+          <text class="warehouse-label">等待时长</text>
+          <text class="warehouse-value {{item.overdue ? 'warehouse-danger' : ''}}">已等待 {{item.waiting_hours}} 小时</text>
+        </view>
+      </view>
+
+      <view class="warehouse-doc-footer">
+        <button
+          class="{{statusGroup === 'completed' ? 'warehouse-secondary' : 'warehouse-primary'}}"
+          data-key="{{item.key}}"
+          bindtap="openDocument"
+        >{{item.buttonText}}</button>
+      </view>
+    </view>
+  </block>
+
+  <view wx:if="{{!error}}" class="warehouse-pager">
+    <text class="warehouse-pager-total">共 {{total}} 条</text>
+    <button disabled="{{page <= 1 || loading}}" bindtap="previous">上一页</button>
+    <text class="warehouse-current-page">{{page}} / {{lastPage}}</text>
+    <button disabled="{{page >= lastPage || loading}}" bindtap="next">下一页</button>
+  </view>
 </view>
-<view wx:if="{{filterOpen}}" class="warehouse-overlay" catchtouchmove="stop"><view class="warehouse-dialog"><view class="warehouse-dialog-header"><text>筛选单据</text><button class="warehouse-close" bindtap="closeFilter"><van-icon name="cross"/></button></view><view class="warehouse-dialog-body">
-  <view class="warehouse-field"><text class="warehouse-label">开始日期</text><picker class="warehouse-value" mode="date" value="{{draftFrom}}" data-field="draftFrom" bindchange="filterDate"><view class="warehouse-input">{{draftFrom || '请选择'}}</view></picker></view>
-  <view class="warehouse-field"><text class="warehouse-label">结束日期</text><picker class="warehouse-value" mode="date" value="{{draftTo}}" data-field="draftTo" bindchange="filterDate"><view class="warehouse-input">{{draftTo || '请选择'}}</view></picker></view><view class="warehouse-error">{{filterError}}</view>
-</view><view class="warehouse-dialog-footer"><button class="warehouse-secondary" bindtap="resetFilter">重置</button><button class="warehouse-primary" bindtap="applyFilter">确认筛选</button></view></view></view>
+
+<!-- 日期筛选弹窗 -->
+<view wx:if="{{filterOpen}}" class="warehouse-overlay" catchtouchmove="stop">
+  <view class="warehouse-dialog">
+    <view class="warehouse-dialog-header">
+      <text>按单据日期筛选</text>
+      <button class="warehouse-close" bindtap="closeFilter">
+        <van-icon name="cross" />
+      </button>
+    </view>
+    <view class="warehouse-dialog-body">
+      <view class="list-date-field">
+        <text class="list-date-label">开始日期</text>
+        <picker
+          class="list-date-picker"
+          mode="date"
+          value="{{draftFrom}}"
+          data-field="draftFrom"
+          bindchange="filterDate"
+        >
+          <view class="warehouse-input warehouse-kv-select">
+            <text class="{{draftFrom ? '' : 'warehouse-muted'}}">{{draftFrom || '点击选择开始日期'}}</text>
+            <van-icon name="calendar-o" color="#64748b" />
+          </view>
+        </picker>
+      </view>
+      <view class="list-date-field">
+        <text class="list-date-label">结束日期</text>
+        <picker
+          class="list-date-picker"
+          mode="date"
+          value="{{draftTo}}"
+          data-field="draftTo"
+          bindchange="filterDate"
+        >
+          <view class="warehouse-input warehouse-kv-select">
+            <text class="{{draftTo ? '' : 'warehouse-muted'}}">{{draftTo || '点击选择结束日期'}}</text>
+            <van-icon name="calendar-o" color="#64748b" />
+          </view>
+        </picker>
+      </view>
+      <view class="warehouse-error">{{filterError}}</view>
+    </view>
+    <view class="warehouse-dialog-footer">
+      <button class="warehouse-secondary" bindtap="resetFilter">重置</button>
+      <button class="warehouse-primary" bindtap="applyFilter">确认筛选</button>
+    </view>
+  </view>
+</view>

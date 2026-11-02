@@ -6,6 +6,7 @@ use App\Exceptions\Erp\WorkOrderDomainException;
 use App\Http\Controllers\Controller;
 use App\Services\Erp\AuthContextService;
 use App\Services\Erp\Manufacturing\SharedCuttingService;
+use App\Services\Erp\Manufacturing\CuttingRemnantReceiptService;
 use Illuminate\Http\Request;
 
 /** 集中开料（不属于工单）：待切清单、领板、登记余料；工单下料点「已备料」时按定额从开料池扣。 */
@@ -21,7 +22,7 @@ class MfgSharedCuttingController extends Controller
     public function index(Request $request, SharedCuttingService $cutting)
     {
         [, $amounts] = $this->user($request, false);
-        $data = $request->validate(['status' => 'nullable|in:issued,settled', 'item_id' => 'nullable|integer|min:1', 'cutting_run_id' => 'nullable|integer|min:1',
+        $data = $request->validate(['status' => 'nullable|in:issued,awaiting_confirm,settled', 'item_id' => 'nullable|integer|min:1', 'cutting_run_id' => 'nullable|integer|min:1',
             'page' => 'nullable|integer|min:1', 'per_page' => 'nullable|integer|min:1|max:50']);
         return response()->json($cutting->index($data, $amounts));
     }
@@ -52,19 +53,13 @@ class MfgSharedCuttingController extends Controller
 
     public function settle(Request $request, int $id, SharedCuttingService $cutting)
     {
-        [$user, $amounts] = $this->user($request, true);
-        $data = $request->validate(['expected_version' => 'required|integer|min:1', 'idempotency_key' => 'required|string|min:16|max:80',
-            'confirmed' => 'required|accepted', 'remark' => 'nullable|string|max:500',
-            'remnants' => 'required|array|min:1|max:200', 'remnants.*.source_key' => 'required|string|max:120',
-            'remnants.*.measure_qty' => 'required|string|regex:/^\d{1,10}(?:\.\d{1,8})?$/D',
-            'remnants.*.warehouse_id' => 'nullable|integer|min:1', 'remnants.*.location_id' => 'nullable|integer|min:1']);
-        foreach ($data['remnants'] as $i => $row) {
-            if ((float) $row['measure_qty'] > 0 && (empty($row['warehouse_id']) || empty($row['location_id'])))
-                throw new WorkOrderDomainException('remnant_location_required', '有余料的板请选放回的仓库和库位。', 422);
-            $data['remnants'][$i]['warehouse_id'] = (int) ($row['warehouse_id'] ?? 0);
-            $data['remnants'][$i]['location_id'] = (int) ($row['location_id'] ?? 0);
-        }
-        return response()->json(['message' => '已登记余料，切好的件可以在各工单下料点「已备料」。', 'data' => $cutting->settle($id, $data, $user, $amounts)]);
+        [$user] = $this->user($request, true);
+        $data = $request->validate(CuttingRemnantReceiptService::requestRules() + ['client_command_id' => 'required|string|max:120']);
+        $commandId = $data['client_command_id']; unset($data['client_command_id']);
+        $auth = app(AuthContextService::class);
+        $result = app(\App\Services\Erp\WarehouseCommandService::class)->run('cutting_batch.request', $id, $commandId, $data,
+            $user, $auth->permissionCodes($user), $auth->isSuperAdmin($user))['result'];
+        return response()->json(['message' => $result['status'] === 'settled' ? '真实零余料已确认，净耗已结算。' : '余料申请已提交，仓库确认后才能分配本批净耗。', 'data' => $result]);
     }
 
     private function user(Request $request, bool $write): array

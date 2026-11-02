@@ -618,6 +618,7 @@ export default {
       const map = {
         stored: 'success',
         completed: 'success',
+        pending_receipt: 'warning',
         in_progress: 'warning',
         rework: 'danger',
         scrapped: 'danger',
@@ -655,7 +656,10 @@ export default {
         unit_scrap_requested: '申请报废',
         unit_scrap_rejected: '报废驳回',
         unit_scrapped: '报废处置',
-        unit_stored: '已入库'
+        unit_stored: '已入库',
+        unit_receipt_requested: '提交入库',
+        unit_receipt_rejected: '仓库驳回',
+        unit_receipt_cancelled: '撤回入库'
       }
       return map[action] || '工序操作'
     },

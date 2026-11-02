@@ -9,7 +9,7 @@
   >
     <div v-loading="loading">
       <p class="dialog-hint">{{ operationName }}：把领多、领错、不良或报废设备拆下的料退回仓库，按原收料的批次和单价冲回库存和工单材料成本。</p>
-      <el-form label-position="top" size="small">
+      <el-form label-position="top" size="small" :disabled="saving || pendingRequest">
         <el-form-item label="退料类型">
           <el-radio-group v-model="form.return_type">
             <el-radio-button v-for="t in types" :key="t.value" :label="t.value">{{ t.label }}</el-radio-button>
@@ -29,14 +29,11 @@
         <el-form-item label="退料原因">
           <el-input v-model="form.reason" type="textarea" :rows="2" maxlength="500" placeholder="例如：多领 2 个、型号领错、来料不良、报废设备拆回" />
         </el-form-item>
+        <el-form-item v-if="form.direct && selectedSerialNos.length" :label="'逐个核对序列号 · 已核对 ' + Object.keys(checkedSerials).filter(sn => selectedSerialNos.includes(sn)).length + ' / ' + selectedSerialNos.length"><el-input v-model="serialCode" placeholder="扫描或输入序列号后回车" @keyup.enter.native="checkSerial"><el-button slot="append" @click="checkSerial">核对</el-button></el-input></el-form-item>
         <template v-if="canApprove">
-          <el-checkbox v-model="form.direct">直接退料入库（库管确认实物已收到，不用再审核）</el-checkbox>
+          <el-checkbox v-model="form.direct">提交时同时接收入库（需核对全部实物与实际库位）</el-checkbox>
           <el-form-item v-if="form.direct" label="退入库位" class="locate">
-            <el-radio-group v-model="form.original">
-              <el-radio :label="true">退回原库位</el-radio>
-              <el-radio :label="false">选择库位</el-radio>
-            </el-radio-group>
-            <div v-if="!form.original" class="picker-row">
+            <div class="picker-row">
               <el-button size="small" @click="openPicker('warehouses')">{{ form.warehouse_name || '选仓库' }}<i class="el-icon-search" /></el-button>
               <el-button size="small" :disabled="!form.warehouse_id" @click="openPicker('locations')">{{ form.location_name || '选库位' }}<i class="el-icon-search" /></el-button>
             </div>
@@ -47,7 +44,7 @@
     </div>
     <span slot="footer">
       <el-button size="small" @click="$emit('update:visible', false)">取消</el-button>
-      <el-button size="small" type="success" class="btn-theme-create" :loading="saving" :disabled="!canSubmit" @click="submit">{{ form.direct ? '确认退料入库' : '提交退料申请' }}</el-button>
+      <el-button size="small" type="success" class="btn-theme-create" :loading="saving" :disabled="!canSubmit" @click="submit">{{ pendingRequest ? '核对上次申请结果' : form.direct ? '确认退料入库' : '提交退料申请' }}</el-button>
     </span>
     <system-record-picker :visible.sync="picker.visible" :type="picker.type" :multiple="false" :value="[]" :warehouse-id="Number(form.warehouse_id || 0)" :location-purposes="['general']" management-scope="factory" @confirm="pick" />
   </el-dialog>
@@ -57,6 +54,7 @@
 import { getMaterialReturnOptions, createMaterialReturn } from '../../../api/erp/production'
 import SystemRecordPicker from '../../../components/system/SystemRecordPicker.vue'
 import { qty, errorText } from './mfg-helpers'
+import { pendingWarehouseCommand } from '@/api/erp/warehouse'
 
 const HINTS = {
   surplus: '多领或领错的料，最多退到“已领 − 已到本道的设备应用量”，冲减已领数量。',
@@ -74,11 +72,12 @@ export default {
     operationName: { type: String, default: '' }
   },
   data: () => ({
-    loading: false, saving: false, types: [], materials: [], canApprove: false,
+    loading: false, saving: false, types: [], materials: [], canApprove: false, pendingRequest: false, checkedSerials: {}, serialCode: '',
     form: { return_type: 'surplus', qty: {}, serials: {}, reason: '', direct: false, original: true, warehouse_id: null, warehouse_name: '', location_id: null, location_name: '' },
     picker: { visible: false, type: 'warehouses' }
   }),
   computed: {
+    selectedSerialNos() { return this.lines.flatMap(line => { const material = this.materials.find(m => m.material_id === line.material_id); return (material?.serials || []).filter(sn => line.serial_ids.includes(sn.id)).map(sn => sn.serial_no) }) },
     typeHint() { return HINTS[this.form.return_type] || '' },
     typeLabel() { const t = this.types.find(x => x.value === this.form.return_type); return t ? t.label : '' },
     visibleMaterials() { return this.materials.filter(m => (m.by_number && this.serialsFor(m).length) || (m.by_qty && this.limitOf(m) > 0)) },
@@ -90,7 +89,7 @@ export default {
       })).filter(l => l.serial_ids.length || l.qty > 0)
     },
     canSubmit() {
-      return this.lines.length && this.form.reason.trim() && (!this.form.direct || this.form.original || this.form.location_id)
+      return this.pendingRequest || (this.lines.length && this.form.reason.trim() && (!this.form.direct || (this.form.location_id && this.selectedSerialNos.every(sn => this.checkedSerials[sn]))))
     }
   },
   watch: {
@@ -98,9 +97,11 @@ export default {
   },
   methods: {
     qty,
+    checkSerial() { const code = this.serialCode.trim().replace(/^ERP:SN:/i, ''); if (!this.selectedSerialNos.includes(code)) return this.$message.error('该序列号不属于本次退料'); if (this.checkedSerials[code]) return this.$message.warning('该序列号已核对'); this.$set(this.checkedSerials, code, true); this.serialCode = '' },
     async load() {
       this.loading = true
       this.materials = []
+      this.pendingRequest = Boolean(pendingWarehouseCommand('material_return.request', this.operationId)); this.checkedSerials = {}; this.serialCode = ''
       this.form = { return_type: 'surplus', qty: {}, serials: {}, reason: '', direct: false, original: true, warehouse_id: null, warehouse_name: '', location_id: null, location_name: '' }
       try {
         const { data } = await getMaterialReturnOptions(this.workOrderId, this.operationId)
@@ -149,15 +150,17 @@ export default {
       const payload = { return_type: f.return_type, reason: f.reason.trim(), lines: this.lines, with_detail: true }
       if (f.direct) {
         payload.direct = true
-        if (!f.original) payload.location_id = f.location_id
+        payload.location_id = f.location_id
+        payload.serial_nos = this.selectedSerialNos.filter(sn => this.checkedSerials[sn])
       }
       this.saving = true
       try {
         const { data } = await createMaterialReturn(this.workOrderId, this.operationId, payload)
         this.$message.success(data.message || '已提交')
-        this.$emit('done', data.data)
         this.$emit('update:visible', false)
+        this.$emit('done')
       } catch (e) {
+        this.pendingRequest = Boolean(e.pendingCommand)
         this.$message.error(errorText(e, '退料失败'))
       } finally {
         this.saving = false

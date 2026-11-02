@@ -366,7 +366,7 @@ Page({
     const yes = approve === 'yes' || approve === true;
     const infoSub = row.kind === 'scrap'
       ? (yes ? `确认 ${row.serial_no || ''} 报废？确认后该单件将终止生产。` : '驳回后该单件保留在当前工序继续返工。')
-      : (yes ? `处置方案：${row.plan_label}${row.plan && row.plan.action === 'rework' ? '（审核通过后自动下达返工子工单）' : ''}` : '驳回后退回物料保留在原工序。');
+      : (yes ? `处置方案：${row.plan_label}。方案通过后仍需仓库接收入库${row.plan && row.plan.action === 'rework' ? '，接收后下达返工子工单' : ''}。` : '驳回后退回物料保留在原工序。');
     view.modal(this, {
       mode: 'input',
       theme: yes ? 'default' : 'danger',
@@ -380,7 +380,7 @@ Page({
       confirmText: yes ? '确认审核通过' : '确认驳回',
       success: res => {
         if (!res.confirm) return;
-        const payload = { approve: yes, remark: res.content || '' };
+        const payload = { approve: yes, remark: res.content || '', expected_version: row.business_version };
         this.setData({ busy: true });
         (row.kind === 'scrap' ? production.reviewScrap(row.id, payload) : production.reviewPlan(row.id, payload)).then(response => {
           wx.showToast({ title: response.message || '已处理', icon: 'none' });

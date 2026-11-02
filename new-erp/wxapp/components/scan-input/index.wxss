@@ -1,65 +1,84 @@
 .scan-input {
   display: flex;
   align-items: center;
-  gap: 16rpx;
+  gap: 14rpx;
   width: 100%;
   min-width: 0;
   box-sizing: border-box;
-  padding: 8rpx;
-  border: 1rpx solid #cfd6e2;
-  border-radius: 18rpx;
-  background: #ffffff;
+  padding: 8rpx 10rpx 8rpx 20rpx;
+  border: 2rpx solid #e2e8f0;
+  border-radius: 20rpx;
+  background: #f8fafc;
+  transition: border-color 0.15s ease;
 }
+
 .scan-input-icon {
   flex-shrink: 0;
-  margin-left: 14rpx;
   color: #d81e06;
+  display: flex;
+  align-items: center;
 }
+
 .scan-input-field {
   flex: 1;
   min-width: 0;
-  height: 74rpx;
-  font-size: 29rpx;
+  height: 68rpx;
+  font-size: 27rpx;
   color: #1e293b;
 }
+
 .scan-input-button {
-  display: flex;
+  display: inline-flex;
   flex-shrink: 0;
   align-items: center;
   justify-content: center;
-  gap: 10rpx;
-  min-width: 144rpx;
+  gap: 8rpx;
+  width: auto !important;
+  min-width: 140rpx;
+  height: 68rpx;
+  min-height: 68rpx;
   margin: 0;
-  padding: 16rpx 18rpx;
-  border-radius: 15rpx;
-  background: #df1b07;
+  padding: 0 24rpx;
+  border-radius: 16rpx;
+  background: linear-gradient(135deg, #d81e06 0%, #ef1008 100%);
   color: #ffffff;
-  font-size: 29rpx;
-  font-weight: 600;
-  line-height: 1.5;
+  font-size: 26rpx;
+  font-weight: 700;
+  line-height: 1.2;
+  box-shadow: 0 4rpx 12rpx rgba(216, 30, 6, 0.2);
+  box-sizing: border-box;
 }
+
 .scan-input-button::after {
   border: 0;
 }
+
 .scan-input-button[disabled] {
-  background: #f1a79f;
-  color: #ffffff;
+  background: #f5a39b !important;
+  color: #ffffff !important;
+  box-shadow: none;
 }
+
 .compact {
-  gap: 8rpx;
-  padding: 4rpx;
-  border-radius: 12rpx;
+  gap: 10rpx;
+  padding: 6rpx 8rpx 6rpx 16rpx;
+  border-radius: 16rpx;
 }
+
 .compact .scan-input-icon {
   display: none;
 }
+
 .compact .scan-input-field {
   height: 58rpx;
-  padding-left: 10rpx;
-  font-size: 26rpx;
+  padding-left: 4rpx;
+  font-size: 25rpx;
 }
+
 .compact .scan-input-button {
-  min-width: 62rpx;
-  padding: 8rpx;
-  border-radius: 9rpx;
+  min-width: 68rpx;
+  height: 58rpx;
+  min-height: 58rpx;
+  padding: 0 16rpx;
+  border-radius: 12rpx;
 }

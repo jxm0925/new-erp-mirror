@@ -40,6 +40,6 @@ CREATE TABLE `erp_mfg_work_order_units` (
 SQL;
 
     public const DECLARED_CHECKS = [
-        'mfg_wo_unit_status_chk' => "(`status` IN ('waiting', 'in_progress', 'rework', 'completed', 'stored', 'scrapped', 'cancelled'))",
+        'mfg_wo_unit_status_chk' => "(`status` IN ('waiting', 'in_progress', 'rework', 'completed', 'pending_receipt', 'stored', 'scrapped', 'cancelled'))",
     ];
 };

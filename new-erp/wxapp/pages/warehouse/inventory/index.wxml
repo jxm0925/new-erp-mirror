@@ -1,16 +1,375 @@
-<warehouse-context/>
+<warehouse-context />
+
 <view class="warehouse-page">
-  <view wx:if="{{!selected}}" class="warehouse-card"><scan-input focus clear-after-resolve placeholder="扫码或输入物料编码" bind:resolved="scanned"/><view class="warehouse-search inventory-filter-actions"><van-icon name="search"/><input placeholder="请输入物料名称或规格" value="{{keyword}}" bindinput="input" bindconfirm="search" confirm-type="search"/></view><view class="inventory-filters"><view bindtap="openLocator">仓库 {{locator.warehouse_name || '全部'}} <van-icon name="arrow-down"/></view><view bindtap="openLocator">库位 {{locator.location_code || '全部'}} <van-icon name="arrow-down"/></view></view><view class="warehouse-actions"><button class="warehouse-primary" bindtap="search">查询</button><button class="warehouse-secondary" bindtap="reset">重置</button></view></view>
-  <block wx:else><view class="inventory-back" bindtap="closeDetail"><van-icon name="arrow-left"/> 返回库存查询</view><view class="warehouse-card"><view class="inventory-item"><view class="inventory-icon"><van-icon name="debit-pay" color="#ed1a0b" size="60rpx"/></view><view class="inventory-item-main"><view class="warehouse-card-title">{{selected.itemName}}</view><view class="warehouse-field"><text class="warehouse-label">编码</text><text class="warehouse-value">{{selected.itemCode}}</text></view><view class="warehouse-field"><text class="warehouse-label">规格</text><text class="warehouse-value">{{selected.spec || '—'}}</text></view></view></view><view class="phase-metrics"><view>账面数量<text>{{selected.onHand || '—'}} {{selected.unit}}</text></view><view>可用数量<text class="available">{{selected.available || '—'}} {{selected.unit}}</text></view><view>占用数量<text class="locked">{{selected.locked || '—'}} {{selected.unit}}</text></view></view><view wx:if="{{selected.lengthText}}" class="warehouse-field"><text class="warehouse-label">总长度</text><text class="warehouse-value">{{selected.lengthText}} 米</text></view><view wx:if="{{selected.areaTotalText}}" class="warehouse-field"><text class="warehouse-label">总面积</text><text class="warehouse-value">{{selected.areaTotalText}} m²</text></view><view wx:if="{{canAmount && selected.amount}}" class="warehouse-field"><text class="warehouse-label">库存金额</text><text class="warehouse-value">{{selected.amount}}</text></view></view><view class="phase-tabs"><view class="{{tab === 'batches' ? 'active' : ''}}" data-tab="batches" bindtap="switchTab">批次库位</view><view class="{{tab === 'serials' ? 'active' : ''}}" data-tab="serials" bindtap="switchTab">序列号</view><view class="{{tab === 'physicals' ? 'active' : ''}}" data-tab="physicals" bindtap="switchTab">实物</view></view></block>
-  <view wx:if="{{scanInfo}}" class="warehouse-card"><view class="phase-heading">{{scanInfo.name}}</view><view wx:if="{{scanInfo.statusText}}" class="warehouse-field"><text class="warehouse-label">状态</text><text class="warehouse-value">{{scanInfo.statusText}}</text></view><view wx:if="{{scanInfo.work_order_no}}" class="warehouse-field"><text class="warehouse-label">关联工单</text><text class="warehouse-value">{{scanInfo.work_order_no}}</text></view><view wx:if="{{scanInfo.current_operation_name}}" class="warehouse-field"><text class="warehouse-label">当前工序</text><text class="warehouse-value">{{scanInfo.current_operation_name}}</text></view></view>
-  <view wx:if="{{loading}}" class="warehouse-empty"><van-loading color="#ed1609"/></view><view wx:elif="{{error}}" class="warehouse-empty">{{error}}<button wx:if="{{selected}}" class="warehouse-secondary" bindtap="loadDetail">重新加载</button><button wx:else class="warehouse-secondary" bindtap="load">重新加载</button></view>
-  <block wx:elif="{{!selected}}"><view class="warehouse-muted">共 {{total}} 条记录</view><view wx:if="{{!rows.length}}" class="warehouse-empty">暂无符合条件的库存</view><view wx:for="{{rows}}" wx:key="item_id" class="warehouse-card"><view class="inventory-item" data-id="{{item.item_id}}" bindtap="open"><view class="inventory-icon"><van-icon name="debit-pay" color="#ed1a0b" size="48rpx"/></view><view class="inventory-item-main"><view class="warehouse-card-title">{{item.itemName}}</view><view class="warehouse-field"><text class="warehouse-label">编码</text><text class="warehouse-value">{{item.itemCode}}</text></view><view class="warehouse-field"><text class="warehouse-label">规格</text><text class="warehouse-value">{{item.spec || '—'}}</text></view></view></view><view class="phase-metrics"><view>账面数量<text>{{item.onHand}} {{item.unit}}</text></view><view>可用数量<text class="available">{{item.available}} {{item.unit}}</text></view><view>占用数量<text class="locked">{{item.locked}} {{item.unit}}</text></view></view><view wx:if="{{canAmount && item.amount}}" class="warehouse-field"><text class="warehouse-label">库存金额</text><text class="warehouse-value">{{item.amount}}</text></view><view class="phase-result"><text data-id="{{item.item_id}}" data-tab="batches" bindtap="open">查看批次</text><text data-id="{{item.item_id}}" data-tab="physicals" bindtap="open">查看实物</text><van-icon name="arrow"/></view></view></block>
-  <view wx:elif="{{selected}}" class="warehouse-card"><view class="phase-heading">{{tab === 'physicals' ? '实物清单' : tab === 'serials' ? (balanceId ? '序列号清单' : '选择库存位置') : batch ? '库位分布' : '批次清单'}}</view><view wx:if="{{batch}}" class="inventory-back" bindtap="closeBatch">{{batch}} · 返回批次清单</view><view wx:if="{{tab === 'serials' && balanceId}}" class="inventory-back" bindtap="chooseBalance">{{balanceTitle}} · 更换库存位置</view><view class="warehouse-search"><input placeholder="{{tab === 'physicals' ? '输入实物编号' : tab === 'serials' && balanceId ? '输入序列号' : '输入批次号'}}" value="{{detailKeyword}}" data-field="detailKeyword" bindinput="input" bindconfirm="search"/><button bindtap="search">查询</button></view><view wx:if="{{!detailRows.length}}" class="warehouse-empty">暂无记录</view>
-    <view wx:for="{{detailRows}}" wx:key="key" class="phase-line"><block wx:if="{{tab === 'physicals'}}"><view class="warehouse-field"><text class="warehouse-label">实物编号</text><text class="warehouse-value">{{item.physical_no}}</text></view><view class="warehouse-field"><text class="warehouse-label">规格描述</text><text class="warehouse-value">{{item.dimensionText ? item.dimensionText + ' mm' : '不规则余板'}}</text></view><view wx:if="{{item.areaText}}" class="warehouse-field"><text class="warehouse-label">面积</text><text class="warehouse-value">{{item.areaText}} m²</text></view><view class="warehouse-field"><text class="warehouse-label">所在仓库</text><text class="warehouse-value">{{item.warehouse_name}}</text></view><view class="warehouse-field"><text class="warehouse-label">库位</text><text class="warehouse-value">{{item.location_code || item.location_name}}</text></view><view class="warehouse-field"><text class="warehouse-label">批次号</text><text class="warehouse-value">{{item.batch_no || '—'}}</text></view><view class="warehouse-field"><text class="warehouse-label">状态</text><text class="warehouse-value">{{item.statusText || '可用'}}</text></view><view wx:if="{{canAmount && item.costText}}" class="warehouse-field"><text class="warehouse-label">库存成本</text><text class="warehouse-value">{{item.costText}}</text></view></block>
-    <block wx:elif="{{tab === 'serials' && balanceId}}"><view class="warehouse-field"><text class="warehouse-label">序列号</text><text class="warehouse-value">{{item.serial_no}}</text></view><view class="warehouse-field"><text class="warehouse-label">状态</text><text class="warehouse-value">{{item.statusText}}</text></view></block>
-    <block wx:else><view class="warehouse-field"><text class="warehouse-label">批次号</text><text class="warehouse-value">{{item.batch_no || '—'}}</text></view><view wx:if="{{item.warehouse}}" class="warehouse-field"><text class="warehouse-label">仓库 / 库位</text><text class="warehouse-value">{{item.warehouse.warehouse_name}} / {{item.location.location_code}} {{item.location.location_name}}</text></view><view class="phase-metrics"><view>账面数量<text>{{item.onHand}}</text></view><view>可用数量<text class="available">{{item.available}}</text></view><view>占用数量<text class="locked">{{item.locked}}</text></view></view><view wx:if="{{item.perLengthText}}" class="warehouse-field"><text class="warehouse-label">每根长度</text><text class="warehouse-value">{{item.perLengthText}} mm</text></view><button wx:if="{{tab === 'batches' && !batch}}" class="warehouse-secondary" data-batch="{{item.batch_no}}" bindtap="openBatch">查看库位分布</button><button wx:else class="warehouse-secondary" data-id="{{item.id}}" data-title="{{item.warehouse.warehouse_name + ' · ' + item.location.location_code + ' · ' + item.batch_no}}" bindtap="openSerials">查看序列号</button></block></view>
-    <view class="phase-heading">扫描库位</view><scan-input compact placeholder="请扫描库位条码或输入库位" types="{{['location']}}" bind:resolved="scanned"/>
+  <!-- 顶部库存模式切换 -->
+  <view wx:if="{{!selected}}" class="phase-tabs inv-top-tabs">
+    <view
+      class="{{stockMode === 'warehouse' ? 'active' : ''}}"
+      data-mode="warehouse"
+      bindtap="switchStockMode"
+    >仓内库存</view>
+    <view
+      class="{{stockMode === 'in_transit' ? 'active' : ''}}"
+      data-mode="in_transit"
+      bindtap="switchStockMode"
+    >调拨在途</view>
+    <view
+      class="{{onlyException && stockMode === 'in_transit' ? 'active' : ''}}"
+      bindtap="toggleException"
+    >有接收异常</view>
   </view>
-  <view wx:if="{{!error}}" class="warehouse-pager"><button disabled="{{loading || (selected ? detailPage : page) <= 1}}" data-delta="-1" bindtap="turn">上一页</button><text>{{selected ? detailPage : page}} / {{selected ? detailLast : lastPage}}</text><button disabled="{{loading || (selected ? detailPage >= detailLast : page >= lastPage)}}" data-delta="1" bindtap="turn">下一页</button></view>
+
+  <!-- 资产汇总卡片 -->
+  <view wx:if="{{!selected && assetAmounts.length}}" class="warehouse-card inv-asset-card">
+    <view class="phase-heading">库存资产汇总</view>
+    <view class="phase-metrics">
+      <view wx:for="{{assetAmounts}}" wx:key="label">
+        {{item.label}}
+        <text class="warehouse-danger">{{item.value}}</text>
+      </view>
+    </view>
+  </view>
+
+  <!-- 在途扫码提示 -->
+  <view wx:if="{{scanInfo.in_transit}}" class="warehouse-note inv-transit-note">
+    <view>实物调拨在途，不计入任何仓库可用量。目标仓库：{{scanInfo.target_warehouse_name}}</view>
+    <button
+      wx:if="{{scanInfo.transit_transfer}}"
+      class="warehouse-secondary inv-transit-btn"
+      bindtap="openScannedTransfer"
+    >查看在途单据</button>
+  </view>
+
+  <!-- 列表筛选卡片 -->
+  <view wx:if="{{!selected}}" class="warehouse-card">
+    <scan-input
+      focus
+      clear-after-resolve
+      placeholder="扫码或输入物料编码 / 序列号 / 实物码"
+      bind:resolved="scanned"
+    />
+    <view class="warehouse-search inventory-filter-actions">
+      <van-icon name="search" color="#64748b" size="32rpx" />
+      <input
+        placeholder="请输入物料名称或规格型号"
+        value="{{keyword}}"
+        bindinput="input"
+        bindconfirm="search"
+        confirm-type="search"
+      />
+    </view>
+    <view class="inventory-filters">
+      <view class="inv-filter-chip {{locator.warehouse_id ? 'is-selected' : ''}}" bindtap="openLocator">
+        <view class="inv-chip-main">
+          <text class="inv-chip-lbl">仓库</text>
+          <text class="inv-chip-val">{{locator.warehouse_name || '全部仓库'}}</text>
+        </view>
+        <van-icon name="arrow-down" size="24rpx" color="#64748b" />
+      </view>
+      <view class="inv-filter-chip {{locator.location_id ? 'is-selected' : ''}}" bindtap="openLocator">
+        <view class="inv-chip-main">
+          <text class="inv-chip-lbl">库位</text>
+          <text class="inv-chip-val">{{locator.location_code || '全部库位'}}</text>
+        </view>
+        <van-icon name="arrow-down" size="24rpx" color="#64748b" />
+      </view>
+    </view>
+    <view class="warehouse-actions">
+      <button class="warehouse-secondary" bindtap="reset">重置条件</button>
+      <button class="warehouse-primary" bindtap="search">查询库存</button>
+    </view>
+  </view>
+
+  <!-- 选中物料详情头部 -->
+  <block wx:else>
+    <view class="inventory-back" bindtap="closeDetail">
+      <van-icon name="arrow-left" size="28rpx" />
+      <text>返回库存查询列表</text>
+    </view>
+
+    <view class="warehouse-card">
+      <view class="inventory-item">
+        <view class="inventory-icon">
+          <van-icon name="apps-o" color="#d81e06" size="52rpx" />
+        </view>
+        <view class="inventory-item-main">
+          <view class="warehouse-card-title">{{selected.itemName}}</view>
+          <view class="inv-meta-tags">
+            <text class="inv-code-tag">{{selected.itemCode}}</text>
+            <text wx:if="{{selected.spec}}" class="inv-spec-tag">{{selected.spec}}</text>
+          </view>
+        </view>
+      </view>
+
+      <view class="phase-metrics">
+        <view>账面数量<text>{{selected.onHand || '—'}} {{selected.unit}}</text></view>
+        <view>可用数量<text class="available">{{selected.available || '—'}} {{selected.unit}}</text></view>
+        <view>占用数量<text class="locked">{{selected.locked || '—'}} {{selected.unit}}</text></view>
+      </view>
+
+      <view wx:if="{{selected.lengthText}}" class="warehouse-field">
+        <text class="warehouse-label">总长度</text>
+        <text class="warehouse-value">{{selected.lengthText}} 米</text>
+      </view>
+      <view wx:if="{{selected.areaTotalText}}" class="warehouse-field">
+        <text class="warehouse-label">总面积</text>
+        <text class="warehouse-value">{{selected.areaTotalText}} m²</text>
+      </view>
+      <view wx:if="{{canAmount && selected.amount}}" class="warehouse-field">
+        <text class="warehouse-label">库存金额</text>
+        <text class="warehouse-value warehouse-danger">{{selected.amount}}</text>
+      </view>
+    </view>
+
+    <view class="phase-tabs">
+      <view class="{{tab === 'batches' ? 'active' : ''}}" data-tab="batches" bindtap="switchTab">批次库位</view>
+      <view class="{{tab === 'serials' ? 'active' : ''}}" data-tab="serials" bindtap="switchTab">序列号</view>
+      <view class="{{tab === 'physicals' ? 'active' : ''}}" data-tab="physicals" bindtap="switchTab">板管实物</view>
+    </view>
+  </block>
+
+  <!-- 扫码识别信息卡 -->
+  <view wx:if="{{scanInfo}}" class="warehouse-card inv-scan-info-card">
+    <view class="phase-heading">
+      <text>{{scanInfo.name}}</text>
+      <text wx:if="{{scanInfo.statusText}}" class="phase-tag">{{scanInfo.statusText}}</text>
+    </view>
+    <view wx:if="{{scanInfo.work_order_no}}" class="warehouse-field">
+      <text class="warehouse-label">关联工单</text>
+      <text class="warehouse-value">{{scanInfo.work_order_no}}</text>
+    </view>
+    <view wx:if="{{scanInfo.current_operation_name}}" class="warehouse-field">
+      <text class="warehouse-label">当前工序</text>
+      <text class="warehouse-value">{{scanInfo.current_operation_name}}</text>
+    </view>
+  </view>
+
+  <!-- 加载与错误态 -->
+  <view wx:if="{{loading}}" class="warehouse-empty">
+    <van-loading color="#d81e06" size="44rpx" />
+    <text class="warehouse-muted">正在加载库存数据...</text>
+  </view>
+
+  <view wx:elif="{{error}}" class="warehouse-empty">
+    <van-icon name="warning-o" size="68rpx" color="#d81e06" />
+    <view class="warehouse-error">{{error}}</view>
+    <button wx:if="{{selected}}" class="warehouse-secondary inv-retry-btn" bindtap="loadDetail">重新加载</button>
+    <button wx:else class="warehouse-secondary inv-retry-btn" bindtap="load">重新加载</button>
+  </view>
+
+  <!-- 调拨在途列表 -->
+  <block wx:elif="{{!selected && stockMode === 'in_transit'}}">
+    <view class="inv-result-count">共 {{total}} 条在途明细</view>
+    <view wx:if="{{!rows.length}}" class="warehouse-empty">
+      <van-icon name="logistics" size="80rpx" color="#cbd5e1" />
+      <view>暂无符合条件的在途明细</view>
+    </view>
+    <view wx:for="{{rows}}" wx:key="key" class="warehouse-card">
+      <view class="phase-heading">
+        <text>{{item.item_name || item.number}}</text>
+        <text class="phase-tag">在途</text>
+      </view>
+      <view class="warehouse-field">
+        <text class="warehouse-label">调拨单号</text>
+        <text class="warehouse-value">{{item.number}}</text>
+      </view>
+      <view class="warehouse-field">
+        <text class="warehouse-label">在途数量</text>
+        <text class="warehouse-value warehouse-danger">{{item.qtyText}} {{item.unit_name}}</text>
+      </view>
+      <view class="warehouse-field">
+        <text class="warehouse-label">来源仓库</text>
+        <text class="warehouse-value">{{item.source_warehouse_name}} / {{item.source_location_code}}</text>
+      </view>
+      <view class="warehouse-field">
+        <text class="warehouse-label">目标仓库</text>
+        <text class="warehouse-value">{{item.target_warehouse_name}} / {{item.target_location_code}}</text>
+      </view>
+      <view class="warehouse-field">
+        <text class="warehouse-label">调出时间</text>
+        <text class="warehouse-value warehouse-muted">{{item.dispatchedText}}</text>
+      </view>
+      <view wx:if="{{canAmount && item.amountText}}" class="warehouse-field">
+        <text class="warehouse-label">在途成本</text>
+        <text class="warehouse-value">{{item.amountText}}</text>
+      </view>
+      <view wx:if="{{item.receipt_exception}}" class="warehouse-error">接收异常：{{item.receipt_exception}}</view>
+      <view class="warehouse-actions">
+        <button class="warehouse-secondary" data-key="{{item.key}}" bindtap="openTransit">查看调拨单</button>
+      </view>
+    </view>
+  </block>
+
+  <!-- 仓内库存列表 -->
+  <block wx:elif="{{!selected}}">
+    <view class="inv-result-count">共 {{total}} 条库存记录</view>
+    <view wx:if="{{!rows.length}}" class="warehouse-empty">
+      <van-icon name="box-o" size="80rpx" color="#cbd5e1" />
+      <view>暂无符合条件的库存</view>
+    </view>
+    <view wx:for="{{rows}}" wx:key="item_id" class="warehouse-card inv-row-card">
+      <view class="inventory-item" data-id="{{item.item_id}}" bindtap="open">
+        <view class="inventory-icon">
+          <van-icon name="apps-o" color="#d81e06" size="46rpx" />
+        </view>
+        <view class="inventory-item-main">
+          <view class="warehouse-card-title">{{item.itemName}}</view>
+          <view class="inv-meta-tags">
+            <text class="inv-code-tag">{{item.itemCode}}</text>
+            <text wx:if="{{item.spec}}" class="inv-spec-tag">{{item.spec}}</text>
+          </view>
+        </view>
+      </view>
+
+      <view class="phase-metrics">
+        <view>账面数量<text>{{item.onHand}} {{item.unit}}</text></view>
+        <view>可用数量<text class="available">{{item.available}} {{item.unit}}</text></view>
+        <view>占用数量<text class="locked">{{item.locked}} {{item.unit}}</text></view>
+      </view>
+
+      <view wx:if="{{canAmount && item.amount}}" class="warehouse-field">
+        <text class="warehouse-label">库存金额</text>
+        <text class="warehouse-value warehouse-danger">{{item.amount}}</text>
+      </view>
+
+      <view class="phase-result">
+        <view class="inv-action-pill" data-id="{{item.item_id}}" data-tab="batches" bindtap="open">查看批次</view>
+        <view class="inv-action-pill" data-id="{{item.item_id}}" data-tab="physicals" bindtap="open">查看实物</view>
+        <van-icon name="arrow" size="26rpx" color="#d81e06" />
+      </view>
+    </view>
+  </block>
+
+  <!-- 物料批次/序列号/实物详情卡片 -->
+  <view wx:elif="{{selected}}" class="warehouse-card">
+    <view class="phase-heading">
+      <text>{{tab === 'physicals' ? '板管实物清单' : tab === 'serials' ? (balanceId ? '序列号清单' : '选择库存位置') : batch ? '批次库位分布' : '批次清单'}}</text>
+    </view>
+
+    <view wx:if="{{batch}}" class="inventory-sub-back" bindtap="closeBatch">
+      <van-icon name="replay" size="26rpx" color="#d81e06" />
+      <text>当前批次：{{batch}} · 点击返回批次清单</text>
+    </view>
+    <view wx:if="{{tab === 'serials' && balanceId}}" class="inventory-sub-back" bindtap="chooseBalance">
+      <van-icon name="exchange" size="26rpx" color="#d81e06" />
+      <text>{{balanceTitle}} · 点击更换库存位置</text>
+    </view>
+
+    <view class="warehouse-search inv-detail-search">
+      <van-icon name="search" color="#64748b" size="30rpx" />
+      <input
+        placeholder="{{tab === 'physicals' ? '输入实物编号筛选' : tab === 'serials' && balanceId ? '输入序列号筛选' : '输入批次号筛选'}}"
+        value="{{detailKeyword}}"
+        data-field="detailKeyword"
+        bindinput="input"
+        bindconfirm="search"
+      />
+      <button bindtap="search">查询</button>
+    </view>
+
+    <view wx:if="{{!detailRows.length}}" class="warehouse-empty">暂无明细记录</view>
+
+    <view wx:for="{{detailRows}}" wx:key="key" class="phase-line">
+      <block wx:if="{{tab === 'physicals'}}">
+        <view class="phase-line-title">
+          <text>{{item.physical_no}}</text>
+          <text class="phase-tag">{{item.statusText || '可用'}}</text>
+        </view>
+        <view class="warehouse-field">
+          <text class="warehouse-label">规格尺寸</text>
+          <text class="warehouse-value">{{item.dimensionText ? item.dimensionText + ' mm' : '异形余板'}}</text>
+        </view>
+        <view wx:if="{{item.areaText}}" class="warehouse-field">
+          <text class="warehouse-label">核算面积</text>
+          <text class="warehouse-value">{{item.areaText}} m²</text>
+        </view>
+        <view class="warehouse-field">
+          <text class="warehouse-label">所在仓库</text>
+          <text class="warehouse-value">{{item.warehouse_name}}</text>
+        </view>
+        <view class="warehouse-field">
+          <text class="warehouse-label">所在库位</text>
+          <text class="warehouse-value">{{item.location_code || item.location_name}}</text>
+        </view>
+        <view class="warehouse-field">
+          <text class="warehouse-label">批次号</text>
+          <text class="warehouse-value">{{item.batch_no || '—'}}</text>
+        </view>
+        <view wx:if="{{canAmount && item.costText}}" class="warehouse-field">
+          <text class="warehouse-label">库存成本</text>
+          <text class="warehouse-value warehouse-danger">{{item.costText}}</text>
+        </view>
+      </block>
+
+      <block wx:elif="{{tab === 'serials' && balanceId}}">
+        <view class="warehouse-field">
+          <text class="warehouse-label">序列号 SN</text>
+          <text class="warehouse-value">{{item.serial_no}}</text>
+        </view>
+        <view class="warehouse-field">
+          <text class="warehouse-label">当前状态</text>
+          <text class="warehouse-value warehouse-danger">{{item.statusText}}</text>
+        </view>
+      </block>
+
+      <block wx:else>
+        <view class="warehouse-field">
+          <text class="warehouse-label">批次号</text>
+          <text class="warehouse-value">{{item.batch_no || '—'}}</text>
+        </view>
+        <view wx:if="{{item.warehouse}}" class="warehouse-field">
+          <text class="warehouse-label">仓库 / 库位</text>
+          <text class="warehouse-value">{{item.warehouse.warehouse_name}} / {{item.location.location_code}} {{item.location.location_name}}</text>
+        </view>
+        <view class="phase-metrics">
+          <view>账面数量<text>{{item.onHand}}</text></view>
+          <view>可用数量<text class="available">{{item.available}}</text></view>
+          <view>占用数量<text class="locked">{{item.locked}}</text></view>
+        </view>
+        <view wx:if="{{item.perLengthText}}" class="warehouse-field">
+          <text class="warehouse-label">每根长度</text>
+          <text class="warehouse-value">{{item.perLengthText}} mm</text>
+        </view>
+        <view class="warehouse-actions">
+          <button
+            wx:if="{{tab === 'batches' && !batch}}"
+            class="warehouse-secondary"
+            data-batch="{{item.batch_no}}"
+            bindtap="openBatch"
+          >查看库位分布</button>
+          <button
+            wx:else
+            class="warehouse-secondary"
+            data-id="{{item.id}}"
+            data-title="{{item.warehouse.warehouse_name + ' · ' + item.location.location_code + ' · ' + item.batch_no}}"
+            bindtap="openSerials"
+          >查看序列号</button>
+        </view>
+      </block>
+    </view>
+
+    <view class="inv-scan-loc-box">
+      <view class="phase-heading">按库位条码快筛</view>
+      <scan-input
+        compact
+        placeholder="请扫描库位条码或输入库位编码"
+        types="{{['location']}}"
+        bind:resolved="scanned"
+      />
+    </view>
+  </view>
+
+  <view wx:if="{{!error}}" class="warehouse-pager">
+    <button disabled="{{loading || (selected ? detailPage : page) <= 1}}" data-delta="-1" bindtap="turn">上一页</button>
+    <text class="inv-page-indicator">{{selected ? detailPage : page}} / {{selected ? detailLast : lastPage}}</text>
+    <button disabled="{{loading || (selected ? detailPage >= detailLast : page >= lastPage)}}" data-delta="1" bindtap="turn">下一页</button>
+  </view>
 </view>
-<warehouse-locator open="{{locatorOpen}}" value="{{locator}}" allow-warehouse-only bind:confirm="chooseLocator" bind:cancel="closeLocator"/>
+
+<warehouse-locator
+  open="{{locatorOpen}}"
+  value="{{locator}}"
+  allow-warehouse-only
+  bind:confirm="chooseLocator"
+  bind:cancel="closeLocator"
+/>
