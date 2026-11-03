@@ -1,7 +1,7 @@
 const warehouse = require('../../../services/warehouse');
 const page = require('../../../utils/warehouse-page');
 const LABELS = { confirm: '确认入库', reject: '驳回', cancel: '撤回申请', scrap: '报废余料', exception: '登记异常', resubmit: '更正后重新提交' };
-const TITLES = { mfg_receipt: '生产入库确认', cutting_remnant: '余料入库确认', inventory_transfer: '调拨入库确认', material_physical_transfer: '实物调拨接收' };
+const TITLES = { mfg_receipt: '生产入库确认', cutting_remnant: '历史余料申请', inventory_transfer: '调拨入库确认', material_physical_transfer: '实物调拨接收' };
 Page({
   data: { kind: 'mfg_receipt', id: 0, loading: true, saving: false, error: '', formError: '', header: { serial_nos: [], allowed_location_purposes: [] }, lines: [], actions: {},
     page: 1, lastPage: 1, total: 0, checked: {}, checkedCount: 0, checkedPhysicals: {}, drafts: {}, resubmitting: false, locatorTarget: '', locator: {}, locatorOpen: false, remark: '', dialog: null, pendingActions: [], canViewAmount: false, isRemnant: false, isTransfer: false, isPhysical: false, confirmReady: false,
@@ -21,8 +21,7 @@ Page({
       const changed = this.version && this.version !== Number(header.business_version);
       if (changed) this.setData({ checked: {}, checkedCount: 0, checkedPhysicals: {}, drafts: {}, locator: {}, formError: '单据已变化，请重新核对库位和实物' });
       this.version = Number(header.business_version);
-      const actions = {}; (body.actions || []).forEach(action => { actions[action.split('.')[1]] = true; });
-      if (header.can_resubmit) actions.resubmit = true;
+      const actions = {}; if (!this.data.isRemnant) (body.actions || []).forEach(action => { actions[action.split('.')[1]] = true; });
       const locator = this.data.locator; const drafts = Object.assign({}, this.data.drafts);
       (header.confirmation_lines || []).forEach(row => { const key = this.data.isRemnant ? row.source_key : String(row.id); if (!drafts[key]) drafts[key] = { measure_qty: page.quantity(row.measure_qty), location_id: null, location_code: '', warehouse_id: this.data.isTransfer ? header.target_warehouse_id : null }; });
       const canViewAmount = page.permissions()('inventory.amount.view');
@@ -31,10 +30,10 @@ Page({
         sourceWarehouseName: header.source_warehouse_name || (header.source_warehouse || {}).warehouse_name,
         sourceLocationCode: header.source_location_code || (header.source_location || {}).location_code,
         targetWarehouseName: header.target_warehouse_name || (header.target_warehouse || {}).warehouse_name,
-        costText: header.cost_status === 'pending_confirmation' ? '待仓库确认' : page.money(header.cost_amount),
+        costText: header.cost_status === 'pending_confirmation' ? (this.data.isRemnant ? '历史申请未结算' : '待仓库确认') : page.money(header.cost_amount),
         sourceText: header.confirmation_source === 'auto_handoff' ? '系统交接' : header.confirmation_source === 'legacy_posted' ? '历史已入库' : '' }),
         actions, drafts, lines: result.rows.map(row => Object.assign({}, row, { rowKey: row.source_key || String(row.id), measureUnitText: row.measure_unit === 'm2' ? 'm²' : '米' })), loading: false, page: result.page, lastPage: result.lastPage, total: result.total, canViewAmount,
-        locator, pendingActions: Object.keys(LABELS).filter(action => warehouse.pending(this.data.kind + '.' + action, this.data.id)).concat(this.data.isRemnant && warehouse.pending('cutting_batch.request', header.cutting_batch_id) ? ['resubmit'] : []) });
+        locator, pendingActions: this.data.isRemnant ? [] : Object.keys(LABELS).filter(action => warehouse.pending(this.data.kind + '.' + action, this.data.id)) });
       if (result.page > result.lastPage) { this.setData({ page: result.lastPage }); return this.load(); }
       this.updateReady(); wx.setNavigationBarTitle({ title: TITLES[this.data.kind] });
     }).catch(error => { if (sequence === this.sequence) this.setData({ loading: false, error: page.errorText(error) }); });
@@ -138,7 +137,7 @@ Page({
   },
   recover(event) { this.submit(event.currentTarget.dataset.action); },
   async submit(action, payload) {
-    if (this.data.saving) return;
+    if (this.data.saving || this.data.isRemnant) return;
     this.setData({ saving: true, formError: '' });
     try {
       const result = await warehouse.submit(action === 'resubmit' ? 'cutting_batch.request' : this.data.kind + '.' + action, action === 'resubmit' ? this.data.header.cutting_batch_id : this.data.id, payload || {});

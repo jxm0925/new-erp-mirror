@@ -21,22 +21,22 @@ class MfgSharedCuttingController extends Controller
 
     public function index(Request $request, SharedCuttingService $cutting)
     {
-        [, $amounts] = $this->user($request, false);
+        [$user, $amounts] = $this->user($request, false);
         $data = $request->validate(['status' => 'nullable|in:issued,awaiting_confirm,settled', 'item_id' => 'nullable|integer|min:1', 'cutting_run_id' => 'nullable|integer|min:1',
             'page' => 'nullable|integer|min:1', 'per_page' => 'nullable|integer|min:1|max:50']);
-        return response()->json($cutting->index($data, $amounts));
+        return response()->json($cutting->index($data, $amounts, $user));
     }
 
     public function show(Request $request, int $id, SharedCuttingService $cutting)
     {
-        [, $amounts] = $this->user($request, false);
-        return response()->json(['data' => $cutting->show($id, $amounts)]);
+        [$user, $amounts] = $this->user($request, false);
+        return response()->json(['data' => $cutting->show($id, $amounts, $user)]);
     }
 
     public function sources(Request $request, SharedCuttingService $cutting)
     {
         [, $amounts] = $this->user($request, false);
-        $data = $request->validate(['item_id' => 'required|integer|min:1', 'keyword' => 'nullable|string|max:120',
+        $data = $request->validate(['item_id' => 'required|integer|min:1', 'cutting_run_id' => 'nullable|integer|min:1', 'keyword' => 'nullable|string|max:120',
             'page' => 'nullable|integer|min:1', 'per_page' => 'nullable|integer|min:1|max:50']);
         return response()->json($cutting->sources($data, $amounts));
     }
@@ -46,9 +46,10 @@ class MfgSharedCuttingController extends Controller
         [$user, $amounts] = $this->user($request, true);
         $data = $request->validate(['item_id' => 'required|integer|min:1', 'cutting_run_id' => 'required|integer|min:1', 'idempotency_key' => 'required|string|min:16|max:80',
             'remark' => 'nullable|string|max:500', 'sources' => 'required|array|min:1|max:200',
-            'sources.*.inventory_balance_id' => 'required|integer|min:1', 'sources.*.physical_material_id' => 'required|integer|min:1',
+            'sources.*.inventory_balance_id' => 'required|integer|min:1', 'sources.*.physical_material_id' => 'nullable|integer|min:1',
+            'sources.*.source_key' => 'nullable|string|max:120|distinct', 'sources.*.qty' => 'nullable|string|regex:/^\d{1,10}(?:\.\d{1,8})?$/D',
             'sources.*.source_version' => 'required|string|size:64']);
-        return response()->json(['message' => '已领板，切完后登记每张板的余料。', 'data' => $cutting->issue($data, $user, $amounts)]);
+        return response()->json(['message' => '已记录实际领料，切完后登记各来源的实际余料。', 'data' => $cutting->issue($data, $user, $amounts)]);
     }
 
     public function settle(Request $request, int $id, SharedCuttingService $cutting)
@@ -59,7 +60,7 @@ class MfgSharedCuttingController extends Controller
         $auth = app(AuthContextService::class);
         $result = app(\App\Services\Erp\WarehouseCommandService::class)->run('cutting_batch.request', $id, $commandId, $data,
             $user, $auth->permissionCodes($user), $auth->isSuperAdmin($user))['result'];
-        return response()->json(['message' => $result['status'] === 'settled' ? '真实零余料已确认，净耗已结算。' : '余料申请已提交，仓库确认后才能分配本批净耗。', 'data' => $result]);
+        return response()->json(['message' => $result['status'] === 'settled' ? '实际余料已记录，净耗已结算。' : '实际余料已记录，切完结束登记件数后结算。', 'data' => $result]);
     }
 
     private function user(Request $request, bool $write): array

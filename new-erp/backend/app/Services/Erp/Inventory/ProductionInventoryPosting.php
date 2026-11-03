@@ -460,15 +460,9 @@ class ProductionInventoryPosting
                 throw ValidationException::withMessages(['cutting' => '这张开料批次不能再次结算。']);
             }
             $positive = collect($batch->remnants)->filter(fn ($row) => bccomp((string) $row['measure_qty'], '0', 8) > 0);
-            $receipt = \App\Models\Erp\MfgCuttingRemnantReceipt::query()->where('cutting_batch_id', $batch->id)
-                ->where('status', 'confirmed')->whereNull('inventory_transaction_id')->orderByDesc('id')->lockForUpdate()->first();
-            if ($positive->isNotEmpty() && (! $receipt || ! $receipt->confirmed_by_legacy_id
-                || $receipt->confirmed_lines !== $batch->remnants)) {
-                throw ValidationException::withMessages(['cutting' => '余料必须来自本批仓库已确认的完整申请，不能从车间登记直接入库。']);
-            }
-            if ($positive->isEmpty() && (! $batch->settlement_key || \App\Models\Erp\MfgCuttingRemnantReceipt::query()
-                ->where('cutting_batch_id', $batch->id)->where('status', 'pending')->exists())) {
-                throw ValidationException::withMessages(['cutting' => '零余料必须由登记人明确确认或经独立报废处置，不能抹掉待确认申请。']);
+            if (! $batch->settlement_key || ! $batch->remnants || count($batch->remnants) !== count($batch->input_lines)
+                || ! collect($batch->remnants)->every(fn ($line) => ! empty($line['self_recorded']) && ! empty($line['recorded_by_legacy_id']))) {
+                throw ValidationException::withMessages(['cutting' => '请下料人逐一核对真实来源和实际余料后登记结算。']);
             }
             if ($positive->isEmpty()) return ['transaction' => null, 'lines' => []];
             $transaction = $this->kernel->begin([
@@ -496,14 +490,14 @@ class ProductionInventoryPosting
                     'item_id' => $item->id, 'warehouse_id' => $remnant['warehouse_id'], 'location_id' => $remnant['location_id'],
                     'batch_no' => $batchNo, 'unit_id' => $input['unit_id'], 'material_lot_id' => $lotId,
                     'change_qty' => $qty, 'cost_amount' => $remnant['cost_amount'], 'unit_cost' => bcdiv($remnant['cost_amount'], $qty, 8),
-                    'cost_source_type' => 'mfg_cutting_remnant', 'physical_operation' => $input['mode'] === 'sheet' ? 'mfg_cutting_remnant' : null,
+                    'cost_source_type' => 'mfg_cutting_remnant', 'physical_operation' => $input['physical_material_id'] ? 'mfg_cutting_remnant' : null,
                     'physical_material_id' => $input['physical_material_id'], 'cutting_source_key' => $input['source_key'],
                     'source_type' => 'mfg_cutting_batch', 'source_id' => $batch->id, 'remark' => '开料余料来源 '.$input['source_key'],
                 ]);
                 $balance = InventoryBalance::query()->where('item_id', $item->id)->where('warehouse_id', $remnant['warehouse_id'])
                     ->where('location_id', $remnant['location_id'])->where('batch_no', $batchNo)->lockForUpdate()->firstOrFail();
                 $physicalId = null;
-                if ($input['mode'] === 'sheet') {
+                if ($input['physical_material_id']) {
                     $physicalId = $this->physicalMaterials->createManufacturingRemnant($batch, $input, $remnant, $balance, $fact, $operatorId ?? 0);
                 }
                 $lines[$input['source_key']] = ['transaction_item_id' => (int) $fact->id, 'inventory_balance_id' => (int) $balance->id,

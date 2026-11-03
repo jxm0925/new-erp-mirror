@@ -549,7 +549,7 @@ final class WorkOrderService
         $out = [];
         if ($pending = (int) ($units['pending_receipt'] ?? 0)) $out[] = ['type' => 'receipt_confirmation', 'text' => '待仓库确认 '.$pending.' 台'];
         $awaitingBatches = MfgCuttingBatch::query()->where('work_order_id', $wo->id)->where('status', 'awaiting_confirm')->orderBy('id')->pluck('batch_no')->all();
-        if ($awaitingBatches) $out[] = ['type' => 'cutting_remnant_confirmation', 'text' => '开料批次 '.implode('、', $awaitingBatches).' 余料待仓库确认'];
+        if ($awaitingBatches) $out[] = ['type' => 'cutting_remnant_confirmation', 'text' => '请下料人补齐开料批次 '.implode('、', $awaitingBatches).' 的实际余料登记结算'];
         $returns = \App\Models\Erp\MfgMaterialReturn::query()->where('work_order_id', $wo->id)->where('status', 'pending')->pluck('return_no')->all();
         if ($returns) $out[] = ['type' => 'material_return', 'text' => '退料单 '.implode('、', $returns).' 待库管审核'];
         $deliveries = \App\Models\Erp\MfgMaterialDelivery::query()->where('work_order_id', $wo->id)->whereIn('status', ['dispatched', 'rejected'])->pluck('delivery_no')->all();

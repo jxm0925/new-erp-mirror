@@ -59,7 +59,7 @@
         <el-descriptions-item label="来源方式">
           {{ sourceText }}
         </el-descriptions-item>
-        <el-descriptions-item v-if="doc.source_no" label="来源单号">
+        <el-descriptions-item v-if="doc.source_no" :label="doc.source_type === 'sales' && doc.source_id ? '销售订单' : '来源单号'">
           {{ doc.source_no }}
         </el-descriptions-item>
         <el-descriptions-item label="物料品种数">
@@ -138,6 +138,9 @@
           <el-table-column label="物料名称" width="160" show-overflow-tooltip>
             <template slot-scope="{row}">
               <span class="item-name-text">{{ itemName(row) }}</span>
+              <div v-for="allocation in row.sales_allocations || []" :key="allocation.sales_order_item_id" class="sales-source-line">
+                历史关联：{{ allocation.source_snapshot?.sales_order_no }} · {{ allocation.source_snapshot?.customer_name }} · {{ allocation.source_snapshot?.product_name || allocation.source_snapshot?.sku_name }}：{{ Number(allocation.qty) }} {{ baseUnitName(row) }}
+              </div>
             </template>
           </el-table-column>
           <el-table-column label="规格型号" width="145" show-overflow-tooltip>
@@ -198,6 +201,10 @@
           <el-table-column label="物料名称" width="155" show-overflow-tooltip>
             <template slot-scope="{row}">
               <span class="item-name-text">{{ itemName(row) }}</span>
+              <div v-if="row.request?.source_type === 'sales' && row.request?.source_id" class="sales-source-line">销售订单：{{ row.request.source_no }}</div>
+              <div v-for="allocation in row.sales_allocations || []" :key="allocation.sales_order_item_id" class="sales-source-line">
+                历史关联：{{ allocation.source_snapshot?.sales_order_no }} · {{ allocation.source_snapshot?.customer_name }} · {{ allocation.source_snapshot?.product_name || allocation.source_snapshot?.sku_name }}：{{ Number(allocation.qty) }} {{ baseUnitName(row) }}
+              </div>
             </template>
           </el-table-column>
           <el-table-column label="规格型号" width="140" show-overflow-tooltip>
@@ -454,6 +461,14 @@ export default {
 </script>
 
 <style scoped>
+.sales-source-line {
+  margin-top: 4px;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
 .progress-card { margin-top: 12px; }
 .order-progress { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; padding: 6px 4px 2px; }
 .progress-step { position: relative; display: flex; gap: 8px; align-items: flex-start; }

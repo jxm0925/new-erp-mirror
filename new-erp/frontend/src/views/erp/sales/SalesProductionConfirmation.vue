@@ -20,9 +20,10 @@
             </el-tag>
           </div>
           <div class="sub-row">
-            <span>订单日期：<b>{{ date(order.order_time) }}</b></span>
+            <span>订单日期：<b>{{ date(order.order_time || order.channel_ordered_at || order.order_date || order.created_at) }}</b></span>
             <span>交付要求：<b>{{ date(order.required_delivery_date) }}</b></span>
-            <span>销售人员：<b>{{ order.created_by || '-' }}</b></span>
+            <span>销售人员：<b>{{ (order.sales_user && order.sales_user.display_name) || (order.sales_user_legacy_id ? `账号 ${order.sales_user_legacy_id}` : '-') }}</b></span>
+            <span v-if="order.creator">创建者：<b>{{ order.creator.display_name || (order.created_by_legacy_id ? `账号 ${order.created_by_legacy_id}` : '-') }}</b></span>
             <span>付款条件：<b>{{ funding ? (funding.policy_name || '标准收款') : '-' }}</b></span>
             <span v-if="funding">
               开工款项：<b :class="funding.production_funds_satisfied ? 'text-success font-medium' : 'text-warning font-medium'">{{ productionFundingText }}</b>

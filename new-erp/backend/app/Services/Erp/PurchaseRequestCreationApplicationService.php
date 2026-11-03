@@ -7,22 +7,27 @@ use Illuminate\Support\Facades\DB;
 
 final class PurchaseRequestCreationApplicationService
 {
-    public function create(array $data, array $items): PurchaseRequest
+    public function create(array $data, array $items, ?object $actor = null): PurchaseRequest
     {
-        return DB::transaction(function () use ($data, $items) {
+        return DB::transaction(function () use ($data, $items, $actor) {
             $scopes = app(PurchaseManagementScopeService::class);
             $data['management_scope'] = $scopes->resolveDocumentScope($items, $data,
                 requiredScope: $scopes->requiredScopeForSource($data['source_type'] ?? null));
             $record = PurchaseRequest::create([...$data, 'request_status' => 'draft', 'status' => 'draft',
                 'item_id' => $items[0]['item_id'], 'request_qty' => 0, 'planned_qty' => 0]);
-            $this->saveItems($record, $items);
+            app(PurchaseRequestSalesAllocationService::class)->prepareHeader($record, $actor);
+            $production = app(PurchaseRequestProductionSourceService::class)->prepare($record, $items, $actor);
+            $this->saveItems($record, $items, actor: $actor, production: $production);
             return $record->fresh('items');
         }, 5);
     }
 
-    public function saveItems(PurchaseRequest $request, array $items, $priorItems = null): void
+    public function saveItems(PurchaseRequest $request, array $items, $priorItems = null, ?object $actor = null, $existingLinks = null, ?array $production = null): void
     {
         $totalQty = 0;
+        $allocations = app(PurchaseRequestSalesAllocationService::class);
+        $existingLinks ??= collect();
+        $kept = [];
         foreach ($items as $line) {
             $item = app(PurchaseManagementScopeService::class)->assertItemScope((int) $line['item_id'], $request->management_scope)->load('unit.standardUnit');
             $line['management_scope'] = $request->management_scope;
@@ -43,8 +48,11 @@ final class PurchaseRequestCreationApplicationService
                 'priority' => $line['priority'] ?? 'normal', 'line_status' => 'open', 'remark' => $line['remark'] ?? null,
                 'data_source' => 'manual', ...app(MaterialPolicySnapshotService::class)->fromItem($item),
             ]);
+            $kept = array_merge($kept, $allocations->preserveLegacyLine($request, $created, $prior, $existingLinks, $actor));
             $totalQty += $qty;
         }
+        $allocations->finishReplacement($request, $existingLinks, $kept, $actor);
+        app(PurchaseRequestProductionSourceService::class)->replace($request, $production, $actor);
         $request->update(['item_id' => $items[0]['item_id'] ?? null, 'request_qty' => $totalQty, 'planned_qty' => 0, 'required_date' => $items[0]['expected_date'] ?? null]);
     }
 }

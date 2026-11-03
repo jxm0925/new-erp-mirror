@@ -5,7 +5,7 @@ Page({
     loading: false, error: '', filterOpen: false, dateFrom: '', dateTo: '', draftFrom: '', draftTo: '' },
   onLoad(options) {
     const direction = ['inbound', 'outbound', 'all'].includes(options.direction) ? options.direction : 'inbound';
-    this.setData({ direction, kind: options.kind || '', keyword: options.keyword || '' });
+    this.setData({ direction, kind: options.kind || '', keyword: options.keyword || '', statusGroup: options.kind === 'cutting_remnant' ? 'completed' : 'pending' });
     wx.setNavigationBarTitle({ title: options.kind === 'material_return' ? '退料接收' : direction === 'inbound' ? '入库办理' : direction === 'outbound' ? '出库办理' : '仓库待办' });
   },
   onShow() { if (!page.resumingScan(this)) this.load(); },
@@ -18,7 +18,7 @@ Page({
       keyword: this.data.keyword.trim(), page: this.data.page, per_page: 10, date_from: this.data.dateFrom, date_to: this.data.dateTo }).then(response => {
       if (sequence !== this.sequence) return;
       const parsed = page.rows(response);
-      const types = [{ key: '', name: '全部' }].concat((response.types || []).filter(type => this.data.direction === 'all' || type.direction === this.data.direction));
+      const types = [{ key: '', name: '全部' }].concat((response.types || []).filter(type => (this.data.direction === 'all' || type.direction === this.data.direction) && (this.data.statusGroup === 'completed' || type.key !== 'cutting_remnant')).map(type => type.key === 'cutting_remnant' ? Object.assign({}, type, { name: '历史余料申请' }) : type));
       if (parsed.page > parsed.lastPage) { this.setData({ page: parsed.lastPage }); return this.load(); }
       this.setData({ rows: parsed.rows.map(page.decorate), page: parsed.page, lastPage: parsed.lastPage, total: parsed.total, types,
         typeIndex: Math.max(0, types.findIndex(type => type.key === this.data.kind)), loading: false });
@@ -26,7 +26,7 @@ Page({
   },
   keywordInput(event) { this.setData({ keyword: event.detail.value }); },
   search() { this.setData({ page: 1 }); this.load(); },
-  switchStatus(event) { this.setData({ statusGroup: event.currentTarget.dataset.status, page: 1 }); this.load(); },
+  switchStatus(event) { const statusGroup = event.currentTarget.dataset.status; this.setData({ statusGroup, page: 1, kind: statusGroup === 'pending' && this.data.kind === 'cutting_remnant' ? '' : this.data.kind }); this.load(); },
   changeType(event) { const type = this.data.types[Number(event.detail.value)]; if (type) { this.setData({ kind: type.key, typeIndex: Number(event.detail.value), page: 1 }); this.load(); } },
   previous() { if (this.data.page > 1 && !this.data.loading) { this.setData({ page: this.data.page - 1 }); this.load(); } },
   next() { if (this.data.page < this.data.lastPage && !this.data.loading) { this.setData({ page: this.data.page + 1 }); this.load(); } },

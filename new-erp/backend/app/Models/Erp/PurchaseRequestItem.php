@@ -10,4 +10,5 @@ class PurchaseRequestItem extends PurchaseBaseModel
     public function item() { return $this->belongsTo(Item::class); }
     public function unit() { return $this->belongsTo(Unit::class); }
     public function warehouse() { return $this->belongsTo(Warehouse::class); }
+    public function salesAllocations() { return $this->hasMany(PurchaseRequestSalesLink::class, 'purchase_request_item_id')->where('status', 'active'); }
 }

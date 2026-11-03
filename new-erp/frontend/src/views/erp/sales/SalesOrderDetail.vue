@@ -15,18 +15,8 @@ Progress design: 用户确认的订单产品树、单台整链路与工单聚合
           <h1 class="order-no-title">{{ order.sales_order_no || '-' }}</h1>
           <div class="header-tags">
             <el-tag size="small" :type="orderStatusTag(order.order_status)" effect="light">{{ orderStatusText(order.order_status) }}</el-tag>
-            <el-tag size="small" :type="fulfillmentStatusTag(order.fulfillment_status)" effect="plain">
-              {{ fulfillmentStatusText(order.fulfillment_status) }}
-            </el-tag>
-            <el-tag size="small" :type="statusTag(order.shipment_status)" effect="plain">发货：{{ order.order_status === 'cancelled' ? '-' : shipmentStatusText(order.shipment_status) }}</el-tag>
-            <span v-if="order.order_status !== 'cancelled' && order.fulfillment_composition_label" class="header-pill header-pill--composition">
-              {{ order.fulfillment_composition_label }}
-            </span>
-            <el-tag size="small" :type="statusTag(order.production_confirm_status)" effect="plain">
-              生产确认: {{ order.order_status === 'cancelled' ? '-' : statusText(order.production_confirm_status) }}
-            </el-tag>
-            <el-tag v-if="order.priority && order.priority !== 3" size="small" :type="priorityTagType(order.priority)" effect="dark">{{ order.priority_label }}</el-tag>
-            <span class="header-pill header-pill--version">V{{ currentVersion }}</span>
+            <el-tag v-if="order.order_status !== 'cancelled'" size="small" :type="statusTag(order.shipment_status)" effect="plain">{{ shipmentStatusText(order.shipment_status) }}</el-tag>
+            <el-tag v-if="order.priority && order.priority !== 3" size="small" :type="priorityTagType(order.priority)" effect="plain">{{ order.priority_label }}</el-tag>
           </div>
         </div>
       </div>
@@ -34,13 +24,16 @@ Progress design: 用户确认的订单产品树、单台整链路与工单聚合
         <el-button size="small" icon="el-icon-back" @click="$router.push('/sales/orders')">返回列表</el-button>
         <el-button v-if="$can('sales_order.shipment.view')" size="small" icon="el-icon-truck" @click="$router.push({ path: '/sales/shipments', query: { sales_order_id: order.id } })">发货单</el-button>
         <el-button v-if="order.allowed_actions && order.allowed_actions.edit" size="small" icon="el-icon-edit" @click="$router.push(`/sales/orders/${order.id}/edit`)">{{ order.allowed_actions.production_released ? '申请修改（需审核）' : '编辑订单' }}</el-button>
+        <el-button v-if="order.allowed_actions && order.allowed_actions.lock_inventory" size="small" type="success" plain icon="el-icon-lock" @click="openInventoryLock">锁库存</el-button>
         <el-button v-if="order.allowed_actions && order.allowed_actions.submit_confirmation" size="small" type="success" icon="el-icon-check" @click="doConfirm">确认订单</el-button>
-        <el-button v-if="order.allowed_actions && order.allowed_actions.lock_inventory" class="inventory-lock-button" size="small" type="danger" icon="el-icon-lock" @click="openInventoryLock">锁库存</el-button>
-        <el-button v-if="order.allowed_actions && order.allowed_actions.production_confirmation" size="small" type="primary" icon="el-icon-s-operation" @click="$router.push(`/sales/orders/${order.id}/production-confirmation`)">生产确认</el-button>
-        <el-button v-if="canRequestInvoice" size="small" icon="el-icon-tickets" @click="openInvoiceRequest">申请开票</el-button>
-        <el-button v-if="canShortClose" size="small" type="warning" plain icon="el-icon-scissors" :loading="shortClose.loading" @click="openShortClose">短交关闭</el-button>
-        <el-button v-if="order.allowed_actions && order.allowed_actions.cancel" size="small" type="danger" plain :loading="cancelling" @click="cancelOrder">取消订单</el-button>
-        <el-button v-if="order.allowed_actions && order.allowed_actions.delete_draft" size="small" type="danger" plain icon="el-icon-delete" @click="deleteDraft">删除草稿</el-button>
+        <el-button v-if="order.allowed_actions && order.allowed_actions.production_confirmation" size="small" type="success" icon="el-icon-s-operation" @click="$router.push(`/sales/orders/${order.id}/production-confirmation`)">生产确认</el-button>
+        <el-button v-if="canRequestInvoice" size="small" :type="hasStageAction ? '' : 'success'" icon="el-icon-tickets" @click="openInvoiceRequest">申请开票</el-button>
+        <el-dropdown v-if="moreActions.length" trigger="click" @command="runMoreAction">
+          <el-button size="small" :loading="shortClose.loading || cancelling">更多<i class="el-icon-arrow-down el-icon--right" /></el-button>
+          <el-dropdown-menu slot="dropdown">
+            <el-dropdown-item v-for="action in moreActions" :key="action.key" :command="action.key" :divided="action.divided" :class="{ 'more-danger': action.danger }">{{ action.label }}</el-dropdown-item>
+          </el-dropdown-menu>
+        </el-dropdown>
       </div>
     </div>
 
@@ -59,26 +52,28 @@ Progress design: 用户确认的订单产品树、单台整链路与工单聚合
       </el-form>
       <span slot="footer">
         <el-button @click="priority.visible = false">取消</el-button>
-        <el-button type="primary" :loading="priority.saving" @click="savePriority">保存</el-button>
+        <el-button type="success" :loading="priority.saving" @click="savePriority">保存</el-button>
       </span>
     </el-dialog>
 
     <!-- 锁定库存弹窗 -->
-    <el-dialog title="确认锁定库存" :visible.sync="inventoryLockVisible" width="min(620px, calc(100vw - 32px))" :close-on-click-modal="false">
+    <el-dialog title="确认锁定库存" :visible.sync="inventoryLockVisible" width="min(1180px, calc(100vw - 32px))" :close-on-click-modal="false">
       <el-alert type="info" :closable="false" show-icon title="系统将按当前可用库存、仓库、库位和批次进行正式占用，不会重复锁定。" />
-      <div class="inventory-lock-summary">
-        <div><span>当前已锁</span><b class="green">{{ numberText(lockTotals.locked_inventory_qty) }}</b></div>
-        <div><span>生产缺口</span><b class="orange">{{ numberText(lockTotals.pending_production_qty) }}</b></div>
-        <div><span>外购待到货</span><b class="orange">{{ numberText(lockTotals.pending_purchase_qty) }}</b></div>
-      </div>
-      <el-table :data="lockLines" border size="mini" max-height="260">
+      <el-alert v-if="inventoryLockError" type="error" :closable="false" show-icon :title="inventoryLockError" />
+      <el-table v-else v-loading="inventoryLockLoading" :data="lockLines" border size="mini" max-height="360">
         <el-table-column prop="line_no" label="行" width="48" align="center" />
-        <el-table-column label="订单数量" min-width="86" align="right"><template slot-scope="{row}">{{ numberText(row.order_qty) }}</template></el-table-column>
-        <el-table-column label="已锁库存" min-width="86" align="right"><template slot-scope="{row}"><b class="green">{{ numberText(row.locked_inventory_qty) }}</b></template></el-table-column>
-        <el-table-column label="生产缺口" min-width="86" align="right"><template slot-scope="{row}"><b class="orange">{{ numberText(row.pending_production_qty) }}</b></template></el-table-column>
-        <el-table-column label="外购待到货" min-width="105" align="right"><template slot-scope="{row}"><b class="orange">{{ numberText(row.pending_purchase_qty) }}</b></template></el-table-column>
+        <el-table-column label="商品" min-width="160"><template slot-scope="{row}"><b>{{ row.product_name || row.item_name || '-' }}</b><div v-if="row.inventory_pool_shared" class="text-muted">同物料行共用库存</div></template></el-table-column>
+        <el-table-column label="规格" min-width="150"><template slot-scope="{row}">{{ row.spec_text || row.sku_name || '-' }}</template></el-table-column>
+        <el-table-column prop="fulfillment_label" label="备货方式" min-width="96" />
+        <el-table-column label="销售需求" min-width="96" align="right"><template slot-scope="{row}">{{ lockQuantity(row.order_qty, row.sales_unit_name) }}<div v-if="row.requires_delivery" class="text-muted">已发 {{ lockQuantity(row.shipped_qty, row.sales_unit_name) }}<br>待发 {{ lockQuantity(row.pending_fulfillment_qty, row.sales_unit_name) }}</div></template></el-table-column>
+        <el-table-column label="订单库存需求" min-width="96" align="right"><template slot-scope="{row}">{{ row.requires_delivery ? lockQuantity(row.required_base_qty, row.base_unit_name) : '—' }}</template></el-table-column>
+        <el-table-column label="库存余额" min-width="96" align="right"><template slot-scope="{row}">{{ row.requires_delivery ? lockQuantity(row.inventory_on_hand_qty, row.sales_unit_name) : '—' }}</template></el-table-column>
+        <el-table-column label="可再锁库存" min-width="110" align="right"><template slot-scope="{row}">{{ row.requires_delivery ? lockQuantity(row.inventory_available_qty, row.sales_unit_name) : '—' }}<div v-if="row.quantity_notice" class="text-muted">{{ row.quantity_notice }}</div></template></el-table-column>
+        <el-table-column label="本行已锁" min-width="96" align="right"><template slot-scope="{row}"><b class="green">{{ row.requires_delivery ? lockQuantity(row.locked_inventory_qty, row.sales_unit_name) : '—' }}</b></template></el-table-column>
+        <el-table-column label="生产待补" min-width="96" align="right"><template slot-scope="{row}"><b class="orange">{{ row.fulfillment_strategy === 'production' || Number(row.pending_production_qty) > 0 ? lockQuantity(row.pending_production_qty, row.sales_unit_name) : '—' }}</b></template></el-table-column>
+        <el-table-column label="外购待补" min-width="96" align="right"><template slot-scope="{row}"><b class="orange">{{ row.fulfillment_strategy === 'purchase' || Number(row.pending_purchase_qty) > 0 ? lockQuantity(row.pending_purchase_qty, row.sales_unit_name) : '—' }}</b></template></el-table-column>
       </el-table>
-      <span slot="footer"><el-button @click="inventoryLockVisible=false">取消</el-button><el-button type="danger" :loading="inventoryLockBusy" @click="confirmInventoryLock">确认锁库存</el-button></span>
+      <span slot="footer"><el-button @click="inventoryLockVisible=false">取消</el-button><el-button type="success" :loading="inventoryLockBusy" :disabled="inventoryLockLoading || !!inventoryLockError || !order.allowed_actions || !order.allowed_actions.lock_inventory" @click="confirmInventoryLock">确认锁库存</el-button></span>
     </el-dialog>
 
     <!-- 短交关闭弹窗：剩余未发不再发，应收改为实发金额 + 运费 -->
@@ -137,19 +132,30 @@ Progress design: 用户确认的订单产品树、单台整链路与工单聚合
         <div v-else class="kpi-sub">共 {{ totalLineCount }} 项明细 · 总计 {{ totalOrderQty }} 件</div>
       </div>
       <div class="kpi-card">
-        <div class="kpi-label"><i class="el-icon-user" /> 客户信息</div>
-        <div class="kpi-value primary" :title="order.customer_name">{{ order.customer_name || '-' }}</div>
-        <div class="kpi-sub">{{ order.customer_phone || order.contact_phone || '暂无联系电话' }}</div>
+        <div class="kpi-label"><i class="el-icon-coin" /> 收款进度{{ order.funding_status && order.funding_status.policy_name ? ` · ${order.funding_status.policy_name}` : '' }}</div>
+        <template v-if="order.funding_status && order.order_status !== 'cancelled'">
+          <div class="kpi-value" :class="receiptProgress.done ? 'green' : 'orange'">¥{{ money(order.funding_status.net_received_amount) }}<small class="kpi-of">/ {{ money(receiptProgress.target) }}</small></div>
+          <div class="kpi-bar"><i :style="{ width: receiptProgress.percent + '%' }" /></div>
+          <div class="kpi-sub">{{ receiptProgress.text }}</div>
+        </template>
+        <div v-else class="kpi-value text-muted">-</div>
       </div>
       <div class="kpi-card">
-        <div class="kpi-label"><i class="el-icon-date" /> 单据时间</div>
-        <div class="kpi-value">{{ dateOnly(order.order_time) }}</div>
-        <div class="kpi-sub">下单：{{ date(order.order_time) }}</div>
+        <div class="kpi-label"><i class="el-icon-truck" /> 发货进度</div>
+        <template v-if="shipmentProgress.total > 0">
+          <div class="kpi-value">{{ numberText(shipmentProgress.shipped) }}<small class="kpi-of">/ {{ numberText(shipmentProgress.total) }} 需发</small></div>
+          <div class="kpi-bar"><i :style="{ width: shipmentProgress.percent + '%' }" /></div>
+          <div class="kpi-sub">{{ shipmentProgress.text }}</div>
+        </template>
+        <template v-else>
+          <div class="kpi-value text-muted">无需发货</div>
+          <div class="kpi-sub">本订单没有实物商品</div>
+        </template>
       </div>
       <div class="kpi-card">
         <div class="kpi-label"><i class="el-icon-time" /> 要求交期</div>
         <div class="kpi-value" :class="{ 'text-muted': !order.required_delivery_date }">{{ dateOnly(order.required_delivery_date) }}</div>
-        <div class="kpi-sub">备货安排：{{ fulfillmentStatusText(order.fulfillment_status) }}</div>
+        <div class="kpi-sub">下单 {{ date(orderTime) }} · 优先级 {{ order.priority_label || '普通' }}</div>
       </div>
     </div>
 
@@ -164,7 +170,11 @@ Progress design: 用户确认的订单产品树、单台整链路与工单聚合
         <div class="kv-grid">
           <div class="kv-item">
             <span class="kv-label">销售人员</span>
-            <span class="kv-value font-medium">{{ order.created_by || '-' }}</span>
+            <span class="kv-value font-medium">{{ (order.sales_user && order.sales_user.display_name) || (order.sales_user_legacy_id ? `账号 ${order.sales_user_legacy_id}` : '-') }}</span>
+          </div>
+          <div class="kv-item">
+            <span class="kv-label">创建者</span>
+            <span class="kv-value font-medium">{{ (order.creator && order.creator.display_name) || (order.created_by_legacy_id ? `账号 ${order.created_by_legacy_id}` : '-') }}</span>
           </div>
           <div class="kv-item">
             <span class="kv-label">订单来源</span>
@@ -207,6 +217,10 @@ Progress design: 用户确认的订单产品树、单台整链路与工单聚合
             <span class="kv-value">{{ (order.funding_status && order.funding_status.policy_name) || '未配置' }}</span>
           </div>
           <div class="kv-item">
+            <span class="kv-label">备货组成</span>
+            <span class="kv-value">{{ order.order_status === 'cancelled' ? '-' : (order.fulfillment_composition_label || '-') }}</span>
+          </div>
+          <div class="kv-item">
             <span class="kv-label">加急 / 延期</span>
             <span class="kv-value">
               <el-tag v-if="order.is_urgent" size="mini" type="danger">加急订单</el-tag>
@@ -237,23 +251,10 @@ Progress design: 用户确认的订单产品树、单台整链路与工单聚合
               <el-button v-if="order.allowed_actions && order.allowed_actions.edit_agreed_deposit" type="text" size="mini" :loading="depositSaving" @click="editAgreedDeposit">修改</el-button>
             </span>
           </div>
-          <div v-if="order.funding_status" class="kv-item">
-            <span class="kv-label">资金状态</span>
-            <span v-if="order.order_status === 'cancelled'" class="kv-value">-</span>
-            <span v-else class="kv-value">
-              <el-tag size="mini" :type="order.funding_status.production_funds_satisfied ? 'success' : 'warning'">{{ order.funding_status.production_funds_satisfied ? '可开工' : '定金未到' }}</el-tag>
-              <el-tag size="mini" :type="order.funding_status.shipment_funds_satisfied ? 'success' : 'warning'">{{ order.funding_status.shipment_funds_satisfied ? '可发货' : (order.funding_status.outstanding_amount !== undefined ? `未收 ¥${Number(order.funding_status.outstanding_amount || 0).toLocaleString('zh-CN')}` : '尾款未齐') }}</el-tag>
-            </span>
-          </div>
-          <div class="kv-item">
+          <div class="kv-item kv-item--full">
             <span class="kv-label">订单备注</span>
-            <span class="kv-value" :class="{ 'text-muted': !order.remark }">{{ order.remark || '无备注' }}</span>
+            <span class="kv-value remark-text" :class="{ 'text-muted': !order.remark }">{{ order.remark || '无备注' }}</span>
           </div>
-        </div>
-        <!-- 订单长备注独立块 -->
-        <div v-if="order.remark" class="order-remark-box">
-          <div class="remark-title"><i class="el-icon-chat-dot-round" /> 订单详细备注</div>
-          <div class="remark-content">{{ order.remark }}</div>
         </div>
       </section>
 
@@ -291,13 +292,9 @@ Progress design: 用户确认的订单产品树、单台整链路与工单聚合
               </el-tag>
             </span>
           </div>
-          <div class="kv-item">
-            <span class="kv-label">承运物流</span>
-            <span class="kv-value">{{ shippingCarrierName }}</span>
-          </div>
-          <div class="kv-item">
-            <span class="kv-label">物流单号</span>
-            <span class="kv-value font-mono">{{ (order.logistics_snapshot && order.logistics_snapshot.express_no) || '-' }}</span>
+          <div v-if="!(order.shipping_snapshot && order.shipping_snapshot.is_self_pickup)" class="kv-item">
+            <span class="kv-label">客户指定物流</span>
+            <span class="kv-value">{{ shippingCarrierName }}<small v-if="shippingCarrierName !== '-'" class="kv-hint">发货时预填，可改</small></span>
           </div>
           <div v-if="order.customer_snapshot && order.customer_snapshot.name && order.customer_snapshot.name !== order.customer_name" class="kv-item">
             <span class="kv-label">客户历史快照</span>
@@ -331,6 +328,22 @@ Progress design: 用户确认的订单产品树、单台整链路与工单聚合
               </span>
             </div>
           </template>
+        </div>
+        <div class="dispatch-records">
+          <div class="dispatch-records-head">
+            <b>发运记录</b>
+            <el-button v-if="$can('sales_order.shipment.view') && dispatchRecords.length" type="text" size="mini" @click="$router.push({ path: '/sales/shipments', query: { sales_order_id: order.id } })">查看发货单</el-button>
+          </div>
+          <el-table v-if="dispatchRecords.length" :data="dispatchRecords" size="mini" border>
+            <el-table-column label="发运单" min-width="140"><template slot-scope="{row}"><span class="font-mono">{{ row.dispatch_no }}</span></template></el-table-column>
+            <el-table-column label="方式" width="60"><template slot-scope="{row}">{{ row.delivery_mode === 'pickup' ? '提货' : '发运' }}</template></el-table-column>
+            <el-table-column label="快递公司" min-width="100"><template slot-scope="{row}"><span :class="{ 'text-muted': !row.carrier_name }">{{ row.carrier_name || (row.delivery_mode === 'pickup' ? '-' : '未填写') }}</span></template></el-table-column>
+            <el-table-column label="运单号" min-width="130"><template slot-scope="{row}"><span :class="row.tracking_no ? 'font-mono' : 'text-muted'">{{ row.tracking_no || (row.delivery_mode === 'pickup' ? '-' : '未填写') }}</span></template></el-table-column>
+            <el-table-column label="包裹" width="60" align="right"><template slot-scope="{row}">{{ row.package_count }} 个</template></el-table-column>
+            <el-table-column label="发运时间" min-width="140"><template slot-scope="{row}">{{ date(row.dispatched_at) }}<span v-if="row.operator_name" class="text-muted"> · {{ row.operator_name }}</span></template></el-table-column>
+          </el-table>
+          <div v-else class="dispatch-empty text-muted">未发运。实际快递公司和运单号在每次发运时填写。</div>
+          <div v-if="dispatchRecords.length > 1" class="dispatch-empty text-muted">共 {{ dispatchRecords.length }} 次发运 · {{ dispatchPackageCount }} 个包裹</div>
         </div>
       </section>
     </div>
@@ -373,94 +386,18 @@ Progress design: 用户确认的订单产品树、单台整链路与工单聚合
                 <span class="line-expand-sub">订单行详细扩展信息</span>
               </div>
 
-              <!-- 订单行结构化详情卡片组 -->
-              <div class="line-expand-grid">
-                <!-- 规格与单位换算 -->
-                <div class="expand-info-card">
-                  <div class="expand-card-title"><i class="el-icon-refresh" /> 规格与单位换算</div>
-                  <div class="expand-kv-list">
-                    <div class="expand-kv">
-                      <span class="lbl">销售单位：</span>
-                      <span class="val font-medium">{{ row.unit_name_snapshot || '台' }}</span>
-                    </div>
-                    <div class="expand-kv">
-                      <span class="lbl">库存物料：</span>
-                      <span class="val">{{ lineItem(row).item_name || '-' }} <small v-if="lineItem(row).item_code" class="text-muted font-mono">({{ lineItem(row).item_code }})</small></span>
-                    </div>
-                    <div class="expand-kv">
-                      <span class="lbl">基本单位：</span>
-                      <span class="val">{{ row.item_base_unit_name_snapshot || (row.item_snapshot && row.item_snapshot.base_unit_name) || '-' }}</span>
-                    </div>
-                    <div class="expand-kv">
-                      <span class="lbl">换算比例：</span>
-                      <span class="val font-mono">1 {{ row.unit_name_snapshot || '销售单位' }} = {{ row.fulfillment_factor_snapshot || 1 }} {{ row.item_base_unit_name_snapshot || '基本单位' }}</span>
-                    </div>
-                    <div class="expand-kv">
-                      <span class="lbl">基本需求量：</span>
-                      <span class="val font-mono font-semibold">{{ row.item_base_required_qty != null ? row.item_base_required_qty : row.order_qty }} {{ row.item_base_unit_name_snapshot || '' }}</span>
-                    </div>
-                  </div>
-                </div>
-
-                <!-- 定制与配置说明 -->
-                <div class="expand-info-card">
-                  <div class="expand-card-title"><i class="el-icon-setting" /> 定制与配置说明</div>
-                  <div class="expand-kv-list">
-                    <div class="expand-kv">
-                      <span class="lbl">定制类型：</span>
-                      <span class="val">
-                        <el-tag v-if="row.is_special_customized" size="mini" type="danger">特殊定制</el-tag>
-                        <el-tag v-else-if="row.is_customized" size="mini">普通定制</el-tag>
-                        <span v-else class="text-muted">标准配置</span>
-                      </span>
-                    </div>
-                    <div class="expand-kv">
-                      <span class="lbl">工作电压：</span>
-                      <span class="val font-medium">{{ row.electric || '标准电压 / 未选' }}</span>
-                    </div>
-                    <div class="expand-kv">
-                      <span class="lbl">原水泵控制：</span>
-                      <span class="val">{{ row.need_pump === true ? '需要原水泵' : (row.need_pump === false ? '不需要原水泵' : '未配置') }}</span>
-                    </div>
-                    <div class="expand-kv">
-                      <span class="lbl">报价有效期：</span>
-                      <span class="val">{{ (row.configuration_snapshot && row.configuration_snapshot.valid_days) ? `${row.configuration_snapshot.valid_days} 天` : '未设定有效期' }}</span>
-                    </div>
-                    <div class="expand-kv expand-kv--full">
-                      <span class="lbl">特殊定制说明：</span>
-                      <span class="val" :class="{ 'text-muted': !((row.configuration_snapshot && row.configuration_snapshot.special_custom_description) || row.customization_description) }">
-                        {{ ((row.configuration_snapshot && row.configuration_snapshot.special_custom_description) || row.customization_description) || '无特殊说明' }}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-
-                <!-- 备货与进度跟踪 -->
-                <div class="expand-info-card">
-                  <div class="expand-card-title"><i class="el-icon-s-operation" /> 备货与执行进度</div>
-                  <div class="expand-kv-list">
-                    <div class="expand-kv">
-                      <span class="lbl">已锁库存：</span>
-                      <span class="val font-mono">{{ lineLockQuantities(row).locked_inventory_qty != null ? lineLockQuantities(row).locked_inventory_qty : '-' }}</span>
-                    </div>
-                    <div class="expand-kv">
-                      <span class="lbl">生产缺口：</span>
-                      <span class="val font-mono">{{ lineLockQuantities(row).pending_production_qty != null ? lineLockQuantities(row).pending_production_qty : '-' }}</span>
-                    </div>
-                    <div class="expand-kv">
-                      <span class="lbl">外购缺口：</span>
-                      <span class="val font-mono">{{ lineLockQuantities(row).pending_purchase_qty != null ? lineLockQuantities(row).pending_purchase_qty : '-' }}</span>
-                    </div>
-                    <div class="expand-kv">
-                      <span class="lbl">已发货数量：</span>
-                      <span class="val font-mono">{{ lineLockQuantities(row).shipped_qty != null ? lineLockQuantities(row).shipped_qty : (row.shipped_qty || 0) }}</span>
-                    </div>
-                    <div class="expand-kv expand-kv--full">
-                      <span class="lbl">订单行备注：</span>
-                      <span class="val font-medium" :class="{ 'text-muted': !row.remark }">{{ row.remark || '无行备注' }}</span>
-                    </div>
-                  </div>
-                </div>
+              <!-- 订单行详情：一块三列信息，数量进度已在表格列中直接显示 -->
+              <div class="line-expand-compact">
+                <div class="expand-kv"><span class="lbl">销售单位</span><span class="val">{{ row.unit_name_snapshot || '-' }}</span></div>
+                <div class="expand-kv"><span class="lbl">库存物料</span><span class="val">{{ lineItem(row).item_name || '-' }} <small v-if="lineItem(row).item_code" class="text-muted font-mono">({{ lineItem(row).item_code }})</small></span></div>
+                <div class="expand-kv"><span class="lbl">换算</span><span class="val font-mono">{{ row.item_base_unit_name_snapshot && row.fulfillment_factor_snapshot ? `1 ${row.unit_name_snapshot || ''} = ${Number(row.fulfillment_factor_snapshot)} ${row.item_base_unit_name_snapshot}` : '无需换算' }}</span></div>
+                <div class="expand-kv"><span class="lbl">定制类型</span><span class="val">{{ row.is_special_customized ? '特殊定制' : (row.is_customized ? '普通定制' : '标准配置') }}</span></div>
+                <div class="expand-kv"><span class="lbl">工作电压</span><span class="val">{{ row.electric || '未选' }}</span></div>
+                <div class="expand-kv"><span class="lbl">原水泵</span><span class="val">{{ row.need_pump === true ? '需要' : (row.need_pump === false ? '不需要' : '未配置') }}</span></div>
+                <div class="expand-kv"><span class="lbl">报价有效期</span><span class="val">{{ (row.configuration_snapshot && row.configuration_snapshot.valid_days) ? `${row.configuration_snapshot.valid_days} 天` : '未设定' }}</span></div>
+                <div class="expand-kv"><span class="lbl">库存余额</span><span class="val">{{ lineLockQuantities(row).requires_delivery ? `${numberText(lineLockQuantities(row).inventory_on_hand_qty)} ${row.unit_name_snapshot || ''}（可再锁 ${numberText(lineLockQuantities(row).inventory_available_qty)}）` : '—' }}</span></div>
+                <div class="expand-kv"><span class="lbl">行备注</span><span class="val" :class="{ 'text-muted': !row.remark }">{{ row.remark || '无' }}</span></div>
+                <div v-if="(row.configuration_snapshot && row.configuration_snapshot.special_custom_description) || row.customization_description" class="expand-kv expand-kv--full"><span class="lbl">特殊定制说明</span><span class="val">{{ (row.configuration_snapshot && row.configuration_snapshot.special_custom_description) || row.customization_description }}</span></div>
               </div>
 
               <!-- 本行图纸与技术附件表格 -->
@@ -499,7 +436,7 @@ Progress design: 用户确认的订单产品树、单台整链路与工单聚合
           </template>
         </el-table-column>
         <el-table-column label="行号" width="55" align="center">
-          <template slot-scope="{$index}"><span class="line-index">{{ $index + 1 }}</span></template>
+          <template slot-scope="{row, $index}"><span class="line-index">{{ row.line_no || ($index + 1) }}</span></template>
         </el-table-column>
         <el-table-column prop="product_name" label="产品名称" width="155" show-overflow-tooltip>
           <template slot-scope="{row}">
@@ -537,8 +474,20 @@ Progress design: 用户确认的订单产品树、单台整链路与工单聚合
         </el-table-column>
         <el-table-column label="小计金额" width="115" align="left">
           <template slot-scope="{row}">
-            <b class="font-mono amount-cell" :style="Number(row.unit_price) < 0 ? 'color:#dc2626' : ''">{{ Number(row.unit_price) < 0 ? '-' : '' }}¥{{ money(Math.abs(Number(row.order_qty || 0) * Number(row.unit_price || 0))) }}</b>
+            <b class="font-mono amount-cell" :style="lineAmount(row) < 0 ? 'color:#dc2626' : ''">{{ lineAmount(row) < 0 ? '-' : '' }}¥{{ money(Math.abs(lineAmount(row))) }}</b>
           </template>
+        </el-table-column>
+        <el-table-column label="已发" width="64" align="right">
+          <template slot-scope="{row}"><span class="font-mono">{{ lineQty(row, 'shipped_qty') }}</span></template>
+        </el-table-column>
+        <el-table-column label="待发" width="64" align="right">
+          <template slot-scope="{row}"><b class="font-mono">{{ lineQty(row, 'pending_fulfillment_qty') }}</b></template>
+        </el-table-column>
+        <el-table-column label="已锁" width="64" align="right">
+          <template slot-scope="{row}"><span class="font-mono">{{ lineQty(row, 'locked_inventory_qty') }}</span></template>
+        </el-table-column>
+        <el-table-column label="待补" width="86" align="right">
+          <template slot-scope="{row}"><span class="font-mono orange">{{ lineShortText(row) }}</span></template>
         </el-table-column>
         <el-table-column label="配置摘要" min-width="180">
           <template slot-scope="{row}">
@@ -584,16 +533,25 @@ Progress design: 用户确认的订单产品树、单台整链路与工单聚合
           </template>
         </el-table-column>
       </el-table>
+      <div class="order-lines-total">
+        <span>运费 ¥{{ money(order.freight_amount) }}</span>
+        <span>合计 <b>¥{{ money(order.total_amount) }}</b></span>
+      </div>
     </section>
 
     <!-- 合同附件（公共整单附件，合入订单信息） -->
-    <section ref="contractAttachmentSection" class="detail-card contract-attachments-card">
-      <div class="card-head">
+    <section ref="contractAttachmentSection" class="detail-card attachments-invoice-card">
+      <div class="card-head is-clickable" @click="attachmentsOpen = !attachmentsOpen">
         <div class="card-title">
-          <i class="el-icon-paperclip" /> 合同附件
-          <span class="title-sub-count">共 {{ contractFiles.length }} 个文件</span>
+          <i class="el-icon-paperclip" /> 附件与开票
+          <span class="title-sub-count">合同附件 {{ contractFiles.length }} 个</span>
+          <span v-if="canViewInvoice" class="title-sub-count">开票申请 {{ invoiceRequestCount }} 笔</span>
+          <span v-if="invoicePendingCount" class="title-sub-count title-sub-count--orange">{{ invoicePendingCount }} 笔待开票</span>
         </div>
+        <el-button type="text" size="mini">{{ attachmentsOpen ? '收起' : '展开' }}<i :class="attachmentsOpen ? 'el-icon-arrow-up' : 'el-icon-arrow-down'" /></el-button>
       </div>
+      <div v-show="attachmentsOpen" class="attachments-invoice-body">
+      <h4 class="sub-section-title">合同附件</h4>
       <div v-if="contractFiles.length" class="compact-file-list">
         <div v-for="file in contractFiles" :key="file.attachment_id || file.file_hash || file.file_name" class="compact-file-row">
           <div class="compact-file-main">
@@ -611,17 +569,11 @@ Progress design: 用户确认的订单产品树、单台整链路与工单聚合
       <div v-else class="contract-empty-inline text-muted">
         <i class="el-icon-folder-opened" /> 暂无合同附件
       </div>
-    </section>
-
-    <!-- 开票信息（合入订单信息） -->
-    <section v-if="canViewInvoice" ref="invoiceSection" class="detail-card order-invoice-card">
-      <div class="card-head">
-        <div class="card-title">
-          <i class="el-icon-tickets" /> 开票信息
-          <span v-if="invoicePendingCount" class="title-sub-count title-sub-count--orange">{{ invoicePendingCount }} 笔待开票</span>
-        </div>
+      <div v-if="canViewInvoice" ref="invoiceSection" class="order-invoice-inline">
+        <h4 class="sub-section-title">开票信息</h4>
+        <sales-order-invoice-panel v-if="order.id" ref="invoicePanel" :order-id="order.id" @loaded="onInvoiceLoaded" />
       </div>
-      <sales-order-invoice-panel v-if="order.id" ref="invoicePanel" :order-id="order.id" @loaded="onInvoiceLoaded" />
+      </div>
     </section>
 
     <!-- 审核进度条 (存在审核任务时展开) -->
@@ -684,7 +636,7 @@ Progress design: 用户确认的订单产品树、单台整链路与工单聚合
                 <div class="pane-sub-header"><h4>操作日志</h4><span class="text-muted">共 {{ (order.logs || []).length }} 条记录</span></div>
                 <div class="sales-order-operation-log__body">
                   <el-timeline>
-                    <el-timeline-item v-for="log in order.logs || []" :key="log.id" :timestamp="date(log.created_at)">
+                    <el-timeline-item v-for="log in operationLogs" :key="log.id" :timestamp="date(log.created_at)">
                       <div class="timeline-log-title">
                         <b>{{ statusText(log.action) }}</b>
                         <span v-if="log.operator" class="log-operator-tag">{{ log.operator }}</span>
@@ -697,7 +649,7 @@ Progress design: 用户确认的订单产品树、单台整链路与工单聚合
               <section class="version-table-section">
                 <div class="pane-sub-header"><h4>版本快照记录</h4><span class="text-muted">共 {{ (order.versions || []).length }} 次版本</span></div>
                 <div class="sales-order-version-list__body">
-                  <el-table :data="order.versions || []" border size="mini" :max-height="320">
+                  <el-table :data="orderVersions" border size="mini" :max-height="320">
                     <el-table-column prop="version_no" label="版本" width="60" align="center"><template slot-scope="{row}"><b class="font-mono">V{{ row.version_no }}</b></template></el-table-column>
                     <el-table-column label="变更类型" min-width="90" show-overflow-tooltip><template slot-scope="{row}">{{ statusText(row.change_type) }}</template></el-table-column>
                     <el-table-column prop="operator" label="操作人" width="75" show-overflow-tooltip />
@@ -835,6 +787,8 @@ export default {
   data: () => ({
     cancelDialogVisible: false,
     invoicePendingCount: 0,
+    invoiceRequestCount: 0,
+    attachmentsOpen: false,
     activeTab: 'info',
     order: {},
     workOrders: [],
@@ -849,6 +803,9 @@ export default {
     candidateDetailVisible: false,
     inventoryLockVisible: false,
     inventoryLockBusy: false,
+    inventoryLockLoading: false,
+    inventoryLockError: '',
+    inventoryLockSequence: 0,
     cancelling: false,
     shortClose: { visible: false, loading: false, saving: false, preview: null, reason: '' },
     depositSaving: false,
@@ -866,6 +823,45 @@ export default {
       if (this.order.order_status !== 'confirmed' || this.order.short_closed_at || !this.$can('sales_order.short_close')) return false
       return (this.order.lines || []).some(line => Number(line.shipped_qty || 0) > 0)
     },
+    hasStageAction() {
+      const actions = this.order.allowed_actions || {}
+      return !!(actions.submit_confirmation || actions.production_confirmation)
+    },
+    moreActions() {
+      const actions = this.order.allowed_actions || {}
+      const list = []
+      if (actions.adjust_priority) list.push({ key: 'priority', label: '调整优先级' })
+      if (this.canShortClose) list.push({ key: 'short_close', label: '短交关闭' })
+      const danger = []
+      if (actions.cancel) danger.push({ key: 'cancel', label: '取消订单', danger: true })
+      if (actions.delete_draft) danger.push({ key: 'delete_draft', label: '删除草稿', danger: true })
+      if (danger.length && list.length) danger[0].divided = true
+      return [...list, ...danger]
+    },
+    receiptProgress() {
+      const f = this.order.funding_status || {}
+      const target = Number(f.net_receivable_amount != null ? f.net_receivable_amount : (f.contract_amount || 0))
+      const received = Number(f.net_received_amount || 0)
+      const percent = target > 0 ? Math.min(100, Math.max(0, (received / target) * 100)) : 0
+      const text = !f.production_funds_satisfied ? (f.production_block_reason === 'production_funds_insufficient' ? '定金未到，不能开工' : (f.production_block_message || '收款条件未满足'))
+        : (f.shipment_funds_satisfied ? '已收齐，可发货' : `可开工，尾款未齐（未收 ¥${this.money(f.outstanding_amount)}）`)
+      return { target, percent, text, done: !!f.shipment_funds_satisfied }
+    },
+    shipmentProgress() {
+      const lines = (this.fulfillmentQuantities.lines || []).filter(line => line.requires_delivery !== false && Number(line.order_qty || 0) > 0 && (line.pending_fulfillment_qty > 0 || line.shipped_qty > 0))
+      const shipped = lines.reduce((sum, line) => sum + Number(line.shipped_qty || 0), 0)
+      const pending = lines.reduce((sum, line) => sum + Number(line.pending_fulfillment_qty || 0), 0)
+      const production = lines.reduce((sum, line) => sum + Number(line.pending_production_qty || 0), 0)
+      const purchase = lines.reduce((sum, line) => sum + Number(line.pending_purchase_qty || 0), 0)
+      const total = shipped + pending
+      const parts = []
+      if (production > 0) parts.push(`生产待补 ${this.numberText(production)}`)
+      if (purchase > 0) parts.push(`外购待补 ${this.numberText(purchase)}`)
+      return { shipped, total, percent: total > 0 ? Math.min(100, (shipped / total) * 100) : 0,
+        text: pending <= 0 ? '已全部发出' : (parts.join(' · ') || `待发 ${this.numberText(pending)}，库存已备`) }
+    },
+    dispatchRecords() { return this.order.dispatch_records || [] },
+    dispatchPackageCount() { return this.dispatchRecords.reduce((sum, row) => sum + Number(row.package_count || 0), 0) },
     shortCloseLines() {
       return ((this.shortClose.preview && this.shortClose.preview.lines) || []).filter(line => line.is_physical)
     },
@@ -927,12 +923,14 @@ export default {
       if (this.order.production_confirm_status === 'confirmed') return { type: 'success', icon: 'el-icon-s-flag', text: '生产确认完成：已记录需生产数量，金额及结算条件修改需财务审核；影响生产的修改生效后需重新生产确认。' }
       return null
     },
+    orderTime() { return this.order.order_time || this.order.channel_ordered_at || this.order.order_date || this.order.created_at },
+    operationLogs() { return [...(this.order.logs || [])].sort((a, b) => erpDateTime(b.created_at).localeCompare(erpDateTime(a.created_at)) || Number(b.id || 0) - Number(a.id || 0)) },
+    orderVersions() { return [...(this.order.versions || [])].sort((a, b) => Number(b.version_no || 0) - Number(a.version_no || 0) || Number(b.id || 0) - Number(a.id || 0)) },
     currentVersion() { return Math.max(1, ...(this.order.versions || []).map(item => Number(item.version_no || 0))) },
     orderApprovalSteps() { const task=this.order.approval_task||{}; const steps=[{key:'submit',name:'发起提交',state:'done'},...(task.nodes||[]).map(n=>({key:n.node_key,name:n.node_name,state:n.node_status==='APPROVED'?'done':n.node_status==='PENDING'?'active':n.node_status==='REJECTED'?'failed':'wait'})),{key:'finish',name:'审核完成',state:task.task_status==='APPROVED'?'done':task.task_status==='REJECTED'?'failed':'wait'}]; return steps },
     orderApprovalCurrent() { const task=this.order.approval_task||{}; const node=(task.nodes||[]).find(n=>n.node_status==='PENDING'); return node ? node.node_name : (task.task_status==='APPROVED'?'审核完成':task.task_status==='REJECTED'?'已驳回':'—') },
     candidateHistory() { return [...(this.order.change_candidates || [])].sort((a, b) => Number(b.candidate_version || 0) - Number(a.candidate_version || 0)) },
     fulfillmentQuantities() { return this.order.fulfillment_quantities || { totals: {}, lines: [] } },
-    lockTotals() { return this.fulfillmentQuantities.totals || {} },
     lockLines() { return this.fulfillmentQuantities.lines || [] }
   },
   async created() {
@@ -941,9 +939,36 @@ export default {
   activated() { if (this.order.id) this.load() },
   watch: { 'pageRoute.params.id'(next, previous) { if (next !== previous) this.load() } },
   methods: {
-    onInvoiceLoaded(info) { this.invoicePendingCount = ((info && info.requests) || []).filter(row => row.status === 'pending').length },
+    onInvoiceLoaded(info) {
+      const requests = (info && info.requests) || []
+      this.invoiceRequestCount = requests.length
+      this.invoicePendingCount = requests.filter(row => row.status === 'pending').length
+    },
+    runMoreAction(key) {
+      if (key === 'priority') this.openPriority()
+      else if (key === 'short_close') this.openShortClose()
+      else if (key === 'cancel') this.cancelOrder()
+      else if (key === 'delete_draft') this.deleteDraft()
+    },
+    lineAmount(row) {
+      const amount = row.amount_incl_tax != null ? row.amount_incl_tax : row.amount
+      return amount != null ? Number(amount) : Number(row.order_qty || 0) * Number(row.unit_price || 0)
+    },
+    lineQty(row, key) {
+      const q = this.lineLockQuantities(row)
+      return q.requires_delivery === false || q[key] == null ? '—' : this.numberText(q[key])
+    },
+    lineShortText(row) {
+      const q = this.lineLockQuantities(row)
+      if (q.requires_delivery === false) return '—'
+      const parts = []
+      if (Number(q.pending_production_qty) > 0) parts.push(`生产 ${this.numberText(q.pending_production_qty)}`)
+      if (Number(q.pending_purchase_qty) > 0) parts.push(`外购 ${this.numberText(q.pending_purchase_qty)}`)
+      return parts.join(' / ') || '0'
+    },
     openInvoiceRequest() {
       this.activeTab = 'info'
+      this.attachmentsOpen = true
       this.$nextTick(() => {
         const panel = this.$refs.invoicePanel
         if (panel) panel.openCreate()
@@ -1001,6 +1026,7 @@ export default {
       const { data } = await getSalesOrder(id)
       if (sequence !== this.loadSequence) return
       this.order = data
+      if (this.contractFiles.length) this.attachmentsOpen = true
       this.expandedLineRowKeys = (data.lines || [])
         .filter(line => this.lineFiles(line).length > 0 && line.id != null)
         .map(line => line.id)
@@ -1071,9 +1097,30 @@ export default {
       this.$message.success('订单已正式确认，单位换算信息已锁定')
       await this.load()
     },
-    openInventoryLock() { this.inventoryLockVisible = true },
+    lockQuantity(value, unit) { return value == null ? '—' : `${this.numberText(value)} ${unit || ''}` },
+    async openInventoryLock() {
+      const sequence = ++this.inventoryLockSequence
+      const orderId = this.order.id
+      const token = localStorage.getItem('erp_token')
+      this.inventoryLockVisible = true
+      this.inventoryLockLoading = true
+      this.inventoryLockError = ''
+      try {
+        const { data } = await getSalesOrder(orderId)
+        if (this._isDestroyed || sequence !== this.inventoryLockSequence || !this.inventoryLockVisible || Number(this.order.id) !== Number(orderId) || Number(this.pageRoute.params.id) !== Number(orderId)) return
+        if (localStorage.getItem('erp_token') !== token) {
+          this.inventoryLockError = '登录账号已变化，请重新打开订单'
+          return
+        }
+        this.order = data
+      } catch (error) {
+        if (sequence === this.inventoryLockSequence && Number(this.order.id) === Number(orderId) && Number(this.pageRoute.params.id) === Number(orderId)) this.inventoryLockError = error.userMessage || '库存数量加载失败，请关闭后重新打开'
+      } finally {
+        if (sequence === this.inventoryLockSequence) this.inventoryLockLoading = false
+      }
+    },
     async confirmInventoryLock() {
-      if (this.inventoryLockBusy) return
+      if (this.inventoryLockBusy || this.inventoryLockLoading || this.inventoryLockError || !this.order.allowed_actions?.lock_inventory) return
       this.inventoryLockBusy = true
       const orderId = this.order.id
       const storageKey = this.inventoryLockStorageKey
@@ -1239,7 +1286,7 @@ export default {
       return v ? erpDateTime(v, 16) : '-'
     },
     dateOnly(v) {
-      return v ? String(v).slice(0, 10) : '-'
+      return v ? erpDateTime(v, 10) : '-'
     },
     snapshotName(v) {
       if (!v) return '未锁定'
@@ -1473,10 +1520,110 @@ export default {
   justify-content: flex-end;
 }
 
-.inventory-lock-button {
-  background: #dc2626 !important;
-  border-color: #dc2626 !important;
-  color: #ffffff !important;
+.kpi-of {
+  margin-left: 4px;
+  color: #94a3b8;
+  font-size: 12px;
+  font-weight: 400;
+}
+.kpi-value.green { color: #008b4b; }
+.kpi-value.orange { color: #d97706; }
+.kpi-bar {
+  height: 6px;
+  margin-top: 6px;
+  overflow: hidden;
+  border-radius: 3px;
+  background: #f1f5f9;
+}
+.kpi-bar i {
+  display: block;
+  height: 100%;
+  background: #10a65e;
+}
+.kv-hint {
+  margin-left: 6px;
+  color: #94a3b8;
+  font-size: 11px;
+  font-weight: 400;
+}
+.remark-text {
+  white-space: pre-wrap;
+}
+.dispatch-records {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px dashed #e2e8f0;
+}
+.dispatch-records-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+.dispatch-records-head b {
+  font-size: 13px;
+  color: #1e293b;
+}
+.dispatch-empty {
+  padding: 4px 0;
+  font-size: 12px;
+}
+.line-expand-compact {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px 24px;
+  margin: 8px 0 12px;
+}
+.line-expand-compact .expand-kv {
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+  font-size: 12px;
+}
+.line-expand-compact .lbl {
+  flex: none;
+  width: 84px;
+  color: #64748b;
+}
+.line-expand-compact .val {
+  min-width: 0;
+  color: #1e293b;
+  overflow-wrap: anywhere;
+}
+.line-expand-compact .expand-kv--full {
+  grid-column: 1 / -1;
+}
+.order-lines-total {
+  display: flex;
+  justify-content: flex-end;
+  gap: 20px;
+  padding: 10px 4px 0;
+  color: #64748b;
+  font-size: 12px;
+}
+.order-lines-total b {
+  color: #008b4b;
+  font-size: 14px;
+}
+.card-head.is-clickable {
+  cursor: pointer;
+}
+.attachments-invoice-body {
+  padding-top: 4px;
+}
+.sub-section-title {
+  margin: 10px 0 8px;
+  color: #475569;
+  font-size: 13px;
+  font-weight: 600;
+}
+.more-danger {
+  color: #ef4444 !important;
+}
+@media (max-width: 780px) {
+  .line-expand-compact {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 /* 预警与通知栏 */
@@ -1651,32 +1798,6 @@ export default {
   border-radius: 6px;
   padding: 6px 10px;
   font-size: 12px;
-}
-
-/* 订单备注卡片 */
-.order-remark-box {
-  margin-top: 14px;
-  background: #f8fafc;
-  border: 1px solid #e2e8f0;
-  border-radius: 6px;
-  padding: 10px 12px;
-}
-
-.remark-title {
-  font-size: 11px;
-  font-weight: 600;
-  color: #475569;
-  margin-bottom: 4px;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.remark-content {
-  font-size: 12px;
-  color: #334155;
-  line-height: 1.5;
-  word-break: break-word;
 }
 
 /* 订单行表格定制 */

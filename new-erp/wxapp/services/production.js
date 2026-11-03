@@ -40,6 +40,7 @@ module.exports = {
   // 工序内开料：读需求和批次、选原料、算方案、领料、登记产出与余料
   cutting: (workOrderId, query) => get(`work-orders/${Number(workOrderId)}/cutting`, query),
   cuttingSources: (workOrderId, query) => get(`work-orders/${Number(workOrderId)}/cutting/sources`, query),
+  cuttingRecommend: (workOrderId, payload) => request.request({ path: `${base}/work-orders/${Number(workOrderId)}/cutting/recommend`, method: 'POST', data: payload, loading: false }),
   cuttingPreview: (workOrderId, payload) => request.request({ path: `${base}/work-orders/${Number(workOrderId)}/cutting/preview`, method: 'POST', data: payload, loading: true, loadingTitle: '计算中...' }),
   cuttingIssue: (workOrderId, payload) => request.write(`${base}/work-orders/${Number(workOrderId)}/cutting/issue`, payload, { loading: true, commandPrefix: 'cut' }),
   cuttingSettle: (batchId, payload) => request.write(`${base}/cutting-batches/${Number(batchId)}/settle`, payload, { loading: true, commandPrefix: 'cut' }),

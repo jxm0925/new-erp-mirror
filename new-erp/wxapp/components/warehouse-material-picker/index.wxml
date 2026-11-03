@@ -1,0 +1,96 @@
+<view wx:if="{{open}}" class="warehouse-overlay material-picker-overlay" catchtouchmove="stop">
+  <view class="warehouse-dialog material-picker-dialog">
+    <view class="warehouse-dialog-header">
+      <text>{{mode === 'serial' ? '选择配料编号' : '选择配料批次'}}</text>
+      <button class="warehouse-close" disabled="{{locked}}" bindtap="cancel"><van-icon name="cross" /></button>
+    </view>
+
+    <scroll-view scroll-y class="warehouse-dialog-body material-picker-body">
+      <view class="material-picker-name">{{material.name}}</view>
+      <view wx:if="{{material.code || material.spec}}" class="warehouse-muted">{{material.code}}{{material.code && material.spec ? ' · ' : ''}}{{material.spec}}</view>
+      <view class="material-picker-demand"><text>本次需配</text><text class="warehouse-danger">{{material.demandQty}} {{material.unit}}</text></view>
+
+      <view wx:if="{{mode === 'serial'}}" class="material-picker-source">
+        <view>{{serialBalance.warehouse_name || '—'}} · {{serialBalance.location_code || serialBalance.location_name || '—'}}</view>
+        <view>批次 {{serialBalance.batch_no || '—'}} · 可用 {{serialBalance.availableText}} {{material.unit}}</view>
+        <view>库存剩余 {{serialRemainingText}} {{material.unit}}</view>
+      </view>
+      <view class="material-picker-search">
+        <scan-input compact value="{{keyword}}" placeholder="{{mode === 'serial' ? '扫描或输入编号' : '搜索批次 / 库位，或扫码'}}" disabled="{{locked || loading}}" types="{{['item', 'location', 'serial']}}" bind:input="input" bind:resolved="scan" />
+        <button class="material-picker-small" disabled="{{locked || loading}}" bindtap="search">搜索</button>
+      </view>
+      <view wx:if="{{locationFilter.location_id}}" class="material-picker-filter">
+        <text>库位：{{locationFilter.location_code || locationFilter.location_name}}</text>
+        <button class="material-picker-link" disabled="{{locked || loading}}" bindtap="clearLocation">清除</button>
+      </view>
+      <view class="material-picker-list-head">
+        <text>{{showChosen ? (mode === 'serial' ? '已选编号' : '已选批次') : (mode === 'serial' ? '可用编号' : '可用库存')}}</text>
+        <view class="material-picker-list-actions">
+          <button class="material-picker-link" disabled="{{locked || loading}}" bindtap="toggleChosen">{{showChosen ? '返回列表' : '查看已选'}}（{{mode === 'serial' ? serialCount : chosen.length}}）</button>
+          <button wx:if="{{!showChosen}}" class="material-picker-link" disabled="{{locked || loading}}" bindtap="refresh">刷新</button>
+        </view>
+      </view>
+
+      <view wx:if="{{loading}}" class="warehouse-empty material-picker-empty"><van-loading color="#d81e06" /></view>
+      <view wx:elif="{{!displayedRows.length}}" class="warehouse-empty material-picker-empty">{{showChosen ? '暂未选择' : '暂无符合条件的可用库存'}}</view>
+      <block wx:else>
+        <block wx:if="{{mode === 'balance'}}">
+          <view wx:for="{{displayedRows}}" wx:key="id" class="material-picker-row {{item.chosen ? 'material-picker-chosen' : ''}}">
+            <view class="material-picker-row-title"><text>{{item.warehouse_name || '—'}}</text><text>可用 {{item.availableText}} {{item.unit_name || material.unit}}</text></view>
+            <view class="material-picker-row-detail">库位 {{item.location_code || '—'}}{{item.location_name && item.location_name !== item.location_code ? ' · ' + item.location_name : ''}}</view>
+            <view class="material-picker-row-detail">批次 {{item.batch_no || '—'}}</view>
+            <view class="material-picker-row-detail">库存剩余 {{item.remainingStockText}} {{item.unit_name || material.unit}}</view>
+            <view wx:if="{{item.incompatible}}" class="warehouse-error">物料或单位与本次需求不一致，不能选择</view>
+            <block wx:else>
+              <view class="material-picker-quantity">
+                <text>本次数量</text>
+                <view class="material-picker-input-wrap">
+                  <text wx:if="{{item.requiredSerial}}" class="material-picker-serial-qty">{{item.serialQtyText}}</text>
+                  <input wx:else type="digit" value="{{item.qtyText}}" placeholder="填写数量" disabled="{{locked || loading}}" data-id="{{item.id}}" bindinput="qtyInput" />
+                  <text>{{item.unit_name || material.unit}}</text>
+                </view>
+              </view>
+              <view wx:if="{{item.supportsSerial || item.chosen}}" class="material-picker-row-actions">
+                <button wx:if="{{item.supportsSerial}}" class="material-picker-link" disabled="{{locked || loading}}" data-id="{{item.id}}" bindtap="openSerial">{{item.requiredSerial ? '选择编号' : '选择编号（选填）'}}（{{item.serialCount}}）</button>
+                <button wx:if="{{item.chosen}}" class="material-picker-link" disabled="{{locked || loading}}" data-id="{{item.id}}" bindtap="remove">移除本批</button>
+              </view>
+              <view wx:if="{{item.serialText}}" class="material-picker-serials">{{item.serialText}}</view>
+              <view wx:if="{{item.rowError}}" class="warehouse-error material-picker-row-error">{{item.rowError}}</view>
+            </block>
+          </view>
+        </block>
+        <block wx:else>
+          <view wx:for="{{displayedRows}}" wx:key="id" class="material-picker-serial-row {{item.chosen ? 'material-picker-chosen' : ''}}" data-id="{{item.id}}" bindtap="chooseSerial">
+            <text>{{item.serial_no || ('编号 ' + item.id)}}</text><text class="material-picker-choice">{{item.chosen ? '✓ 已选' : '选择'}}</text>
+          </view>
+        </block>
+      </block>
+
+      <view wx:if="{{!showChosen}}" class="warehouse-pager material-picker-pager">
+        <button disabled="{{locked || loading || page <= 1}}" data-delta="-1" bindtap="turn">上一页</button>
+        <text>共 {{total}} 条 · {{page}}/{{lastPage}}</text>
+        <button disabled="{{locked || loading || page >= lastPage}}" data-delta="1" bindtap="turn">下一页</button>
+      </view>
+      <view wx:if="{{error || errorMessage}}" class="warehouse-error">{{error || errorMessage}}</view>
+    </scroll-view>
+
+    <view class="material-picker-summary">
+      <block wx:if="{{mode === 'serial'}}"><text>已选 {{serialCount}} 个编号</text></block>
+      <block wx:else>
+        <text>合计已选 <text class="warehouse-danger">{{totalQty}} {{material.unit}}</text></text>
+        <text wx:if="{{remainingQty}}">还需选 {{remainingQty}} {{material.unit}}</text>
+        <text wx:elif="{{excessQty}}" class="warehouse-danger">超出 {{excessQty}} {{material.unit}}</text>
+        <text wx:elif="{{summaryInvalid}}" class="warehouse-danger">请核对本次数量</text>
+        <text wx:elif="{{totalMatch}}">数量已配足</text>
+      </block>
+    </view>
+    <view wx:if="{{mode === 'serial'}}" class="warehouse-dialog-footer">
+      <button class="warehouse-secondary" disabled="{{locked}}" bindtap="cancelSerial">取消选编号</button>
+      <button class="warehouse-primary" disabled="{{locked || loading}}" bindtap="applySerial">确认编号</button>
+    </view>
+    <view wx:else class="warehouse-dialog-footer">
+      <button class="warehouse-secondary" disabled="{{locked}}" bindtap="cancel">返回</button>
+      <button class="warehouse-primary" disabled="{{locked || loading || !totalMatch}}" loading="{{locked}}" bindtap="confirm">确认配料数量</button>
+    </view>
+  </view>
+</view>

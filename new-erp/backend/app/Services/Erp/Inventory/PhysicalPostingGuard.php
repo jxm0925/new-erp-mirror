@@ -59,11 +59,8 @@ class PhysicalPostingGuard
                 && bccomp((string) $line['cost_amount'], bcsub('0', (string) $physical->total_cost, 4), 4) === 0
                 && $this->atBalance((int) $physical->id, (int) $item->id, (int) $balance->id)) return;
             $remnant = $batch ? collect($batch->remnants ?? [])->firstWhere('source_key', $line['cutting_source_key'] ?? null) : null;
-            $receipt = $batch && $operation === 'mfg_cutting_remnant'
-                ? \App\Models\Erp\MfgCuttingRemnantReceipt::query()->where('cutting_batch_id', $batch->id)->where('status', 'confirmed')
-                    ->whereNull('inventory_transaction_id')->lockForUpdate()->first() : null;
-            if ($valid && $batch->status === 'awaiting_confirm' && $receipt && $receipt->confirmed_by_legacy_id
-                && $receipt->confirmed_lines === $batch->remnants && $operation === 'mfg_cutting_remnant' && $batch->inventory_issue_transaction_id && ! $batch->inventory_return_transaction_id
+            if ($valid && $batch->status === 'awaiting_confirm' && $batch->settlement_key && ! empty($remnant['self_recorded']) && ! empty($remnant['recorded_by_legacy_id'])
+                && $operation === 'mfg_cutting_remnant' && $batch->inventory_issue_transaction_id && ! $batch->inventory_return_transaction_id
                 && $transaction->transaction_type === 'mfg_cutting_remnant_inbound' && $physical->status === 'CUTTING'
                 && $remnant && bccomp((string) $remnant['measure_qty'], '0', 8) > 0 && bccomp($quantity, '1', 8) === 0
                 && (int) $remnant['warehouse_id'] === (int) $line['warehouse_id'] && (int) $remnant['location_id'] === (int) $line['location_id']

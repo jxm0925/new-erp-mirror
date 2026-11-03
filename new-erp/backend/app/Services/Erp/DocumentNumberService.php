@@ -29,6 +29,13 @@ class DocumentNumberService
                 ->first();
 
             if ($existing) {
+                if ($existing->reserved_by_legacy_id
+                    && $reservedByLegacyId
+                    && (int) $existing->reserved_by_legacy_id !== $reservedByLegacyId) {
+                    throw ValidationException::withMessages([
+                        'creation_session_id' => '该新建会话的预占编号不属于当前登录用户，请重新打开新建页面。',
+                    ]);
+                }
                 if ($existing->status === 'expired') {
                     throw ValidationException::withMessages([
                         'creation_session_id' => '该新建会话的预占编号已过期，请重新打开新建页面。',

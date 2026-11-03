@@ -11,11 +11,12 @@ Page({
     return (this.data.status === 'pending' ? warehouse.pendingDeliveries(query) : warehouse.deliveries(query)).then(response => {
       if (sequence !== this.sequence) return; const result = page.rows(response);
       if (result.page > result.lastPage) { this.setData({ page: result.lastPage }); return this.load(); }
-      this.setData({ loading: false, rows: result.rows.map(row => Object.assign({}, row, { key: this.data.status === 'pending' ? row.operation_id : row.id, lines: (row.lines || []).map(line => Object.assign({}, line, { qtyText: page.quantity(line.qty) })) })), page: result.page, lastPage: result.lastPage, total: result.total });
+      this.setData({ loading: false, rows: result.rows.map(row => Object.assign({}, row, { key: this.data.status === 'pending' ? row.operation_id : row.id, summaryOpen: false, lines: (row.lines || []).map(line => Object.assign({}, line, { qtyText: page.quantity(line.qty) })) })), page: result.page, lastPage: result.lastPage, total: result.total });
     }).catch(error => { if (sequence === this.sequence) this.setData({ loading: false, error: page.errorText(error), rows: [] }); });
   },
   input(event) { this.setData({ keyword: event.detail.value }); }, search() { this.setData({ page: 1 }); this.load(); },
   switchTab(event) { this.setData({ status: event.currentTarget.dataset.status, page: 1 }); this.load(); },
   turn(event) { const target = this.data.page + Number(event.currentTarget.dataset.delta); if (!this.data.loading && target > 0 && target <= this.data.lastPage) { this.setData({ page: target }); this.load(); } },
+  toggleSummary(event) { const index = Number(event.currentTarget.dataset.index); const row = this.data.rows[index]; if (row) this.setData({ ['rows[' + index + '].summaryOpen']: !row.summaryOpen }); },
   open(event) { const row = this.data.rows[Number(event.currentTarget.dataset.index)]; if (row) page.openDocument({ kind: this.data.status === 'pending' ? 'material_preparation' : 'material_delivery', id: this.data.status === 'pending' ? row.operation_id : row.id, parent_id: row.work_order_id }); },
 });

@@ -1,0 +1,8 @@
+{
+  "component": true,
+  "usingComponents": {
+    "scan-input": "../scan-input/index",
+    "van-icon": "@vant/weapp/icon/index",
+    "van-loading": "@vant/weapp/loading/index"
+  }
+}

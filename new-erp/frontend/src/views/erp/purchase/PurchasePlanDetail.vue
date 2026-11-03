@@ -289,6 +289,10 @@
           <template slot-scope="{row}">
             <span v-if="row.request" class="code-badge-subtle">{{ row.request.request_no }}</span>
             <span v-else class="text-muted">--</span>
+            <div v-if="row.request?.source_type === 'sales' && row.request?.source_id" class="sales-source-line">销售订单：{{ row.request.source_no }}</div>
+            <div v-for="allocation in row.sales_allocations || []" :key="allocation.sales_order_item_id" class="sales-source-line">
+              历史关联：{{ allocation.source_snapshot?.sales_order_no }} · {{ allocation.source_snapshot?.customer_name }} · {{ allocation.source_snapshot?.product_name || allocation.source_snapshot?.sku_name }}：{{ Number(allocation.qty) }} {{ row.purchase_conversion_snapshot?.base_unit_name_snapshot || row.item?.unit?.unit_name || '' }}
+            </div>
           </template>
         </el-table-column>
         <el-table-column prop="remark" label="行备注" min-width="100" show-overflow-tooltip />
@@ -572,6 +576,14 @@ export default {
 </script>
 
 <style scoped>
+.sales-source-line {
+  margin-top: 4px;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
 .plan-detail-page {
   box-sizing: border-box;
   min-width: 0;

@@ -6,6 +6,7 @@ use App\Exceptions\Erp\WorkOrderDomainException;
 use App\Http\Controllers\Controller;
 use App\Services\Erp\AuthContextService;
 use App\Services\Erp\Manufacturing\MaterialDeliveryService;
+use App\Services\Erp\Manufacturing\ShortageService;
 use App\Services\Erp\Manufacturing\WorkOrderQueryService;
 use Illuminate\Http\Request;
 
@@ -33,17 +34,49 @@ class MfgMaterialDeliveryController extends Controller
     public function preview(Request $request, int $id, int $operationId, MaterialDeliveryService $deliveries)
     {
         $this->user($request, self::MANAGE);
-        $data = $request->validate(['units' => 'nullable|integer|min:1|max:100000']);
-        return response()->json(['data' => $deliveries->preview($id, $operationId, isset($data['units']) ? (int) $data['units'] : null)]);
+        $data = $request->validate(['units' => 'nullable|integer|min:1|max:100000'] + MaterialDeliveryService::selectionRules());
+        return response()->json(['data' => $deliveries->preview($id, $operationId, isset($data['units']) ? (int) $data['units'] : null, $data['selections'] ?? [])]);
+    }
+
+    public function candidates(Request $request, int $id, int $operationId, MaterialDeliveryService $deliveries)
+    {
+        $this->user($request, self::MANAGE);
+        $filters = $request->validate(['material_id' => 'required|integer|min:1', 'item_id' => 'nullable|integer|min:1',
+            'mode' => 'nullable|in:balance,serial', 'balance_id' => 'required_if:mode,serial|integer|min:1', 'serial_id' => 'nullable|integer|min:1',
+            'exclude_serial_ids' => 'sometimes|array|max:5000', 'exclude_serial_ids.*' => 'integer|min:1|distinct',
+            'keyword' => 'nullable|string|max:120', 'location_id' => 'nullable|integer|min:1', 'page' => 'nullable|integer|min:1', 'per_page' => 'nullable|integer|min:1|max:100']);
+        return response()->json($deliveries->candidates($id, $operationId, $filters));
+    }
+
+    public function shortagePurchasePreview(Request $request, int $id, int $operationId, MaterialDeliveryService $deliveries)
+    {
+        $this->user($request, self::MANAGE);
+        $data = $request->validate(['units' => 'nullable|integer|min:1|max:100000'] + MaterialDeliveryService::selectionRules());
+        return response()->json(['data' => $deliveries->shortagePurchasePreview($id, $operationId,
+            isset($data['units']) ? (int) $data['units'] : null, $data['selections'] ?? [])]);
+    }
+
+    public function shortagePurchaseRequest(Request $request, int $id, int $operationId, ShortageService $shortages)
+    {
+        [$user] = $this->user($request, self::MANAGE);
+        $data = $request->validate(['units' => 'nullable|integer|min:1|max:100000', 'lines' => 'required|array|min:1|max:100',
+            'lines.*.item_id' => 'required|integer|min:1|distinct', 'lines.*.qty' => 'required|numeric|min:0.0001|max:100000000|decimal:0,4',
+            'lines.*.purchase_unit_id' => 'required|integer|min:1'] + MaterialDeliveryService::selectionRules());
+        $record = $shortages->createRequest($data['lines'], $id, null, $user, ['operation_id' => $operationId,
+            'units' => isset($data['units']) ? (int) $data['units'] : null, 'selections' => $data['selections'] ?? []]);
+        return response()->json(['message' => "已生成采购需求 {$record->request_no}（草稿），请采购确认后转计划。",
+            'data' => ['id' => $record->id, 'request_no' => $record->request_no]], 201);
     }
 
     public function store(Request $request, int $id, int $operationId, MaterialDeliveryService $deliveries)
     {
         [$user] = $this->user($request, self::MANAGE);
-        $data = $request->validate(['units' => 'nullable|integer|min:1|max:100000', 'remark' => 'nullable|string|max:500', 'dispatch' => 'nullable|boolean']);
-        $delivery = $deliveries->prepare($id, $operationId, isset($data['units']) ? (int) $data['units'] : null, $data['remark'] ?? null, $user);
+        $data = $request->validate(['units' => 'nullable|integer|min:1|max:100000', 'remark' => 'nullable|string|max:500', 'dispatch' => 'nullable|boolean',
+            'expected_source_revision' => 'nullable|string|regex:/^[a-f0-9]{64}$/'] + MaterialDeliveryService::selectionRules());
+        $delivery = $deliveries->prepare($id, $operationId, isset($data['units']) ? (int) $data['units'] : null, $data['remark'] ?? null, $user,
+            $data['expected_source_revision'] ?? null, $data['selections'] ?? []);
         if (! empty($data['dispatch'])) {
-            $delivery = $deliveries->dispatch($delivery->id, $user);
+            $delivery = $deliveries->dispatch($delivery->id, $user, $data['expected_source_revision'] ?? null);
             return response()->json(['message' => "配料单 {$delivery->delivery_no} 已发出，已扣库存，等车间签收。", 'data' => $deliveries->row($delivery)], 201);
         }
         return response()->json(['message' => "配料单 {$delivery->delivery_no} 已生成，照单拣货后点“发出”。", 'data' => $deliveries->row($delivery)], 201);

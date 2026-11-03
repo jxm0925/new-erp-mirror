@@ -15,7 +15,9 @@ final class SalesOrderVisibilityService
 
     public function applySalesUserScope(QueryBuilder $users, object $user): void
     {
-        if ($this->auth->isSuperAdmin($user) || $this->auth->dataScope($user) === 'all') return;
+        // 建单权限允许替其他有效销售人员建单，不扩大已有订单的写入范围。
+        if ($this->auth->isSuperAdmin($user) || $this->auth->dataScope($user) === 'all'
+            || array_intersect(['sales_order.create', 'sales.order.create'], $this->auth->permissionCodes($user))) return;
         $ids = $this->auth->dataScope($user) === 'department'
             ? $this->auth->departmentUserIds($user)
             : [(int) ($user->legacy_id ?? $user->id ?? 0)];
@@ -35,7 +37,7 @@ final class SalesOrderVisibilityService
         }
     }
 
-    /** 共享只增加读取范围；写入口继续使用默认的数据范围。 */
+    /** 共享与代建增加读取范围；代建者仅在草稿期间具有原按钮权限约束下的写入范围。 */
     public function apply(Builder $orders, object $user, bool $includeShared = false): void
     {
         if ($this->auth->isSuperAdmin($user) || $this->auth->dataScope($user) === 'all') return;
@@ -44,11 +46,12 @@ final class SalesOrderVisibilityService
         $orders->where(function (Builder $visible) use ($actor, $departmentIds, $includeShared): void {
             $visible->where(function (Builder $owned) use ($actor, $departmentIds): void {
                 if ($departmentIds !== null) $owned->whereIn('sales_user_legacy_id', $departmentIds);
-                else $owned->where('sales_user_legacy_id', $actor)
-                    ->orWhere(fn (Builder $fallback) => $fallback->whereNull('sales_user_legacy_id')->where('created_by_legacy_id', $actor));
+                else $owned->where('sales_user_legacy_id', $actor);
             });
-            if ($includeShared && $actor > 0) {
-                $visible->orWhere(fn (Builder $shared) => $shared->where('is_share', true)
+            if ($actor > 0) {
+                $visible->orWhere(fn (Builder $created) => $created->where('created_by_legacy_id', $actor)
+                    ->when(!$includeShared, fn (Builder $draft) => $draft->where('order_status', 'draft')));
+                if ($includeShared) $visible->orWhere(fn (Builder $shared) => $shared->where('is_share', true)
                     ->whereRaw('FIND_IN_SET(?, '.$shared->qualifyColumn('share_user').') > 0', [(string) $actor]));
             }
         });
@@ -64,9 +67,12 @@ final class SalesOrderVisibilityService
         Validator::make(['share_user' => $users], ['share_user' => 'array|max:1000', 'share_user.*' => 'required|integer|min:1'])->validate();
         $ids = array_values(array_unique(array_map('intval', $users)));
         $active = DB::table('erp_legacy_admin_users')->whereIn('legacy_id', $ids)->whereNull('deleted_at')
-            ->whereIn(DB::raw('LOWER(TRIM(status))'), ['normal', 'active'])->count();
-        if ($active !== count($ids)) {
-            throw ValidationException::withMessages(['share_user' => '共享人员必须是已启用的员工账号，请重新选择。']);
+            ->whereIn(DB::raw('LOWER(TRIM(status))'), ['normal', 'active']);
+        $staff = app(BusinessStaffService::class);
+        $staff->ensureBackfilled();
+        $staff->applyActive($active, 'sales');
+        if ($active->count() !== count($ids)) {
+            throw ValidationException::withMessages(['share_user' => '共享人员只能选择有效的销售员（账号与销售员档案均已启用，且在生效期内），请重新选择。']);
         }
         return $ids ? implode(',', $ids) : null;
     }

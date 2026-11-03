@@ -72,7 +72,6 @@ final class SalesOrderFulfillmentPolicy
             'requires_delivery' => $delivery,
             'customer_complete' => filled($header['customer_name'] ?? null) && filled($header['contact_phone'] ?? null),
             'shipping_complete' => ! $delivery || filled($address),
-            'carrier_complete' => ! $delivery || filled(($header['default_carrier_id'] ?? null) ?: ($header['carrier_id'] ?? null)),
         ];
     }
 
@@ -81,7 +80,6 @@ final class SalesOrderFulfillmentPolicy
         $requirements = self::confirmationRequirements($order->attributesToArray(), $order->lines->map(fn ($line) => $line->getAttributes())->all());
         if (! $requirements['customer_complete']) throw ValidationException::withMessages(['customer' => '订单确认前必须填写客户名称及联系电话。']);
         if (! $requirements['shipping_complete']) throw ValidationException::withMessages(['full_address' => '实物订单确认前必须填写收货地址。']);
-        if (! $requirements['carrier_complete']) throw ValidationException::withMessages(['carrier_id' => '实物订单确认前必须选择默认承运方式。']);
     }
 
     public static function isPurchaseLine(SalesOrderLine $line): bool

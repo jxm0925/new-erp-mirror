@@ -107,10 +107,6 @@
           <text class="warehouse-label">{{statusGroup === 'completed' ? '办理日期' : '单据日期'}}</text>
           <text class="warehouse-value warehouse-muted">{{item.dateText}}</text>
         </view>
-        <view wx:if="{{item.kind === 'cutting_remnant' && item.status === 'pending'}}" class="warehouse-field">
-          <text class="warehouse-label">等待时长</text>
-          <text class="warehouse-value {{item.overdue ? 'warehouse-danger' : ''}}">已等待 {{item.waiting_hours}} 小时</text>
-        </view>
       </view>
 
       <view class="warehouse-doc-footer">

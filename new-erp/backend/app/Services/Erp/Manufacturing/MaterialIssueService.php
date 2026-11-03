@@ -3,6 +3,7 @@
 namespace App\Services\Erp\Manufacturing;
 
 use App\Models\Erp\InventorySerial;
+use App\Models\Erp\InventoryBalance;
 use App\Models\Erp\Item;
 use App\Models\Erp\MfgMaterialIssue;
 use App\Models\Erp\MfgUnitReport;
@@ -20,7 +21,7 @@ use Illuminate\Support\Facades\DB;
 /**
  * 工序收料：车间按设备数收本道要用的料（总装收半成品和外购件，下料组收原料），收料时才扣库存。
  * 本道的料没收够就不能开工；仓库没货时总装可以给下料组开半成品工单。
- * 按实物管理的板料走开料领用，不在这里收。
+ * 板材／管材由下料人在开料批次自选来源，不在这里自动收料。
  */
 final class MaterialIssueService
 {
@@ -36,16 +37,16 @@ final class MaterialIssueService
     ) {}
 
     /**
-     * 开料批次料：按实物逐张／逐根管理（含余料实物）的板材／管材，必须在「开料」里领入、登记产出和余料。
-     * 按数量管理的板材／管材是普通下料料：按 BOM 定额收料（随单下料），或在集中下料后点「已备料」确认。
+     * 管材不论按数量还是实物管理，都可随单选择原料并登记产出、余料；板材沿用实物开料规则。
+     * 集中开料切好的件仍可通过「已备料」承接，报工统一校验已登记的可供套数。
      */
     public static function isCutting(MfgWorkOrderMaterial $m): bool
     {
-        return in_array($m->cutting_mode, ['sheet', 'length'], true)
-            && Item::query()->whereKey($m->component_item_id)->value('material_management_mode') === 'physical';
+        return $m->cutting_mode === 'length'
+            || ($m->cutting_mode === 'sheet' && Item::query()->whereKey($m->component_item_id)->value('material_management_mode') === 'physical');
     }
 
-    /** 工单里用开料批次料（按实物管理的板材／管材）的车间工序：这些工序在本道开料、按开料套数报完成。 */
+    /** 使用管材或实物板材的车间工序：在本道随单开料，按已登记的开料套数报完成。 */
     public static function cuttingOperationIds(int $workOrderId): array
     {
         return self::cutRows($workOrderId, true)->distinct()->pluck('m.work_order_operation_id')->map(fn ($id) => (int) $id)->all();
@@ -57,19 +58,21 @@ final class MaterialIssueService
         return self::cutRows($workOrderId, false)->distinct()->pluck('m.work_order_operation_id')->map(fn ($id) => (int) $id)->all();
     }
 
-    private static function cutRows(int $workOrderId, bool $physical)
+    private static function cutRows(int $workOrderId, bool $forCutting)
     {
         return DB::table('erp_mfg_work_order_materials as m')->join('erp_items as i', 'i.id', '=', 'm.component_item_id')
             ->where('m.work_order_id', $workOrderId)->whereIn('m.cutting_mode', ['sheet', 'length'])->where('m.required_qty', '>', 0)
             ->whereNotNull('m.work_order_operation_id')
-            ->when($physical, fn ($q) => $q->where('i.material_management_mode', 'physical'), fn ($q) => $q->where(fn ($w) => $w->whereNull('i.material_management_mode')->orWhere('i.material_management_mode', '!=', 'physical')));
+            ->when($forCutting,
+                fn ($q) => $q->where(fn ($w) => $w->where('m.cutting_mode', 'length')->orWhere('i.material_management_mode', 'physical')),
+                fn ($q) => $q->where(fn ($w) => $w->whereNull('i.material_management_mode')->orWhere('i.material_management_mode', '!=', 'physical')));
     }
 
     /** 开料登记够做到第几套（各种板材／管材取最少）；本道不开料时返回 null。 */
     public function cutUnits(MfgWorkOrder $wo, MfgWorkOrderOperation $op, bool $lock = false): ?int
     {
         $rows = MfgWorkOrderMaterial::query()->where('work_order_operation_id', $op->id)->whereIn('cutting_mode', ['sheet', 'length'])
-            ->where('required_qty', '>', 0)->orderBy('id')->when($lock, fn ($q) => $q->lockForUpdate())->get()->filter(fn ($m) => self::isCutting($m));
+            ->where('required_qty', '>', 0)->orderBy('id')->when($lock, fn ($q) => $q->lockForUpdate())->get();
         if ($rows->isEmpty()) return null;
         return (int) $rows->map(fn ($m) => $this->coveredUnits($m, $wo))->min();
     }
@@ -84,12 +87,12 @@ final class MaterialIssueService
     }
 
     /**
-     * 本道的料必须已经收够到这些台。按实物管理的板材／管材不在这里查：在本道开料，报完成时按开料登记的套数校验；按数量管理的板材／管材和普通料一样按定额收料。
+     * 普通物料必须收够到这些台；板材／管材另按实际开料可供套数校验，不要求仓库配送。
      */
     public function assertReceivedForStart(MfgWorkOrder $wo, MfgWorkOrderOperation $op, Collection $units, ?float $upTo = null): void
     {
         $materials = MfgWorkOrderMaterial::query()->where('work_order_operation_id', $op->id)->where('participates_in_kitting', true)
-            ->where('required_qty', '>', 0)->orderBy('id')->lockForUpdate()->get()->reject(fn ($m) => self::isCutting($m))->values();
+            ->where('required_qty', '>', 0)->orderBy('id')->lockForUpdate()->get()->reject(fn ($m) => in_array($m->cutting_mode, ['sheet', 'length'], true))->values();
         if ($materials->isEmpty()) return;
         // 开工按已经到本道的设备数查；「已备料」按本道做到第几台查（$upTo）。
         $reached = $upTo ?? $this->reachedUnits($op);
@@ -243,8 +246,8 @@ final class MaterialIssueService
         return $rows;
     }
 
-    /** 本道要收的料：参与齐套、按数量管理（含按数量管理的板材／管材；按实物管理的走开料，不在这里收）。 */
-    public function receivable(MfgWorkOrderOperation $op, bool $lock = false): Collection
+    /** 普通收料排除下料原料；退料兼容旧领料单，仍由退料服务按原出库来源限定可退数量。 */
+    public function receivable(MfgWorkOrderOperation $op, bool $lock = false, bool $forReturn = false): Collection
     {
         $query = MfgWorkOrderMaterial::query()->where('work_order_operation_id', $op->id)->where('participates_in_kitting', true)->orderBy('id');
         if ($lock) $query->lockForUpdate();
@@ -252,7 +255,8 @@ final class MaterialIssueService
         // 加锁时同时锁物料行：收料、配料、重新拣货、发出、退料都在物料锁下读库存和配料占用，与库存过账的物料锁一致。
         $physical = Item::query()->whereIn('id', $rows->pluck('component_item_id')->unique()->sort()->values())->orderBy('id')->when($lock, fn ($q) => $q->lockForUpdate())->get()
             ->filter(fn (Item $item) => $item->materialManagementMode() === 'physical')->pluck('id')->map(fn ($id) => (int) $id)->all();
-        return $rows->reject(fn ($m) => in_array((int) $m->component_item_id, $physical, true) || (float) $m->required_qty <= 0)->values();
+        return $rows->reject(fn ($m) => in_array((int) $m->component_item_id, $physical, true)
+            || (! $forReturn && in_array($m->cutting_mode, ['sheet', 'length'], true)) || (float) $m->required_qty <= 0)->values();
     }
 
     /** 按物料 ID 顺序锁物料行，作为分配库存和配料占用的互斥边界（须在本事务任何普通读取之前调用）。 */
@@ -306,12 +310,12 @@ final class MaterialIssueService
      * 从可用库存挑库存行：先挑工单仓库，再挑其他工厂仓库；按序列号管理的自动挑先入库的号。
      * 仓库已配好、还没发出的配料单占住的数量和编号不再分给别人（$exceptDeliveryId 为重新拣货时排除自己）。
      */
-    public function allocate(MfgWorkOrderMaterial $m, float $qty, MfgWorkOrder $wo, ?int $exceptDeliveryId = null): array
+    public function allocate(MfgWorkOrderMaterial $m, float $qty, MfgWorkOrder $wo, ?int $exceptDeliveryId = null, array $planned = []): array
     {
         $item = Item::query()->findOrFail($m->component_item_id);
         $mode = $item->serialTrackingMode();
         $balances = $this->balancesFor($item, $wo);
-        $holds = MaterialDeliveryService::holds($exceptDeliveryId);
+        $holds = $this->deliveryHolds($exceptDeliveryId, $planned);
         $left = $qty;
         $picks = [];
         foreach ($balances as $balance) {
@@ -328,6 +332,8 @@ final class MaterialIssueService
                     $take = min(floor($take + self::EPS), $serials->count());
                     $serialIds = $serials->take((int) $take)->all();
                 } elseif ($take > $unnumbered + self::EPS) {
+                    // 一个编号对应一整件；分数部分只能来自真实无编号库存，不能为 1.5 件扣掉两个编号。
+                    $take = min($take, floor($take + self::EPS) + $unnumbered);
                     $serialIds = $serials->take((int) ceil($take - $unnumbered - self::EPS))->all();
                 }
             }
@@ -399,22 +405,38 @@ final class MaterialIssueService
      * 核对已保存的拣货来源现在还能不能照单出库（库存行可出库、扣掉其他配料单占用后数量够、编号仍在该库存行可用）。
      * 返回问题说明，空 = 可以照单过账。$lock 为发出时锁库存行和编号。
      */
-    public function verifyPicks(MfgWorkOrderMaterial $m, MfgWorkOrder $wo, array $picks, ?int $exceptDeliveryId, bool $lock = false): array
+    public function verifyPicks(MfgWorkOrderMaterial $m, MfgWorkOrder $wo, array $picks, ?int $exceptDeliveryId, bool $lock = false, array $planned = []): array
     {
         $item = Item::query()->findOrFail($m->component_item_id);
         $eligible = $this->balancesFor($item, $wo)->keyBy('id');
-        $holds = MaterialDeliveryService::holds($exceptDeliveryId);
+        $holds = $this->deliveryHolds($exceptDeliveryId, $planned);
         $problems = [];
+        $seenBalances = []; $seenSerials = [];
         foreach ($picks as $pick) {
             $balanceId = (int) ($pick['balance_id'] ?? 0);
+            $qty = (float) ($pick['qty'] ?? 0);
+            if (isset($seenBalances[$balanceId]) || ! is_finite($qty) || $qty <= 0 || abs($qty - round($qty, 4)) > 0.00000001) {
+                $problems[] = $m->component_item_name.' 拣货来源重复或数量无效'; continue;
+            }
+            $seenBalances[$balanceId] = true;
             $balance = \App\Models\Erp\InventoryBalance::query()->with('location:id,location_code')->when($lock, fn ($q) => $q->lockForUpdate())->find($balanceId);
             $where = $balance ? (($balance->location?->location_code ?: '库位').($balance->batch_no ? ' 批次 '.$balance->batch_no : '')) : '原库存行';
             if (! $balance || ! $eligible->has($balanceId)) { $problems[] = $m->component_item_name.' '.$where.' 已停用或不能出库'; continue; }
             $available = round($this->availability->availableForOutbound($balance) - (float) ($holds['balances'][$balanceId] ?? 0), 4);
             if ($available + self::EPS < (float) $pick['qty']) $problems[] = $m->component_item_name.' '.$where.' 现在可用 '.$this->num(max(0, $available)).'，不够 '.$this->num((float) $pick['qty']);
             $ids = array_map('intval', (array) ($pick['serial_ids'] ?? []));
+            $mode = $item->serialTrackingMode();
+            $freeSerialCount = $mode === 'optional' ? InventorySerial::query()->where('inventory_balance_id', $balanceId)->where('item_id', $item->id)->where('serial_status', 'available')
+                ->whereNotIn('id', array_keys($holds['serials']) ?: [0])->when($lock, fn ($q) => $q->lockForUpdate())->get(['id'])->count() : 0;
+            if (($mode === 'none' && $ids) || ($mode === 'required' && abs($qty - count($ids)) > self::EPS)
+                || ($mode === 'optional' && (count($ids) > $qty + self::EPS || $qty - count($ids) > max(0, $available - $freeSerialCount) + self::EPS)))
+                $problems[] = $m->component_item_name.' 所选编号与本批数量不一致，请重新选择';
+            foreach ($ids as $sid) {
+                if ($sid < 1 || isset($seenSerials[$sid])) $problems[] = $m->component_item_name.' 有重复或无效编号';
+                $seenSerials[$sid] = true;
+            }
             if ($ids) {
-                $ok = InventorySerial::query()->whereIn('id', $ids)->where('inventory_balance_id', $balanceId)->where('serial_status', 'available')
+                $ok = InventorySerial::query()->whereIn('id', $ids)->where('inventory_balance_id', $balanceId)->where('item_id', $item->id)->where('serial_status', 'available')
                     ->when($lock, fn ($q) => $q->lockForUpdate())->pluck('serial_no', 'id');
                 $bad = array_filter($ids, fn ($id) => ! isset($ok[$id]) || isset($holds['serials'][$id]));
                 if ($bad) $problems[] = $m->component_item_name.' 有 '.count($bad).' 个编号已不在 '.$where.' 或已被占用';
@@ -426,9 +448,100 @@ final class MaterialIssueService
     /** 可出库的库存行：工厂仓库优先工单仓库，按库存行先后。 */
     private function balancesFor(Item $item, MfgWorkOrder $wo): Collection
     {
+        return $this->balanceQuery($item, $wo)->get();
+    }
+
+    private function balanceQuery(Item $item, MfgWorkOrder $wo)
+    {
         return $this->availability->outboundBalanceQuery([(int) $item->id])
             ->where(fn ($q) => $q->whereNull('erp_warehouses.management_scope')->orWhere('erp_warehouses.management_scope', '!=', 'office'))
-            ->orderByRaw('erp_inventory_balances.warehouse_id = ? DESC', [(int) $wo->warehouse_id])->orderBy('erp_inventory_balances.id')->get();
+            ->orderByRaw('erp_inventory_balances.warehouse_id = ? DESC', [(int) $wo->warehouse_id])->orderBy('erp_inventory_balances.id')
+            ->when(DB::transactionLevel() > 0, fn ($q) => $q->lockForUpdate());
+    }
+
+    private function deliveryHolds(?int $exceptDeliveryId, array $planned = []): array
+    {
+        $holds = MaterialDeliveryService::holds($exceptDeliveryId);
+        foreach ($planned['balances'] ?? [] as $id => $qty) $holds['balances'][$id] = round(($holds['balances'][$id] ?? 0) + $qty, 4);
+        $holds['serials'] += $planned['serials'] ?? [];
+        return $holds;
+    }
+
+    /** 分页前须投影出库资格和占用量；SQL与 availableForOutbound 同口径，保存时仍由 verifyPicks 权威核验。 */
+    private function deliveryBalanceQuery(Item $item, MfgWorkOrder $wo, array $holds)
+    {
+        $held = '0';
+        if ($holds['balances']) {
+            $held = 'CASE erp_inventory_balances.id';
+            foreach ($holds['balances'] as $id => $qty) $held .= ' WHEN '.(int) $id.' THEN '.number_format((float) $qty, 4, '.', '');
+            $held .= ' ELSE 0 END';
+        }
+        $available = 'ROUND(GREATEST(0, LEAST(erp_inventory_balances.quantity_available, erp_inventory_balances.quantity_on_hand - erp_inventory_balances.quantity_locked - erp_inventory_balances.quantity_defective - erp_inventory_balances.quantity_pending) - '.$held.'), 4)';
+        if ($item->serialTrackingMode() !== 'none') {
+            $heldSerials = implode(',', array_map('intval', array_keys($holds['serials']))) ?: '0';
+            $count = '(SELECT COUNT(*) FROM erp_inventory_serials AS ds WHERE ds.inventory_balance_id = erp_inventory_balances.id AND ds.item_id = '.(int) $item->id." AND ds.serial_status = 'available' AND ds.id NOT IN (".$heldSerials.'))';
+            $available = $item->serialTrackingMode() === 'required' ? 'LEAST(FLOOR('.$available.' + 0.00001), '.$count.')'
+                : 'LEAST('.$available.', FLOOR('.$available.' + 0.00001) + GREATEST(0, '.$available.' - '.$count.'))';
+        }
+        return $this->balanceQuery($item, $wo)
+            ->when($item->materialManagementMode() === 'physical', fn ($q) => $q->whereRaw('1 = 0'))
+            ->where(function ($q) use ($item) {
+                $q->whereNull('erp_inventory_balances.material_lot_id')->orWhereExists(function ($lot) use ($item) {
+                    $lot->selectRaw('1')->from('erp_material_lots as dl')->whereColumn('dl.id', 'erp_inventory_balances.material_lot_id')
+                        ->whereColumn('dl.item_id', 'erp_inventory_balances.item_id')->whereNull('dl.configuration_id')->whereNull('dl.stage_id')
+                        ->where(fn ($form) => $form->whereIn('dl.material_form', ['FULL_STOCK', 'STANDARD_LENGTH'])
+                            ->when($item->item_type === 'finished_product' && $item->materialManagementMode() === 'quantity', fn ($f) => $f->orWhere('dl.material_form', 'PRODUCT')));
+                });
+            })->selectRaw($available.' AS delivery_available_qty')->whereRaw($available.' > 0.00001');
+    }
+
+    public function deliveryAvailability(MfgWorkOrderMaterial $m, MfgWorkOrder $wo, array $planned = [], ?int $exceptDeliveryId = null): array
+    {
+        $item = Item::query()->findOrFail($m->component_item_id);
+        return $this->deliveryBalanceQuery($item, $wo, $this->deliveryHolds($exceptDeliveryId, $planned))->get()
+            ->mapWithKeys(fn ($b) => [(int) $b->id => (float) $b->delivery_available_qty])->all();
+    }
+
+    public function deliveryCandidates(MfgWorkOrderMaterial $m, MfgWorkOrder $wo, array $filters): array
+    {
+        $item = Item::query()->findOrFail($m->component_item_id);
+        if (isset($filters['item_id']) && (int) $filters['item_id'] !== (int) $item->id)
+            $this->fail('material_mismatch', '所选物料不属于本工单用料，请重新选择。');
+        $holds = $this->deliveryHolds(null);
+        $query = $this->deliveryBalanceQuery($item, $wo, $holds)
+            ->with(['warehouse:id,warehouse_name', 'location:id,location_code,location_name'])
+            ->when($filters['location_id'] ?? null, fn ($q, $id) => $q->where('erp_inventory_balances.location_id', $id));
+        $keyword = trim((string) ($filters['keyword'] ?? ''));
+        $size = min(100, max(1, (int) ($filters['per_page'] ?? 10)));
+        $page = max(1, (int) ($filters['page'] ?? 1));
+        $identity = ['material_id' => (int) $m->id, 'item_id' => (int) $item->id, 'component_item_id' => (int) $item->id,
+            'item_name' => $m->component_item_name, 'item_code' => $m->component_item_code, 'spec' => $item->spec,
+            'unit_name' => $m->unit_name, 'serial_tracking_mode' => $item->serialTrackingMode()];
+        $row = fn ($b) => $identity + ['balance_id' => (int) $b->id, 'inventory_balance_id' => (int) $b->id,
+            'warehouse_id' => (int) $b->warehouse_id, 'warehouse_name' => $b->warehouse?->warehouse_name,
+            'location_id' => (int) $b->location_id, 'location_code' => $b->location?->location_code, 'location_name' => $b->location?->location_name,
+            'batch_no' => $b->batch_no, 'quantity_available' => (float) $b->delivery_available_qty];
+        if (($filters['mode'] ?? 'balance') === 'serial') {
+            $balance = $query->where('erp_inventory_balances.id', (int) $filters['balance_id'])->first();
+            if (! $balance || $item->serialTrackingMode() === 'none') $this->fail('stock_unavailable', '本批物料已不可用，请刷新后重选。');
+            $serials = InventorySerial::query()->where('inventory_balance_id', $balance->id)->where('item_id', $item->id)->where('serial_status', 'available')
+                ->whereNotIn('id', array_keys($holds['serials']) ?: [0])
+                ->whereNotIn('id', $filters['exclude_serial_ids'] ?? [])
+                ->when($filters['serial_id'] ?? null, fn ($q, $id) => $q->where('id', $id))
+                ->when($keyword !== '', fn ($q) => $q->where('serial_no', 'like', '%'.$keyword.'%'))
+                ->orderBy('id')->paginate($size, ['*'], 'page', $page);
+            $serials->getCollection()->transform(fn ($s) => ['id' => (int) $s->id, 'serial_no' => $s->serial_no] + $row($balance));
+            return $serials->toArray();
+        }
+        $query->when($filters['serial_id'] ?? null, fn ($q, $id) => $q->whereHas('serials', fn ($s) => $s->where('id', $id)->where('item_id', $item->id)
+            ->where('serial_status', 'available')->whereNotIn('id', array_keys($holds['serials']) ?: [0])))
+            ->when($keyword !== '', fn ($q) => $q->where(fn ($w) => $w->where('erp_inventory_balances.batch_no', 'like', '%'.$keyword.'%')
+                ->orWhere('erp_locations.location_code', 'like', '%'.$keyword.'%')->orWhere('erp_locations.location_name', 'like', '%'.$keyword.'%')
+                ->orWhere('erp_warehouses.warehouse_name', 'like', '%'.$keyword.'%')
+                ->orWhereHas('item', fn ($i) => $i->where('item_code', 'like', '%'.$keyword.'%')->orWhere('item_name', 'like', '%'.$keyword.'%')->orWhere('spec', 'like', '%'.$keyword.'%'))));
+        $balances = $query->paginate($size, ['*'], 'page', $page);
+        $balances->getCollection()->transform(fn ($b) => ['id' => (int) $b->id] + $row($b));
+        return $balances->toArray();
     }
 
     private function num(float $v): string { return rtrim(rtrim(number_format($v, 4, '.', ''), '0'), '.'); }

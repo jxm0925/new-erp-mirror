@@ -91,14 +91,14 @@
         </view>
       </view>
       <view wx:else class="mt-muted">{{task.cutting.completed_units >= task.cutting.planned_units ? '本工序下料已全部完成' : '请先在下方「开料作业」中领料切割并登记产出套数'}}</view>
-      <view wx:if="{{task.prepMode && !task.cutting.reportable_units && task.selectableCount > 0}}" class="mt-muted mt-gap">板件已在「集中开料」完成切割：点击底部「已备料」可直接交接下道工序，板材按 BOM 定额从集中开料净耗池扣减。<text wx:for="{{task.cutting.pool}}" wx:key="item_id">{{item.item_name}} 已切未备料 {{item.left_measure}} m²；</text></view>
+      <view wx:if="{{task.prepMode && !task.cutting.reportable_units && task.selectableCount > 0}}" class="mt-muted mt-gap">如已在「集中开料」切好，可点击底部「已备料」领用已切件并交接下道工序；尚未切割的，请先在下方「开料作业」进入「随单开料」，选择原料并登记实际产出与余料。<text wx:for="{{task.cutting.pool}}" wx:key="item_id">{{item.item_name}} 已切未备料 {{item.left_measure}} m²；</text></view>
       <view class="mt-muted mt-gap">已完成 {{task.cutting.completed_units}} / {{task.cutting.planned_units}} 套<text wx:if="{{task.progress.next_operation_name && !task.completion}}"> · 完工后交接至{{task.progress.next_operation_name}}</text></view>
     </view>
 
     <!-- 集中开料批次选择 -->
     <view wx:if="{{task.prepMode && task.cutting_runs && (task.cutting_runs.runs.length || task.cutting_runs.running)}}" class="mt-card">
       <view class="mt-card-title"><text>集中开料批次关联</text><text class="tk-link red" bindtap="openSharedCutting">前往集中开料 ›</text></view>
-      <view class="mt-muted">提交「已备料」时将按件数从所选集中开料批次领走切好的料（切完结束时已扣库存，不再从仓库扣）并分摊开料工时（批次总工时 ÷ 总件数 × 本次领用件数）；未指定时默认按先进先出匹配，批次不够的部分按 BOM 定额从仓库收料。</view>
+      <view class="mt-muted">提交「已备料」时从所选集中开料批次领用已切件并分摊开料工时；未指定时按先进先出匹配。已扣的原料不再重复扣库，已切件不足时须先完成开料登记。</view>
       <view wx:if="{{task.cutting_runs.running}}" class="mt-muted mt-gap" style="color:#b7791f">当前有 {{task.cutting_runs.running}} 批正在集中开料，请待其「切完结束」登记件数后再执行备料。</view>
       <view wx:for="{{task.cutting_runs.runs}}" wx:key="id" class="tk-unit" data-id="{{item.id}}" bindtap="pickRun">
         <view class="tk-check {{runPick === item.id ? 'on' : ''}}">{{runPick === item.id ? '✓' : ''}}</view>

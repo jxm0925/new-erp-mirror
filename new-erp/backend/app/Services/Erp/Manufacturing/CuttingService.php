@@ -39,7 +39,7 @@ final class CuttingService
         private readonly SalesOrderFundingGateService $funding,
     ) {}
 
-    public function context(int $workOrderId, array $filters, bool $amounts): array
+    public function context(int $workOrderId, array $filters, bool $amounts, object $actor): array
     {
         $wo = MfgWorkOrder::query()->with(['materials', 'operations'])->findOrFail($workOrderId);
         $requirements = [];
@@ -51,7 +51,7 @@ final class CuttingService
         $batches = MfgCuttingBatch::query()->where('work_order_id', $wo->id)
             ->when(! empty($filters['operation_id']), fn ($q) => $q->where('work_order_operation_id', (int) $filters['operation_id']))->orderByDesc('id')
             ->paginate($filters['per_page'] ?? 10, ['*'], 'page', $filters['page'] ?? 1);
-        $batches->getCollection()->transform(fn ($batch) => $this->batch($batch, $amounts));
+        $batches->getCollection()->transform(fn ($batch) => $this->batch($batch, $amounts, $actor));
         return ['work_order_id' => (int) $wo->id, 'business_version' => (int) $wo->business_version,
             'operations' => $wo->operations->where('execution_context', 'production')->map(fn ($op) => ['id' => (int) $op->id, 'operation_name' => $op->operation_name])->values()->all(),
             'requirements' => $requirements, 'remaining_unit_qty_by_operation' => $remaining, 'batches' => $batches->toArray(),
@@ -61,21 +61,44 @@ final class CuttingService
     public function sources(int $workOrderId, array $filters, bool $amounts): array
     {
         $wo = MfgWorkOrder::query()->with('materials')->findOrFail($workOrderId);
-        $item = $this->sourceItem($wo, (int) $filters['item_id']);
-        $query = $this->sourceQuery($item);
-        if ($keyword = trim((string) ($filters['keyword'] ?? ''))) {
-            $query->where(function ($q) use ($keyword, $item) {
-                $q->where('erp_inventory_balances.batch_no', 'like', '%'.$keyword.'%')
-                    ->orWhere('erp_locations.location_name', 'like', '%'.$keyword.'%')
-                    ->orWhere('erp_warehouses.warehouse_name', 'like', '%'.$keyword.'%');
-                if ($item->materialManagementMode() === 'physical') $q->orWhere('cut_physical.physical_no', 'like', '%'.$keyword.'%');
-                if (str_contains($item->item_code.' '.$item->item_name.' '.$item->spec.' '.$item->model.' '.$item->material_grade, $keyword)) $q->orWhereRaw('1=1');
-            });
+        $materials = $wo->materials->filter(fn ($m) => in_array($m->cutting_mode, ['sheet', 'length'], true) && (float) $m->required_qty > 0);
+        if (! empty($filters['operation_id'])) {
+            $operationId = (int) $filters['operation_id'];
+            if (! $wo->operations()->whereKey($operationId)->where('execution_context', 'production')->exists())
+                $this->fail('operation_invalid', '请选择本工单实际存在的车间工序。');
+            $materials = $materials->where('work_order_operation_id', $operationId);
         }
-        if (! empty($filters['category_id']) && (int) $item->category_id !== (int) $filters['category_id']) $query->whereRaw('1=0');
-        $page = $query->orderBy('erp_inventory_balances.id')->when($item->materialManagementMode() === 'physical', fn ($q) => $q->orderBy('cut_physical.id'))
+        $itemIds = $materials->pluck('component_item_id')->unique()->sort()->values();
+        if (! empty($filters['item_id'])) {
+            if (! $itemIds->contains((int) $filters['item_id'])) $this->fail('item_invalid', '所选物料不在当前开料需求中。');
+            $itemIds = collect([(int) $filters['item_id']]);
+        }
+        $items = []; $stocks = []; $union = null;
+        $keyword = trim((string) ($filters['keyword'] ?? ''));
+        foreach ($itemIds as $itemId) {
+            $item = $items[$itemId] = $this->sourceItem($wo, (int) $itemId);
+            $snapshot = data_get(collect(data_get($wo->bom_snapshot, 'items', []))->firstWhere('component_item_id', (int) $itemId), 'cutting_quantity_snapshot', []);
+            $stocks[$itemId] = array_replace(['thickness_mm' => data_get($snapshot, 'dimensions.thickness_mm')], $snapshot['stock_dimensions'] ?? []);
+            $query = $this->sourceQuery($item);
+            if ($keyword !== '') {
+                $query->where(function ($q) use ($keyword, $item) {
+                    $q->where('erp_inventory_balances.batch_no', 'like', '%'.$keyword.'%')
+                        ->orWhere('erp_locations.location_name', 'like', '%'.$keyword.'%')
+                        ->orWhere('erp_warehouses.warehouse_name', 'like', '%'.$keyword.'%');
+                    if ($item->materialManagementMode() === 'physical') $q->orWhere('cut_physical.physical_no', 'like', '%'.$keyword.'%');
+                    if (str_contains($item->item_code.' '.$item->item_name.' '.$item->spec.' '.$item->model.' '.$item->material_grade, $keyword)) $q->orWhereRaw('1=1');
+                });
+            }
+            if (! empty($filters['category_id']) && (int) $item->category_id !== (int) $filters['category_id']) $query->whereRaw('1=0');
+            // 实物和数量库存保留各自来源规则，合并后统一分页，避免把所有库存拉到小程序。
+            if ($item->materialManagementMode() !== 'physical') $query->selectRaw('NULL AS cutting_physical_id, NULL AS cutting_physical_no, NULL AS cutting_dimensions, NULL AS cutting_shape, NULL AS cutting_physical_cost, NULL AS cutting_physical_version');
+            $union = $union ? $union->unionAll($query->toBase()) : $query->toBase();
+        }
+        $query = $union ? InventoryBalance::query()->fromSub($union, 'cut_sources')->select('cut_sources.*')
+            ->orderBy('item_id')->orderBy('id')->orderBy('cutting_physical_id') : InventoryBalance::query()->whereRaw('1=0');
+        $page = $query
             ->paginate($filters['per_page'] ?? 10, ['*'], 'page', $filters['page'] ?? 1);
-        $page->getCollection()->transform(fn ($balance) => $this->publicData($this->source($balance, $item), $amounts));
+        $page->getCollection()->transform(fn ($balance) => $this->publicData($this->source($balance, $items[$balance->item_id], $stocks[$balance->item_id]), $amounts));
         return $page->toArray() + ['categories' => ItemCategory::query()->where(fn ($q) => $q->whereNull('management_scope')->orWhere('management_scope', 'factory'))
             ->orderBy('sort_order')->orderBy('id')->get(['id', 'parent_id', 'category_name'])->toArray()];
     }
@@ -84,6 +107,70 @@ final class CuttingService
     {
         $wo = MfgWorkOrder::query()->with(['materials', 'operations'])->findOrFail($workOrderId);
         return $this->publicData($this->plan($wo, $data), $amounts);
+    }
+
+    public function recommend(int $workOrderId, array $data, bool $amounts): array
+    {
+        $wo = MfgWorkOrder::query()->with(['materials', 'operations'])->findOrFail($workOrderId);
+        $operationId = (int) $data['operation_id'];
+        $units = (int) $data['unit_qty'];
+        if (! $wo->operations->contains(fn ($op) => (int) $op->id === $operationId && $op->execution_context === 'production'))
+            $this->fail('operation_invalid', '请选择本工单实际存在的车间工序。');
+        if ($units < 1 || $units > $this->remainingUnits($wo, $operationId)) $this->fail('qty_invalid', '本次套数超过该工序尚未安排开料的数量。');
+        $requirements = $this->requirements($wo, $operationId);
+        if (! $requirements) $this->fail('no_cutting_material', '这道工序没有冻结的板材或管材开料需求。');
+        $pending = [];
+        foreach ($requirements as $part) $pending[$part['part_key']] = $part['quantity_basis'] === 'total_length'
+            ? bcmul($part['per_unit_measure'], (string) $units, 8) : (string) ($part['per_unit_piece_qty'] * $units);
+        $sources = []; $assignments = []; $originalKeys = []; $balanceAvailable = [];
+        foreach (collect($requirements)->groupBy('item_id') as $itemId => $parts) {
+            $item = $this->sourceItem($wo, (int) $itemId);
+            $snapshot = data_get(collect($wo->bom_snapshot['items'])->firstWhere('component_item_id', (int) $itemId), 'cutting_quantity_snapshot', []);
+            $stock = array_replace(['thickness_mm' => data_get($snapshot, 'dimensions.thickness_mm')], $snapshot['stock_dimensions'] ?? []);
+            // shortcut: 余料优先的顺序选料不保证全局最省料，需要最优套裁时升级排料算法。
+            $query = $this->sourceQuery($item)->orderByRaw("CASE WHEN cut_lot.material_form = 'REMNANT' THEN 0 ELSE 1 END")
+                ->orderBy('erp_inventory_balances.id')->when($item->materialManagementMode() === 'physical', fn ($q) => $q->orderBy('cut_physical.id'));
+            foreach ($query->lazy(100) as $balance) {
+                $source = $this->source($balance, $item, $stock);
+                $balanceId = (int) $source['inventory_balance_id'];
+                $available = $balanceAvailable[$balanceId] ?? $source['available_qty'];
+                $index = 0;
+                while (bccomp($available, '0', 8) > 0) {
+                    if (! $parts->contains(fn ($part) => bccomp($pending[$part['part_key']], '0', 8) > 0)) break 2;
+                    $whole = $source['physical_material_id'] || $source['unit_kind'] === 'sheet';
+                    if ($whole && bccomp($available, '1', 8) < 0) break;
+                    $qty = $whole ? '1.0000' : ($source['unit_kind'] === 'root' ? $this->minimum('1', $available) : $available);
+                    $key = in_array($source['unit_kind'], ['root', 'sheet'], true) && ! $source['physical_material_id'] ? $source['source_key'].':'.(++$index) : $source['source_key'];
+                    $candidate = array_replace($source, ['source_key' => $key, 'qty' => $qty, 'input_measure' => bcmul($source['measure_qty'], $qty, 8)]);
+                    $rows = $this->suggest($parts->values()->all(), [$candidate], $units, $pending);
+                    if (! $rows) break;
+                    // 整根／整张实际领出后登记余料；按米／面积的数量来源只领所需量。
+                    if (! $whole && in_array($source['unit_kind'], ['m', 'm2'], true)) {
+                        $used = '0';
+                        foreach ($rows as $row) $used = bcadd($used, bcmul($row['qty'], $parts->firstWhere('part_key', $row['part_key'])['per_piece_measure'], 8), 8);
+                        $qty = bcdiv($used, $source['measure_qty'], 4);
+                        if (bccomp(bcmul($qty, $source['measure_qty'], 8), $used, 8) < 0) $qty = bcadd($qty, '0.0001', 4);
+                    }
+                    $this->assertSourceQuantity($source, $qty);
+                    if (count($sources) >= 1000) $this->fail('source_limit', '本次需要的原料来源超过 1000 条，请减少套数分批开料。');
+                    $sources[] = ['source_key' => $key, 'item_id' => (int) $itemId, 'inventory_balance_id' => $source['inventory_balance_id'],
+                        'physical_material_id' => $source['physical_material_id'], 'source_version' => $source['source_version'], 'qty' => $qty];
+                    $originalKeys[$key] = $source['source_key'];
+                    foreach ($rows as $row) $pending[$row['part_key']] = bcsub($pending[$row['part_key']], $row['qty'], 8);
+                    $assignments = array_merge($assignments, $rows);
+                    $available = bcsub($available, $qty, 8);
+                    $balanceAvailable[$balanceId] = $available;
+                    if ($source['physical_material_id'] || ! in_array($source['unit_kind'], ['root', 'sheet'], true)) break;
+                }
+            }
+            $missing = $parts->filter(fn ($part) => bccomp($pending[$part['part_key']], '0', 8) > 0);
+            if ($missing->isNotEmpty()) $this->fail('source_short', $item->item_name.' '.($item->spec ?: $item->model).' 的可用来源未能满足本次下料需求，请手动选料或减少套数。');
+        }
+        // 推荐只读；确认领料时仍按来源版本、库存余额和排料守恒重新校验。
+        $plan = $this->plan($wo, $data + ['sources' => $sources, 'assignments' => $assignments]);
+        foreach ($plan['sources'] as &$source) $source['original_source_key'] = $originalKeys[$source['source_key']];
+        unset($source);
+        return $this->publicData($plan, $amounts);
     }
 
     public function issue(int $workOrderId, array $data, object $actor, bool $amounts): array
@@ -95,7 +182,7 @@ final class CuttingService
             $old = MfgCuttingBatch::query()->where('idempotency_key', $data['idempotency_key'])->lockForUpdate()->first();
             if ($old) {
                 if ((int) $old->work_order_id !== (int) $wo->id || ! hash_equals($old->request_hash, $hash)) $this->fail('idempotency_conflict', '这个领料请求编号已被其他内容使用，请刷新后重新确认。', 409);
-                return $this->batch($old, $amounts);
+                return $this->batch($old, $amounts, $actor);
             }
             if (! in_array($wo->status, ['released', 'in_progress'], true)) $this->fail('status_invalid', '只有已下达或生产中的工单可以领入开料。');
             if ((int) $wo->business_version !== (int) $data['expected_version']) $this->fail('version_conflict', '工单已经变更，请刷新后重新选料。', 409);
@@ -126,7 +213,7 @@ final class CuttingService
             $batch->update(['input_lines' => $inputs]);
             $wo->update(['business_version' => (int) $wo->business_version + 1]);
             $this->workOrders->log($wo, 'cutting_issued', $wo->status, $wo->status, '开料批次 '.$batch->batch_no.' 已领入真实原料，待登记产出和确认余料', $actor, ['cutting_batch_id' => $batch->id]);
-            return $this->batch($batch->fresh(), $amounts);
+            return $this->batch($batch->fresh(), $amounts, $actor);
         }, 5);
     }
 
@@ -143,7 +230,7 @@ final class CuttingService
             if (! $key) $this->fail('command_required', '请提供本次登记的稳定请求编号。');
             if ($batch->status === 'settled') {
                 if ($batch->settlement_key !== $key || ! hash_equals((string) $batch->settlement_hash, $hash)) $this->fail('already_settled', '这批已经结算，不能改写原料和产出事实。', 409);
-                return $this->batch($batch, $amounts);
+                return $this->batch($batch, $amounts, $actor);
             }
             if (! in_array($wo->status, ['released', 'in_progress', 'paused'], true) || ! in_array($batch->status, ['issued', 'awaiting_confirm'], true))
                 $this->fail('status_invalid', '当前工单或开料批次不能登记余料。');
@@ -165,8 +252,8 @@ final class CuttingService
                 $doneUnits = (int) MfgCuttingBatch::query()->where('work_order_id', $wo->id)->where('work_order_operation_id', $batch->work_order_operation_id)
                     ->whereIn('status', ['settled', 'awaiting_confirm'])->lockForUpdate()->get()->sum('completed_unit_qty') + $actualUnits;
                 foreach ($wo->materials->where('work_order_operation_id', $batch->work_order_operation_id) as $material) {
-                    if (! MaterialIssueService::isCutting($material)) continue;
-                    // 已登记的合格件先满足数量，仓库确认只结余料与成本，不能再增加一次 issued_qty。
+                    if (! in_array($material->cutting_mode, ['sheet', 'length'], true)) continue;
+                    // 实际产出只满足一次数量；旧批次重核余料不能重复增加 issued_qty。
                     $increase = bcdiv(bcmul((string) $material->required_qty, (string) $actualUnits, 12), (string) $wo->planned_qty, 4);
                     $newQty = $doneUnits >= (int) $wo->planned_qty ? (string) $material->required_qty : bcadd((string) $material->issued_qty, $increase, 4);
                     if (bccomp($newQty, (string) $material->required_qty, 4) > 0) $this->fail('qty_invalid', '开料已满足量超过工单冻结需求。');
@@ -180,18 +267,18 @@ final class CuttingService
             app(CuttingRemnantReceiptService::class)->submitForBatch($batch, $data['remnants'] ?? [], $actor);
             $wo->update(['business_version' => (int) $wo->business_version + 1]);
             if (! $registered) $this->workOrders->log($wo, 'cutting_outputs_registered', $wo->status, $wo->status,
-                '开料批次 '.$batch->batch_no.' 已登记 '.$actualUnits.' 套合格产出，车间可继续加工；余料另由仓库核对', $actor, ['cutting_batch_id' => $batch->id]);
-            return $this->batch($batch->fresh(), $amounts);
+                '开料批次 '.$batch->batch_no.' 已登记 '.$actualUnits.' 套合格产出及实际余料并结算', $actor, ['cutting_batch_id' => $batch->id]);
+            return $this->batch($batch->fresh(), $amounts, $actor);
         }, 5);
     }
 
-    public function batch(MfgCuttingBatch $batch, bool $amounts): array
+    public function batch(MfgCuttingBatch $batch, bool $amounts, object $actor): array
     {
         $row = $batch->only(['id', 'batch_no', 'work_order_id', 'work_order_operation_id', 'status', 'business_version', 'unit_qty', 'completed_unit_qty',
             'input_lines', 'planned_outputs', 'actual_outputs', 'remnants', 'input_cost_amount', 'remnant_cost_amount', 'net_cost_amount',
             'issued_by_name', 'settled_by_name', 'issued_at', 'settled_at', 'remark']);
-        $row += app(CuttingRemnantReceiptService::class)->batchConfirmation($batch, $amounts);
-        $row['status_label'] = ['issued' => '切割中，待登记', 'awaiting_confirm' => '产出已登记，余料待确认', 'settled' => '已结算'][$batch->status] ?? $batch->status;
+        $row += app(CuttingRemnantReceiptService::class)->batchConfirmation($batch, $amounts, $actor);
+        $row['status_label'] = ['issued' => '切割中，待登记', 'awaiting_confirm' => '待下料人登记结算', 'settled' => '已结算'][$batch->status] ?? $batch->status;
         if ($batch->status !== 'settled') foreach (['remnant_cost_amount', 'net_cost_amount'] as $field) $row[$field] = null;
         $row['summaries'] = array_map(fn ($input) => array_intersect_key($input, array_flip(['source_key', 'input_measure', 'output_measure', 'suggested_remnant', 'measure_unit'])), $batch->input_lines);
         return $this->publicData($row, $amounts);
@@ -222,10 +309,12 @@ final class CuttingService
             elseif ($row['physical_material_id'] ?? null) $this->fail('source_invalid', '管材不能引用板材实物身份。');
             $balance = $query->when($lock, fn ($q) => $q->lockForUpdate())->first();
             if (! $balance) $this->fail('source_unavailable', '所选来源已被占用或不在可用仓库中，请重新选料。');
-            $source = $this->source($balance, $item);
+            $snapshot = data_get(collect(data_get($wo->bom_snapshot, 'items', []))->firstWhere('component_item_id', (int) $item->id), 'cutting_quantity_snapshot', []);
+            $stock = array_replace(['thickness_mm' => data_get($snapshot, 'dimensions.thickness_mm')], $snapshot['stock_dimensions'] ?? []);
+            $source = $this->source($balance, $item, $stock);
             if (! hash_equals($source['source_version'], (string) $row['source_version'])) $this->fail('source_changed', '来源库存、实物尺寸或版本已变化，请重新选料。', 409);
             $qty = CuttingDecimal::value($row['qty']);
-            if (in_array($source['unit_kind'], ['sheet', 'root'], true) && bccomp($qty, '1', 8) !== 0) $this->fail('whole_source_required', '板材逐张、管材逐根登记，每条真实来源的基本数量必须为一。');
+            $this->assertSourceQuantity($source, $qty);
             if ($source['physical_material_id']) {
                 if (in_array($source['physical_material_id'], $physicalIds, true)) $this->fail('source_duplicate', '同一张板不能重复选择。');
                 $physicalIds[] = $source['physical_material_id'];
@@ -253,6 +342,17 @@ final class CuttingService
             'summaries' => array_values($summaries), 'input_cost_amount' => $total];
     }
 
+    public function assertSourceQuantity(array $source, string $qty): void
+    {
+        if (in_array($source['unit_kind'], ['root', 'm', 'm2'], true) && bccomp($qty, bcadd($qty, '0', 4), 8) !== 0)
+            $this->fail('stock_precision_invalid', '领用的库存数量最多保留四位小数。');
+        if ((! empty($source['physical_material_id']) || $source['unit_kind'] === 'sheet') && bccomp($qty, '1', 8) !== 0)
+            $this->fail('whole_source_required', '实物原料和板材须逐件登记，每条来源数量必须为一。');
+        // 数量库存允许不足一根，但不能把多根拼成一条可切割的来源。
+        if ($source['unit_kind'] === 'root' && bccomp($qty, '1', 8) > 0)
+            $this->fail('whole_source_required', '管材须逐根登记，每条来源数量不能超过一根。');
+    }
+
     private function requirements(MfgWorkOrder $wo, int $operationId): array
     {
         $lines = collect(data_get($wo->bom_snapshot, 'items', []))->keyBy('id');
@@ -261,8 +361,8 @@ final class CuttingService
             ->get(['id', 'spec', 'model'])->keyBy('id');
         $out = [];
         foreach ($wo->materials->where('work_order_operation_id', $operationId) as $material) {
-            // 只有按实物管理的板材／管材走开料批次；按数量管理的按定额收料或「已备料」确认。
-            if (! MaterialIssueService::isCutting($material)) continue;
+            // 下料人自选真实原料或余料；数量来源与实物来源共用冻结的加工要求。
+            if (! in_array($material->cutting_mode, ['sheet', 'length'], true) || (float) $material->required_qty <= 0) continue;
             $line = $lines->get($material->bom_item_id);
             $snapshot = $line['cutting_quantity_snapshot'] ?? null;
             if (! is_array($snapshot) || ($snapshot['mode'] ?? null) !== $material->cutting_mode) $this->fail('cutting_snapshot_missing', '开料需求缺少冻结尺寸与单位，请先通过正式工单资料补齐。');
@@ -291,13 +391,13 @@ final class CuttingService
         return $out;
     }
 
-    private function suggest(array $requirements, array $sources, int $units): array
+    private function suggest(array $requirements, array $sources, int $units, ?array $pending = null): array
     {
         $rows = [];
         $used = array_fill_keys(array_column($sources, 'source_key'), '0.00000000');
         $placed = [];
         foreach ($requirements as $part) {
-            $left = $part['quantity_basis'] === 'total_length' ? bcmul($part['per_unit_measure'], (string) $units, 8) : (string) ($part['per_unit_piece_qty'] * $units);
+            $left = $pending[$part['part_key']] ?? ($part['quantity_basis'] === 'total_length' ? bcmul($part['per_unit_measure'], (string) $units, 8) : (string) ($part['per_unit_piece_qty'] * $units));
             foreach ($sources as $source) {
                 if ((int) $source['item_id'] !== (int) $part['item_id'] || bccomp($left, '0', 8) <= 0) continue;
                 $room = bcsub($source['input_measure'], $used[$source['source_key']], 8);
@@ -320,7 +420,7 @@ final class CuttingService
                 $used[$source['source_key']] = bcadd($used[$source['source_key']], bcmul($take, $part['per_piece_measure'], 8), 8);
                 $left = bcsub($left, $take, 8);
             }
-            if (bccomp($left, '0', 8) > 0) $this->fail('source_short', '所选真实来源不足以满足 '.$part['part_name'].'，请增加来源或减少本批套数。');
+            if ($pending === null && bccomp($left, '0', 8) > 0) $this->fail('source_short', '所选真实来源不足以满足 '.$part['part_name'].'，请增加来源或减少本批套数。');
         }
         return $rows;
     }
@@ -395,12 +495,11 @@ final class CuttingService
 
     private function sourceItem(MfgWorkOrder $wo, int $itemId, bool $lock = false): Item
     {
-        if (! $wo->materials->contains(fn ($row) => (int) $row->component_item_id === $itemId && MaterialIssueService::isCutting($row))) $this->fail('item_invalid', '所选物料不在本工单冻结的开料需求中（按数量管理的板材／管材请直接收料或点「已备料」）。');
+        if (! $wo->materials->contains(fn ($row) => (int) $row->component_item_id === $itemId && in_array($row->cutting_mode, ['sheet', 'length'], true))) $this->fail('item_invalid', '所选物料不在本工单冻结的开料需求中。');
         $item = Item::query()->with('unit.standardUnit')->where('status', 'enabled')->when($lock, fn ($q) => $q->lockForUpdate())->find($itemId);
         if (! $item || ($item->management_scope && $item->management_scope !== 'factory')) $this->fail('item_invalid', '开料必须选择启用的工厂物料。');
         if ($wo->materials->where('component_item_id', $itemId)->contains(fn ($material) => $material->cutting_mode !== $item->cuttingMode()))
             $this->fail('material_policy_changed', '原料当前下料模式与工单冻结需求不一致，请先核实资料。');
-        if ($item->cuttingMode() === 'sheet' && $item->materialManagementMode() !== 'physical') $this->fail('physical_required', '板材必须采用逐张实物管理，不能通过数量来源代替。');
         if ($item->materialManagementMode() !== 'physical' && $item->serialTrackingMode() !== 'none') $this->fail('serial_source_required', '按序列号管理的原料暂不能从普通开料来源领入，请先核实实物身份。');
         $unit = $this->units->canonicalUnit($item->unit);
         foreach (collect(data_get($wo->bom_snapshot, 'items', []))->where('component_item_id', $itemId) as $line) {
@@ -423,7 +522,8 @@ final class CuttingService
             ->whereRaw('(erp_inventory_balances.quantity_on_hand - erp_inventory_balances.quantity_locked - erp_inventory_balances.quantity_defective - erp_inventory_balances.quantity_pending) > 0')
             ->where(function ($q) { $q->whereNull('erp_inventory_balances.material_lot_id')->orWhere(fn ($lot) => $lot->whereColumn('cut_lot.item_id', 'erp_inventory_balances.item_id')->whereNull('cut_lot.configuration_id')->whereNull('cut_lot.stage_id')->whereIn('cut_lot.material_form', ['FULL_STOCK', 'STANDARD_LENGTH', 'REMNANT'])); })
             ->addSelect(['erp_warehouses.warehouse_name as cutting_warehouse_name', 'erp_locations.location_name as cutting_location_name',
-                'cut_lot.material_form as cutting_material_form', 'cut_lot.cut_length_mm as cutting_lot_length_mm']);
+                'cut_lot.material_form as cutting_material_form', 'cut_lot.cut_length_mm as cutting_lot_length_mm',
+                'cut_lot.source_type as cutting_lot_source_type', 'cut_lot.source_id as cutting_lot_source_id']);
         if ($item->materialManagementMode() === 'physical') {
             $query->join('erp_material_holdings as cut_holding', 'cut_holding.inventory_balance_id', '=', 'erp_inventory_balances.id')
                 ->join('erp_material_physicals as cut_physical', 'cut_physical.current_holding_id', '=', 'cut_holding.id')
@@ -438,7 +538,7 @@ final class CuttingService
         return $query;
     }
 
-    public function source(InventoryBalance $balance, Item $item): array
+    public function source(InventoryBalance $balance, Item $item, array $stockDimensions = []): array
     {
         $unit = $this->units->canonicalUnit($item->unit);
         if (! $unit) $this->fail('unit_missing', '原料必须维护真实的库存基本单位。');
@@ -446,25 +546,40 @@ final class CuttingService
         $mode = $item->cuttingMode();
         $dimensions = $balance->cutting_dimensions ? json_decode($balance->cutting_dimensions, true, 512, JSON_THROW_ON_ERROR) : [];
         $shape = strtoupper((string) ($balance->cutting_shape ?: ($mode === 'length' ? 'LENGTH' : '')));
+        if ($mode === 'sheet' && $item->materialManagementMode() !== 'physical') {
+            if ($balance->cutting_material_form === 'REMNANT') {
+                $origin = $balance->cutting_lot_source_type === 'mfg_cutting_batch' ? MfgCuttingBatch::query()->find($balance->cutting_lot_source_id) : null;
+                $remnant = collect($origin?->remnants ?? [])->firstWhere('material_lot_id', (int) $balance->material_lot_id);
+                if (! $remnant) $this->fail('remnant_dimensions_missing', '这块板材余料缺少已登记的实际面积，不能套用原板尺寸。');
+                $dimensions = $remnant['dimensions']; $shape = $remnant['shape'];
+            } else {
+                $dimensions = $stockDimensions;
+                $shape = $kind === 'm2' ? 'AREA_ONLY' : 'RECTANGLE';
+                if ($kind === 'm2') $dimensions['area_m2'] = '1.00000000';
+            }
+        }
         if ($mode === 'sheet') {
-            if ($kind !== 'sheet') $this->fail('unit_invalid', '逐张实物板材的库存基本单位必须为张。');
+            if (! in_array($kind, ['sheet', 'm2'], true) || ($item->materialManagementMode() === 'physical' && $kind !== 'sheet')) $this->fail('unit_invalid', '板材库存基本单位必须为张或平方米，实物板材必须为张。');
             if (! in_array($shape, ['RECTANGLE', 'AREA_ONLY'], true) || ! isset($dimensions['thickness_mm'])) $this->fail('source_dimensions_missing', '板材缺少可确认的真实形状或厚度。');
-            $measure = $shape === 'AREA_ONLY' ? CuttingDecimal::value($dimensions['area_m2'] ?? null)
-                : bcdiv(bcmul(CuttingDecimal::value($dimensions['length_mm'] ?? null, 2), CuttingDecimal::value($dimensions['width_mm'] ?? null, 2), 8), '1000000', 8);
+            $measure = $kind === 'm2' ? '1.00000000' : ($shape === 'AREA_ONLY' ? CuttingDecimal::value($dimensions['area_m2'] ?? null)
+                : bcdiv(bcmul(CuttingDecimal::value($dimensions['length_mm'] ?? null, 2), CuttingDecimal::value($dimensions['width_mm'] ?? null, 2), 8), '1000000', 8));
         } else {
             if (! in_array($kind, ['root', 'm'], true)) $this->fail('unit_invalid', '管材库存单位必须明确为根或米。');
-            $length = $balance->cutting_lot_length_mm;
+            $length = $dimensions['length_mm'] ?? $balance->cutting_lot_length_mm;
             if ($balance->cutting_material_form === 'REMNANT' && (float) $length <= 0) $this->fail('remnant_length_missing', '这条管材余料缺少实际余长，不能套用整根标准长度。');
-            if ((float) $length <= 0) $length = $item->standard_stock_length_mm;
+            if ((float) $length <= 0) $length = $stockDimensions['length_mm'] ?? $item->standard_stock_length_mm;
             if ($kind === 'root' && (float) $length <= 0) $this->fail('source_dimensions_missing', '按根领料必须有来源真实长度，不能默认补标准长度。');
             $dimensions = $length ? ['length_mm' => bcadd((string) $length, '0', 2)] : [];
             $measure = $kind === 'root' ? bcdiv((string) $length, '1000', 8) : '1.00000000';
         }
         $available = bcsub(bcsub(bcsub((string) $balance->quantity_on_hand, (string) $balance->quantity_locked, 8), (string) $balance->quantity_defective, 8), (string) $balance->quantity_pending, 8);
         $available = $this->minimum($available, (string) $balance->quantity_available);
+        $held = MaterialDeliveryService::holds()['balances'][(int) $balance->id] ?? 0;
+        $available = bcsub($available, sprintf('%.4F', $held), 8);
+        if (bccomp($available, '0', 8) < 0) $available = '0.00000000';
         $version = $this->hash([(int) $balance->id, (string) $balance->quantity_on_hand, (string) $balance->quantity_locked,
             (string) $balance->quantity_defective, (string) $balance->quantity_pending, (string) $balance->inventory_value,
-            (string) $balance->last_transaction_at, $balance->material_lot_id, $balance->cutting_physical_id, $balance->cutting_physical_version, $dimensions]);
+            (string) $balance->last_transaction_at, $balance->material_lot_id, $balance->cutting_physical_id, $balance->cutting_physical_version, $dimensions, $held]);
         return ['source_key' => $balance->cutting_physical_id ? 'physical:'.$balance->cutting_physical_id : 'balance:'.$balance->id,
             'item_id' => (int) $item->id, 'item_code' => $item->item_code, 'item_name' => $item->item_name, 'specification' => $item->spec ?: $item->model,
             'material_grade' => $item->material_grade,
@@ -483,7 +598,7 @@ final class CuttingService
     {
         $batches = MfgCuttingBatch::query()->where('work_order_id', $wo->id)->where('work_order_operation_id', $operationId)->when($lock, fn ($q) => $q->lockForUpdate())->get();
         $arranged = (int) $batches->sum(fn ($batch) => in_array($batch->status, ['settled', 'awaiting_confirm'], true) ? $batch->completed_unit_qty : $batch->unit_qty);
-        $materials = $wo->materials->where('work_order_operation_id', $operationId)->filter(fn ($material) => MaterialIssueService::isCutting($material) && (float) $material->required_qty > 0);
+        $materials = $wo->materials->where('work_order_operation_id', $operationId)->filter(fn ($material) => in_array($material->cutting_mode, ['sheet', 'length'], true) && (float) $material->required_qty > 0);
         $covered = $materials->isEmpty() ? 0 : $materials->map(fn ($material) => (int) bcdiv(bcmul((string) $material->issued_qty, (string) $wo->planned_qty, 12), (string) $material->required_qty, 0))->min();
         return max(0, (int) $wo->planned_qty - max($arranged, $covered));
     }

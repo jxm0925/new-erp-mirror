@@ -14,6 +14,7 @@ use App\Models\Erp\SalesOrderLine;
 use App\Models\Erp\SalesOrderLog;
 use App\Models\Erp\SalesOrderVersion;
 use App\Models\Erp\SalesOrderAttachment;
+use App\Models\Erp\ShipmentDispatch;
 use App\Models\Erp\SalesCustomer;
 use App\Models\Erp\SalesCustomerAddress;
 use App\Models\Erp\SalesCustomerContact;
@@ -68,7 +69,7 @@ class SalesOrderController extends Controller
     public function storeDraft(Request $request)
     {
         $this->abortUnlessPermission($request, 'sales_order.create');
-        $payload = $this->attachCurrentOperator($this->validateOrder($request), $request);
+        $payload = $this->attachCurrentOperator($this->validateOrder($request), $request, true);
         $this->assertTradePlatform($payload, null, false);
         $payload['agreed_deposit_amount'] = $this->validatedAgreedDeposit($request);
         $order = app(SalesOrderDraftService::class)->create($payload, $this->operatorName($request));
@@ -526,6 +527,7 @@ class SalesOrderController extends Controller
 
         $page = $query->paginate($this->perPage($request));
         app(\App\Services\Erp\SalesTradePlatformService::class)->decorate($page->getCollection());
+        $this->decorateOrderPeople($page->getCollection());
         $page->getCollection()->transform(function (SalesOrder $order) use ($request) {
             $order->setAttribute('allowed_actions', $this->orderAllowedActions($request, $order));
             $order->setAttribute('priority_label', SalesOrderPriorityService::label((int) $order->priority));
@@ -595,7 +597,7 @@ class SalesOrderController extends Controller
         $this->abortUnlessPermission($request, 'sales.order.create');
         $payload = $this->validateOrder($request);
         $this->assertTradePlatform($payload, null, true);
-        $payload = $this->attachCurrentOperator($payload, $request);
+        $payload = $this->attachCurrentOperator($payload, $request, true);
 
         return DB::transaction(function () use ($payload) {
             $lines = $payload['lines'];
@@ -674,8 +676,8 @@ class SalesOrderController extends Controller
             'fulfillments.item',
             'fulfillments.warehouse',
             'fulfillments.location',
-            'versions',
-            'logs',
+            'versions' => fn ($query) => $query->orderByDesc('version_no')->orderByDesc('id'),
+            'logs' => fn ($query) => $query->orderByDesc('created_at')->orderByDesc('id'),
             'changeCandidates.approvals',
             'shipments.lines',
             'shipments.packages',
@@ -683,7 +685,7 @@ class SalesOrderController extends Controller
         ]);
         $this->applySalesOrderVisibility($query, $request, true);
         $order = $query->findOrFail($id);
-        $order->setAttribute('sales_user', app(ErpUserProjectionService::class)->one($order->sales_user_legacy_id));
+        $this->decorateOrderPeople([$order]);
         $order->setAttribute('share_users', array_values(app(ErpUserProjectionService::class)->many(explode(',', (string) $order->share_user))));
         $paymentMethodName = data_get($order->payment_method_snapshot, 'method_name')
             ?: ($order->payment_method_id ? PaymentMethod::query()->whereKey($order->payment_method_id)->value('method_name') : null)
@@ -723,7 +725,18 @@ class SalesOrderController extends Controller
         $superAdmin = $user ? $auth->isSuperAdmin($user) : false;
         $order->setAttribute('funding_status', app(SalesOrderFundingGateService::class)
             ->statusForPermissions($order, $permissions, $superAdmin));
-        $order->setAttribute('fulfillment_quantities', app(SalesOrderInventoryLockService::class)->projection($order));
+        $order->setAttribute('fulfillment_quantities', app(SalesOrderInventoryLockService::class)->projection($order, true));
+        // 实际快递公司和运单号在每次发运时填写，一张订单可分多次、多个快递；订单上的“客户指定物流”只是预填值。
+        $shipmentNos = $order->shipments->pluck('shipment_no', 'id');
+        $order->setAttribute('dispatch_records', ShipmentDispatch::query()->whereIn('shipment_id', $shipmentNos->keys())
+            ->orderByDesc('dispatched_at')->orderByDesc('id')->get()
+            ->map(fn (ShipmentDispatch $dispatch) => [
+                'id' => (int) $dispatch->id, 'dispatch_no' => $dispatch->dispatch_no, 'shipment_id' => (int) $dispatch->shipment_id,
+                'shipment_no' => $shipmentNos->get($dispatch->shipment_id), 'delivery_mode' => $dispatch->delivery_mode,
+                'carrier_name' => $dispatch->carrier_name, 'tracking_no' => $dispatch->tracking_no,
+                'package_count' => count($dispatch->package_ids ?: []), 'operator_name' => $dispatch->operator_name,
+                'dispatched_at' => $dispatch->dispatched_at?->toDateTimeString(),
+            ])->values()->all());
         $payload = $order->toArray();
         return response()->json($payload);
     }
@@ -739,9 +752,13 @@ class SalesOrderController extends Controller
         $payload = $this->validateOrder($request, true);
         $this->assertTradePlatform($payload, $order, true);
         $payload = $this->attachCurrentOperator($payload, $request);
+        $operator = $this->operatorName($request);
 
-        return DB::transaction(function () use ($order, $payload) {
+        return DB::transaction(function () use ($order, $payload, $operator, $request) {
             $order = SalesOrder::query()->lockForUpdate()->findOrFail($order->id);
+            $this->abortUnlessOrderVisible($request, $order);
+            abort_if($order->order_status !== 'draft', 422, '已确认订单禁止普通编辑，请走订单变更或正式撤回确认流程');
+            abort_if($order->shipment_status !== 'not_shipped', 422, '已有发货记录的订单不能直接编辑，请走订单变更或售后流程');
             $before = $order->fresh(['lines', 'fulfillments'])->toArray();
             $lines = $payload['lines'];
             $deletedLineIds = $payload['deleted_line_ids'] ?? [];
@@ -761,7 +778,7 @@ class SalesOrderController extends Controller
                 'production_confirm_status' => 'not_required',
             ]);
             $after = $order->fresh(['lines'])->toArray();
-            $this->version($order->id, 'update', $before, $after, $payload['created_by'] ?? 'system');
+            $this->version($order->id, 'update', $before, $after, $operator);
             $this->log($order->id, null, 'update', $before['order_status'] ?? null, $order->order_status, '编辑销售订单，原备货和生产安排已撤回待重新确认');
 
             return response()->json([
@@ -784,18 +801,16 @@ class SalesOrderController extends Controller
 
     private function performFormalConfirm(Request $request, int $id)
     {
-        $order = SalesOrder::with(['lines.sku', 'lines.item'])->findOrFail($id);
-        $this->abortUnlessOrderVisible($request, $order);
-        // 订单确认只锁定单位换算并进入“待生产确认”；备货、生产需求和工单在销售核实后的生产确认里才生成。
-        $isReplay = $order->order_status === 'confirmed';
-        if ($isReplay) {
-            return $order->fresh(['lines', 'fulfillments']);
-        }
-        abort_if(!$isReplay && $order->confirm_status !== 'pending_confirmation', 422, '请先完成确认前检查');
-        abort_if(!$isReplay && $order->order_status !== 'draft', 422, '只有草稿状态的销售订单可以提交确认');
-        abort_if($order->order_status === 'cancelled', 422, '已取消订单不能确认');
-        abort_if($order->lines->isEmpty(), 422, '销售订单至少需要一行明细');
-        if (!$isReplay) {
+        return DB::transaction(function () use ($request, $id) {
+            $order = SalesOrder::with(['lines.sku', 'lines.item'])->lockForUpdate()->findOrFail($id);
+            // 代建者的确认权限随草稿状态结束；等待并发确认后必须按锁内状态重新裁定。
+            $this->abortUnlessOrderVisible($request, $order);
+            // 订单确认只锁定单位换算并进入“待生产确认”；备货、生产需求和工单在销售核实后的生产确认里才生成。
+            $isReplay = $order->order_status === 'confirmed';
+            if ($isReplay) return $order->fresh(['lines', 'fulfillments']);
+            abort_if($order->confirm_status !== 'pending_confirmation', 422, '请先完成确认前检查');
+            abort_if($order->order_status !== 'draft', 422, '只有草稿状态的销售订单可以提交确认');
+            abort_if($order->lines->isEmpty(), 422, '销售订单至少需要一行明细');
             SalesOrderFulfillmentPolicy::assertConfirmationRequirements($order);
             abort_if(round((float) $order->lines->sum(fn ($l) => (float) ($l->amount_incl_tax ?? $l->amount)) + (float) $order->freight_amount, 2) < 0, 422, '扣减项（红包、优惠）合计不能超过商品金额，订单金额不能小于 0');
             foreach ($order->lines as $line) {
@@ -803,12 +818,11 @@ class SalesOrderController extends Controller
                 abort_if($priceProblem !== null, 422, '提交确认前，'.$priceProblem);
                 $this->assertLineOrderAttributes($line);
             }
-        }
-
-        $operator = app(AuthContextService::class)->currentUser($request);
-        abort_unless($operator, 401, '请先登录 ERP');
-        return app(\App\Services\Erp\SalesOrderFulfillmentApplicationService::class)
-            ->confirmOrder($order->id, $this->operatorName($request));
+            $operator = app(AuthContextService::class)->currentUser($request);
+            abort_unless($operator, 401, '请先登录 ERP');
+            return app(\App\Services\Erp\SalesOrderFulfillmentApplicationService::class)
+                ->confirmOrder($order->id, $this->operatorName($request));
+        }, 5);
     }
 
     public function productionConfirmationPreview(Request $request, int $id)
@@ -817,6 +831,7 @@ class SalesOrderController extends Controller
         $order = SalesOrder::with(['lines.product', 'lines.sku', 'lines.item', 'fulfillments'])->findOrFail($id);
         $this->abortUnlessOrderVisible($request, $order);
         $preview = app(\App\Services\Erp\SalesOrderFulfillmentApplicationService::class)->preview($order->id);
+        $this->decorateOrderPeople([$preview['order']]);
         $auth = app(AuthContextService::class);
         $user = $auth->currentUser($request);
         // 确认页顶部显示“开工够不够 / 发货还差多少”。
@@ -1015,7 +1030,7 @@ class SalesOrderController extends Controller
         $this->abortUnlessPermission($request, 'sales_order.view');
         $order = SalesOrder::findOrFail($id);
         $this->abortUnlessOrderVisible($request, $order, true);
-        return response()->json(SalesOrderLog::where('sales_order_id', $id)->latest('id')->paginate($this->perPage($request)));
+        return response()->json(SalesOrderLog::where('sales_order_id', $id)->latest('created_at')->latest('id')->paginate($this->perPage($request)));
     }
 
     public function versions(Request $request, int $id)
@@ -1023,7 +1038,7 @@ class SalesOrderController extends Controller
         $this->abortUnlessPermission($request, 'sales_order.view');
         $order = SalesOrder::findOrFail($id);
         $this->abortUnlessOrderVisible($request, $order, true);
-        return response()->json(SalesOrderVersion::where('sales_order_id', $id)->latest('version_no')->paginate($this->perPage($request)));
+        return response()->json(SalesOrderVersion::where('sales_order_id', $id)->latest('version_no')->latest('id')->paginate($this->perPage($request)));
     }
 
     public function changes(Request $request, int $id)
@@ -1191,7 +1206,6 @@ class SalesOrderController extends Controller
             'payment_terms_snapshot' => 'nullable|array',
             'platform_buyer_id' => 'nullable|string|max:160',
             'pay_type' => 'nullable|string|max:80',
-            'created_by_legacy_id' => 'nullable|integer|min:1',
             'sales_user_legacy_id' => 'nullable|integer|min:1',
             'customer_id' => 'nullable|integer|exists:erp_sales_customers,id',
             'customer_contact_id' => 'nullable|integer|min:1',
@@ -1241,7 +1255,6 @@ class SalesOrderController extends Controller
             'legacy_payload' => 'nullable|array',
             'contract_attachments' => 'nullable|string',
             'remark' => 'nullable|string',
-            'created_by' => 'nullable|string|max:80',
             'draft_token' => 'nullable|string|max:120',
             'deleted_line_ids' => 'nullable|array',
             'deleted_line_ids.*' => 'integer|min:1',
@@ -1713,25 +1726,31 @@ class SalesOrderController extends Controller
         abort_unless($query->exists(), 403, '无权访问该销售订单');
     }
 
-    private function attachCurrentOperator(array $payload, Request $request): array
+    private function decorateOrderPeople(iterable $orders): void
     {
-        $legacyAdminId = $this->currentLegacyAdminId($request);
-        if (!$legacyAdminId) {
-            return $payload;
+        $orders = collect($orders);
+        $users = app(ErpUserProjectionService::class)->many($orders->pluck('sales_user_legacy_id')
+            ->merge($orders->pluck('created_by_legacy_id'))->all());
+        foreach ($orders as $order) {
+            $order->setAttribute('sales_user', $users[(int) $order->sales_user_legacy_id] ?? null);
+            $order->setAttribute('creator', $users[(int) $order->created_by_legacy_id] ?? null);
         }
+    }
 
-        $user = DB::table('erp_legacy_admin_users')->where('legacy_id', $legacyAdminId)->first();
-        if (!$user) {
-            return $payload;
-        }
-
-        $payload['created_by_legacy_id'] = $payload['created_by_legacy_id'] ?? $legacyAdminId;
-        if (empty($payload['sales_user_legacy_id'])) {
-            $payload['sales_user_legacy_id'] = $legacyAdminId;
-        }
-        app(SalesOrderVisibilityService::class)->assertAssignableSalesUser($payload['sales_user_legacy_id'], $user);
-        if (empty($payload['created_by'])) {
+    private function attachCurrentOperator(array $payload, Request $request, bool $creating = false): array
+    {
+        $user = app(AuthContextService::class)->currentUser($request);
+        abort_unless($user && (int) $user->legacy_id > 0, 401, '未登录或登录已过期。');
+        $legacyAdminId = (int) $user->legacy_id;
+        if ($creating) {
+            $payload['created_by_legacy_id'] = $legacyAdminId;
             $payload['created_by'] = $user->nickname ?: $user->username;
+        } else {
+            unset($payload['created_by_legacy_id'], $payload['created_by']);
+        }
+        if ($creating || array_key_exists('sales_user_legacy_id', $payload)) {
+            if (empty($payload['sales_user_legacy_id'])) $payload['sales_user_legacy_id'] = $legacyAdminId;
+            app(SalesOrderVisibilityService::class)->assertAssignableSalesUser($payload['sales_user_legacy_id'], $user);
         }
 
         return $payload;

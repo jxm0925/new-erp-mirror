@@ -54,12 +54,12 @@
               <el-date-picker v-model="form.request_date" value-format="yyyy-MM-dd" placeholder="选择需求日期" style="width: 100%" />
             </el-form-item>
             <el-form-item label="来源类型">
-              <el-select v-model="form.source_type" placeholder="请选择来源类型" style="width: 100%">
+              <el-select v-model="form.source_type" :disabled="Boolean(form.id)" placeholder="请选择来源类型" style="width: 100%" @change="changeRequestSource">
                 <el-option label="手工创建" value="manual" />
                 <el-option v-if="form.management_scope === 'factory'" label="生产需求" value="production" />
                 <el-option v-if="form.management_scope === 'factory'" label="销售订单" value="sales" />
                 <el-option v-if="form.source_type === 'production_shortage'" label="生产缺料" value="production_shortage" />
-                <el-option label="库存预警" value="inventory_alert" />
+                <el-option v-if="form.source_type === 'inventory_alert'" label="库存预警" value="inventory_alert" />
               </el-select>
             </el-form-item>
             <el-form-item label="单据状态">
@@ -67,8 +67,10 @@
                 {{ form.id ? ({ draft: '草稿', confirmed: '已确认', closed: '已关闭', cancelled: '已取消', partially_planned: '部分转计划', planned: '已转计划' }[form.request_status] || form.request_status) : '草稿' }}
               </el-tag>
             </el-form-item>
-            <el-form-item label="来源单号">
-              <el-input v-model="form.source_no" placeholder="选填，关联外部单号" />
+            <el-form-item :label="form.source_type === 'sales' ? '销售订单' : '来源单号'" prop="source_id" :required="form.source_type === 'sales' && !legacySalesSource">
+              <paged-record-select v-if="form.source_type === 'sales'" v-model="form.source_id" :request="listPurchaseSalesCandidates" :columns="salesCandidateColumns" :label="salesCandidateLabel" title="选择销售订单" placeholder="选择销售订单" :disabled="saving" @select="selectSourceSalesOrder" />
+              <paged-record-select v-else-if="form.source_type === 'production' && !form.id" v-model="form.source_id" :request="listPurchaseWorkOrderCandidates" :columns="workOrderCandidateColumns" :label="workOrderCandidateLabel" title="选择生产工单" placeholder="选择已有生产工单" @select="selectSourceWorkOrder" />
+              <el-input v-else v-model="form.source_no" :disabled="form.source_type !== 'manual'" placeholder="选填，关联外部单号" />
             </el-form-item>
             <el-form-item label="备注说明" class="remark-span-3">
               <el-input v-model="form.remark" placeholder="选填，请输入需求补充说明或业务要求..." />
@@ -772,7 +774,7 @@ import { erpDateTime } from '../../../utils/dateTime'
 import { listEntity, listItemPurchaseConversionOptions } from '@/api/erp/master'
 import { minimalValidPurchaseQuantity } from '@/utils/unitConversion'
 import { priceCheckText, priceWarnings } from '@/utils/purchasePriceCheck'
-import { checkPurchasePrices, listPriceHistories, previewPurchaseConversion, generateReceiptSerials, getPurchase, getSupplierRecommendations, savePurchaseRequest, savePurchasePlan, savePurchaseOrder, savePurchaseReceipt, submitRequest, submitPlan, submitOrder } from '@/api/erp/purchase'
+import { listPurchaseSalesCandidates, listPurchaseWorkOrderCandidates, checkPurchasePrices, listPriceHistories, previewPurchaseConversion, generateReceiptSerials, getPurchase, getSupplierRecommendations, savePurchaseRequest, savePurchasePlan, savePurchaseOrder, savePurchaseReceipt, submitRequest, submitPlan, submitOrder } from '@/api/erp/purchase'
 import { reserveForCreatePage, clearCreatePageReservation } from '@/utils/documentNumberReservation'
 import PurchaseItemPicker from '@/components/purchase/PurchaseItemPicker.vue'
 import PurchaseConversionFacts from '@/components/purchase/PurchaseConversionFacts.vue'
@@ -787,6 +789,8 @@ export default {
     form: { management_scope: 'factory', items: [] }, documentRevision: 0, warehouseRevision: 0, scopeChanging: false, saving: false, items: [], suppliers: [], warehouses: [], locations: [], activeIndex: 0,
     reservation: null, recommendations: [], recommendLoading: false, recommendationRevision: 0, pickerTarget: null, attachmentDraftToken: '',
     selectedRequestRows: [],
+    salesCandidateColumns: [{ prop: 'sales_order_no', label: '销售订单' }, { prop: 'customer_name', label: '客户' }],
+    workOrderCandidateColumns: [{ prop: 'work_order_no', label: '工单编号' }, { prop: 'item_name', label: '物料' }, { prop: 'product_name', label: '产品' }],
     selectedPlanRows: [],
       supplierDialogVisible: false,
       activeSplitRow: null,
@@ -796,6 +800,7 @@ export default {
   }),
   computed: {
     scopeOptions() { return purchaseScopes },
+    legacySalesSource() { return Boolean(this.form.id && !this.form.source_id && (this.form.items || []).some(row => (row.sales_allocations || []).length)) },
     scopeIssue() { return purchaseScopeIssue(this.form, this.items) },
     scopeLocked() { return this.scopeChanging || this.saving || purchaseSourceLocked(this.form) || (this.type === 'request' && ['production', 'sales', 'production_shortage'].includes(this.form.source_type)) },
     scopedWarehouses() { return this.warehouses.filter(row => purchaseScopeMatches(row, this.form.management_scope)) },
@@ -818,6 +823,7 @@ export default {
       const required = message => [{ required: true, message, trigger: ['change', 'blur'] }]
       if (this.type === 'order') return { supplier_id: required('请选择供应商'), order_date: required('请选择订单日期'), expected_arrival_date: required('提交订单前请填写预计到货日期') }
       if (this.type === 'receipt') return { supplier_id: required('请选择供应商'), receipt_date: required('请选择到货日期') }
+      if (this.type === 'request' && this.form.source_type === 'sales' && !this.legacySalesSource) return { source_id: required('请选择需求所属的销售订单') }
       return {}
     },
     planSourceText() {
@@ -928,6 +934,16 @@ export default {
   },
   async mounted() { await this.initializeDocument() },
   methods: {
+    listPurchaseSalesCandidates,
+    listPurchaseWorkOrderCandidates,
+    salesCandidateLabel(row) { return [row.sales_order_no, row.customer_name].filter(Boolean).join(' · ') },
+    selectSourceSalesOrder(row) { this.$set(this.form, 'source_no', row?.sales_order_no || '') },
+    workOrderCandidateLabel(row) { return [row.work_order_no, row.product_name || row.item_name].filter(Boolean).join(' · ') },
+    selectSourceWorkOrder(row) { this.$set(this.form, 'source_no', row?.work_order_no || '') },
+    changeRequestSource() {
+      this.$set(this.form, 'source_no', '')
+      this.$set(this.form, 'source_id', null)
+    },
     purchaseConversions(line, params) { return listItemPurchaseConversionOptions(line.item_id, params) },
     localConversionOptions(line) { return (line._conversionOptions || []).filter(row => row.identity_conversion || row.snapshot_option) },
     scopeLabel(scope) { return purchaseScopeLabel(scope) },
@@ -1304,12 +1320,11 @@ export default {
       if (!validPurchaseScope(this.form.management_scope)) return this.$message.warning('请先明确单据管理类型')
       if (purchaseSourceLocked(this.form)) return this.$message.warning('来源单据物料已锁定，请保留原来源明细')
       this.pickerTarget = line
-      const isMulti = ['request', 'plan'].includes(this.type)
       this.$refs.itemPicker.open({
         currentId: line && line.item_id,
-        multiple: isMulti,
-        selected: isMulti ? this.currentSelectedItems() : (line && line.item_id ? [this.getItem(line.item_id)].filter(Boolean) : []),
-        title: isMulti ? '选择采购物料 (支持多选)' : '选择采购物料',
+        multiple: false,
+        selected: line && line.item_id ? [this.getItem(line.item_id)].filter(Boolean) : [],
+        title: '选择采购物料',
         params: { status: 'enabled', is_purchase_item: 1, management_scope: this.form.management_scope }
       })
     },
@@ -1317,25 +1332,41 @@ export default {
       const line = this.pickerTarget
       if (!line || !item || !this.form.items.includes(line) || !this.canPickScope([item])) return
       const changed = Number(line.item_id || 0) !== Number(item.id)
+      if (changed && ['request', 'plan'].includes(this.type) && this.form.items.some(row => row !== line && Number(row.item_id) === Number(item.id))) return this.$message.warning('所选物料已在其他明细行中，不能重复添加')
       this.rememberItem(item)
+      this.pickerTarget = null
+      if (!changed) return
       this.$set(line, 'item_id', item.id)
       this.$set(line, 'spec_model', item.spec_model || item.spec || item.model || '')
-      if (this.type === 'plan') this.$set(line, 'unit_id', item.unit_id || item.unit?.id || null)
-      if (changed) {
-        this.$delete(line, 'id')
-        this.$delete(line, 'purchase_conversion_snapshot')
-        this.$delete(line, 'conversion_factor_snapshot')
-        this.$delete(line, '_planningPreview')
-        if (this.type === 'plan') this.$set(line, 'splits', [])
-        this.$set(line, 'purchase_unit_id', null)
-        this.$set(line, '_conversionOptions', [])
-        this.$set(line, 'serial_text', '')
-        this.$set(line, 'serial_number_source', 'supplier')
-        await this.loadLineConversions(line, true)
-      }
-      await this.fillReferencePrice(line)
+      this.$set(line, 'unit_id', item.unit_id || item.unit?.id || null)
+      // 旧物料的换算响应不能覆盖更换后的数量和单位，重选原物料则保留人工输入与快照。
+      this.$set(line, '_planningRevision', Number(line._planningRevision || 0) + 1)
+      ;[
+        'id', 'item', 'sales_allocations', 'material_policy_snapshot', 'management_scope_snapshot', 'is_stock_item_snapshot',
+        'purchase_conversion_snapshot', 'conversion_factor_snapshot', 'purchase_unit_name_snapshot', 'base_unit_name_snapshot', 'base_unit_id', 'allow_actual_conversion_snapshot',
+        'conversion_factor_preview', 'purchase_unit_name_preview', 'base_unit_name_preview', 'allow_actual_conversion_preview', 'allow_actual_conversion', 'standard_base_qty',
+        '_effectiveConversionFactor', '_planningPreview', '_priceHint'
+      ].forEach(key => this.$delete(line, key))
+      if (this.type === 'plan') this.$set(line, 'splits', [])
+      this.$set(line, 'purchase_unit_id', null)
+      this.$set(line, '_conversionOptions', [])
+      this.$set(line, '_planningError', '')
+      this.$set(line, '_planningPending', ['request', 'plan'].includes(this.type))
+      this.$set(line, 'serial_text', '')
+      this.$set(line, 'serial_number_source', 'supplier')
       this.recommendations = []
-      this.pickerTarget = null
+      const documentRevision = this.documentRevision
+      try {
+        await this.loadLineConversions(line, true)
+        if (line.item_id !== item.id || documentRevision !== this.documentRevision || !this.form.items.includes(line)) return
+        await this.fillReferencePrice(line)
+      } catch (error) {
+        if (line.item_id === item.id && documentRevision === this.documentRevision) {
+          this.$set(line, '_planningError', error.userMessage || '采购单位加载失败，请重新选择采购单位')
+          this.$set(line, '_planningPending', false)
+          this.$message.error(line._planningError)
+        }
+      }
     },
     /** 查该供应商该物料最近一次采购价，换算到当前采购单位；只在单价为空时填写，不覆盖采购员已填的价格。 */
     async priceWarningsForSubmit() {
@@ -1373,6 +1404,7 @@ export default {
     },
     openBatchItemPicker() {
       if (!validPurchaseScope(this.form.management_scope)) return this.$message.warning('请先明确单据管理类型')
+      if (purchaseSourceLocked(this.form)) return this.$message.warning('来源单据物料已锁定，请保留原来源明细')
       this.pickerTarget = null
       this.$refs.itemPicker.open({
         multiple: true,
@@ -1383,62 +1415,6 @@ export default {
     },
     async applyPickedMultipleItems(items) {
       if (!items || !items.length || !this.canPickScope(items)) return
-
-      // 若从某一行点击“更换”触发
-      if (this.pickerTarget) {
-        const targetLine = this.pickerTarget
-        this.pickerTarget = null
-        const otherLineItemIds = new Set(
-          this.form.items.filter(row => row !== targetLine && row.item_id).map(row => Number(row.item_id))
-        )
-        const candidates = items.filter(item => !otherLineItemIds.has(Number(item.id)))
-        if (!candidates.length) {
-          return this.$message.warning('所选物料已在其他明细行中，不能重复添加')
-        }
-        const first = candidates.shift()
-        this.rememberItem(first)
-        // 重新确认原物料时保留采购员已编辑的规格、供应商和快照，只有换物料才清理。
-        if (Number(targetLine.item_id) !== Number(first.id)) {
-          this.$set(targetLine, 'item_id', first.id)
-          this.$set(targetLine, 'spec_model', first.spec_model || first.spec || first.model || '')
-          this.$delete(targetLine, 'id')
-          this.$delete(targetLine, 'purchase_conversion_snapshot')
-          this.$delete(targetLine, 'conversion_factor_snapshot')
-          this.$set(targetLine, '_planningRevision', Number(targetLine._planningRevision || 0) + 1)
-          this.$set(targetLine, '_planningPreview', null)
-          this.$set(targetLine, '_conversionOptions', [])
-          this.$set(targetLine, 'purchase_unit_id', null)
-          if (this.type === 'plan') {
-            this.$set(targetLine, 'unit_id', first.unit_id || first.unit?.id || null)
-            this.$set(targetLine, 'splits', [])
-          }
-        }
-
-        const currentItemIds = new Set(this.form.items.filter(row => row.item_id).map(row => Number(row.item_id)))
-        let addedCount = 1
-        const defaultDate = this.form.items[0]?.expected_date || ''
-        const defaultWarehouse = this.form.items[0]?.warehouse_id || null
-        candidates.forEach(item => {
-          if (!currentItemIds.has(Number(item.id))) {
-            this.rememberItem(item)
-            this.form.items.push({
-              _rowKey: Date.now() + Math.random(),
-              item_id: item.id,
-              spec_model: item.spec_model || item.spec || item.model || '',
-              purchase_quantity: 1,
-              expected_date: defaultDate,
-              priority: 'normal',
-              warehouse_id: defaultWarehouse,
-              remark: '',
-              ...(this.type === 'plan' ? { unit_id: item.unit_id || item.unit?.id || null, splits: [] } : {})
-            })
-            currentItemIds.add(Number(item.id))
-            addedCount++
-          }
-        })
-        await this.initializeMissingPlanningLines()
-        return this.$message.success(`已更新物料明细（选用 ${addedCount} 项）`)
-      }
 
       // 从主按钮“选择物料 (多选)”触发
       const existingItemIds = new Set(this.form.items.filter(row => row.item_id).map(row => Number(row.item_id)))
@@ -1928,7 +1904,11 @@ export default {
     },
     payload() {
       let payload
-      if (this.type === 'request') payload = { ...this.form, items: this.form.items.map(i => ({ ...i, purchase_quantity: i.purchase_quantity, expected_conversion_fingerprint: i._planningPreview?.conversion_fingerprint })) }
+      if (this.type === 'request') payload = { ...this.form, items: this.form.items.map(i => {
+        const line = { ...i, purchase_quantity: i.purchase_quantity, expected_conversion_fingerprint: i._planningPreview?.conversion_fingerprint }
+        delete line.sales_allocations
+        return line
+      }) }
       else if (this.type === 'plan') payload = { ...this.form, items: this.form.items.map(i => ({ ...i, purchase_quantity: i.purchase_quantity, expected_conversion_fingerprint: i._planningPreview?.conversion_fingerprint, splits: (i.splits || []).map(split => ({ ...split, expected_conversion_fingerprint: split._planningPreview?.conversion_fingerprint })) })) }
       else if (this.type === 'order') payload = { ...this.form, items: this.form.items.map(i => ({ ...i, order_qty: i.qty, expected_conversion_factor: this.effectiveConversionFactor(i) })) }
       else payload = { ...this.form, items: this.form.items.map(i => ({ ...i, receipt_qty: i.qty })) }
@@ -1962,6 +1942,11 @@ export default {
         if (rows.some(row => row._planningPending)) return this.$message.warning('采购换算正在计算，请稍候保存')
         if (rows.some(row => row._planningError || !row._planningPreview)) return this.$message.error('请先完成采购单位及数量换算')
       }
+      if (this.type === 'request' && this.form.source_type === 'sales' && !this.form.source_id && !this.legacySalesSource) {
+        this.$refs.headerForm && this.$refs.headerForm.validateField('source_id')
+        return this.$message.error('请选择需求所属的销售订单')
+      }
+      if (this.type === 'request' && this.form.source_type === 'production' && !this.form.source_id) return this.$message.error('请选择需求来源的生产工单')
       if (submit && this.type !== 'receipt') {
         // 提交后单据锁定，确认框写清对象和金额，避免误提交。
         const label = { request: '确认采购需求', plan: '提交采购计划审核', order: '提交采购订单' }[this.type]

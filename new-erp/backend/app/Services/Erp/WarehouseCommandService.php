@@ -61,7 +61,7 @@ final class WarehouseCommandService
             $failure = $response['failure'];
             throw new WorkOrderDomainException($failure['error_code'], $failure['message'], $failure['status'], $failure['details']);
         }
-        return $this->present($response, $action, $permissions, $super);
+        return $this->present($response, $action, $permissions, $super, $user);
     }
 
     public function result(string $commandId, object $user, array $permissions, bool $super): array
@@ -71,11 +71,22 @@ final class WarehouseCommandService
         // Recheck current permission and data scope even for a successful historical response.
         $this->actions->authorize($row->action, $row->aggregate_id, json_decode($row->request_payload, true), $user, $permissions, $super);
         return ['status' => $row->status, 'response' => in_array($row->status, ['SUCCEEDED', 'FAILED'], true)
-            ? $this->present(json_decode($row->response, true), $row->action, $permissions, $super) : null];
+            ? $this->present(json_decode($row->response, true), $row->action, $permissions, $super, $user) : null];
     }
 
-    private function present(array $response, string $action, array $permissions, bool $super): array
+    private function present(array $response, string $action, array $permissions, bool $super, object $user): array
     {
+        if ($action === 'cutting_batch.request' && isset($response['result'])) {
+            // 命令账本保留原结果；按钮权限必须随当前参与关系和批次状态重新计算。
+            $batch = \App\Models\Erp\MfgCuttingBatch::query()->find($response['aggregate_id']);
+            $current = $batch ? app(\App\Services\Erp\Manufacturing\CuttingRemnantReceiptService::class)
+                ->batchConfirmation($batch, in_array('inventory.amount.view', $permissions, true), $user) : [];
+            foreach (['can_resubmit', 'remnant_editable'] as $field) $response['result'][$field] = (bool) ($current[$field] ?? false);
+            if (is_array($response['result']['remnant_receipt'] ?? null)) {
+                $response['result']['remnant_receipt']['can_resubmit'] = (bool) ($current['remnant_receipt']['can_resubmit'] ?? false);
+                $response['result']['remnant_receipt']['actions'] = $current['remnant_receipt']['actions'] ?? ['confirm' => false, 'reject' => false, 'scrap' => false, 'cancel' => false];
+            }
+        }
         if (! in_array('inventory.amount.view', $permissions, true))
             $response = app(InventoryAmountVisibilityService::class)->redact($response, false, false, false, false, true);
         if (str_starts_with($action, 'sales_')) {

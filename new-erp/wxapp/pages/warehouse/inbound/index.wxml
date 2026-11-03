@@ -55,8 +55,8 @@
           <text class="warehouse-value">{{header.requested_by_name}}</text>
         </view>
         <view class="warehouse-field">
-          <text class="warehouse-label">{{header.status === 'pending' ? '已等待' : '申请时间'}}</text>
-          <text class="warehouse-value {{header.overdue ? 'warehouse-danger' : ''}}">{{header.status === 'pending' ? header.waiting_hours + ' 小时' : header.requested_at}}</text>
+          <text class="warehouse-label">申请时间</text>
+          <text class="warehouse-value">{{header.requested_at}}</text>
         </view>
       </block>
 
@@ -102,7 +102,7 @@
 
     <!-- 核对余料 -->
     <view wx:if="{{isRemnant}}" class="warehouse-card">
-      <view class="phase-heading">核对余料</view>
+      <view class="phase-heading">历史余料明细</view>
       <view wx:for="{{lines}}" wx:key="rowKey" class="phase-line">
         <view class="phase-line-title">
           <text>{{item.item_name}}</text>
@@ -138,6 +138,10 @@
           <text wx:else class="warehouse-value">{{item.measure_qty}}</text>
           <text>{{item.measureUnitText}}</text>
         </view>
+        <view wx:if="{{item.location_id}}" class="warehouse-field">
+          <text class="warehouse-label">申请库位</text>
+          <text class="warehouse-value">{{item.warehouse_name}} / {{item.location_code || item.location_name}}</text>
+        </view>
         <block wx:if="{{(actions.confirm || resubmitting)}}">
           <view class="warehouse-title">实际入库库位</view>
           <view class="phase-inline">
@@ -155,7 +159,7 @@
           <view wx:if="{{drafts[item.source_key].location_id}}" class="phase-audit">{{drafts[item.source_key].warehouse_name}} · {{drafts[item.source_key].location_code}}</view>
         </block>
       </view>
-      <view wx:if="{{header.waiting_reason}}" class="warehouse-error">{{header.waiting_reason}}</view>
+      <view wx:if="{{header.waiting_reason}}" class="warehouse-note">{{header.waiting_reason}}</view>
     </view>
 
     <!-- 逐台核对 / 调拨入库明细 -->

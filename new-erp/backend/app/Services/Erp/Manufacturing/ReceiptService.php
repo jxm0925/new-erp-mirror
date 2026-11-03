@@ -215,11 +215,9 @@ final class ReceiptService
         // 还会继续产出的设备 = 没入库、没报废、没取消的设备（含本批）。
         $open = MfgWorkOrderUnit::query()->where('work_order_id', $wo->id)->whereNotIn('status', ['stored', 'scrapped', 'cancelled'])->lockForUpdate()->count();
         $lastBatch = $qty >= $open;
-        // 待确认余料尚无最终净耗，任何入库批次都不能用零成本先过账；未登记开料仍沿原尾批收口。
-        if ($awaiting = MfgCuttingBatch::query()->where('work_order_id', $wo->id)->where('status', 'awaiting_confirm')->lockForUpdate()->first(['id', 'batch_no']))
-            $this->fail('cutting_confirmation_pending', '开料批次 '.$awaiting->batch_no.' 余料待仓库确认，最终净耗尚未确定，请完成确认后再办理本批入库。');
-        if ($lastBatch && ($unsettled = MfgCuttingBatch::query()->where('work_order_id', $wo->id)->where('status', 'issued')->lockForUpdate()->first(['id', 'batch_no'])))
-            $this->fail('cutting_not_settled', '这是本工单最后一批设备，开料批次 '.$unsettled->batch_no.' 尚未登记产出和余料，请先完成登记。');
+        // 下料人登记即结算，不再等待仓库余料确认；尾批仍须补齐实际用料记录才能收口成本。
+        if ($lastBatch && ($unsettled = MfgCuttingBatch::query()->where('work_order_id', $wo->id)->whereIn('status', ['issued', 'awaiting_confirm'])->lockForUpdate()->first(['id', 'batch_no'])))
+            $this->fail('cutting_not_settled', '这是本工单最后一批设备，请下料人先完成开料批次 '.$unsettled->batch_no.' 的实际产出和余料登记结算。');
         $actualCost = '0.0000';
         foreach (MfgMaterialIssue::query()->where('work_order_id', $wo->id)->lockForUpdate()->get() as $issue) $actualCost = bcadd($actualCost, (string) $issue->cost_amount, 4);
         // 已审核的生产退料按原单价冲回，从实际材料成本里扣除。

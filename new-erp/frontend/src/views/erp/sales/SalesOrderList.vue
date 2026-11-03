@@ -77,10 +77,10 @@ Design status: 按“基础档案”页面风格重做（页头卡片 / 提示�
               <small class="muted">{{ row.customer_phone || row.contact_phone || '-' }}</small>
             </template>
           </el-table-column>
-          <el-table-column prop="created_by" label="销售人员" width="88" show-overflow-tooltip />
+          <el-table-column label="销售人员" width="88" show-overflow-tooltip><template slot-scope="{row}">{{ (row.sales_user && row.sales_user.display_name) || (row.sales_user_legacy_id ? `账号 ${row.sales_user_legacy_id}` : '-') }}</template></el-table-column>
           <el-table-column label="成交平台" width="150" show-overflow-tooltip><template slot-scope="{ row }">{{ row.platform_label || '-' }}</template></el-table-column>
           <el-table-column label="订单日期" width="104">
-            <template slot-scope="{row}">{{ dateOnly(row.order_time) }}</template>
+            <template slot-scope="{row}">{{ dateOnly(row.order_time || row.channel_ordered_at || row.order_date || row.created_at) }}</template>
           </el-table-column>
           <el-table-column label="要求交期" width="104">
             <template slot-scope="{row}">{{ dateOnly(row.required_delivery_date) }}</template>
@@ -186,6 +186,7 @@ Design status: 按“基础档案”页面风格重做（页头卡片 / 提示�
 </template>
 
 <script>
+import { erpDateTime } from '@/utils/dateTime'
 import { confirmSalesOrder, deleteSalesOrderDraft, listSalesOrders } from '@/api/erp/sales'
 import { statusTag, statusText, shipmentStatusText, orderStatusText, orderStatusTag } from '@/utils/erpStatus'
 
@@ -353,7 +354,7 @@ export default {
     fulfillmentStatusText(value) { return ({ pending: '待交付', partial: '部分交付', fulfilled: '已交付', cancelled: '已取消' })[value] || value || '-' },
     fulfillmentStatusTag(value) { return ({ pending: 'warning', partial: 'warning', fulfilled: 'success', cancelled: 'danger' })[value] || 'info' },
     dateOnly(v) {
-      return v ? String(v).slice(0, 10) : '-'
+      return v ? erpDateTime(v, 10) : '-'
     }
   }
 }

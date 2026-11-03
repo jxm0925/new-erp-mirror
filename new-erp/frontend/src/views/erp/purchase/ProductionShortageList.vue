@@ -50,7 +50,7 @@
               <template slot-scope="s">
                 <el-tooltip v-if="s.row.in_transit_detail" placement="top">
                   <div slot="content">
-                    <div v-for="d in s.row.in_transit_detail.documents" :key="d.stage + d.document_no">{{ d.stage_label }} {{ d.document_no }}：{{ qty(d.qty) }}</div>
+                    <div v-for="d in s.row.in_transit_detail.documents" :key="d.stage + d.document_no + ':' + d.line_id">{{ d.stage_label }} {{ d.document_no }}：{{ qty(d.qty) }}</div>
                   </div>
                   <span class="lk">{{ qty(s.row.in_transit_qty) }}</span>
                 </el-tooltip>

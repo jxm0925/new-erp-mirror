@@ -65,10 +65,11 @@
       </view>
 
       <view class="dlv-lines-box">
-        <view class="dlv-lines-head">
+        <view class="dlv-lines-head {{item.summaryOpen ? 'dlv-lines-head-open' : ''}}" data-index="{{index}}" bindtap="toggleSummary" aria-role="button" aria-label="{{item.summaryOpen ? '收起物料摘要' : '展开物料摘要'}}">
           <text class="dlv-lines-title">物料摘要</text>
-          <text class="warehouse-muted">共 {{item.lines.length}} 种</text>
+          <view class="dlv-lines-meta"><text class="warehouse-muted">共 {{item.lines.length}} 种</text><van-icon name="{{item.summaryOpen ? 'arrow-up' : 'arrow-down'}}" color="#64748b" /></view>
         </view>
+        <block wx:if="{{item.summaryOpen}}">
         <view
           wx:for="{{item.lines}}"
           wx:for-item="line"
@@ -78,6 +79,7 @@
           <text class="dlv-line-name">{{line.component_item_name}}</text>
           <text class="dlv-line-qty">{{line.qtyText}} {{line.unit_name}}</text>
         </view>
+        </block>
       </view>
 
       <view class="dlv-card-footer">

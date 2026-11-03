@@ -478,8 +478,8 @@ Page({
       infoMain: `本次备料：${qty} 套`,
       infoSub: `流转去向：${task.completion ? '下一步选择完工流转去向' : (next ? '交接至' + next + '工序' : '完成本工序')}`,
       quickTagsLabel: '快捷备注（选填）：',
-      quickTags: ['板材批次齐套', '集中开料领入', '按单正常备料'],
-      placeholderText: '备料备注（选填，如板材批次）',
+      quickTags: ['开料批次齐套', '集中开料领入', '按单正常备料'],
+      placeholderText: '备料备注（选填，如开料批次）',
       confirmText: '确认备料',
       success: res => { if (res.confirm && !this.hidden && !this.data.loading && task === this.data.task) this.chooseCompletion(Object.assign({ action: 'prepare', unit_ids: ids, media: res.media || [], remark: String(res.content || '').trim() || null }, runPick ? { cutting_run_id: runPick } : {}), '已完成备料交接'); },
     });

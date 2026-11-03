@@ -460,17 +460,18 @@ final class MaterialPhysicalService
             throw ValidationException::withMessages(['remnants' => '原板不在当前开料批次，不能生成余料身份。']);
         }
         $holding = $this->warehouseHolding($balance, 'REMNANT', (int) $balance->material_lot_id);
-        $dimensions = ['area_m2' => CuttingDecimal::value($remnant['measure_qty']),
-            'thickness_mm' => $input['dimensions']['thickness_mm']];
+        $length = $input['mode'] === 'length';
+        $dimensions = $length ? ['length_mm' => bcmul((string) $remnant['measure_qty'], '1000', 2)]
+            : ['area_m2' => CuttingDecimal::value($remnant['measure_qty']), 'thickness_mm' => $input['dimensions']['thickness_mm']];
         $uncut = bccomp((string) ($remnant['output_measure'] ?? $remnant['consumed_measure']), '0', 8) === 0
             && bccomp((string) $remnant['measure_qty'], (string) $input['input_measure'], 8) === 0;
         if ($uncut && $input['shape'] === 'RECTANGLE') $dimensions = $input['dimensions'];
         if (isset($input['dimensions']['nominal_thickness_mm'])) $dimensions['nominal_thickness_mm'] = $input['dimensions']['nominal_thickness_mm'];
         $id = DB::table('erp_material_physicals')->insertGetId([
-            'physical_no' => $this->numbers->next('material_physical', 'PLATE'), 'item_id' => $source->item_id,
+            'physical_no' => $this->numbers->next('material_physical', $length ? 'TUBE' : 'PLATE'), 'item_id' => $source->item_id,
             'source_transaction_item_id' => $transactionItem->id, 'material_lot_id' => $balance->material_lot_id,
             'current_holding_id' => $holding->id, 'root_physical_id' => $source->root_physical_id ?: $source->id, 'parent_physical_id' => $source->id,
-            'material_form' => 'REMNANT', 'shape' => $uncut ? $input['shape'] : 'AREA_ONLY', 'dimensions' => json_encode($dimensions, JSON_THROW_ON_ERROR),
+            'material_form' => 'REMNANT', 'shape' => $length ? 'LENGTH' : ($uncut ? $input['shape'] : 'AREA_ONLY'), 'dimensions' => json_encode($dimensions, JSON_THROW_ON_ERROR),
             'total_cost' => $remnant['cost_amount'], 'status' => 'AVAILABLE', 'business_version' => 1,
             'created_at' => now(), 'updated_at' => now(),
         ]);

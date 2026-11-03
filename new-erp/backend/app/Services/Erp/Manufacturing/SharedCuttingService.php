@@ -101,7 +101,7 @@ final class SharedCuttingService
         return ['items' => array_values($items)];
     }
 
-    public function index(array $filters, bool $amounts): array
+    public function index(array $filters, bool $amounts, object $actor): array
     {
         $page = MfgCuttingBatch::query()->where('batch_scope', 'shared')
             ->when(! empty($filters['status']), fn ($q) => $q->where('status', $filters['status']))
@@ -110,32 +110,37 @@ final class SharedCuttingService
             ->orderByRaw("status IN ('issued', 'awaiting_confirm') DESC")->orderByDesc('id')
             ->paginate($filters['per_page'] ?? 10, ['*'], 'page', $filters['page'] ?? 1);
         $names = Item::query()->whereIn('id', $page->getCollection()->pluck('item_id')->unique())->get(['id', 'item_code', 'item_name', 'spec', 'model'])->keyBy('id');
-        $page->getCollection()->transform(fn ($batch) => $this->summary($batch, $names->get($batch->item_id), $amounts));
+        $page->getCollection()->transform(fn ($batch) => $this->summary($batch, $names->get($batch->item_id), $amounts, $actor));
         return $page->toArray();
     }
 
-    public function show(int $id, bool $amounts): array
+    public function show(int $id, bool $amounts, object $actor): array
     {
         $batch = MfgCuttingBatch::query()->where('batch_scope', 'shared')->findOrFail($id);
-        return $this->detail($batch, $amounts);
+        return $this->detail($batch, $amounts, $actor);
     }
 
     public function sources(array $filters, bool $amounts): array
     {
         $item = $this->sharedItem((int) $filters['item_id']);
+        $run = empty($filters['cutting_run_id']) ? null : \App\Models\Erp\MfgCuttingRun::query()->findOrFail((int) $filters['cutting_run_id']);
+        $line = collect($run?->lines ?? [])->firstWhere('component_item_id', (int) $item->id);
+        if ($run && ! $line) $this->fail('cutting_run_item_invalid', '这种原料不在所选开料记录中。');
         $query = $this->cutting->sourceQuery($item);
         if ($keyword = trim((string) ($filters['keyword'] ?? ''))) {
-            $query->where(fn ($q) => $q->where('cut_physical.physical_no', 'like', '%'.$keyword.'%')->orWhere('erp_inventory_balances.batch_no', 'like', '%'.$keyword.'%')
-                ->orWhere('erp_locations.location_name', 'like', '%'.$keyword.'%')->orWhere('erp_warehouses.warehouse_name', 'like', '%'.$keyword.'%'));
+            $query->where(function ($q) use ($keyword, $item) {
+                $q->where('erp_inventory_balances.batch_no', 'like', '%'.$keyword.'%')->orWhere('erp_locations.location_name', 'like', '%'.$keyword.'%')->orWhere('erp_warehouses.warehouse_name', 'like', '%'.$keyword.'%');
+                if ($item->materialManagementMode() === 'physical') $q->orWhere('cut_physical.physical_no', 'like', '%'.$keyword.'%');
+            });
         }
         // 先用余板（面积小的先用），再用整板。
-        $page = $query->orderByRaw("cut_lot.material_form = 'REMNANT' DESC")->orderBy('erp_inventory_balances.id')->orderBy('cut_physical.id')
+        $page = $query->orderByRaw("cut_lot.material_form = 'REMNANT' DESC")->orderBy('erp_inventory_balances.id')->when($item->materialManagementMode() === 'physical', fn ($q) => $q->orderBy('cut_physical.id'))
             ->paginate($filters['per_page'] ?? 10, ['*'], 'page', $filters['page'] ?? 1);
-        $page->getCollection()->transform(fn ($balance) => $this->cutting->publicData($this->cutting->source($balance, $item), $amounts));
+        $page->getCollection()->transform(fn ($balance) => $this->cutting->publicData($this->cutting->source($balance, $item, $line['stock_dimensions'] ?? []), $amounts));
         return $page->toArray();
     }
 
-    /** 领板：整张领入开料，原板离开仓库进入开料中。 */
+    /** 下料人选择原料或余料：整张／整根拆来源，按米／面积保留实际数量。 */
     public function issue(array $data, object $actor, bool $amounts): array
     {
         return DB::transaction(function () use ($data, $actor, $amounts) {
@@ -143,31 +148,44 @@ final class SharedCuttingService
             $old = MfgCuttingBatch::query()->where('idempotency_key', $data['idempotency_key'])->lockForUpdate()->first();
             if ($old) {
                 if ($old->batch_scope !== 'shared' || ! hash_equals($old->request_hash, $hash)) $this->fail('idempotency_conflict', '这个领料请求编号已被其他内容使用，请刷新后重新确认。', 409);
-                return $this->detail($old, $amounts);
+                return $this->detail($old, $amounts, $actor);
             }
             $item = $this->sharedItem((int) $data['item_id'], true);
             // 一次只开一个 BOM：领板必须挂在一条还在开的开料记录上，且这种板在那个 BOM 里。
             $run = \App\Models\Erp\MfgCuttingRun::query()->lockForUpdate()->find((int) ($data['cutting_run_id'] ?? 0));
-            if (! $run || $run->status !== 'running') $this->fail('cutting_run_required', '请先在「集中开料」里选 BOM 开始一批，再从那一批里领板。');
-            if (! collect($run->lines)->contains(fn ($l) => (int) $l['component_item_id'] === (int) $item->id))
-                $this->fail('cutting_run_item_invalid', $run->output_item_name.' 的 BOM 里不用这种板，不能在这一批里领。');
+            if (! $run || $run->status !== 'running') $this->fail('cutting_run_required', '请先在「集中开料」里选 BOM 开始一批，再从那一批里选择实际原料或余料。');
+            $line = collect($run->lines)->firstWhere('component_item_id', (int) $item->id);
+            if (! $line)
+                $this->fail('cutting_run_item_invalid', $run->output_item_name.' 的 BOM 里不用这种原料，不能在这一批里领。');
+            if (($line['mode'] ?? null) !== $item->cuttingMode()) $this->fail('material_policy_changed', '原料下料模式与本批冻结资料不一致，请先核对。');
             $requested = $data['sources'];
-            usort($requested, fn ($a, $b) => [(int) $a['inventory_balance_id'], (int) $a['physical_material_id']] <=> [(int) $b['inventory_balance_id'], (int) $b['physical_material_id']]);
-            $sources = []; $seen = []; $total = '0.0000';
+            usort($requested, fn ($a, $b) => [(int) $a['inventory_balance_id'], (int) ($a['physical_material_id'] ?? 0)] <=> [(int) $b['inventory_balance_id'], (int) ($b['physical_material_id'] ?? 0)]);
+            $sources = []; $seen = []; $physicalIds = []; $remaining = []; $total = '0.0000';
             foreach ($requested as $row) {
-                $physicalId = (int) $row['physical_material_id'];
-                if (isset($seen[$physicalId])) $this->fail('source_duplicate', '同一张板不能重复选择。');
-                $seen[$physicalId] = true;
-                $balance = $this->cutting->sourceQuery($item)->where('erp_inventory_balances.id', (int) $row['inventory_balance_id'])
-                    ->where('cut_physical.id', $physicalId)->lockForUpdate()->first();
-                if (! $balance) $this->fail('source_unavailable', '所选板材已被占用或不在可用仓库中，请重新选。');
-                $source = $this->cutting->source($balance, $item);
-                if (! hash_equals($source['source_version'], (string) $row['source_version'])) $this->fail('source_changed', '板材库存、尺寸或版本已变化，请重新选。', 409);
-                $this->physicals->assertPhysicalNotInOpenDocument($physicalId);
-                $sources[] = array_replace($source, ['qty' => '1.00000000', 'input_measure' => $source['measure_qty']]);
-                $total = bcadd($total, (string) $source['cost_amount'], 4);
+                $physicalId = (int) ($row['physical_material_id'] ?? 0);
+                $key = trim((string) ($row['source_key'] ?? ($physicalId ? 'physical:'.$physicalId : '')));
+                if ($key === '' || isset($seen[$key]) || ($physicalId && isset($physicalIds[$physicalId]))) $this->fail('source_duplicate', '真实来源编号不能为空或重复，同一实物不能重复选择。');
+                $seen[$key] = true; if ($physicalId) $physicalIds[$physicalId] = true;
+                if ($item->materialManagementMode() !== 'physical' && $physicalId) $this->fail('source_invalid', '数量管理的原料不能冒用实物身份。');
+                $query = $this->cutting->sourceQuery($item)->where('erp_inventory_balances.id', (int) $row['inventory_balance_id']);
+                if ($item->materialManagementMode() === 'physical') $query->where('cut_physical.id', $physicalId);
+                $balance = $query->lockForUpdate()->first();
+                if (! $balance) $this->fail('source_unavailable', '所选原料已被占用或不在可用仓库中，请重新选。');
+                $source = $this->cutting->source($balance, $item, $line['stock_dimensions'] ?? []);
+                if (isset($line['stock_unit_id']) && (int) $line['stock_unit_id'] !== (int) $source['unit_id']) $this->fail('material_policy_changed', '原料库存单位与本批冻结资料不一致，请先核对。');
+                if (! hash_equals($source['source_version'], (string) $row['source_version'])) $this->fail('source_changed', '原料库存、尺寸或版本已变化，请重新选。', 409);
+                $qty = CuttingDecimal::value($row['qty'] ?? '1');
+                $this->cutting->assertSourceQuantity($source, $qty);
+                $id = (int) $balance->id;
+                $remaining[$id] ??= ['available' => $source['available_qty'], 'qty' => (string) $balance->quantity_on_hand, 'cost' => (string) $balance->inventory_value];
+                if (bccomp($qty, $remaining[$id]['available'], 8) > 0) $this->fail('stock_short', '同一来源累计领用数量超过当前可用库存。');
+                if ($physicalId) $this->physicals->assertPhysicalNotInOpenDocument($physicalId);
+                $cost = $physicalId ? $source['cost_amount'] : CuttingDecimal::share($remaining[$id]['cost'], $remaining[$id]['qty'], $qty);
+                $remaining[$id] = ['available' => bcsub($remaining[$id]['available'], $qty, 8), 'qty' => bcsub($remaining[$id]['qty'], $qty, 8), 'cost' => bcsub($remaining[$id]['cost'], $cost, 4)];
+                $sources[] = array_replace($source, ['source_key' => $key, 'qty' => $qty, 'cost_amount' => $cost, 'input_measure' => bcmul($source['measure_qty'], $qty, 8)]);
+                $total = bcadd($total, (string) $cost, 4);
             }
-            if (! $sources) $this->fail('source_required', '请选择要切的板材。');
+            if (! $sources) $this->fail('source_required', '请选择实际领入的原料或余料。');
             $batch = MfgCuttingBatch::create([
                 'batch_no' => $this->numbers->next('mfg_cutting_batch', 'MCB'), 'batch_scope' => 'shared', 'item_id' => $item->id, 'cutting_run_id' => $run->id,
                 'work_order_id' => null, 'work_order_operation_id' => null, 'status' => 'issued', 'business_version' => 1,
@@ -180,6 +198,7 @@ final class SharedCuttingService
             $inputs = $batch->input_lines;
             foreach ($inputs as &$input) {
                 $input = array_replace($input, $posted['lines'][$input['source_key']]);
+                if (! $input['physical_material_id']) continue;
                 $physical = DB::table('erp_material_physicals')->where('id', $input['physical_material_id'])->lockForUpdate()->first();
                 $holding = DB::table('erp_material_holdings')->where('id', $physical->current_holding_id)->lockForUpdate()->first();
                 $target = $this->physicals->nonWarehouseHolding((int) $physical->material_lot_id, 'MFG_CUTTING', (int) $batch->id, $input['cost_amount'], 'ACTIVE');
@@ -188,11 +207,11 @@ final class SharedCuttingService
             }
             unset($input);
             $batch->update(['input_lines' => $inputs]);
-            return $this->detail($batch->fresh(), $amounts);
+            return $this->detail($batch->fresh(), $amounts, $actor);
         }, 5);
     }
 
-    /** 首次登记和驳回后重提都保留产出事实，只有仓库确认后净耗才进池。 */
+    /** 下料人登记实际余料；已有产出直接结算，否则切完结束时结算。 */
     public function settle(int $id, array $data, object $actor, bool $amounts): array
     {
         return DB::transaction(function () use ($id, $data, $actor, $amounts) {
@@ -204,7 +223,7 @@ final class SharedCuttingService
             if (! $key) $this->fail('command_required', '请提供本次登记的稳定请求编号。');
             if ($batch->status === 'settled') {
                 if ($batch->settlement_key !== $key || ! hash_equals((string) $batch->settlement_hash, $hash)) $this->fail('already_settled', '这批已经结算，不能改写原产出和余料。', 409);
-                return $this->detail($batch, $amounts);
+                return $this->detail($batch, $amounts, $actor);
             }
             if (! in_array($batch->status, ['issued', 'awaiting_confirm'], true)) $this->fail('status_invalid', '这批不能登记余料。');
             if ((int) $batch->business_version !== (int) ($data['expected_version'] ?? 0)) $this->fail('version_conflict', '这批已有变化，请刷新后再登记。', 409);
@@ -214,7 +233,8 @@ final class SharedCuttingService
                 'business_version' => (int) $batch->business_version + 1, 'settlement_key' => $key, 'settlement_hash' => $hash,
                 'remark' => $data['remark'] ?? $batch->remark]);
             app(CuttingRemnantReceiptService::class)->submitForBatch($batch, $data['remnants'] ?? [], $actor);
-            return $this->detail($batch->fresh(), $amounts);
+            if ($batch->cutting_run_id) app(CuttingRunService::class)->finalizeAwaitingRun((int) $batch->cutting_run_id, $actor);
+            return $this->detail($batch->fresh(), $amounts, $actor);
         }, 5);
     }
 
@@ -250,7 +270,7 @@ final class SharedCuttingService
                 $this->fail('cutting_measure_conflict', $m->component_item_name.' 已收数量与既有开料面积不一致，请先核对历史开料及分配记录。', 409);
             if (bccomp($measure, '0', 8) <= 0) continue;
             if ($unsettled) $this->fail('cutting_not_settled', '批次 '.$unsettled->batch_no.($unsettled->status === 'awaiting_confirm'
-                ? ' 余料待仓库确认，本次新增备料需要最终净耗，请先完成确认。' : ' 尚未登记产出和余料，请先登记。'));
+                ? ' 请下料人先核对实际余料并登记结算。' : ' 尚未登记产出和余料，请先登记。'));
             $batches = MfgCuttingBatch::query()->where('batch_scope', 'shared')->where('item_id', $m->component_item_id)->where('status', 'settled')
                 ->whereColumn('allocated_measure', '<', 'pool_measure')->orderBy('settled_at')->orderBy('id')->lockForUpdate()->get();
             $available = '0.00000000';
@@ -258,7 +278,7 @@ final class SharedCuttingService
             if (bccomp($available, $measure, 8) < 0) {
                 $waiting = MfgCuttingBatch::query()->where('batch_scope', 'shared')->where('item_id', $m->component_item_id)->where('status', 'awaiting_confirm')->orderBy('id')->pluck('batch_no')->implode('、');
                 $this->fail('cutting_pool_short', $m->component_item_name.' 可分配开料池只有 '.$this->num($available).' m²，本次需要 '.$this->num($measure).' m²。'
-                    .($waiting ? '批次 '.$waiting.' 余料待仓库确认，最终净耗尚不可分配。' : '请先在「集中开料」登记真实产出和余料。'));
+                    .($waiting ? '请下料人补齐批次 '.$waiting.' 的产出和实际余料登记。' : '请先在「集中开料」登记真实产出和余料。'));
             }
             $left = $measure; $qtyLeft = $need;
             foreach ($batches as $b) {
@@ -327,12 +347,12 @@ final class SharedCuttingService
     {
         $item = Item::query()->with('unit.standardUnit')->where('status', 'enabled')->when($lock, fn ($q) => $q->lockForUpdate())->find($itemId);
         if (! $item || ($item->management_scope && $item->management_scope !== 'factory')) $this->fail('item_invalid', '请选择启用的工厂板材。');
-        if ($item->cuttingMode() !== 'sheet' || $item->materialManagementMode() !== 'physical')
-            $this->fail('item_invalid', '集中开料只用于逐张管理的板材；管材按 BOM 定额在工单下料里收料或点「已备料」。');
+        if (! in_array($item->cuttingMode(), ['sheet', 'length'], true) || $item->serialTrackingMode() !== 'none')
+            $this->fail('item_invalid', '请选择按下料管理且无需序列号追溯的板材或管材。');
         return $item;
     }
 
-    private function summary(MfgCuttingBatch $batch, ?Item $item, bool $amounts): array
+    private function summary(MfgCuttingBatch $batch, ?Item $item, bool $amounts, object $actor): array
     {
         $inputs = collect($batch->input_lines);
         $input = '0.00000000';
@@ -340,22 +360,25 @@ final class SharedCuttingService
         $row = $batch->only(['id', 'batch_no', 'item_id', 'cutting_run_id', 'status', 'business_version', 'input_cost_amount', 'remnant_cost_amount', 'net_cost_amount',
             'issued_by_name', 'settled_by_name', 'issued_at', 'settled_at', 'remark']) + [
             'item_code' => $item?->item_code, 'item_name' => $item?->item_name, 'specification' => $item?->spec ?: $item?->model,
-            'sheet_count' => $inputs->count(), 'input_measure' => $input, 'pool_measure' => (string) $batch->pool_measure,
+            'sheet_count' => $inputs->count(), 'input_measure' => $input, 'measure_unit' => $inputs->first()['measure_unit'] ?? 'm2', 'mode' => $inputs->first()['mode'] ?? 'sheet',
+            'input_qty' => $inputs->sum('qty'), 'unit_kind' => $inputs->first()['unit_kind'] ?? null, 'pool_measure' => (string) $batch->pool_measure,
+            'net_measure' => collect($batch->remnants ?? [])->reduce(fn ($sum, $r) => bcadd($sum, (string) ($r['consumed_measure'] ?? '0'), 8), '0.00000000'),
+            'pool_tracked' => ! empty($inputs->first()['physical_material_id']) && ($inputs->first()['mode'] ?? null) === 'sheet',
             'allocated_measure' => (string) $batch->allocated_measure, 'allocated_cost_amount' => (string) $batch->allocated_cost_amount,
             'left_measure' => bcsub((string) $batch->pool_measure, (string) $batch->allocated_measure, 8),
-            'status_label' => ['issued' => '切割中', 'awaiting_confirm' => '产出已登记，余料待确认', 'settled' => '已结算'][$batch->status] ?? $batch->status];
-        $row += app(CuttingRemnantReceiptService::class)->batchConfirmation($batch, $amounts);
+            'status_label' => ['issued' => '切割中', 'awaiting_confirm' => '待下料人登记结算', 'settled' => '已结算'][$batch->status] ?? $batch->status];
+        $row += app(CuttingRemnantReceiptService::class)->batchConfirmation($batch, $amounts, $actor);
         if ($batch->status !== 'settled') foreach (['remnant_cost_amount', 'net_cost_amount'] as $field) $row[$field] = null;
         return $this->cutting->publicData($row, $amounts);
     }
 
-    private function detail(MfgCuttingBatch $batch, bool $amounts): array
+    private function detail(MfgCuttingBatch $batch, bool $amounts, object $actor): array
     {
         $item = Item::query()->find($batch->item_id, ['id', 'item_code', 'item_name', 'spec', 'model']);
-        $row = $this->summary($batch, $item, $amounts);
+        $row = $this->summary($batch, $item, $amounts, $actor);
         $row['inputs'] = $this->cutting->publicData(array_map(fn ($i) => array_intersect_key($i, array_flip(['source_key', 'physical_material_id', 'physical_no',
             'inventory_balance_id', 'warehouse_id', 'warehouse_name', 'location_id', 'location_name', 'batch_no', 'shape', 'dimensions', 'material_form',
-            'input_measure', 'measure_unit', 'cost_amount'])), $batch->input_lines), $amounts);
+            'input_measure', 'measure_unit', 'mode', 'unit_kind', 'qty', 'measure_qty', 'cost_amount'])), $batch->input_lines), $amounts);
         $row['remnants'] = $this->cutting->publicData($batch->remnants ?? [], $amounts);
         $row['allocations'] = $this->cutting->publicData(MfgCuttingAllocation::query()->from('erp_mfg_cutting_allocations as a')
             ->join('erp_mfg_work_orders as w', 'w.id', '=', 'a.work_order_id')

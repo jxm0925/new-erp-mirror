@@ -4,7 +4,7 @@ namespace App\Services\Erp;
 
 use App\Exceptions\Erp\WorkOrderDomainException;
 use App\Models\Erp\{InventoryTransaction, PurchaseReceipt, PurchaseReturn, SalesOrder, SalesReturn, SalesReturnReceipt, SalesShipment};
-use App\Models\Erp\{InventoryStocktake, Item, MfgMaterialDelivery, MfgMaterialReturn, MfgReceipt, MfgWorkOrderUnit, MfgWorkOrderOperation};
+use App\Models\Erp\{InventoryStocktake, Item, MfgMaterialDelivery, MfgMaterialReturn, MfgReceipt, MfgWorkOrder, MfgWorkOrderUnit, MfgWorkOrderOperation};
 use App\Services\Erp\Manufacturing\{MaterialDeliveryService, MaterialReturnService, ReceiptService};
 use App\Services\Erp\Inventory\{InventoryStocktakeService, InventoryStocktakeEntryService};
 use Illuminate\Pagination\LengthAwarePaginator;
@@ -148,15 +148,15 @@ final class WarehouseDocumentService
             if ($stocktake->stocktake_status === 'counting') $actions = ['stocktake.counts', 'stocktake.complete'];
         } else {
             if ($kind === 'material_preparation') {
-                $operation = MfgWorkOrderOperation::query()->with('workOrder:id,item_name,product_name')->findOrFail($id);
+                $operation = MfgWorkOrderOperation::query()->with('workOrder:id,item_name,product_name,source_type,sales_order_id')->findOrFail($id);
                 $preview = app(MaterialDeliveryService::class)->preview((int) $operation->work_order_id, $id, isset($filters['units']) ? (int) $filters['units'] : null);
                 $header = ['id' => $id, 'work_order_id' => (int) $operation->work_order_id, 'operation_id' => $id,
                     'work_order_no' => $preview['work_order_no'], 'operation_name' => $preview['operation_name'],
                     'item_name' => $operation->workOrder?->item_name, 'product_name' => $operation->workOrder?->product_name,
                     'status' => 'pending', 'status_label' => '待配料',
-                    'source_revision' => MaterialDeliveryService::sourceRevision($preview['lines'])];
+                    'source_revision' => MaterialDeliveryService::sourceRevision($preview['lines'])] + $this->workOrderSalesHeader($operation->workOrder);
                 $rows = $preview['lines']; $extra['preview'] = $preview;
-                $actions = ['material_delivery.prepare'];
+                $actions = ['material_delivery.prepare', 'material_delivery.request_purchase'];
             } elseif ($kind === 'material_delivery') {
                 $delivery = MfgMaterialDelivery::query()->with(['workOrder', 'operation'])->findOrFail($id);
                 $header = app(MaterialDeliveryService::class)->row($delivery); $rows = $header['lines'];
@@ -164,6 +164,7 @@ final class WarehouseDocumentService
                 unset($header['lines']);
                 $header['item_name'] = $delivery->workOrder?->item_name;
                 $header['product_name'] = $delivery->workOrder?->product_name;
+                $header += $this->workOrderSalesHeader($delivery->workOrder);
                 $actions = match ($delivery->status) {
                     'prepared' => ['material_delivery.dispatch', 'material_delivery.repick', 'material_delivery.cancel'],
                     'rejected' => ['material_delivery.redeliver', 'material_delivery.recall'],
@@ -194,6 +195,35 @@ final class WarehouseDocumentService
             $lines = new LengthAwarePaginator(array_slice($rows, ($page - 1) * $size, $size), count($rows), $size, $page);
         }
         return ['kind' => $kind, 'header' => $header, 'lines' => $lines->toArray(), 'actions' => $this->allowed($actions, $permissions), 'receipt' => null] + $extra;
+    }
+
+    /** 只取本工单的有效销售来源；备货保留的旧订单号不能作为当前订单，子单可关联多张父单。 */
+    private function workOrderSalesHeader(?MfgWorkOrder $workOrder): array
+    {
+        $pending = $workOrder ? collect([$workOrder]) : collect();
+        $visited = []; $orderIds = []; $stock = false;
+        while ($pending->isNotEmpty()) {
+            $parents = [];
+            foreach ($pending as $wo) {
+                if (isset($visited[$wo->id])) continue;
+                $visited[$wo->id] = true;
+                if ($wo->source_type === 'stock') { $stock = true; continue; }
+                if ($wo->sales_order_id) $orderIds[] = (int) $wo->sales_order_id;
+                elseif ($wo->source_type === 'work_order') $parents[] = (int) $wo->id;
+            }
+            if (! $parents) break;
+            $pending = DB::table('erp_mfg_work_order_links as l')->join('erp_mfg_work_orders as w', 'w.id', '=', 'l.parent_work_order_id')
+                ->whereIn('l.child_work_order_id', $parents)->where('l.qty', '>', 0)->where('w.status', '!=', 'cancelled')->whereNull('w.cancelled_at')
+                ->whereNotIn('w.id', array_keys($visited))->orderBy('w.id')->get(['w.id', 'w.source_type', 'w.sales_order_id']);
+        }
+        $orders = SalesOrder::query()->whereIn('id', array_unique($orderIds))->orderBy('id')
+            ->get(['id', 'sales_order_no', 'customer_name_snapshot', 'customer_name', 'sales_user_legacy_id']);
+        $salespeople = app(ErpUserProjectionService::class)->many($orders->pluck('sales_user_legacy_id')->all());
+        return ['source_type' => $workOrder?->source_type,
+            'sales_source_label' => $orders->isNotEmpty() ? ($stock ? '销售订单及备货' : '销售订单') : ($stock ? '备货工单' : '未关联销售订单'),
+            'sales_orders' => $orders->map(fn ($order) => ['sales_order_id' => (int) $order->id, 'sales_order_no' => $order->sales_order_no,
+                'customer_name' => trim((string) $order->customer_name_snapshot) ?: $order->customer_name,
+                'sales_user_name' => $salespeople[(int) $order->sales_user_legacy_id]['display_name'] ?? null])->all()];
     }
 
     private function productionReceipt(int $id, array $filters, object $user, array $permissions): array
@@ -285,5 +315,9 @@ final class WarehouseDocumentService
     }
 
     private function allowed(array $actions, array $permissions): array
-    { return array_values(array_filter($actions, fn ($action) => array_intersect((array) WarehouseActionService::PERMISSIONS[$action], $permissions))); }
+    {
+        // 缺料采购走工单工序专用接口，展示动作不能注册成接收配送单 ID 的通用仓库命令。
+        return array_values(array_filter($actions, fn ($action) => array_intersect((array) ($action === 'material_delivery.request_purchase'
+            ? 'production.material_delivery.manage' : WarehouseActionService::PERMISSIONS[$action]), $permissions)));
+    }
 }

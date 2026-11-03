@@ -8,6 +8,7 @@ use App\Models\Erp\SalesOrderCommand;
 use App\Models\Erp\SalesOrderFulfillment;
 use App\Models\Erp\SalesOrderLine;
 use App\Models\Erp\InventoryReservation;
+use App\Models\Erp\Unit;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 
@@ -164,7 +165,7 @@ class SalesOrderInventoryLockService
         return $totals['pending_production_qty'] + $totals['pending_purchase_qty'] > 0.00000001 ? 'partial' : 'locked';
     }
 
-    public function projection(SalesOrder $order): array
+    public function projection(SalesOrder $order, bool $enrich = false): array
     {
         $order->loadMissing(['lines.item', 'fulfillments']);
         $execution = $this->reservations->salesOrderExecutionProjection($order, DB::transactionLevel() > 0);
@@ -174,31 +175,75 @@ class SalesOrderInventoryLockService
         }
         $order->setAttribute('fulfillment_status', $execution['fulfillment_status']);
         $fulfillmentsByLine = $order->fulfillments->where('demand_status', 'confirmed')->groupBy('sales_order_line_id');
-        $rows = $order->lines->map(function (SalesOrderLine $line) use ($fulfillmentsByLine): array {
-            $physical = $this->isPhysical($line);
+        $stockLines = $enrich ? $order->lines->filter(fn ($line) => $this->isPhysical($line)
+            && !in_array($line->fulfillment_type, ['service', 'no_delivery'], true)) : collect();
+        $inventoryPools = $enrich ? $this->availability->inventoryBaseQuantities($stockLines->pluck('item_id')->all()) : [];
+        $units = $enrich ? Unit::query()->whereIn('id', $order->lines->pluck('unit_id')->merge($order->lines->pluck('item_base_unit_id'))->filter()->unique())->get()->keyBy('id') : collect();
+        $reservationsByLine = $enrich ? InventoryReservation::query()->where('source_type', InventoryReservation::SOURCE_SALES_ORDER)
+            ->where('source_order_id', $order->id)->whereIn('reservation_status', ['active', 'partially_released', 'converted_to_shipment'])
+            ->get()->groupBy('source_order_line_id') : collect();
+        $poolLineCounts = $stockLines->countBy(fn ($line) => $line->item_id.':'.$line->item_base_unit_id);
+        $rows = $order->lines->map(function (SalesOrderLine $line) use ($fulfillmentsByLine, $enrich, $inventoryPools, $units, $reservationsByLine, $poolLineCounts): array {
+            $physical = $this->isPhysical($line) && (!$enrich || !in_array($line->fulfillment_type, ['service', 'no_delivery'], true));
             $effective = SalesOrderFulfillmentPolicy::effectiveQuantity((float) $line->order_qty, (float) $line->cancelled_qty);
-            $factor = max(0.00000001, (float) $line->fulfillment_factor_snapshot);
-            $activeReservations = InventoryReservation::query()
+            $factor = $enrich ? (float) $line->fulfillment_factor_snapshot : max(0.00000001, (float) $line->fulfillment_factor_snapshot);
+            $bound = $line->item && $line->item_base_unit_id;
+            $conversionReady = $bound && (float) $line->fulfillment_factor_snapshot > 0;
+            $activeReservations = $enrich ? $reservationsByLine->get($line->id, collect())->where('item_id', $line->item_id) : InventoryReservation::query()
                 ->where('source_type', InventoryReservation::SOURCE_SALES_ORDER)->where('source_order_id', $line->sales_order_id)
                 ->where('source_order_line_id', $line->id)->whereIn('reservation_status', ['active', 'partially_released', 'converted_to_shipment'])->get();
-            $inventory = $activeReservations->sum(fn ($row) => (float) $row->reserved_qty / $factor);
+            $inventory = $enrich && !$conversionReady ? 0.0 : $activeReservations->sum(fn ($row) => (float) $row->reserved_qty / $factor);
             $replenished = (float) $line->production_replenished_qty;
             $shipped = (float) $line->shipped_qty;
             $allocations = $fulfillmentsByLine->get($line->id, collect());
-            $unallocated = max(0, $effective - (float) $allocations->sum(fn ($row) => $this->salesQty($row, $line)));
-            $purchase = $physical ? (float) $allocations->where('fulfillment_type', 'purchase')->where('reservation_status', 'awaiting_purchase')
+            if ($enrich) $allocations = $allocations->where('item_id', $line->item_id)->where('base_unit_id', $line->item_base_unit_id);
+            $unallocated = $enrich && (!$physical || !$conversionReady) ? 0.0
+                : max(0, $effective - (float) $allocations->sum(fn ($row) => $this->salesQty($row, $line)));
+            $purchase = $physical && (!$enrich || $conversionReady) ? (float) $allocations->where('fulfillment_type', 'purchase')->where('reservation_status', 'awaiting_purchase')
                 ->sum(fn ($row) => $this->salesQty($row, $line)) : 0.0;
-            $pendingProduction = $physical ? max(0, (float) $allocations->where('fulfillment_type', 'production')->sum(fn ($row) => $this->salesQty($row, $line)) - $replenished) : 0.0;
+            $pendingProduction = $physical && (!$enrich || $conversionReady) ? max(0, (float) $allocations->where('fulfillment_type', 'production')->sum(fn ($row) => $this->salesQty($row, $line)) - $replenished) : 0.0;
             if ($physical && SalesOrderFulfillmentPolicy::isPurchaseLine($line)) $purchase += $unallocated;
             elseif ($physical) $pendingProduction += $unallocated;
             $pendingProduction = min($pendingProduction, max(0, $effective - $shipped));
             $purchase = min($purchase, max(0, $effective - $shipped));
-            return [
+            $result = [
                 'sales_order_line_id' => (int) $line->id, 'line_no' => (int) $line->line_no, 'order_qty' => $effective,
                 'locked_inventory_qty' => round($inventory, 8), 'pending_production_qty' => round($pendingProduction, 8),
                 'pending_purchase_qty' => round($purchase, 8), 'production_replenished_qty' => $replenished,
                 'shipped_qty' => round($shipped, 8), 'pending_fulfillment_qty' => $physical ? round(max(0, $effective - $shipped), 8) : 0.0,
             ];
+            if ($enrich) {
+                $poolKey = $line->item_id.':'.$line->item_base_unit_id;
+                $pool = $inventoryPools[$poolKey] ?? ['on_hand_qty' => 0.0, 'available_qty' => 0.0];
+                $strategy = !$physical ? 'none' : (SalesOrderFulfillmentPolicy::isPurchaseLine($line) ? 'purchase' : 'production');
+                $salesPrecision = 10 ** max(0, (int) ($units->get($line->unit_id)?->decimal_places ?? 0));
+                $result += [
+                    'product_name' => $line->product_name, 'sku_name' => $line->sku_name,
+                    'spec_text' => data_get($line->sku_snapshot, 'spec_text') ?: data_get($line->item_snapshot, 'spec')
+                        ?: data_get($line->item_snapshot, 'model') ?: $line->item?->spec ?: $line->item?->model,
+                    'item_name' => $line->item_name ?: $line->item?->item_name,
+                    'sales_unit_name' => $line->unit_name_snapshot ?: $units->get($line->unit_id)?->unit_name,
+                    'base_unit_name' => $line->item_base_unit_name_snapshot ?: $units->get($line->item_base_unit_id)?->unit_name,
+                    'requires_delivery' => $physical, 'is_physical' => $physical, 'fulfillment_strategy' => $strategy,
+                    'fulfillment_label' => match ($strategy) {'none' => '无需发货', 'purchase' => '外购发货', default => '工厂产品'},
+                    'required_base_qty' => $physical && $conversionReady ? round($effective * $factor, 8) : null,
+                    'inventory_on_hand_base_qty' => $physical && $bound ? $pool['on_hand_qty'] : null,
+                    'inventory_available_base_qty' => $physical && $bound ? $pool['available_qty'] : null,
+                    'inventory_on_hand_qty' => $physical && $conversionReady ? round($pool['on_hand_qty'] / $factor, 8) : null,
+                    'inventory_available_qty' => $physical && $conversionReady ? floor(($pool['available_qty'] / $factor + 0.0000000001) * $salesPrecision) / $salesPrecision : null,
+                    'inventory_pool_key' => $physical && $bound ? $poolKey : null,
+                    'inventory_pool_shared' => $physical && ($poolLineCounts[$poolKey] ?? 0) > 1,
+                    'quantity_notice' => !$physical ? null : (!$line->item ? '未绑定库存物料，无法计算库存数量。'
+                        : (!$line->item_base_unit_id ? '缺少库存基本单位，无法计算库存数量。'
+                            : (!$conversionReady ? '缺少有效的销售与库存单位换算比例，库存基本数量尚不能折算销售数量。' : null))),
+                ];
+                if (!$physical || !$conversionReady) {
+                    $result['locked_inventory_qty'] = $physical ? null : 0.0;
+                    $result['pending_production_qty'] = $physical ? null : 0.0;
+                    $result['pending_purchase_qty'] = $physical ? null : 0.0;
+                }
+            }
+            return $result;
         })->values();
         $totals = [];
         foreach (['order_qty', 'locked_inventory_qty', 'pending_production_qty', 'pending_purchase_qty', 'production_replenished_qty', 'shipped_qty', 'pending_fulfillment_qty'] as $key) {

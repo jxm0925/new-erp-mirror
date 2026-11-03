@@ -14,7 +14,7 @@ final class WarehouseWorkspaceService
 {
     private const TYPES = [
         'mfg_receipt' => ['生产入库确认', 'inbound', ['inventory.inbound.confirm', 'production.receipt.execute', 'production.task.execute', 'production.work_order.view']],
-        'cutting_remnant' => ['开料余料确认', 'inbound', ['inventory.inbound.confirm', 'production.work_order.view', 'production.work_order.edit', 'production.task.execute', 'production.task.view']],
+        'cutting_remnant' => ['开料余料历史', 'inbound', ['inventory.inbound.confirm', 'production.work_order.view', 'production.work_order.edit', 'production.task.execute', 'production.task.view']],
         'inventory_transfer' => ['调拨入库确认', 'inbound', ['inventory.inbound.confirm', 'inventory.transfer.view', 'inventory.transfer.post']],
         'material_physical_transfer' => ['实物调拨入库确认', 'inbound', ['inventory.inbound.confirm', 'inventory.transfer.view', 'inventory.physical.manage']],
         'purchase_receipt' => ['采购入库', 'inbound', 'inventory.post.view'],
@@ -107,11 +107,11 @@ final class WarehouseWorkspaceService
     private function sources(string $kind, bool $done, array $f, object $user, array $permissions, bool $super): array
     {
         if ($kind === 'cutting_remnant') {
+            if (! $done) return [];
             $q = DB::table('erp_mfg_cutting_remnant_receipts as d')->join('erp_mfg_cutting_batches as batch', 'batch.id', '=', 'd.cutting_batch_id')
                 ->leftJoin('erp_mfg_work_orders as wo', 'wo.id', '=', 'batch.work_order_id')
                 ->leftJoin('erp_mfg_cutting_runs as run', 'run.id', '=', 'batch.cutting_run_id');
             if (! empty($f['status'])) $q->where('d.status', $f['status']);
-            else $done ? $q->whereIn('d.status', ['confirmed', 'rejected', 'cancelled']) : $q->where('d.status', 'pending');
             if (! array_intersect(['inventory.inbound.confirm', 'production.work_order.view', 'production.work_order.edit'], $permissions))
                 $q->where('d.requested_by_legacy_id', (int) ($user->legacy_id ?? $user->id ?? 0));
             if ($keyword = trim((string) ($f['keyword'] ?? ''))) {

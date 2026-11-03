@@ -74,7 +74,7 @@ class SalesOrderEditImpactService
         'origin_order_no' => '原始单号', 'remark' => '订单备注', 'customer_name' => '客户名称',
         'customer_id' => '客户档案', 'customer_contact_id' => '联系人档案', 'customer_address_id' => '收货地址档案',
         'contact_name' => '收货联系人', 'contact_phone' => '联系电话', 'full_address' => '收货地址',
-        'platform' => '成交平台', 'carrier_id' => '快递选择', 'default_carrier_id' => '默认承运方',
+        'platform' => '成交平台', 'carrier_id' => '客户指定物流', 'default_carrier_id' => '客户指定物流',
         'carrier_fee' => '预估快递费', 'freight_amount' => '运费', 'required_delivery_date' => '要求交期',
         'is_urgent' => '是否加急', 'is_delay' => '是否延期', 'delay_date' => '延期发货日期',
         'payment_terms_snapshot' => '付款规则', 'funding_policy_id' => '资金策略',
@@ -808,8 +808,8 @@ class SalesOrderEditImpactService
             'freight_amount', 'carrier_fee', 'currency', 'transaction_mode' => ['FINANCIAL'],
             'required_delivery_date', 'is_delay', 'delay_date' => $facts['has_fulfillment_facts']
                 ? ['FULFILLMENT'] : ['INFO'],
-            'carrier_id', 'default_carrier_id' => $facts['has_fulfillment_facts']
-                ? ['FULFILLMENT'] : ['INFO'],
+            // 客户指定物流只是发货时快递公司的预填值，实际快递在每次发运时填写，不影响任何交付事实。
+            'carrier_id', 'default_carrier_id' => ['INFO'],
             'trade_type' => ['COMMERCIAL', 'FULFILLMENT'],
             'customer_id', 'customer_name', 'platform', 'sales_channel_id' => ['COMMERCIAL'],
             default => ['INFO'],
@@ -931,7 +931,6 @@ class SalesOrderEditImpactService
                 'payment_terms_snapshot' => '付款规则发生变化，影响生产或发货资金门槛，需要库存交付审核。',
                 'funding_policy_id' => '资金策略发生变化，影响生产或发货资金门槛，需要库存交付审核。',
                 'required_delivery_date', 'is_delay', 'delay_date' => '要求交期发生调整，影响现有库存、生产或交付计划，需要库存交付审核。',
-                'carrier_id', 'default_carrier_id' => '承运方式发生变化，影响现有交付安排，需要库存交付审核。',
                 'sku_id' => 'SKU 身份发生变化，需要重新核对库存、生产和交付安排。',
                 'product_id' => 'Product 身份发生变化，需要重新核对库存、生产和交付安排。',
                 'line_added' => '新增订单行改变了库存、生产和交付范围，需要库存交付审核。',

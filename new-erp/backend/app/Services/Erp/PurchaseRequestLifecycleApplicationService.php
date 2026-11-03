@@ -2,7 +2,7 @@
 
 namespace App\Services\Erp;
 
-use App\Models\Erp\{PurchaseLog, PurchaseRequest};
+use App\Models\Erp\{PurchaseLog, PurchaseRequest, SalesOrder};
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -13,12 +13,20 @@ class PurchaseRequestLifecycleApplicationService
     {
         // Both header and line references exist in historical documents. Either one protects
         // the original request, even if a stale quantity/status no longer reports an allocation.
-        return PurchaseRequest::query()->withExists(['planItems', 'planItemsViaLines', 'orderItems', 'orderItemsViaLines'])
-            ->with('items');
+        $query = PurchaseRequest::query()->withExists(['planItems', 'planItemsViaLines', 'orderItems', 'orderItemsViaLines'])->with('items');
+        if (app(PurchaseRequestSalesAllocationService::class)->available()) $query->with('items.salesAllocations');
+        return $query;
     }
 
     public function present(PurchaseRequest $request): PurchaseRequest
     {
+        if ($request->source_type === 'sales' && ctype_digit((string) $request->source_id) && !$request->source_no) {
+            $request->setAttribute('source_no', SalesOrder::whereKey((int) $request->source_id)->value('sales_order_no'));
+        }
+        if (app(PurchaseRequestSalesAllocationService::class)->available()) $request->loadMissing('items.salesAllocations');
+        foreach ($request->items as $line) {
+            if (!$line->relationLoaded('salesAllocations')) $line->setRelation('salesAllocations', collect());
+        }
         $allowed = $this->canChange($request);
         $request->setAttribute('can_edit', $allowed);
         $request->setAttribute('can_delete', $allowed);

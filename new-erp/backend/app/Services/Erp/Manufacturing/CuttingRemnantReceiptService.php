@@ -2,12 +2,12 @@
 
 namespace App\Services\Erp\Manufacturing;
 
-use App\Models\Erp\{Item, Location, MfgCuttingBatch, MfgCuttingRemnantReceipt, MfgCuttingRun, MfgTaskParticipant, MfgWorkOrder, Warehouse};
-use App\Services\Erp\{AuthContextService, CuttingDecimal, DocumentNumberService, InventoryAmountVisibilityService, MaterialPhysicalService};
+use App\Models\Erp\{Location, MfgCuttingBatch, MfgCuttingRemnantReceipt, MfgCuttingRun, MfgTaskParticipant, MfgWorkOrder, Warehouse};
+use App\Services\Erp\{AuthContextService, CuttingDecimal, InventoryAmountVisibilityService, MaterialPhysicalService};
 use App\Services\Erp\Inventory\ProductionInventoryPosting;
 use Illuminate\Support\Facades\DB;
 
-/** 产出数量先成为生产事实，余料和最终净耗只能在仓库确认后记账。 */
+/** 下料人核对真实余料后直接记库存、实物谱系和净耗；旧申请只保留历史。 */
 final class CuttingRemnantReceiptService
 {
     use ProductionActor;
@@ -17,7 +17,6 @@ final class CuttingRemnantReceiptService
     public function __construct(
         private readonly ProductionInventoryPosting $inventory,
         private readonly MaterialPhysicalService $physicals,
-        private readonly DocumentNumberService $numbers,
     ) {}
 
     public static function requestRules(): array
@@ -42,130 +41,62 @@ final class CuttingRemnantReceiptService
     }
 
     /** 调用方已经锁批次并冻结首次实际产出；重提只能改余料，不能重新满足一次用料数量。 */
-    public function submitForBatch(MfgCuttingBatch $batch, array $rows, object $actor): ?MfgCuttingRemnantReceipt
+    public function submitForBatch(MfgCuttingBatch $batch, array $rows, object $actor): void
     {
         if (DB::transactionLevel() < 1 || $batch->status !== 'awaiting_confirm') throw new \LogicException('Remnant requests require a locked registered batch.');
         $this->assertRequestActor($batch, $actor);
         $last = MfgCuttingRemnantReceipt::query()->where('cutting_batch_id', $batch->id)->orderByDesc('id')->lockForUpdate()->first();
-        if ($last?->status === 'pending') $this->fail('remnant_request_pending', '批次 '.$batch->batch_no.' 已有余料申请待仓库确认，不能重复提交。', 409);
         if ($last && (int) $last->requested_by_legacy_id !== (int) $this->actorId($actor))
             $this->fail('permission_denied', '请原登记人更正批次 '.$batch->batch_no.' 的余料后重新提交。', 403);
         $lines = $this->lines($batch, $rows);
-        $this->assertSharedConservation($batch, $lines, false);
-        $positive = collect($lines)->contains(fn ($line) => bccomp($line['measure_qty'], '0', 8) > 0);
+        foreach ($lines as &$line) $line += ['self_recorded' => true, 'recorded_by_legacy_id' => $this->actorId($actor), 'recorded_by_name' => $this->actorName($actor), 'recorded_at' => now()->toDateTimeString()];
+        unset($line);
+        $output = $this->assertSharedConservation($batch, $lines, false);
+        if ($output) foreach ($lines as &$line) $line['run_output_snapshot'] = $output;
+        unset($line);
         $batch->update(['remnants' => $lines]);
-        if (! $positive) {
-            $this->log($batch, 'remnant_zero_confirmed', '批次 '.$batch->batch_no.' 登记人明确确认真实零余料，直接结算', $actor,
-                ['previous_receipt_id' => $last?->id, 'lines' => $lines]);
-            $this->settleBatch($batch, $lines, $actor);
-            return null;
-        }
-        $receipt = MfgCuttingRemnantReceipt::create(['receipt_no' => $this->numbers->next('mfg_cutting_remnant_receipt', 'MCRR'),
-            'cutting_batch_id' => $batch->id, 'status' => 'pending', 'requested_lines' => $lines,
-            'requested_by_legacy_id' => $this->actorId($actor), 'requested_by_name' => $this->actorName($actor),
-            'requested_at' => now(), 'business_version' => 1]);
-        $this->log($batch, 'remnant_requested', '批次 '.$batch->batch_no.' 已登记产出，余料待仓库确认（'.$receipt->receipt_no.'）', $actor,
-            ['remnant_receipt_id' => $receipt->id]);
-        return $receipt;
+        $this->log($batch, 'remnant_recorded', '批次 '.$batch->batch_no.' 下料人已核对实际余料', $actor,
+            ['previous_receipt_id' => $last?->id, 'lines' => $lines]);
+        // 集中开料先登记余料时尚无实际件数，等切完结束在同一事务核对全批守恒后结算。
+        if ($batch->batch_scope !== 'shared' || $output) $this->settleBatch($batch, $lines, $actor);
+    }
+
+    public function settleRecordedBatch(MfgCuttingBatch $batch, object $actor): void
+    {
+        if (DB::transactionLevel() < 1 || $batch->status !== 'awaiting_confirm' || ! $batch->settlement_key || ! $batch->remnants) return;
+        // 旧仓库申请必须由原登记人主动重核，不把历史 pending 当作已完成的新登记。
+        if (! collect($batch->remnants)->every(fn ($line) => ! empty($line['self_recorded']))) return;
+        $lines = $this->lines($batch, $batch->remnants);
+        foreach ($lines as $index => &$line) $line += array_intersect_key($batch->remnants[$index], array_flip(['self_recorded', 'recorded_by_legacy_id', 'recorded_by_name', 'recorded_at']));
+        unset($line);
+        $output = $this->assertSharedConservation($batch, $lines, true);
+        if ($output) foreach ($lines as &$line) $line['run_output_snapshot'] = $output;
+        unset($line);
+        $this->settleBatch($batch, $lines, $actor);
     }
 
     public function confirm(int $id, array $data, object $actor): MfgCuttingRemnantReceipt
     {
-        $this->assertPermission($actor, ['inventory.inbound.confirm']);
-        return DB::transaction(function () use ($id, $data, $actor) {
-            [$receipt, $batch] = $this->pending($id, $data, $actor);
-            $lines = $this->lines($batch, $data['lines'] ?? []);
-            $output = $this->assertSharedConservation($batch, $lines, true);
-            if ($output) foreach ($lines as &$line) $line['run_output_snapshot'] = $output;
-            unset($line);
-            $receipt->update(['status' => 'confirmed', 'confirmed_lines' => $lines,
-                'confirmed_by_legacy_id' => $this->actorId($actor), 'confirmed_by_name' => $this->actorName($actor), 'confirmed_at' => now(),
-                'business_version' => (int) $receipt->business_version + 1]);
-            $this->settleBatch($batch, $lines, $actor, $receipt);
-            return $receipt->fresh();
-        }, 5);
+        $this->fail('remnant_history_readonly', '旧余料申请仅供查看，请由原登记人在生产开料批次核对实际余料后登记结算。', 409);
     }
 
-    /** 报废是明确处置，不能把驳回或测量零余料当作报废。全部成本留制造净耗，不另造损益。 */
     public function scrap(int $id, array $data, object $actor): MfgCuttingRemnantReceipt
     {
-        $this->assertPermission($actor, ['inventory.inbound.confirm']);
-        $this->assertPermission($actor, ['production.scrap.approve']);
-        $reason = $this->reason($data['reason'] ?? null);
-        return DB::transaction(function () use ($id, $data, $actor, $reason) {
-            [$receipt, $batch] = $this->pending($id, $data, $actor);
-            $measured = $this->lines($batch, $data['lines'] ?? [], false);
-            $output = $this->assertSharedConservation($batch, $measured, true);
-            if (! collect($measured)->contains(fn ($line) => bccomp($line['measure_qty'], '0', 8) > 0))
-                $this->fail('scrap_measure_required', '整批报废必须明确本批真实废余料数量，零余料请按实际核对确认。');
-            $lines = array_map(function ($line) use ($output) {
-                $line['scrapped_measure_qty'] = $line['measure_qty'];
-                $line['measure_qty'] = '0.00000000';
-                $line['cost_amount'] = '0.0000';
-                $line['consumed_measure'] = $line['input_measure'];
-                $line['scrap_measure'] = $line['max_remnant_measure'];
-                if ($output) $line['run_output_snapshot'] = $output;
-                return $line;
-            }, $measured);
-            $receipt->update(['status' => 'confirmed', 'confirmed_lines' => $lines,
-                'confirmed_by_legacy_id' => $this->actorId($actor), 'confirmed_by_name' => $this->actorName($actor), 'confirmed_at' => now(),
-                'disposition' => ['action' => 'scrap', 'reason' => $reason, 'operator_legacy_id' => $this->actorId($actor),
-                    'operator_name' => $this->actorName($actor), 'occurred_at' => now()->toDateTimeString(), 'measured_lines' => $measured],
-                'business_version' => (int) $receipt->business_version + 1]);
-            $this->settleBatch($batch, $lines, $actor, $receipt);
-            return $receipt->fresh();
-        }, 5);
+        $this->fail('remnant_history_readonly', '旧余料申请仅供查看，请由原登记人在生产开料批次核对实际余料后登记结算。', 409);
     }
 
     public function reject(int $id, array $data, object $actor): MfgCuttingRemnantReceipt
     {
-        $this->assertPermission($actor, ['inventory.inbound.confirm']);
-        $reason = $this->reason($data['reason'] ?? null);
-        return DB::transaction(function () use ($id, $data, $actor, $reason) {
-            [$receipt, $batch] = $this->pending($id, $data, $actor);
-            $receipt->update(['status' => 'rejected', 'rejected_by_legacy_id' => $this->actorId($actor), 'rejected_by_name' => $this->actorName($actor),
-                'rejected_at' => now(), 'reject_reason' => $reason, 'business_version' => (int) $receipt->business_version + 1]);
-            $batch->update(['business_version' => (int) $batch->business_version + 1]);
-            $this->log($batch, 'remnant_rejected', '批次 '.$batch->batch_no.' 余料申请被驳回，请登记人更正重提：'.$reason, $actor, ['remnant_receipt_id' => $receipt->id]);
-            return $receipt->fresh();
-        }, 5);
+        $this->fail('remnant_history_readonly', '旧余料申请仅供查看，请由原登记人在生产开料批次核对实际余料后登记结算。', 409);
     }
 
     public function cancel(int $id, array $data, object $actor): MfgCuttingRemnantReceipt
     {
-        $this->assertPermission($actor, ['production.task.execute', 'production.work_order.edit']);
-        return DB::transaction(function () use ($id, $data, $actor) {
-            [$receipt, $batch] = $this->pending($id, $data, $actor);
-            if ((int) $receipt->requested_by_legacy_id !== (int) $this->actorId($actor)) $this->fail('permission_denied', '只能撤回自己提交的余料申请。', 403);
-            $receipt->update(['status' => 'cancelled', 'cancelled_by_legacy_id' => $this->actorId($actor), 'cancelled_at' => now(),
-                'business_version' => (int) $receipt->business_version + 1]);
-            $batch->update(['business_version' => (int) $batch->business_version + 1]);
-            $this->log($batch, 'remnant_cancelled', '批次 '.$batch->batch_no.' 余料申请已撤回，产出事实保留，仍须登记真实余料', $actor, ['remnant_receipt_id' => $receipt->id]);
-            return $receipt->fresh();
-        }, 5);
-    }
-
-    private function pending(int $id, array $data, object $actor): array
-    {
-        $origin = MfgCuttingRemnantReceipt::query()->findOrFail($id);
-        $batch = $this->lockBatch((int) $origin->cutting_batch_id);
-        $receipt = MfgCuttingRemnantReceipt::query()->lockForUpdate()->findOrFail($id);
-        if ((int) ($data['expected_version'] ?? 0) !== (int) $receipt->business_version) $this->fail('version_conflict', '余料申请已变化，请刷新后重新核对。', 409);
-        if ($receipt->status !== 'pending' || $batch->status !== 'awaiting_confirm' || $batch->inventory_return_transaction_id)
-            $this->fail('remnant_status_invalid', '批次 '.$batch->batch_no.' 的余料申请已处理，不能重复办理。', 409);
-        return [$receipt, $batch];
-    }
-
-    private function lockBatch(int $id): MfgCuttingBatch
-    {
-        $batch = MfgCuttingBatch::query()->findOrFail($id);
-        if ($batch->work_order_id) app(CuttingService::class)->lockedWorkOrder((int) $batch->work_order_id);
-        elseif ($batch->cutting_run_id) MfgCuttingRun::query()->lockForUpdate()->findOrFail($batch->cutting_run_id);
-        return MfgCuttingBatch::query()->lockForUpdate()->findOrFail($id);
+        $this->fail('remnant_history_readonly', '旧余料申请仅供查看，请由原登记人在生产开料批次核对实际余料后登记结算。', 409);
     }
 
     /** 来源与产出来自冻结批次；请求只允许提交实测面积/长度与库位。 */
-    private function lines(MfgCuttingBatch $batch, array $rows, bool $locations = true): array
+    private function lines(MfgCuttingBatch $batch, array $rows): array
     {
         $bySource = collect($rows)->keyBy('source_key');
         $inputs = collect($batch->input_lines);
@@ -176,6 +107,8 @@ final class CuttingRemnantReceiptService
         foreach ($inputs as $input) {
             $row = $bySource->get($input['source_key']);
             $measure = CuttingDecimal::value($row['measure_qty'] ?? '', 8, true);
+            if (in_array($input['unit_kind'], ['m', 'm2'], true) && bccomp($measure, bcadd($measure, '0', 4), 8) !== 0)
+                $this->fail('stock_precision_invalid', '按米或平方米入库的实际余料最多保留四位小数，不能让库存数量被四舍五入。');
             if ($input['mode'] === 'length' && bccomp($measure, bcdiv(bcmul($measure, '1000', 2), '1000', 8), 8) !== 0)
                 $this->fail('remnant_precision_invalid', '管材余料以米登记，最多五位小数，必须能无损保存毫米长度。');
             $used = $batch->batch_scope === 'shared' ? null : ($output->get($input['source_key']) ?? collect())
@@ -183,7 +116,7 @@ final class CuttingRemnantReceiptService
             $max = $used === null ? (string) $input['input_measure'] : bcsub((string) $input['input_measure'], $used, 8);
             if (bccomp($measure, $max, 8) > 0) $this->fail('remnant_exceeds_source', '批次 '.$batch->batch_no.' 来源 '.($input['physical_no'] ?? $input['source_key']).' 的余料超过真实投入减实际产出的剩余量。');
             $warehouse = null; $location = null;
-            if ($locations && bccomp($measure, '0', 8) > 0) {
+            if (bccomp($measure, '0', 8) > 0) {
                 $location = Location::query()->lockForUpdate()->find((int) ($row['location_id'] ?? 0));
                 $warehouseId = (int) ($row['warehouse_id'] ?? $location?->warehouse_id ?? 0);
                 $warehouse = Warehouse::query()->lockForUpdate()->find($warehouseId);
@@ -237,8 +170,7 @@ final class CuttingRemnantReceiptService
         $actual = '0.00000000'; $facts = [];
         foreach ($run->lines as $line) {
             if ((int) $line['component_item_id'] !== (int) $batch->item_id || (int) $line['actual_pieces'] <= 0) continue;
-            if ((float) ($line['length_mm'] ?? 0) <= 0 || (float) ($line['width_mm'] ?? 0) <= 0) $this->fail('cutting_output_dimensions_missing', '开料记录 '.$run->run_no.' 缺少冻结板件尺寸，不能核对余料。');
-            $measure = bcdiv(bcmul(bcmul((string) $line['length_mm'], (string) $line['width_mm'], 12), (string) $line['actual_pieces'], 12), '1000000', 8);
+            $measure = CuttingRunService::lineMeasure($line);
             $actual = bcadd($actual, $measure, 8);
             $facts[] = array_intersect_key($line, array_flip(['line_key', 'component_item_id', 'length_mm', 'width_mm', 'thickness_mm', 'actual_pieces'])) + ['measure_qty' => $measure];
         }
@@ -248,7 +180,7 @@ final class CuttingRemnantReceiptService
             'input_measure' => $inputMeasure, 'actual_output_measure' => $actual, 'all_remnant_measure' => $remaining];
     }
 
-    private function settleBatch(MfgCuttingBatch $batch, array $lines, object $actor, ?MfgCuttingRemnantReceipt $receipt = null): void
+    private function settleBatch(MfgCuttingBatch $batch, array $lines, object $actor): void
     {
         $returned = '0.0000'; $pool = '0.00000000';
         foreach ($lines as $line) {
@@ -258,58 +190,51 @@ final class CuttingRemnantReceiptService
         $net = bcsub((string) $batch->input_cost_amount, $returned, 4);
         if (bccomp($net, '0', 4) < 0) $this->fail('cost_invalid', '余料回收成本不能超过真实投入。');
         $batch->update(['remnants' => $lines, 'remnant_cost_amount' => $returned, 'net_cost_amount' => $net,
-            'pool_measure' => $batch->batch_scope === 'shared' ? $pool : '0.00000000']);
+            'pool_measure' => $batch->batch_scope === 'shared' && ! empty($batch->input_lines[0]['physical_material_id']) && ($batch->input_lines[0]['mode'] ?? null) === 'sheet' ? $pool : '0.00000000']);
         $wo = $batch->work_order_id ? MfgWorkOrder::query()->findOrFail($batch->work_order_id) : null;
         $posted = $this->inventory->postManufacturingCuttingSettlement($batch, $wo, $this->actorId($actor));
         foreach ($lines as &$line) $line = array_replace($line, $posted['lines'][$line['source_key']] ?? []);
         unset($line);
         $batch->refresh();
         $movements = [];
-        $scrap = ($receipt?->disposition['action'] ?? null) === 'scrap';
         foreach ($batch->input_lines as $input) {
             if (empty($input['physical_material_id'])) continue;
             $line = collect($lines)->firstWhere('source_key', $input['source_key']);
             $movements[$input['source_key']] = $this->physicals->completeManufacturingCut($batch, $input,
-                bcsub((string) $input['cost_amount'], (string) $line['cost_amount'], 4), $this->actorId($actor) ?? 0,
-                $scrap && bccomp((string) ($line['scrapped_measure_qty'] ?? '0'), '0', 8) > 0);
+                bcsub((string) $input['cost_amount'], (string) $line['cost_amount'], 4), $this->actorId($actor) ?? 0);
         }
         $batch->update(['remnants' => $lines, 'status' => 'settled', 'business_version' => (int) $batch->business_version + 1,
             'settled_by_legacy_id' => $this->actorId($actor), 'settled_by_name' => $this->actorName($actor), 'settled_at' => now()]);
-        if ($receipt) {
-            $facts = ['confirmed_lines' => $lines, 'inventory_transaction_id' => $posted['transaction']?->id,
-                'confirmed_at' => $posted['transaction']?->posted_at ?? $receipt->confirmed_at];
-            if ($scrap) $facts['disposition'] = $receipt->disposition + ['physical_movement_ids' => $movements];
-            $receipt->update($facts);
-        }
         if ($wo) {
             $wo->update(['business_version' => (int) $wo->business_version + 1]);
             app(WorkOrderService::class)->refreshCompletion($wo, $actor);
         }
-        $this->log($batch, $scrap ? 'remnant_scrapped' : 'cutting_settled', '批次 '.$batch->batch_no.($scrap ? ' 余料已明确整批报废，成本留在制造净耗' : ' 余料确认及净耗结算完成'),
-            $actor, ['remnant_receipt_id' => $receipt?->id, 'physical_movement_ids' => $movements, 'lines' => $lines]);
-        if ($batch->cutting_run_id) app(CuttingRunService::class)->finalizeAwaitingRun((int) $batch->cutting_run_id, $actor);
+        $this->log($batch, 'cutting_settled', '批次 '.$batch->batch_no.' 实际余料记录及净耗结算完成',
+            $actor, ['physical_movement_ids' => $movements, 'lines' => $lines]);
     }
 
     public function assertRequestActor(MfgCuttingBatch $batch, object $actor): void
     {
         $this->assertPermission($actor, ['production.task.execute', 'production.work_order.edit']);
+        if (! $this->canRequestActor($batch, $actor)) $this->fail('permission_denied', '只能登记本人当前参与工序的余料。', 403);
+    }
+
+    private function canRequestActor(MfgCuttingBatch $batch, ?object $actor): bool
+    {
+        if (! $actor) return false;
         $auth = app(AuthContextService::class);
-        if (! $batch->work_order_id || $auth->isSuperAdmin($actor) || in_array('production.work_order.edit', $auth->permissionCodes($actor), true)) return;
-        if (! MfgTaskParticipant::query()->where('work_order_operation_id', $batch->work_order_operation_id)
-            ->where('employee_legacy_id', $this->actorId($actor))->where('is_active', true)->exists()) $this->fail('permission_denied', '只能登记本人当前参与工序的余料。', 403);
+        if ($auth->isSuperAdmin($actor)) return true;
+        $codes = $auth->permissionCodes($actor);
+        if (! array_intersect(['production.task.execute', 'production.work_order.edit'], $codes)) return false;
+        return ! $batch->work_order_id || in_array('production.work_order.edit', $codes, true)
+            || MfgTaskParticipant::query()->where('work_order_id', $batch->work_order_id)->where('work_order_operation_id', $batch->work_order_operation_id)
+                ->where('employee_legacy_id', $this->actorId($actor))->where('is_active', true)->exists();
     }
 
     private function assertPermission(object $actor, array $any): void
     {
         $auth = app(AuthContextService::class);
         if (! $auth->isSuperAdmin($actor) && ! array_intersect($any, $auth->permissionCodes($actor))) $this->fail('permission_denied', '当前账号没有这项余料操作权限。', 403);
-    }
-
-    private function reason(mixed $value): string
-    {
-        $reason = trim((string) $value);
-        if ($reason === '' || mb_strlen($reason) > 500) $this->fail('reason_required', '请填写500字以内的原因。');
-        return $reason;
     }
 
     private function log(MfgCuttingBatch $batch, string $action, string $content, object $actor, array $facts): void
@@ -354,7 +279,7 @@ final class CuttingRemnantReceiptService
         $seconds = max(0, (int) ($receipt->requested_at?->diffInSeconds($receipt->confirmed_at ?? $receipt->rejected_at ?? $receipt->cancelled_at ?? now(), false) ?? 0));
         $codes = $actor ? app(AuthContextService::class)->permissionCodes($actor) : [];
         $pending = $receipt->status === 'pending';
-        $confirm = $pending && in_array('inventory.inbound.confirm', $codes, true);
+        $confirm = false;
         $row = $receipt->toArray() + ['batch_no' => $batch?->batch_no, 'batch_scope' => $batch?->batch_scope,
             'batch_status' => $batch?->status, 'batch_business_version' => (int) $batch?->business_version,
             'work_order_id' => $batch?->work_order_id, 'cutting_run_id' => $batch?->cutting_run_id,
@@ -363,13 +288,12 @@ final class CuttingRemnantReceiptService
             'waiting_reason' => $batch ? $this->waitingReason($batch) : null, 'requires_serial_check' => false,
             'cost_status' => $receipt->status === 'confirmed' ? 'confirmed' : 'pending_confirmation',
             'cost_status_label' => $receipt->status === 'confirmed' ? '已确认' : '待确认',
-            'can_resubmit' => $batch?->status === 'awaiting_confirm' && in_array($receipt->status, ['rejected', 'cancelled'], true)
+            'can_resubmit' => $batch?->status === 'awaiting_confirm'
                 && $actor && (int) $receipt->requested_by_legacy_id === (int) $this->actorId($actor)
-                && (bool) array_intersect(['production.task.execute', 'production.work_order.edit'], $codes),
+                && $this->canRequestActor($batch, $actor),
             'actions' => ['confirm' => (bool) $confirm, 'reject' => (bool) $confirm,
                 'scrap' => $confirm && in_array('production.scrap.approve', $codes, true),
-                'cancel' => $pending && $actor && (int) $receipt->requested_by_legacy_id === (int) $this->actorId($actor)
-                    && (bool) array_intersect(['production.task.execute', 'production.work_order.edit'], $codes)]];
+                'cancel' => false]];
         unset($row['batch']);
         foreach ($row['requested_lines'] as &$line) {
             $line['cost_amount'] = null;
@@ -379,16 +303,17 @@ final class CuttingRemnantReceiptService
         return $amounts ? $row : app(InventoryAmountVisibilityService::class)->redact($row, true);
     }
 
-    public function batchConfirmation(MfgCuttingBatch $batch, bool $amounts, ?object $actor = null): array
+    public function batchConfirmation(MfgCuttingBatch $batch, bool $amounts, ?object $actor): array
     {
-        $actor ??= app(AuthContextService::class)->currentUser(request());
         $receipt = MfgCuttingRemnantReceipt::query()->where('cutting_batch_id', $batch->id)->orderByDesc('id')->first();
         $dto = $receipt ? $this->present($receipt, $amounts, $actor) : null;
+        $editable = $actor && $batch->status === 'awaiting_confirm' && (! $receipt || (int) $receipt->requested_by_legacy_id === (int) $this->actorId($actor))
+            && $this->canRequestActor($batch, $actor);
         return ['remnant_receipt' => $dto,
-            'can_resubmit' => (bool) ($dto['can_resubmit'] ?? false),
+            'can_resubmit' => (bool) $editable, 'remnant_editable' => (bool) $editable,
             'waiting_reason' => $this->waitingReason($batch),
             'cost_status' => $batch->status === 'settled' ? 'confirmed' : 'pending_confirmation',
-            'cost_status_label' => $batch->status === 'settled' ? '已确认' : '待确认'];
+            'cost_status_label' => $batch->status === 'settled' ? '已结算' : '待登记结算'];
     }
 
     public function waitingReason(MfgCuttingBatch $batch): ?string
@@ -396,10 +321,8 @@ final class CuttingRemnantReceiptService
         if ($batch->status !== 'awaiting_confirm') return null;
         $receipt = MfgCuttingRemnantReceipt::query()->where('cutting_batch_id', $batch->id)->orderByDesc('id')->first();
         $text = '批次 '.$batch->batch_no.' ';
-        if ($receipt?->status === 'rejected') return $text.'余料被驳回，请登记人更正后重提。';
-        if ($receipt?->status === 'cancelled') return $text.'余料申请已撤回，请重新提交真实余料。';
         if ($batch->cutting_run_id && ($run = MfgCuttingRun::query()->find($batch->cutting_run_id))?->status === 'running')
-            return $text.'余料待确认；开料记录 '.$run->run_no.' 请先「切完结束」登记实际件数并停止计时。';
-        return $text.'余料待仓库确认，最终净耗和开料池尚不可分配。';
+            return $text.'余料已记录；开料记录 '.$run->run_no.' 请「切完结束」登记实际件数并停止计时后结算。';
+        return $text.($receipt ? '旧余料申请保留历史，请原登记人在本批重新核对实际余料并登记结算。' : '请下料人核对实际余料后登记结算。');
     }
 }

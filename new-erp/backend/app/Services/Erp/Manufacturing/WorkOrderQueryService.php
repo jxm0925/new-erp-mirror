@@ -468,11 +468,10 @@ final class WorkOrderQueryService
         if ($row['completed_qty'] > $row['stored_qty'] + 0.00001) {
             $open = MfgWorkOrderUnit::query()->where('work_order_id', $row['id'])->whereNotIn('status', ['stored', 'scrapped', 'cancelled'])->count();
             $waiting = MfgWorkOrderUnit::query()->where('work_order_id', $row['id'])->where('status', 'completed')->count();
-            $batch = MfgCuttingBatch::query()->where('work_order_id', $row['id'])->where('status', 'awaiting_confirm')->first();
-            if (! $batch && $waiting >= $open) $batch = MfgCuttingBatch::query()->where('work_order_id', $row['id'])->where('status', 'issued')->first();
+            $batch = $waiting >= $open ? MfgCuttingBatch::query()->where('work_order_id', $row['id'])->whereIn('status', ['issued', 'awaiting_confirm'])->first() : null;
             if ($batch)
                 $items[] = ['type' => 'warning', 'title' => $batch->status === 'awaiting_confirm' ? '本批设备暂不能确认入库' : '最后一批设备暂不能确认入库', 'text' => '开料批次 '.$batch->batch_no.($batch->status === 'awaiting_confirm'
-                    ? ' 余料待仓库确认，确认后才能结清本批材料净耗。' : ' 尚未登记产出和余料，请先返回开料页登记。')];
+                    ? ' 请下料人补齐实际余料登记后结清材料净耗。' : ' 尚未登记产出和余料，请先返回开料页登记。')];
         }
         if (! empty($row['unbound_components'])) $items[] = ['type' => 'info', 'title' => '有部件编号待登记', 'text' => count($row['unbound_components']).' 个已收料的部件编号还没装到设备上，请在“部件编号”处登记到具体的设备。'];
         if ($row['overdue']) $items[] = ['type' => 'danger', 'title' => '已过计划完工日', 'text' => '计划 '.$row['planned_finish_date'].' 完工，请调整计划或加急。'];

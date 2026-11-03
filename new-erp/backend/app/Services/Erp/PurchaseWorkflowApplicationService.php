@@ -21,14 +21,15 @@ class PurchaseWorkflowApplicationService
     {
     }
 
-    public function submitPlan(int $id, ?string $operator): PurchasePlan
+    public function submitPlan(int $id, ?string $operator, ?object $actor = null): PurchasePlan
     {
-        return DB::transaction(function () use ($id, $operator): PurchasePlan {
+        return DB::transaction(function () use ($id, $operator, $actor): PurchasePlan {
             // 状态、明细验证和submit日志与删除互斥提交，避免删除后追加孤立提交日志。
             $plan = PurchasePlan::query()->with('items.splits.supplier')->lockForUpdate()->findOrFail($id);
             abort_if($plan->plan_status !== 'draft', 422, '只有草稿采购计划可以提交');
             abort_if($plan->items->isEmpty(), 422, '采购计划至少需要一行明细');
             app(PurchaseManagementScopeService::class)->assertDocumentScope($plan);
+            app(PurchaseRequestSalesAllocationService::class)->assertDocumentSources($plan->items, $actor);
             abort_if($plan->items->contains(fn ($i) => (float) $i->remaining_qty > 0), 422, '采购计划存在未分配数量，不能提交审核');
             abort_if($plan->items->contains(fn ($i) => $i->splits->isEmpty()), 422, '采购计划必须完成供应商拆分');
             abort_if(
@@ -90,9 +91,9 @@ class PurchaseWorkflowApplicationService
         }, 5);
     }
 
-    public function confirmRequest(int $id, ?string $operator): PurchaseRequest
+    public function confirmRequest(int $id, ?string $operator, ?object $actor = null): PurchaseRequest
     {
-        return $this->requestTransition($id, ['draft'], 'confirmed', 'confirm', '采购需求已确认，可进入采购计划', $operator);
+        return $this->requestTransition($id, ['draft'], 'confirmed', 'confirm', '采购需求已确认，可进入采购计划', $operator, $actor);
     }
 
     public function cancelRequest(int $id, ?string $operator): PurchaseRequest
@@ -128,6 +129,8 @@ class PurchaseWorkflowApplicationService
             }
 
             app(PurchaseManagementScopeService::class)->assertDocumentScope($order);
+
+            app(PurchaseRequestSalesAllocationService::class)->assertDocumentSources($order->items, $initiator);
 
             $order = $this->updateOrder($order, ['purchase_status' => 'submitted', 'audit_status' => 'pending'], 'submit', '采购订单已提交', $operator);
             if ($initiator) {
@@ -265,9 +268,9 @@ class PurchaseWorkflowApplicationService
         }
     }
 
-    private function requestTransition(int $id, array $allowed, string $to, string $action, string $message, ?string $operator): PurchaseRequest
+    private function requestTransition(int $id, array $allowed, string $to, string $action, string $message, ?string $operator, ?object $actor = null): PurchaseRequest
     {
-        return DB::transaction(function () use ($id, $allowed, $to, $action, $message, $operator): PurchaseRequest {
+        return DB::transaction(function () use ($id, $allowed, $to, $action, $message, $operator, $actor): PurchaseRequest {
             $request = PurchaseRequest::query()->lockForUpdate()->findOrFail($id);
             if (!in_array($request->request_status, $allowed, true)) {
                 throw ValidationException::withMessages(['request_status' => $action === 'close'
@@ -278,7 +281,11 @@ class PurchaseWorkflowApplicationService
                 throw ValidationException::withMessages(['request_status' => '采购需求已经全部进入采购计划，不能再关闭。']);
             }
 
-            if ($action === 'confirm') app(PurchaseManagementScopeService::class)->assertDocumentScope($request);
+            if ($action === 'confirm') {
+                app(PurchaseManagementScopeService::class)->assertDocumentScope($request);
+                app(PurchaseRequestSalesAllocationService::class)->assertCanAdvance($request, $actor);
+                app(PurchaseRequestProductionSourceService::class)->assertCanAdvance($request, $actor);
+            }
 
             $updates = ['request_status' => $to, 'status' => $to];
             if ($to === 'confirmed') $updates += ['confirmed_by' => $operator, 'confirmed_at' => now()];

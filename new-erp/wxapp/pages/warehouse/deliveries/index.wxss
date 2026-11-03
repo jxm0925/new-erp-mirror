@@ -24,7 +24,7 @@
   background: #f8fafc;
   border: 1rpx solid #e2e8f0;
   border-radius: 18rpx;
-  padding: 16rpx 20rpx 8rpx;
+  padding: 16rpx 20rpx;
   margin-top: 14rpx;
 }
 
@@ -32,10 +32,10 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 8rpx;
-  padding-bottom: 10rpx;
-  border-bottom: 1rpx dashed #cbd5e1;
 }
+
+.dlv-lines-head-open { margin-bottom: 8rpx; padding-bottom: 10rpx; border-bottom: 1rpx dashed #cbd5e1; }
+.dlv-lines-meta { display: flex; align-items: center; gap: 12rpx; }
 
 .dlv-lines-title {
   font-size: 24rpx;

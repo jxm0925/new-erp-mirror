@@ -6,6 +6,7 @@ use App\Models\Erp\{ItemCategory, PurchaseOrder, PurchaseOrderItem, PurchasePlan
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Arr;
+use Illuminate\Support\Facades\Schema;
 
 class SalesOrderFinanceQueryService
 {
@@ -90,7 +91,6 @@ class SalesOrderFinanceQueryService
 
     public function overview(SalesOrder $order): array
     {
-        $links = SalesOrderPurchaseLink::where('sales_order_id', $order->id)->where('status', 'active');
         $shipments = DB::table('erp_sales_shipments')->where('sales_order_id', $order->id)
             ->whereIn('shipment_status', ['outbound_posted', 'partially_shipped', 'shipped', 'completed']);
         return [
@@ -98,16 +98,124 @@ class SalesOrderFinanceQueryService
             'order_status' => $order->order_status,
             'version' => (int) $order->purchase_link_version, 'currency' => $order->currency,
             'settlement' => app(SalesFinanceSettlementService::class)->status($order),
-            'purchase_order_count' => (clone $links)->distinct()->count('purchase_order_id'),
+            'purchase_order_count' => $this->purchaseOrderSources()->where('sales_order_id', $order->id)->distinct()->count('purchase_order_id'),
             'posted_shipment_count' => (clone $shipments)->count(),
         ];
     }
 
     public function links(int $orderId, int $perPage)
     {
-        $page = SalesOrderPurchaseLink::where('sales_order_id', $orderId)->orderByDesc('id')->paginate($perPage);
-        $page->getCollection()->transform(fn (SalesOrderPurchaseLink $link) => $this->linkPayload($link));
+        $query = DB::table('erp_sales_order_purchase_links')->where('sales_order_id', $orderId)
+            ->selectRaw("'purchase_order' AS source_type, id, created_at");
+        if (Schema::hasTable('erp_purchase_request_sales_links')) {
+            $query->unionAll(DB::table('erp_purchase_request_sales_links')->where('sales_order_id', $orderId)
+                ->selectRaw("'purchase_request' AS source_type, id, created_at"));
+        }
+        $query->unionAll($this->salesRequestItems()->where('r.source_id', $orderId)
+            ->selectRaw("'request_header_item' AS source_type, i.id, r.created_at"));
+        $page = DB::query()->fromSub($query, 'links')->orderByDesc('created_at')->orderByDesc('id')->orderBy('source_type')->paginate($perPage);
+        $legacy = SalesOrderPurchaseLink::whereIn('id', $page->getCollection()->where('source_type', 'purchase_order')->pluck('id'))->get()->keyBy('id');
+        $requestIds = $page->getCollection()->where('source_type', 'purchase_request')->pluck('id');
+        $requests = $requestIds->isEmpty() ? collect() : DB::table('erp_purchase_request_sales_links as l')
+            ->join('erp_purchase_requests as r', 'r.id', '=', 'l.purchase_request_id')
+            ->leftJoin('erp_purchase_request_items as i', 'i.id', '=', 'l.purchase_request_item_id')
+            ->leftJoin('erp_units as u', 'u.id', '=', 'i.unit_id')->whereIn('l.id', $requestIds)
+            ->get(['l.*', 'r.request_no', 'r.request_status', 'r.deleted_at as request_deleted_at',
+                'i.item_id', 'i.item_code', 'i.item_name', 'i.spec_model', 'i.request_qty', 'u.unit_name'])->keyBy('id');
+        $headerItems = $this->salesRequestItems()->whereIn('i.id', $page->getCollection()->where('source_type', 'request_header_item')->pluck('id'))
+            ->leftJoin('erp_units as u', 'u.id', '=', 'i.unit_id')
+            ->get(['i.*', 'r.source_id as sales_order_id', 'r.request_no', 'r.request_status', 'r.created_by', 'r.created_at as request_created_at', 'u.unit_name'])->keyBy('id');
+        $projection = app(PurchaseSupplyProjectionService::class)->project($requests->where('status', 'active')->pluck('item_id')->merge($headerItems->pluck('item_id'))->filter()->all());
+        $requestItemIds = $requests->where('status', 'active')->pluck('purchase_request_item_id')->merge($headerItems->keys())->filter();
+        $orderSources = $requestItemIds->isEmpty() ? collect() : $this->purchaseOrderSources()
+            ->join('erp_purchase_orders as o', 'o.id', '=', 'purchase_sources.purchase_order_id')->where('purchase_sources.sales_order_id', $orderId)
+            ->whereIn('request_item_id', $requestItemIds)
+            ->distinct()->orderBy('o.id')->get(['purchase_sources.request_item_id', 'o.id as purchase_order_id', 'o.purchase_order_no'])->groupBy('request_item_id');
+        $page->getCollection()->transform(function ($row) use ($legacy, $requests, $headerItems, $projection, $orderSources) {
+            if ($row->source_type === 'purchase_order') return $this->linkPayload($legacy[$row->id]);
+            if ($row->source_type === 'request_header_item') {
+                $item = $headerItems[$row->id];
+                $active = $item->request_status !== 'cancelled';
+                $documents = $active ? array_values(array_filter(
+                    $projection[$item->item_id]['sales_orders'][$item->sales_order_id]['documents'] ?? [],
+                    fn ($d) => (int) $d['request_item_id'] === (int) $item->id)) : [];
+                $stages = array_fill_keys(array_keys(PurchaseSupplyProjectionService::STAGES), 0.0);
+                foreach ($documents as $document) $stages[$document['stage']] = round($stages[$document['stage']] + $document['qty'], 4);
+                return ['id' => (int) $item->id, 'source_type' => 'purchase_request', 'sales_order_id' => (int) $item->sales_order_id,
+                    'sales_order_item_id' => null, 'purchase_request_id' => (int) $item->request_id, 'purchase_request_item_id' => (int) $item->id,
+                    'purchase_qty' => $item->request_qty, 'status' => $active ? 'active' : 'reversed', 'reason' => '整张采购需求归属本销售订单',
+                    'created_by' => $item->created_by, 'created_at' => $item->request_created_at, 'request_status' => $item->request_status,
+                    'reverse_reason' => $active ? null : '采购需求已取消',
+                    'order_sources' => $orderSources->get($item->id, collect())->values()->all(),
+                    'source_snapshot' => ['order_no' => $item->request_no, 'request_no' => $item->request_no,
+                        'item_id' => $item->item_id, 'item_code' => $item->item_code, 'item_name' => $item->item_name,
+                        'spec_model' => $item->spec_model, 'purchase_unit_name' => $item->unit_name, 'base_unit_name' => $item->unit_name,
+                        'source_request_qty' => $item->request_qty],
+                    'progress' => ['total' => round(array_sum($stages), 4), 'stages' => $stages, 'documents' => $documents]];
+            }
+            $link = $requests[$row->id];
+            $snapshot = is_string($link->source_snapshot) ? (json_decode($link->source_snapshot, true) ?: []) : (array) $link->source_snapshot;
+            $documents = $link->status === 'active' ? array_values(array_filter(
+                $projection[$link->item_id]['sales_order_items'][$link->sales_order_item_id]['documents'] ?? [],
+                fn ($d) => (int) $d['request_item_id'] === (int) $link->purchase_request_item_id)) : [];
+            $stages = array_fill_keys(array_keys(PurchaseSupplyProjectionService::STAGES), 0.0);
+            foreach ($documents as $document) $stages[$document['stage']] = round($stages[$document['stage']] + $document['qty'], 4);
+            return ['id' => (int) $link->id, 'source_type' => 'purchase_request', 'sales_order_id' => (int) $link->sales_order_id,
+                'sales_order_item_id' => (int) $link->sales_order_item_id, 'purchase_request_id' => (int) $link->purchase_request_id,
+                'purchase_request_item_id' => $link->purchase_request_item_id ? (int) $link->purchase_request_item_id : null,
+                'purchase_qty' => $link->qty, 'status' => $link->status, 'created_by' => $link->created_by,
+                'created_at' => $link->created_at, 'updated_at' => $link->updated_at, 'reversed_by' => $link->reversed_by, 'reversed_at' => $link->reversed_at,
+                'request_status' => $link->request_deleted_at ? 'deleted' : $link->request_status,
+                'order_sources' => $link->status === 'active' ? $orderSources->get($link->purchase_request_item_id, collect())->values()->all() : [],
+                'source_snapshot' => ['order_no' => $link->request_no, 'request_no' => $link->request_no,
+                    'item_id' => $link->item_id ?? $snapshot['item_id'] ?? null, 'item_code' => $link->item_code ?? $snapshot['item_code'] ?? null,
+                    'item_name' => $link->item_name ?? $snapshot['item_name'] ?? null, 'spec_model' => $link->spec_model ?? $snapshot['spec_model'] ?? null,
+                    'purchase_unit_name' => $link->unit_name ?? $snapshot['base_unit_name'] ?? null,
+                    'base_unit_name' => $link->unit_name ?? $snapshot['base_unit_name'] ?? null,
+                    'source_request_qty' => $link->request_qty ?? $snapshot['source_request_qty'] ?? null] + $snapshot,
+                'progress' => ['total' => round(array_sum($stages), 4), 'stages' => $stages, 'documents' => $documents]];
+        });
+        $this->attachStored($page->getCollection());
         return $page;
+    }
+
+    /**
+     * 采购在途投影只到“到货待入库”，正式入库后单据就退出在途；这里补上已入库的结果，
+     * 让销售能看到订的货到没到仓库。只返回数量、入库单号和时间，不返回任何价格。
+     * 一条采购需求行被多张销售订单分摊时，入库量无法逐单区分，按本单归属数量封顶并标记 shared。
+     */
+    private function attachStored($rows): void
+    {
+        $active = $rows->where('status', 'active');
+        $requestItemIds = $active->where('source_type', 'purchase_request')->pluck('purchase_request_item_id')->filter()->unique()->values()->all();
+        $orderItemIds = $active->where('source_type', 'purchase_order')->pluck('purchase_order_item_id')->filter()->unique()->values()->all();
+        $posted = fn () => DB::table('erp_purchase_receipt_items as ri')->join('erp_purchase_receipts as r', 'r.id', '=', 'ri.receipt_id')
+            ->leftJoin('erp_inventory_transactions as tx', fn ($join) => $join->on('tx.source_id', '=', 'r.id')
+                ->where('tx.source_type', 'purchase_receipt')->where('tx.transaction_type', 'purchase_receipt_posting'))
+            ->where('r.stock_post_status', 'posted')->where('ri.is_stock_item_snapshot', 1)->orderBy('r.id');
+        $byRequestItem = $requestItemIds ? $posted()->join('erp_purchase_order_items as oi', 'oi.id', '=', 'ri.order_item_id')
+            ->leftJoin('erp_purchase_plan_items as p', 'p.id', '=', 'oi.plan_item_id')->whereColumn('ri.item_id', 'oi.item_id')
+            ->whereIn(DB::raw('COALESCE(oi.request_item_id, p.request_item_id)'), $requestItemIds)
+            ->selectRaw('COALESCE(oi.request_item_id, p.request_item_id) AS source_key, r.receipt_no, tx.posted_at, COALESCE(ri.final_stockable_base_qty, ri.qualified_base_qty, 0) AS qty')
+            ->get()->groupBy('source_key') : collect();
+        $byOrderItem = $orderItemIds ? $posted()->whereIn('ri.order_item_id', $orderItemIds)
+            ->selectRaw('ri.order_item_id AS source_key, r.receipt_no, tx.posted_at, COALESCE(ri.final_stockable_base_qty, ri.qualified_base_qty, 0) AS qty')
+            ->get()->groupBy('source_key') : collect();
+        $owners = $requestItemIds && Schema::hasTable('erp_purchase_request_sales_links') ? DB::table('erp_purchase_request_sales_links')
+            ->whereIn('purchase_request_item_id', $requestItemIds)->where('status', 'active')
+            ->selectRaw('purchase_request_item_id, COUNT(DISTINCT sales_order_id) AS owners')->groupBy('purchase_request_item_id')->pluck('owners', 'purchase_request_item_id') : collect();
+        $rows->transform(function (array $row) use ($byRequestItem, $byOrderItem, $owners): array {
+            $receipts = $row['status'] !== 'active' ? collect() : ($row['source_type'] === 'purchase_order'
+                ? $byOrderItem->get($row['purchase_order_item_id'] ?? 0, collect()) : $byRequestItem->get($row['purchase_request_item_id'] ?? 0, collect()));
+            $total = round((float) $receipts->sum('qty'), 4);
+            $owned = (float) ($row['purchase_qty'] ?? 0);
+            $row['stored'] = [
+                'qty' => $owned > 0 ? min($total, $owned) : $total, 'total_qty' => $total,
+                'shared' => (int) ($owners[$row['purchase_request_item_id'] ?? 0] ?? 0) > 1,
+                'documents' => $receipts->map(fn ($r) => ['receipt_no' => $r->receipt_no, 'posted_at' => $r->posted_at, 'qty' => round((float) $r->qty, 4)])->values()->all(),
+            ];
+            return $row;
+        });
     }
 
     /** Internal attribution prices remain stored; sales sees only the quantity relationship. */
@@ -117,6 +225,7 @@ class SalesOrderFinanceQueryService
             'status', 'reason', 'created_by', 'created_at', 'updated_at', 'reverse_reason', 'reversed_by', 'reversed_at']);
         $data['source_snapshot'] = Arr::only((array) $link->source_snapshot, ['order_no', 'supplier_id', 'supplier_name', 'item_id', 'item_code',
             'item_name', 'spec_model', 'purchase_unit_id', 'purchase_unit_name', 'source_purchase_qty']);
+        $data['source_type'] = 'purchase_order';
         return $data;
     }
 
@@ -140,17 +249,55 @@ class SalesOrderFinanceQueryService
         if (!empty($filters['order_status'])) $orders->where('order_status', $filters['order_status']);
         if (!empty($filters['order_date_start'])) $orders->whereDate('order_date', '>=', $filters['order_date_start']);
         if (!empty($filters['order_date_end'])) $orders->whereDate('order_date', '<=', $filters['order_date_end']);
-        if (($filters['purchase_link_status'] ?? '') === 'linked') $orders->whereIn('id', SalesOrderPurchaseLink::where('status', 'active')->select('sales_order_id'));
-        if (($filters['purchase_link_status'] ?? '') === 'unlinked') $orders->whereNotIn('id', SalesOrderPurchaseLink::where('status', 'active')->select('sales_order_id'));
-        $linked = DB::table('erp_sales_order_purchase_links')->where('status', 'active')->whereIn('sales_order_id', (clone $orders)->select('id'))
-            ->selectRaw('COUNT(*) AS link_count, COUNT(DISTINCT sales_order_id) AS linked_order_count, COUNT(DISTINCT purchase_order_id) AS purchase_order_count')->first();
+        if (($filters['purchase_link_status'] ?? '') === 'linked') $orders->whereIn('id', $this->activeSalesLinks()->select('sales_order_id'));
+        if (($filters['purchase_link_status'] ?? '') === 'unlinked') $orders->whereNotIn('id', $this->activeSalesLinks()->select('sales_order_id'));
+        $linked = $this->activeSalesLinks()->whereIn('sales_order_id', (clone $orders)->select('id'))
+            ->selectRaw('COUNT(*) AS link_count, COUNT(DISTINCT sales_order_id) AS linked_order_count')->first();
+        $purchaseOrderCount = $this->purchaseOrderSources()->whereIn('sales_order_id', (clone $orders)->select('id'))->distinct()->count('purchase_order_id');
         $page = $orders->orderByDesc('id')->paginate($filters['per_page'] ?? 10);
         $page->getCollection()->transform(function ($order): array {
             $overview = $this->overview($order);
             return [...$overview, 'customer_name' => $order->customer_name, 'order_date' => $order->order_date?->toDateString(), 'order_status' => $order->order_status];
         });
         return [...$page->toArray(), 'summary' => ['order_count' => $page->total(), 'linked_order_count' => (int) $linked->linked_order_count,
-            'purchase_order_count' => (int) $linked->purchase_order_count, 'link_count' => (int) $linked->link_count],
+            'purchase_order_count' => $purchaseOrderCount, 'link_count' => (int) $linked->link_count],
             'summary_scope' => '全部符合筛选条件的订单；采购关联仅统计单据数量。'];
+    }
+
+    private function activeSalesLinks()
+    {
+        $query = DB::table('erp_sales_order_purchase_links')->where('status', 'active')->select('sales_order_id');
+        if (Schema::hasTable('erp_purchase_request_sales_links')) {
+            $query->unionAll(DB::table('erp_purchase_request_sales_links')->where('status', 'active')->select('sales_order_id'));
+        }
+        $query->unionAll(DB::table('erp_purchase_requests')->where('source_type', 'sales')->whereNotNull('source_id')
+            ->whereNull('deleted_at')->where('request_status', '<>', 'cancelled')->select('source_id as sales_order_id'));
+        return DB::query()->fromSub($query, 'active_sales_links');
+    }
+
+    private function salesRequestItems()
+    {
+        return DB::table('erp_purchase_request_items as i')->join('erp_purchase_requests as r', 'r.id', '=', 'i.request_id')
+            ->where('r.source_type', 'sales')->whereNotNull('r.source_id')->whereNull('r.deleted_at');
+    }
+
+    private function purchaseOrderSources()
+    {
+        $query = DB::table('erp_sales_order_purchase_links')->where('status', 'active')->selectRaw('sales_order_id, purchase_order_id, NULL AS request_item_id');
+        $query->unionAll(DB::table('erp_purchase_order_items as i')->leftJoin('erp_purchase_plan_items as p', 'p.id', '=', 'i.plan_item_id')
+            ->join('erp_purchase_request_items as ri', 'ri.id', '=', DB::raw('COALESCE(i.request_item_id, p.request_item_id)'))
+            ->join('erp_purchase_requests as r', 'r.id', '=', 'ri.request_id')
+            ->whereColumn('ri.item_id', 'i.item_id')->where('r.source_type', 'sales')->whereNotNull('r.source_id')
+            ->whereNull('r.deleted_at')->where('r.request_status', '<>', 'cancelled')
+            ->select('r.source_id as sales_order_id', 'i.order_id as purchase_order_id', 'ri.id as request_item_id'));
+        if (Schema::hasTable('erp_purchase_request_sales_links')) {
+            // 数量关联只沿精确需求行追溯订单；不把整张计划或需求下的其他物料算进来。
+            $query->unionAll(DB::table('erp_purchase_order_items as i')->leftJoin('erp_purchase_plan_items as p', 'p.id', '=', 'i.plan_item_id')
+                ->join('erp_purchase_request_sales_links as l', 'l.purchase_request_item_id', '=', DB::raw('COALESCE(i.request_item_id, p.request_item_id)'))
+                ->join('erp_purchase_request_items as r', 'r.id', '=', 'l.purchase_request_item_id')
+                ->whereColumn('r.item_id', 'i.item_id')->where('l.status', 'active')
+                ->select('l.sales_order_id', 'i.order_id as purchase_order_id', 'l.purchase_request_item_id as request_item_id'));
+        }
+        return DB::query()->fromSub($query, 'purchase_sources');
     }
 }

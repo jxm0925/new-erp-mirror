@@ -176,7 +176,7 @@ final class WarehouseActionService
                 'items.*.warehouse_id' => 'nullable|integer|min:1', 'items.*.location_id' => 'nullable|integer|min:1',
                 'items.*.batch_no' => 'nullable|string|max:80', 'items.*.inspection_remark' => 'nullable|string|max:1000'],
             'material_delivery.prepare' => ['work_order_id' => 'required|integer|min:1', 'units' => 'nullable|integer|min:1|max:100000',
-                'remark' => 'nullable|string|max:500', 'dispatch' => 'nullable|boolean', 'expected_source_revision' => 'nullable|string|regex:/^[a-f0-9]{64}$/'],
+                'remark' => 'nullable|string|max:500', 'dispatch' => 'nullable|boolean', 'expected_source_revision' => 'nullable|string|regex:/^[a-f0-9]{64}$/'] + MaterialDeliveryService::selectionRules(),
             'material_delivery.dispatch' => ['expected_source_revision' => 'nullable|string|regex:/^[a-f0-9]{64}$/'],
             'material_delivery.repick', 'stocktake.complete' => [],
             'material_delivery.cancel', 'material_delivery.redeliver' => ['remark' => 'nullable|string|max:500'],
@@ -267,7 +267,8 @@ final class WarehouseActionService
             $deliveries = app(MaterialDeliveryService::class);
             $delivery = match ($action) {
                 'material_delivery.prepare' => $deliveries->prepare((int) $payload['work_order_id'], $id,
-                    isset($payload['units']) ? (int) $payload['units'] : null, $payload['remark'] ?? null, $user, $payload['expected_source_revision'] ?? null),
+                    isset($payload['units']) ? (int) $payload['units'] : null, $payload['remark'] ?? null, $user,
+                    $payload['expected_source_revision'] ?? null, $payload['selections'] ?? []),
                 'material_delivery.dispatch' => $deliveries->dispatch($id, $user, $payload['expected_source_revision'] ?? null),
                 'material_delivery.repick' => $deliveries->repick($id, $user),
                 'material_delivery.cancel' => $deliveries->cancel($id, $payload['remark'] ?? null, $user),

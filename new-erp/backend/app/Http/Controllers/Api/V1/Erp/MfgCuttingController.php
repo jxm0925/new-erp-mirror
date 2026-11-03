@@ -16,16 +16,17 @@ class MfgCuttingController extends Controller
 {
     public function context(Request $request, int $id, CuttingService $cutting)
     {
-        [, $amounts] = $this->user($request, false, null, $id);
+        [$user, $amounts] = $this->user($request, false, null, $id);
         $data = $request->validate(['page' => 'nullable|integer|min:1', 'per_page' => 'nullable|integer|min:1|max:50', 'operation_id' => 'nullable|integer|min:1']);
-        return response()->json(['data' => $cutting->context($id, $data, $amounts)]);
+        return response()->json(['data' => $cutting->context($id, $data, $amounts, $user)]);
     }
 
     public function sources(Request $request, int $id, CuttingService $cutting)
     {
-        [, $amounts] = $this->user($request, false, null, $id);
-        $data = $request->validate(['item_id' => 'required|integer|min:1', 'category_id' => 'nullable|integer|min:1',
+        $data = $request->validate(['item_id' => 'nullable|required_without:operation_id|integer|min:1',
+            'operation_id' => 'nullable|required_without:item_id|integer|min:1', 'category_id' => 'nullable|integer|min:1',
             'keyword' => 'nullable|string|max:120', 'page' => 'nullable|integer|min:1', 'per_page' => 'nullable|integer|min:1|max:50']);
+        [, $amounts] = $this->user($request, false, isset($data['operation_id']) ? (int) $data['operation_id'] : null, $id);
         return response()->json($cutting->sources($id, $data, $amounts));
     }
 
@@ -34,6 +35,13 @@ class MfgCuttingController extends Controller
         $data = $request->validate($this->planRules());
         [, $amounts] = $this->user($request, false, (int) $data['operation_id'], $id);
         return response()->json(['data' => $cutting->preview($id, $data, $amounts)]);
+    }
+
+    public function recommend(Request $request, int $id, CuttingService $cutting)
+    {
+        $data = $request->validate(['operation_id' => 'required|integer|min:1', 'unit_qty' => 'required|integer|min:1|max:1000']);
+        [, $amounts] = $this->user($request, false, (int) $data['operation_id'], $id);
+        return response()->json(['data' => $cutting->recommend($id, $data, $amounts)]);
     }
 
     public function issue(Request $request, int $id, CuttingService $cutting)
@@ -53,7 +61,7 @@ class MfgCuttingController extends Controller
         $auth = app(AuthContextService::class);
         $result = app(\App\Services\Erp\WarehouseCommandService::class)->run('cutting_batch.request', $id, $commandId, $data,
             $user, $auth->permissionCodes($user), $auth->isSuperAdmin($user))['result'];
-        return response()->json(['message' => $result['status'] === 'settled' ? '真实零余料已确认，开料已结算。' : '产出已登记，车间可继续加工；余料待仓库确认。', 'data' => $result]);
+        return response()->json(['message' => '实际产出与余料已记录，开料已结算。', 'data' => $result]);
     }
 
     private function planRules(): array

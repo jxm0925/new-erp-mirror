@@ -62,7 +62,7 @@ final class MaterialReturnService
     {
         [$wo, $op] = $this->context($workOrderId, $operationId, false);
         $rows = [];
-        foreach ($this->issues->receivable($op) as $m) {
+        foreach ($this->issues->receivable($op, false, true) as $m) {
             if ((float) $m->issued_qty <= self::EPS && ! $this->sources($wo, $m)->count()) continue;
             $item = Item::query()->find($m->component_item_id);
             $mode = $item ? $item->serialTrackingMode() : 'none';
@@ -540,7 +540,7 @@ final class MaterialReturnService
      */
     private function buildLines(MfgWorkOrder $wo, MfgWorkOrderOperation $op, string $type, array $lines, ?int $exceptReturnId, ?int $onlyIssueId = null): array
     {
-        $materials = $this->issues->receivable($op, true)->keyBy('id');
+        $materials = $this->issues->receivable($op, true, true)->keyBy('id');
         $grouped = [];
         foreach ($lines as $line) {
             $id = (int) ($line['material_id'] ?? 0);

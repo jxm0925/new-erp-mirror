@@ -36,12 +36,13 @@
 
     <!-- 实际领用原料 -->
     <view wx:if="{{canIssue}}" class="mt-card">
-      <view class="mt-card-title"><text>实际领用原料</text><text class="tk-link red" bindtap="openSources">{{sources.length ? '重新选择 ›' : '选择库存原料 ›'}}</text></view>
-      <view wx:if="{{!sources.length}}" class="mt-muted">请选择本次实际投入切割的整板、整管或库存余料</view>
+      <view class="mt-card-title"><text>实际领用原料</text><text class="tk-link red" bindtap="openSources">{{sources.length ? '重新选择 ›' : '自动选料 ›'}}</text></view>
+      <view wx:if="{{!sources.length}}" class="mt-muted">进入选料后按本次需求自动推荐原料与用量，核对后确认。</view>
       <view wx:for="{{sources}}" wx:key="source_key" class="clean-item-row">
         <view class="clean-item-left">
-          <view class="clean-item-name mono">{{item.physical_no || item.batch_no}}</view>
-          <view class="clean-item-spec">{{item.item_name}} · {{item.warehouse_name}} / {{item.location_name}}</view>
+          <view class="clean-item-name">{{item.sourceTitle}} · {{item.sourceSpec}}</view>
+          <view class="clean-item-spec mono">{{item.sourceRef}}</view>
+          <view class="clean-item-spec">{{item.sourcePlace}}</view>
         </view>
         <view class="clean-item-right">
           <view class="clean-item-req {{item.mode === 'length' ? 'ct-measure' : ''}}">{{item.qtyText}}</view>
@@ -56,7 +57,8 @@
     <view wx:if="{{groups.length}}" class="mt-card">
       <view class="mt-card-title"><text>原料排料与切割明细</text><text class="mt-muted">支持人工调整件数</text></view>
       <view wx:for="{{groups}}" wx:key="source_key" wx:for-item="group" wx:for-index="g" class="ct-group">
-        <view class="ct-group-head mono">{{group.name}}</view>
+        <view class="ct-group-head">{{group.sourceTitle}} · {{group.sourceSpec}}</view>
+        <view class="mt-muted mono">{{group.sourceRef}}</view>
         <view class="mt-muted">{{group.sizeText}} · {{group.summaryText}}</view>
         <view wx:for="{{group.rows}}" wx:key="part_key" wx:for-index="r" class="ct-line mt-gap">
           <text class="k">{{item.partName}} <text class="mt-muted">{{item.partSize}}</text></text>
@@ -83,7 +85,7 @@
           <text class="mt-tag {{item.status === 'settled' ? 'green' : 'amber'}}">{{item.statusText}}</text>
         </view>
         <view class="mt-muted">{{item.status === 'settled' ? '实际完工 ' + item.completed_unit_qty : '计划开料 ' + item.unit_qty}} 套 · {{item.sourceText}}</view>
-        <view class="tk-link {{item.status === 'settled' ? '' : 'red'}} mt-gap">{{item.status === 'settled' ? '查看登记详情 ›' : item.status === 'awaiting_confirm' ? '余料待仓库确认 ›' : '登记实际产出与余料 ›'}}</view>
+        <view class="tk-link {{item.editable ? 'red' : ''}} mt-gap">{{item.editable ? item.status === 'issued' ? '登记实际产出与余料 ›' : '核对余料并结算 ›' : '查看登记详情 ›'}}</view>
       </view>
     </view>
     <view wx:if="{{!canIssue && remaining > 0}}" class="mt-note">当前工单未处于生产中状态，暂不可领料开料。</view>
@@ -96,10 +98,15 @@
 
 <!-- 选择库存原料弹窗 -->
 <view wx:if="{{panel === 'sources'}}" class="tk-mask" catchtouchmove="stop">
-  <view class="tk-sheet">
-    <view class="mt-row tk-sheet-head"><text class="mt-title">选择库存原料</text><text class="mt-muted">已选 {{pickedCount}} 条</text></view>
+  <view class="tk-sheet ct-source-sheet">
+    <view class="ct-source-header">
+    <view class="mt-row tk-sheet-head"><text class="mt-title">选择库存原料</text><text class="tk-link red" bindtap="showSelectedSources">{{showPicked ? '返回库存' : '查看已选'}}（{{pickedCount}}）</text></view>
+    <view class="mt-row ct-source-tools">
+      <text class="mt-muted">本次开料 {{unitQty}} 套</text>
+      <button class="mt-btn mt-btn-mini" loading="{{autoLoading}}" disabled="{{autoLoading}}" bindtap="recommendSources">{{autoLoading ? '正在选料' : '按需求自动选料'}}</button>
+    </view>
     <production-select
-      wx:if="{{items.length > 1}}"
+      wx:if="{{!showPicked && items.length > 1}}"
       options="{{items}}"
       label-key="label"
       value="{{itemIndex}}"
@@ -107,31 +114,41 @@
       prefix="开料物料："
       bind:change="pickItem"
     />
-    <view wx:else class="ct-select">{{items[0].label}}</view>
-    <view class="mt-search">
-      <input class="mt-input" value="{{keyword}}" bindinput="keywordInput" placeholder="搜索实物编号 / 批次 / 仓库库位" confirm-type="search" bindconfirm="searchSources" />
+    <view wx:elif="{{!showPicked}}" class="ct-select">{{items[0].label}}</view>
+    <view wx:if="{{!showPicked}}" class="mt-search">
+      <input class="mt-input" value="{{keyword}}" bindinput="keywordInput" placeholder="搜索物料 / 规格 / 批次 / 库位" confirm-type="search" bindconfirm="searchSources" />
       <button class="mt-btn mt-btn-mini" bindtap="searchSources">查询</button>
     </view>
+    <view wx:if="{{!showPicked && !sourceLoading && !autoLoading && rows.length}}" class="mt-row mt-gap">
+      <text class="tk-link red" bindtap="togglePageSources">{{pageSelected ? '取消本页选择' : '本页全选'}}</text>
+      <text class="mt-muted">共 {{total}} 条库存来源</text>
+    </view>
+    </view>
     <scroll-view scroll-y class="tk-sheet-body">
-      <view wx:if="{{sourceError}}" class="mt-error">{{sourceError}}</view>
-      <view wx:if="{{sourceLoading}}" class="mt-muted">正在读取可用库存…</view>
-      <view wx:elif="{{!rows.length}}" class="mt-muted">当前物料暂无可用库存</view>
-      <view wx:for="{{rows}}" wx:key="source_key" class="ct-row">
+      <view wx:if="{{!showPicked && sourceError}}" class="mt-error">{{sourceError}}</view>
+      <view wx:if="{{autoLoading}}" class="mt-muted">正在按下料需求匹配原料与数量…</view>
+      <view wx:elif="{{!showPicked && sourceLoading}}" class="mt-muted">正在读取可用库存…</view>
+      <view wx:elif="{{!shownSources.length}}" class="mt-muted">{{showPicked ? '尚未选择原料' : '暂无符合条件的库存原料'}}</view>
+      <view wx:for="{{shownSources}}" wx:key="source_key" class="ct-row">
+        <view class="clean-item-name">{{item.item_name}}</view>
+        <view class="mt-muted">{{item.item_code}}{{item.specification ? ' · ' + item.specification : ''}}{{item.material_grade ? ' · ' + item.material_grade : ''}}</view>
         <view class="ct-line" data-key="{{item.source_key}}" bindtap="toggleSource">
           <view class="tk-check {{picked[item.source_key] ? 'on' : ''}}">{{picked[item.source_key] ? '✓' : ''}}</view>
           <text class="k mono">{{item.nameText}}</text>
           <text class="mt-muted">可用 {{item.availableText}} {{item.unitText}}</text>
         </view>
-        <view wx:if="{{item.mode === 'length'}}" class="ct-measure">{{item.sizeText}}<text wx:if="{{item.totalText}}"> · 共 {{item.totalText}}</text></view>
+        <view class="ct-measure">本次需 {{item.needText}}</view>
+        <view wx:if="{{item.mode === 'length'}}" class="mt-muted">{{item.sizeText}}</view>
         <view class="mt-muted">{{item.mode === 'length' ? '' : item.sizeText + ' · '}}{{item.placeText}}</view>
-        <view wx:if="{{picked[item.source_key] && item.countable}}" class="ct-line mt-gap">
+        <view wx:if="{{picked[item.source_key]}}" class="ct-line mt-gap">
           <text class="k">本次领用数量</text>
-          <input class="ct-input" type="{{item.unit_kind === 'm' ? 'digit' : 'number'}}" value="{{picked[item.source_key].qty}}" data-key="{{item.source_key}}" bindinput="pickedQtyInput" />
+          <input wx:if="{{item.countable}}" class="ct-input" type="digit" disabled="{{autoLoading}}" value="{{picked[item.source_key].measureInput}}" data-key="{{item.source_key}}" bindinput="pickedQtyInput" />
+          <text wx:else>{{picked[item.source_key].measureInput}}</text>
           <text>{{item.unitText}}</text>
-          <text wx:if="{{picked[item.source_key].metersText}}" class="ct-measure">= {{picked[item.source_key].metersText}}</text>
         </view>
+        <view wx:if="{{picked[item.source_key].qty > 0 && picked[item.source_key].stockText}}" class="mt-muted">折合 {{picked[item.source_key].stockText}}</view>
       </view>
-      <view wx:if="{{lastPage > 1}}" class="mt-pager">
+      <view wx:if="{{!showPicked && lastPage > 1}}" class="mt-pager">
         <button class="mt-btn ghost mt-btn-mini" disabled="{{page <= 1}}" data-delta="-1" bindtap="turnPage">上一页</button>
         <text>{{page}} / {{lastPage}}</text>
         <button class="mt-btn ghost mt-btn-mini" disabled="{{page >= lastPage}}" data-delta="1" bindtap="turnPage">下一页</button>
@@ -139,15 +156,15 @@
     </scroll-view>
     <view class="tk-sheet-foot">
       <button class="mt-btn ghost side" bindtap="closePanel">取消</button>
-      <button class="mt-btn" disabled="{{!pickedCount}}" bindtap="confirmSources">确认选用原料</button>
+      <button class="mt-btn" disabled="{{!pickedCount || autoLoading}}" bindtap="confirmSources">确认选用原料</button>
     </view>
   </view>
 </view>
 
 <!-- 登记产出与余料弹窗 -->
 <view wx:if="{{panel === 'batch'}}" class="tk-mask" catchtouchmove="stop">
-  <view class="tk-sheet">
-    <view class="mt-row tk-sheet-head"><text class="mt-title">{{batch.status === 'issued' ? '登记实际产出与余料' : '开料登记详情'}}</text><text class="mt-muted mono">{{batch.batch_no}}</text></view><view wx:if="{{batch.waiting_reason}}" class="mt-note">{{batch.waiting_reason}}</view><button wx:if="{{batch.remnant_receipt.id}}" class="mt-btn plain" data-id="{{batch.remnant_receipt.id}}" bindtap="openRemnantReceipt">查看余料入库申请</button>
+  <view class="tk-sheet ct-batch-sheet">
+    <view class="mt-row tk-sheet-head"><text class="mt-title">{{batch.editable ? '登记实际产出与余料' : '开料登记详情'}}</text><text class="mt-muted mono">{{batch.batch_no}}</text></view><view wx:if="{{batch.waiting_reason}}" class="mt-note">{{batch.waiting_reason}}</view><button wx:if="{{batch.remnant_receipt.id}}" class="mt-btn plain" data-id="{{batch.remnant_receipt.id}}" bindtap="openRemnantReceipt">查看历史余料申请</button>
     <scroll-view scroll-y class="tk-sheet-body">
       <view class="mt-kv">
         <text class="k">实际完成套数</text>
@@ -161,7 +178,8 @@
       <view wx:if="{{batch.status === 'issued' && actualUnits < batch.unit_qty}}" class="mt-muted">若实际完成套数少于计划套数，请同步核改下方各零件实际切出数量。</view>
       <view class="mt-card-title mt-gap">实际产出明细</view>
       <view wx:for="{{actual}}" wx:key="rowKey" class="ct-row">
-        <view class="mt-muted mono">{{item.sourceName}}</view>
+        <view class="clean-item-name">{{item.sourceTitle}} · {{item.sourceSpec}}</view>
+        <view class="mt-muted mono">{{item.sourceRef}}</view>
         <view class="ct-line">
           <text class="k">{{item.partName}} <text class="mt-muted">{{item.partSize}}</text></text>
           <input wx:if="{{batch.status === 'issued'}}" class="ct-input" type="digit" value="{{item.qty}}" data-index="{{index}}" bindinput="actualQtyInput" />
@@ -171,19 +189,24 @@
       </view>
       <view class="mt-card-title mt-gap">余料确认（板材按面积 m²，管材按长度 m）</view>
       <view wx:for="{{remnants}}" wx:key="source_key" class="ct-row">
+        <view class="clean-item-name">{{item.sourceTitle}} · {{item.sourceSpec}}</view>
+        <view wx:if="{{item.sourceCode}}" class="mt-muted mono">物料编码 {{item.sourceCode}}</view>
+        <view class="mt-muted mono">{{item.sourceRef}}</view>
+        <view class="mt-muted">领入 {{item.inputText}} · 实际产出 {{item.outputText}}</view>
+        <view wx:if="{{item.sourcePlace}}" class="mt-muted">领料位置 {{item.sourcePlace}}</view>
         <view class="ct-line">
-          <text class="k mono">{{item.sourceName}}</text>
-          <input wx:if="{{batch.status === 'issued'}}" class="ct-input" type="digit" value="{{item.measure_qty}}" data-index="{{index}}" bindinput="remnantInput" />
+          <text class="k">实际余料</text>
+          <input wx:if="{{batch.editable}}" class="ct-input" type="digit" value="{{item.measure_qty}}" data-index="{{index}}" bindinput="remnantInput" />
           <text wx:else>{{item.measure_qty}}</text>
           <text>{{item.unitText}}</text>
         </view>
         <view wx:if="{{item.measure_qty > 0}}" class="ct-line mt-gap">
           <text class="k mt-muted">余料回库库位</text>
-          <text wx:if="{{batch.status === 'issued'}}" class="ct-locator" data-index="{{index}}" bindtap="openLocator">{{item.location_id ? item.warehouse_name + ' / ' + item.location_name : '选择仓库与库位'}} ›</text>
+          <text wx:if="{{batch.editable}}" class="ct-locator" data-index="{{index}}" bindtap="openLocator">{{item.location_id ? item.warehouse_name + ' / ' + item.location_name : '选择仓库与库位'}} ›</text>
           <text wx:else>{{item.warehouse_name}} / {{item.location_name}}</text>
         </view>
       </view>
-      <block wx:if="{{batch.status === 'issued'}}">
+      <block wx:if="{{batch.editable}}">
         <textarea class="tk-textarea mt-gap" value="{{remark}}" maxlength="500" placeholder="填写开料备注说明（选填）" bindinput="remarkInput" />
         <view class="ct-confirm" bindtap="toggleConfirmed">
           <view class="tk-check {{confirmed ? 'on' : ''}}">{{confirmed ? '✓' : ''}}</view><text>已人工核对实际产出件数与余料数据</text>
@@ -192,7 +215,7 @@
     </scroll-view>
     <view class="tk-sheet-foot">
       <button class="mt-btn ghost side" disabled="{{busy}}" bindtap="closePanel">关闭</button>
-      <button wx:if="{{batch.status === 'issued'}}" class="mt-btn" disabled="{{busy || !confirmed}}" bindtap="settle">确认登记</button>
+      <button wx:if="{{batch.editable}}" class="mt-btn" disabled="{{busy || !confirmed}}" bindtap="settle">确认登记结算</button>
     </view>
   </view>
 </view>

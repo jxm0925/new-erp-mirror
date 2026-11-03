@@ -15,6 +15,7 @@ use App\Models\Erp\MfgWorkOrderUnit;
 use App\Services\Erp\DocumentNumberService;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Validator;
 
 /**
  * 仓库配料配送：库管按工序配料（按先入先用给出拣货库位/批次/编号，不扣库存）→ 发出（扣库存、记已领、编号登记到设备）
@@ -52,8 +53,10 @@ final class MaterialDeliveryService
     public static function holds(?int $exceptId = null): array
     {
         $out = ['balances' => [], 'serials' => []];
+        // 等过物料锁后必须当前读；命令事务先前的查询快照不能漏掉刚提交的待配料占用。
         $rows = MfgMaterialDelivery::query()->where('status', 'prepared')->when($exceptId, fn ($q, $v) => $q->where('id', '!=', $v))
-            ->whereHas('workOrder', fn ($q) => $q->whereIn('status', self::OPEN_WO))->get(['id', 'lines']);
+            ->whereHas('workOrder', fn ($q) => $q->whereIn('status', self::OPEN_WO))->orderBy('id')
+            ->when(DB::transactionLevel() > 0, fn ($q) => $q->lockForUpdate())->get(['id', 'lines']);
         foreach ($rows as $d) foreach ((array) $d->lines as $l) foreach ((array) ($l['picks'] ?? []) as $p) {
             $out['balances'][(int) $p['balance_id']] = round(($out['balances'][(int) $p['balance_id']] ?? 0) + (float) $p['qty'], 4);
             foreach ((array) ($p['serial_ids'] ?? []) as $sid) $out['serials'][(int) $sid] = true;
@@ -82,6 +85,7 @@ final class MaterialDeliveryService
         $semis = Item::query()->whereIn('id', $materials->pluck('component_item_id')->unique())->where('item_type', 'semi_finished')
             ->when($lock, fn ($q) => $q->lockForUpdate())->pluck('id')->map(fn ($id) => (int) $id)->all();
         return $materials->reject(fn ($m) => in_array($m->supply_mode, self::NOT_DELIVERED, true)
+            || in_array($m->cutting_mode, ['sheet', 'length'], true)
             || in_array((int) $m->component_item_id, $semis, true))->values();
     }
 
@@ -139,13 +143,54 @@ final class MaterialDeliveryService
         return $rows;
     }
 
+    public static function selectionRules(): array
+    {
+        return ['selections' => 'sometimes|array|max:1000', 'selections.*.material_id' => 'required|integer|min:1|distinct',
+            'selections.*.picks' => 'required|array|min:1|max:1000', 'selections.*.picks.*.balance_id' => 'required|integer|min:1',
+            'selections.*.picks.*.qty' => ['required', 'numeric', 'gt:0', 'regex:/^\d+(\.\d{1,4})?$/'],
+            'selections.*.picks.*.serial_ids' => 'sometimes|array|max:1000', 'selections.*.picks.*.serial_ids.*' => 'required|integer|min:1'];
+    }
+
     /** 配料预览：这次配到第几台、每种料从哪个库位拿多少（不扣库存）。 */
-    public function preview(int $workOrderId, int $operationId, ?int $units): array
+    public function preview(int $workOrderId, int $operationId, ?int $units, array $selections = []): array
     {
         [$wo, $op] = $this->context($workOrderId, $operationId, false);
-        [$lines, $short, $done, $target] = $this->buildPlan($wo, $op, $units, false);
+        [$lines, $short, $done, $target] = $this->buildPlan($wo, $op, $units, false, $selections);
         return ['work_order_no' => $wo->work_order_no, 'operation_name' => $op->operation_name, 'planned_qty' => (float) $wo->planned_qty,
-            'covered_units' => $done, 'target_units' => $target, 'lines' => $lines, 'short' => $short];
+            'covered_units' => $done, 'target_units' => $target, 'lines' => $lines, 'short' => $short, 'source_revision' => self::sourceRevision($lines)];
+    }
+
+    /** 仓库只申请本次配料实际缺少的外购件；全厂分配后的本单剩余缺口负责扣掉采购在途。 */
+    public function shortagePurchasePreview(int $workOrderId, int $operationId, ?int $units, array $selections = [], bool $lock = false): array
+    {
+        [$wo, $op] = $this->context($workOrderId, $operationId, $lock);
+        if ($lock) CancellationProductionService::assertProductionAllowed((int) $wo->id);
+        [$lines] = $this->buildPlan($wo, $op, $units, $lock, $selections);
+        $short = collect($lines)->where('short_qty', '>', self::EPS)->groupBy('component_item_id');
+        $shortages = app(ShortageService::class);
+        $rows = $shortages->compute($short->keys()->map(fn ($id) => (int) $id)->all());
+        $units = $shortages->purchaseUnits(array_keys($rows));
+        $out = [];
+        foreach ($short as $itemId => $materials) {
+            $row = $rows[$itemId] ?? null;
+            $demand = collect($row['work_orders'] ?? [])->firstWhere('id', $workOrderId);
+            // shortcut: 在途只归属工单，跨页面同工序去重需补工序级采购归属；不能把其他工序的在途全部抵到本道。
+            $qty = round(min($materials->sum('short_qty'), (float) ($demand['shortage_qty'] ?? 0)), 4);
+            if ($qty <= self::EPS) continue;
+            $unit = collect($units[$itemId] ?? [])->firstWhere('is_base', true);
+            if (! $unit) $this->fail('unit_invalid', $row['item_name'].' 未维护有效的库存单位，请先补齐物料档案。');
+            $out[] = ['item_id' => (int) $itemId, 'qty' => $qty, 'purchase_unit_id' => (int) $unit['unit_id'],
+                'name' => $row['item_name'], 'unit' => $unit['unit_name'], 'transit' => (float) ($demand['transit_qty'] ?? 0)];
+        }
+        return ['lines' => $out];
+    }
+
+    public function candidates(int $workOrderId, int $operationId, array $filters): array
+    {
+        [$wo, $op] = $this->context($workOrderId, $operationId, false);
+        $material = $this->deliverable($op)->firstWhere('id', (int) $filters['material_id']);
+        if (! $material) $this->fail('material_invalid', '所选物料不在本道配料范围内，请刷新后重选。');
+        return $this->issues->deliveryCandidates($material, $wo, $filters);
     }
 
     /** Only immutable picking identities and quantities participate; display names and array order do not. */
@@ -165,12 +210,12 @@ final class MaterialDeliveryService
     }
 
     /** 生成配料单（待发出）。库存不够就整单不配，提示缺多少。 */
-    public function prepare(int $workOrderId, int $operationId, ?int $units, ?string $remark, object $actor, ?string $expectedSourceRevision = null): MfgMaterialDelivery
+    public function prepare(int $workOrderId, int $operationId, ?int $units, ?string $remark, object $actor, ?string $expectedSourceRevision = null, array $selections = []): MfgMaterialDelivery
     {
-        return DB::transaction(function () use ($workOrderId, $operationId, $units, $remark, $actor, $expectedSourceRevision) {
+        return DB::transaction(function () use ($workOrderId, $operationId, $units, $remark, $actor, $expectedSourceRevision, $selections) {
             [$wo, $op] = $this->context($workOrderId, $operationId, true);
             CancellationProductionService::assertProductionAllowed((int) $wo->id);
-            [$lines, $short, $done, $target] = $this->buildPlan($wo, $op, $units, true);
+            [$lines, $short, $done, $target] = $this->buildPlan($wo, $op, $units, true, $selections);
             if ($expectedSourceRevision !== null && ! hash_equals($expectedSourceRevision, self::sourceRevision($lines)))
                 $this->fail('delivery_source_changed', '配料来源已变化，请重新加载并核对库位、数量和序列号。', 409);
             if ($short) $this->fail('stock_short', '库存不够，这次配不了：'.implode('、', $short).'。可以少配几台，或找采购。');
@@ -199,14 +244,17 @@ final class MaterialDeliveryService
             $lines = [];
             $short = [];
             $changes = [];
+            $allocated = ['balances' => [], 'serials' => []];
             foreach ((array) $delivery->lines as $line) {
                 $m = $materials->get((int) $line['material_id']);
                 $qty = round((float) $line['qty'], 4);
                 if (! $m || $qty > (float) $m->required_qty - (float) $m->issued_qty + self::EPS)
                     $this->fail('delivery_stale', ($line['component_item_name'] ?? '物料').' 车间已经自己收过料，这张配料单多了，请取消后重配。');
-                [$picks, $left] = $this->issues->allocate($m, $qty, $wo, (int) $delivery->id);
+                $available = $this->issues->deliveryAvailability($m, $wo, $allocated, (int) $delivery->id);
+                [$picks, $left] = $this->issues->allocate($m, $qty, $wo, (int) $delivery->id, $allocated);
                 if ($left > self::EPS) { $short[] = $m->component_item_name.' 要 '.$this->num($qty).'，可用 '.$this->num($qty - $left); continue; }
-                $new = $this->lineOf($m, $qty, $picks);
+                $new = $this->lineOf($m, $qty, $picks, $available);
+                $this->holdPlan($allocated, $picks);
                 $place = fn ($l) => collect($l['picks'] ?? [])->map(fn ($p) => ($p['location_code'] ?? '').($p['batch_no'] ? '/'.$p['batch_no'] : '').' '.$this->num((float) $p['qty']))->implode('，');
                 if ($place($line) !== $place($new)) $changes[] = $m->component_item_name.'：'.($place($line) ?: '无').' → '.$place($new);
                 $lines[] = $new;
@@ -231,6 +279,7 @@ final class MaterialDeliveryService
             $this->issues->lockItems($materials->pluck('component_item_id'));
             $plan = [];
             $problems = [];
+            $planned = ['balances' => [], 'serials' => []];
             foreach ((array) $delivery->lines as $line) {
                 $m = $materials->get((int) $line['material_id']);
                 $qty = round((float) $line['qty'], 4);
@@ -239,7 +288,8 @@ final class MaterialDeliveryService
                 $picks = array_map(fn ($p) => ['balance_id' => (int) $p['balance_id'], 'qty' => round((float) $p['qty'], 4),
                     'serial_ids' => array_map('intval', (array) ($p['serial_ids'] ?? []))], (array) ($line['picks'] ?? []));
                 if (abs(array_sum(array_column($picks, 'qty')) - $qty) > self::EPS) $this->fail('delivery_source_invalid', ($line['component_item_name'] ?? '物料').' 拣货明细与配料数量不一致，请点“重新拣货”。');
-                $problems = array_merge($problems ?? [], $this->issues->verifyPicks($m, $wo, $picks, (int) $delivery->id, true));
+                $problems = array_merge($problems, $this->issues->verifyPicks($m, $wo, $picks, (int) $delivery->id, true, $planned));
+                $this->holdPlan($planned, $picks);
                 $plan[] = ['material' => $m, 'qty' => $qty, 'picks' => $picks];
             }
             // 照单过账：实物从哪个库位、批次拿的，库存和成本就扣哪里；来源失效不自动换，避免账实不符。
@@ -369,25 +419,50 @@ final class MaterialDeliveryService
     }
 
     /** @return array{0: array, 1: string[], 2: float, 3: float} 配料明细、缺货提示、已收够设备数、配到第几台 */
-    private function buildPlan(MfgWorkOrder $wo, MfgWorkOrderOperation $op, ?int $units, bool $lock): array
+    private function buildPlan(MfgWorkOrder $wo, MfgWorkOrderOperation $op, ?int $units, bool $lock, array $selections = []): array
     {
+        $selections = collect(Validator::make(['selections' => $selections], self::selectionRules())->validate()['selections'])->keyBy('material_id');
         $materials = $this->deliverable($op, $lock);
         if ($materials->isEmpty()) $this->fail('no_material', $op->operation_name.'没有要仓库配送的料（半成品由车间自领，板材管材走集中开料，工位库存的料不逐单配送）。');
+        if ($selections->keys()->diff($materials->pluck('id'))->isNotEmpty()) $this->fail('material_invalid', '所选物料不在本道配料范围内，请刷新后重选。');
         // 在本道之前就报废的设备不会再到本道，不再为它们配料。
-        $planned = $this->issues->expectedUnits($op, $wo);
+        $planned = $this->issues->expectedUnits($op, $wo, $lock);
         $prepared = self::preparedQty((int) $op->id);
         $done = $materials->map(fn ($m) => $this->issues->coveredUnits($m, $wo, (float) ($prepared[$m->id] ?? 0)))->min();
         $target = $units ? min($planned, $done + max(1, $units)) : $planned;
         $lines = [];
         $short = [];
-        foreach ($materials as $m) {
+        $allocated = ['balances' => [], 'serials' => []];
+        $stockBalances = [];
+        // 先保留人工已核对的来源，其余同料行再从剩余库存自动分配，避免 FIFO 抢走自选批次。
+        foreach ($materials->sortBy(fn ($m) => $selections->has($m->id) ? 0 : 1) as $m) {
             $qty = round($this->issues->neededFor($m, $wo, $target) - (float) $m->issued_qty - (float) ($prepared[$m->id] ?? 0), 4);
-            if ($qty <= self::EPS) continue;
-            [$picks, $left] = $this->issues->allocate($m, $qty, $wo);
+            if ($qty <= self::EPS) {
+                if ($selections->has($m->id)) $this->fail('material_stale', $m->component_item_name.' 本次已不需要配料，请刷新后重选。', 409);
+                continue;
+            }
+            $available = $this->issues->deliveryAvailability($m, $wo, $allocated);
+            $stockBalances[$m->component_item_id] ??= $this->issues->deliveryAvailability($m, $wo);
+            if ($selections->has($m->id)) {
+                $picks = array_map(fn ($p) => ['balance_id' => (int) $p['balance_id'], 'qty' => (float) $p['qty'],
+                    'serial_ids' => array_map('intval', $p['serial_ids'] ?? [])], $selections->get($m->id)['picks']);
+                if (abs(array_sum(array_column($picks, 'qty')) - $qty) > self::EPS)
+                    $this->fail('delivery_quantity_mismatch', $m->component_item_name.' 本次需要 '.$this->num($qty).($m->unit_name ?: '').'，所选各批数量合计必须一致。');
+                $problems = $this->issues->verifyPicks($m, $wo, $picks, null, $lock, $allocated);
+                if ($problems) $this->fail('delivery_source_invalid', implode('；', $problems).'，请刷新后重选。', 409);
+                $left = 0.0;
+            } else {
+                [$picks, $left] = $this->issues->allocate($m, $qty, $wo, null, $allocated);
+            }
             if ($left > self::EPS) $short[] = $m->component_item_name.' 要 '.$this->num($qty).'，仓库可用 '.$this->num($qty - $left).($m->unit_name ?: '');
-            $lines[] = $this->lineOf($m, $qty, $picks) + ['short_qty' => round($left, 4)];
+            $item = Item::query()->findOrFail($m->component_item_id);
+            $lines[] = $this->lineOf($m, $qty, $picks, $stockBalances[$m->component_item_id]) + ['short_qty' => round($left, 4),
+                'required_qty' => (float) $m->required_qty, 'issued_qty' => (float) $m->issued_qty, 'prepared_qty' => (float) ($prepared[$m->id] ?? 0),
+                'available_qty' => round(array_sum($available), 4), 'stock_available_qty' => round(array_sum($stockBalances[$m->component_item_id]), 4),
+                'serial_tracking_mode' => $item->serialTrackingMode(), 'spec' => $item->spec];
+            $this->holdPlan($allocated, $picks);
         }
-        return [$lines, $short, (float) $done, (float) $target];
+        return [collect($lines)->sortBy('material_id')->values()->all(), $short, (float) $done, (float) $target];
     }
 
     /** 待发出配料单的拣货来源现在是否仍能照单出库（列表提示“来源已失效”）。 */
@@ -397,29 +472,42 @@ final class MaterialDeliveryService
         if (! $wo || ! in_array($wo->status, self::OPEN_WO, true)) return [];
         $materials = MfgWorkOrderMaterial::query()->whereIn('id', collect($d->lines)->pluck('material_id')->all() ?: [0])->get()->keyBy('id');
         $out = [];
+        $planned = ['balances' => [], 'serials' => []];
         foreach ((array) $d->lines as $line) {
             $m = $materials->get((int) $line['material_id']);
-            if ($m) $out = array_merge($out, $this->issues->verifyPicks($m, $wo, (array) ($line['picks'] ?? []), (int) $d->id));
+            $picks = (array) ($line['picks'] ?? []);
+            if ($m) $out = array_merge($out, $this->issues->verifyPicks($m, $wo, $picks, (int) $d->id, false, $planned));
+            $this->holdPlan($planned, $picks);
         }
         return $out;
     }
 
     /** 明细行：带上拣货库位、批次、编号，方便库管照单拣货。 */
-    private function lineOf(MfgWorkOrderMaterial $m, float $qty, array $picks): array
+    private function lineOf(MfgWorkOrderMaterial $m, float $qty, array $picks, array $available = []): array
     {
         $balances = InventoryBalance::query()->with(['warehouse:id,warehouse_name', 'location:id,location_code,location_name'])
             ->whereIn('id', collect($picks)->pluck('balance_id')->all() ?: [0])->get()->keyBy('id');
         $serialNos = InventorySerial::query()->whereIn('id', collect($picks)->flatMap(fn ($p) => $p['serial_ids'] ?? [])->all() ?: [0])->pluck('serial_no', 'id');
         return ['material_id' => (int) $m->id, 'component_item_id' => (int) $m->component_item_id, 'component_item_name' => $m->component_item_name,
             'component_item_code' => $m->component_item_code, 'unit_name' => $m->unit_name, 'qty' => round($qty, 4),
-            'picks' => array_map(function ($p) use ($balances, $serialNos) {
+            'picks' => array_map(function ($p) use ($balances, $serialNos, $available) {
                 $b = $balances->get($p['balance_id']);
                 return ['balance_id' => (int) $p['balance_id'], 'qty' => (float) $p['qty'], 'serial_ids' => array_map('intval', $p['serial_ids'] ?? []),
                     'serial_nos' => array_values(array_filter(array_map(fn ($sid) => $serialNos[$sid] ?? null, $p['serial_ids'] ?? []))),
                     'warehouse_id' => $b?->warehouse_id, 'location_id' => $b?->location_id,
                     'warehouse_name' => $b?->warehouse?->warehouse_name, 'location_code' => $b?->location?->location_code,
-                    'location_name' => $b?->location?->location_name, 'batch_no' => $b?->batch_no];
+                    'location_name' => $b?->location?->location_name, 'batch_no' => $b?->batch_no,
+                    'quantity_available' => (float) ($available[$p['balance_id']] ?? 0)];
             }, $picks)];
+    }
+
+    private function holdPlan(array &$planned, array $picks): void
+    {
+        foreach ($picks as $pick) {
+            $id = (int) $pick['balance_id'];
+            $planned['balances'][$id] = round(($planned['balances'][$id] ?? 0) + (float) $pick['qty'], 4);
+            foreach ($pick['serial_ids'] ?? [] as $sid) $planned['serials'][(int) $sid] = true;
+        }
     }
 
     private function context(int $workOrderId, int $operationId, bool $lock, bool $allowEnded = false): array

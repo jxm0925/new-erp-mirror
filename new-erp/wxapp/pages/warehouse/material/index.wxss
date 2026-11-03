@@ -6,6 +6,101 @@
   font-weight: 800;
 }
 
+.material-preparation-title,
+.material-preparation-quantities {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16rpx;
+  min-width: 0;
+}
+
+.material-preparation-title {
+  font-size: 28rpx;
+  font-weight: 700;
+  color: #1f2329;
+}
+
+.material-preparation-title > text {
+  flex: 1;
+  min-width: 0;
+  word-break: break-all;
+}
+
+.material-select-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  gap: 6rpx;
+  width: auto !important;
+  min-height: 60rpx;
+  margin: 0;
+  padding: 0 18rpx;
+  border-radius: 999rpx;
+  color: #d81e06;
+  background: #fff5f5;
+  font-size: 25rpx;
+  line-height: 1.2;
+}
+
+.material-select-button::after {
+  border: 0;
+}
+
+.material-select-button[disabled] {
+  color: #94a3b8;
+  background: #f8fafc;
+}
+
+.material-preparation-quantities {
+  flex-wrap: wrap;
+  margin-top: 12rpx;
+  color: #64748b;
+  font-size: 25rpx;
+  line-height: 1.5;
+}
+
+.material-preparation-quantities text {
+  color: #1e293b;
+  font-weight: 700;
+}
+
+.material-selection-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  min-height: 44rpx;
+  margin: 14rpx 0 0;
+  padding: 0;
+  background: transparent;
+  color: #64748b;
+  font-size: 24rpx;
+  line-height: 1.5;
+  text-align: left;
+}
+
+.material-selection-summary::after { border: 0; }
+
+.material-selected-pick { margin-top: 16rpx; }
+.material-selection-empty { margin-top: 14rpx; }
+
+.material-shortage-box {
+  padding: 18rpx 20rpx;
+  border: 1rpx solid #ffccc7;
+  border-radius: 16rpx;
+  background: #fff1f0;
+  color: #d81e06;
+  font-size: 24rpx;
+  line-height: 1.6;
+}
+
+.material-shortage-row + .material-shortage-row { margin-top: 12rpx; }
+.material-shortage-title { display: flex; justify-content: space-between; gap: 16rpx; font-weight: 700; }
+.material-purchase-message { margin-top: 16rpx; }
+.material-purchase-button { margin-top: 18rpx; }
+
 .mat-unit-suffix {
   font-weight: 700;
   color: #475569;

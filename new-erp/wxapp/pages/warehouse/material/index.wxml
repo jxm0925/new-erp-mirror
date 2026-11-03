@@ -10,6 +10,7 @@
     <van-icon name="warning-o" size="68rpx" color="#d81e06" />
     <view class="warehouse-error">{{error}}</view>
     <button class="warehouse-secondary mat-retry-btn" bindtap="load">重新加载</button>
+    <button wx:if="{{kind === 'material_preparation' && selections.length}}" class="warehouse-secondary" bindtap="resetSelection" disabled="{{saving}}">清空已选，重新选料</button>
   </view>
 
   <block wx:else>
@@ -27,6 +28,26 @@
         <text class="warehouse-label">产品 / 工序</text>
         <text class="warehouse-value">{{header.product_name || header.item_name}} · {{header.operation_name}}</text>
       </view>
+      <block wx:if="{{kind === 'material_preparation' || kind === 'material_delivery'}}">
+        <block wx:for="{{header.sales_orders}}" wx:key="sales_order_id" wx:for-item="order">
+          <view class="warehouse-field">
+            <text class="warehouse-label">订单客户</text>
+            <text class="warehouse-value">{{order.customer_name || '未记录客户'}}</text>
+          </view>
+          <view class="warehouse-field">
+            <text class="warehouse-label">销售订单号</text>
+            <text class="warehouse-value">{{order.sales_order_no || '未记录订单号'}}</text>
+          </view>
+          <view class="warehouse-field">
+            <text class="warehouse-label">销售人员</text>
+            <text class="warehouse-value">{{order.sales_user_name || '未指定销售'}}</text>
+          </view>
+        </block>
+        <view wx:if="{{!header.sales_orders.length}}" class="warehouse-field">
+          <text class="warehouse-label">订单归属</text>
+          <text class="warehouse-value">{{header.sales_source_label || '未关联销售订单'}}</text>
+        </view>
+      </block>
       <view wx:if="{{header.unit_qty}}" class="warehouse-field">
         <text class="warehouse-label">配料数量</text>
         <text class="warehouse-value warehouse-danger">{{header.unit_qty}} 台</text>
@@ -55,7 +76,7 @@
           <view>已齐套<text class="locked">{{preview.covered_units}} 台</text></view>
           <view>本次配到<text class="available">{{preview.target_units}} 台</text></view>
         </view>
-        <view class="warehouse-field">
+        <view class="warehouse-field" wx:if="{{preview.planned_qty - preview.covered_units > 1}}">
           <text class="warehouse-label">本次配料数量</text>
           <input
             class="warehouse-input material-unit"
@@ -67,7 +88,16 @@
           />
           <text class="mat-unit-suffix">台</text>
         </view>
-        <view wx:for="{{preview.short}}" wx:key="*this" class="warehouse-error">{{item}}</view>
+        <view wx:if="{{shortages.length}}" class="material-shortage-box">
+          <view wx:for="{{shortages}}" wx:key="item_id" class="material-shortage-row">
+            <view class="material-shortage-title"><text>{{item.name}}</text><text>缺 {{item.shortText}} {{item.unit}}</text></view>
+            <view>本次需配 {{item.qtyText}} {{item.unit}} · 可配 {{item.availableText}} {{item.unit}}</view>
+          </view>
+          <view wx:if="{{purchaseMessage}}" class="material-purchase-message">{{purchaseMessage}}</view>
+          <button class="warehouse-primary material-purchase-button" bindtap="requestPurchase" loading="{{saving}}" disabled="{{!canPurchase || saving || loading || pendingActions.length || purchaseCompleted || purchaseUncertain}}">{{purchaseCompleted ? '已生成采购需求单' : '生成采购需求单'}}</button>
+          <view wx:if="{{!canPurchase}}" class="material-purchase-message">当前账号无生成采购需求单权限</view>
+        </view>
+        <block wx:elif="{{preview.short.length}}"><view wx:for="{{preview.short}}" wx:key="*this" class="warehouse-error">{{item}}</view></block>
       </block>
     </view>
 
@@ -80,7 +110,43 @@
 
       <view wx:if="{{!lines.length}}" class="warehouse-empty">暂无物料明细</view>
 
+      <block wx:if="{{kind === 'material_preparation'}}">
+        <view wx:for="{{lines}}" wx:key="id" class="phase-line material-preparation-row" data-line="{{item.id}}" bindtap="toggleLine">
+          <view class="material-preparation-title">
+            <text>{{item.component_item_name || item.item_name}}</text>
+            <button wx:if="{{actions.prepare}}" class="material-select-button" data-line="{{item.id}}" catchtap="openPicker" disabled="{{saving || loading || pendingActions.length}}">选料 <van-icon name="arrow" /></button>
+          </view>
+          <view wx:if="{{item.spec || item.component_item_spec}}" class="warehouse-muted">{{item.spec || item.component_item_spec}}</view>
+          <view class="material-preparation-quantities">
+            <view>本次配 <text class="warehouse-danger">{{item.qtyText}} {{item.unit_name}}</text></view>
+            <view>库存剩余 <text>{{item.remainingText}} {{item.unit_name}}</text></view>
+          </view>
+          <button class="material-selection-summary" data-line="{{item.id}}" catchtap="toggleLine" aria-label="{{expandedLines[item.id] ? '收起已选批次' : '展开已选批次'}}"><text>{{item.picks.length ? '已选 ' + item.picks.length + ' 个批次' : '未选批次'}}</text><van-icon name="{{expandedLines[item.id] ? 'arrow-up' : 'arrow-down'}}" /></button>
+          <block wx:if="{{expandedLines[item.id]}}">
+            <view wx:for="{{item.picks}}" wx:for-item="pick" wx:key="balance_id" class="phase-pick material-selected-pick">
+              <view class="warehouse-field"><text class="warehouse-label">批次号</text><text class="warehouse-value">{{pick.batch_no || '—'}}</text></view>
+              <view class="warehouse-field"><text class="warehouse-label">本次取量</text><text class="warehouse-value warehouse-danger">{{pick.qtyText}} {{item.unit_name}}</text></view>
+              <view class="warehouse-field"><text class="warehouse-label">来源仓库</text><text class="warehouse-value">{{pick.warehouse_name || '—'}}</text></view>
+              <view class="warehouse-field"><text class="warehouse-label">来源库位</text><text class="warehouse-value">{{pick.location_code || '—'}} {{pick.location_name}}</text></view>
+              <view wx:if="{{pick.serialText}}" class="warehouse-field"><text class="warehouse-label">序列号</text><text class="warehouse-value">{{pick.serialText}}</text></view>
+            </view>
+            <view wx:if="{{!item.picks.length}}" class="warehouse-muted material-selection-empty">暂无已选批次</view>
+          </block>
+        </view>
+      </block>
+      <block wx:else>
       <view wx:for="{{lines}}" wx:key="id" class="phase-line">
+        <block wx:if="{{kind === 'material_delivery'}}">
+          <view class="material-preparation-title" data-line="{{item.id}}" bindtap="toggleLine">
+            <text>{{item.component_item_name || item.item_name}}</text>
+          </view>
+          <view wx:if="{{item.spec || item.component_item_spec}}" class="warehouse-muted">{{item.spec || item.component_item_spec}}</view>
+          <view class="material-preparation-quantities">
+            <view>本次配 <text class="warehouse-danger">{{item.qtyText}} {{item.unit_name}}</text></view>
+          </view>
+          <button class="material-selection-summary" data-line="{{item.id}}" catchtap="toggleLine" aria-label="{{expandedLines[item.id] ? '收起已配批次' : '展开查看已配批次'}}"><text>已配 {{item.picks.length}} 个批次 · {{expandedLines[item.id] ? '收起' : '展开查看'}}</text><van-icon name="{{expandedLines[item.id] ? 'arrow-up' : 'arrow-down'}}" /></button>
+        </block>
+        <block wx:else>
         <view class="phase-line-title">
           <text>{{item.component_item_name || item.item_name}}</text>
           <text>{{item.qtyText}} {{item.unit_name}}</text>
@@ -93,8 +159,14 @@
           <text class="warehouse-label">规格型号</text>
           <text class="warehouse-value">{{item.spec || item.component_item_spec}}</text>
         </view>
+        </block>
 
         <block wx:if="{{kind !== 'material_return'}}">
+          <block wx:if="{{expandedLines[item.id]}}">
+          <view wx:if="{{item.component_item_code}}" class="warehouse-field">
+            <text class="warehouse-label">物料编码</text>
+            <text class="warehouse-value">{{item.component_item_code}}</text>
+          </view>
           <view
             wx:for="{{item.picks}}"
             wx:for-item="pick"
@@ -122,21 +194,8 @@
               <text class="warehouse-label">序列号</text>
               <text class="warehouse-value">{{pick.serialText}}</text>
             </view>
-            <block wx:if="{{actions.prepare || actions.dispatch || (actions.recall && canConfirmInbound)}}">
+            <block wx:if="{{actions.recall && canConfirmInbound}}">
               <button class="warehouse-secondary" data-line="{{item.id}}" data-pick="{{pickIndex}}" bindtap="openManual" disabled="{{saving || loading || pendingActions.length}}">手动核对物料 / 库位 / 编号</button>
-              <scan-input
-                wx:if="{{actions.prepare || actions.dispatch}}"
-                compact
-                class="material-scan"
-                focus="{{index === 0 && pickIndex === 0}}"
-                next-input="{{pick.serial_nos.length ? '#pick-serial-' + item.id + '-' + pickIndex : ''}}"
-                placeholder="扫描库位核对"
-                types="{{['location']}}"
-                data-line="{{item.id}}"
-                data-pick="{{pickIndex}}"
-                bind:resolved="verifyPick"
-                disabled="{{saving || pendingActions.length}}"
-              />
               <scan-input
                 wx:if="{{pick.serial_nos.length}}"
                 id="pick-serial-{{item.id}}-{{pickIndex}}"
@@ -154,6 +213,7 @@
               <view wx:if="{{pick.serial_nos.length && pick.serialChecked}}" class="phase-checked">✓ 序列号核对完成</view>
             </block>
           </view>
+          </block>
         </block>
 
         <block wx:else>
@@ -241,6 +301,7 @@
           </view>
         </block>
       </view>
+      </block>
 
       <view class="warehouse-pager">
         <button disabled="{{page <= 1 || loading || saving}}" data-delta="-1" bindtap="turn">上一页</button>
@@ -336,6 +397,7 @@
 </view>
 
 <warehouse-locator open="{{locatorOpen}}" value="{{locator}}" bind:confirm="chooseLocator" bind:cancel="closeLocator" />
+<warehouse-material-picker open="{{pickerOpen}}" work-order-id="{{header.work_order_id}}" operation-id="{{id}}" line="{{pickerLine}}" other-picks="{{pickerOtherPicks}}" initial-scan="{{pickerScan}}" error-message="{{pickerError}}" locked="{{saving || loading || pendingActions.length > 0}}" bind:confirm="confirmPicker" bind:cancel="closePicker" />
 <warehouse-select open="{{manualOpen}}" title="{{manualTitle}}" rows="{{manualRows}}" selected="{{manualSelected}}" scope-key="{{manualScope}}" multiple maximum="{{manualRows.length}}" locked="{{saving || loading || pendingActions.length > 0}}" bind:confirm="confirmManual" bind:cancel="closeManual" />
 
 <view wx:if="{{dialog}}" class="warehouse-overlay" catchtouchmove="stop">

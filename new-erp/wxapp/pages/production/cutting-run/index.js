@@ -1,5 +1,5 @@
 // 集中开料（按实际工时统计）：单次按单一 BOM 启动开料批次并记录作业人员实际工时，完工登记各子件实际产出件数。
-// 切完结束时按数量管理的板材／管材按 件数 × 每件用量 从仓库扣料（库存不够不能结束），逐张管理的板材须先领板并登记余料。
+// 板材／管材均先选择实际来源、登记余料，完成实际产出登记后统一结算。
 // 各工单下料工序执行「已备料」时按件数分摊开料工时（批次总工时 ÷ 总件数 × 领用件数），同时按件数带走已扣的料，不再从仓库扣。
 const production = require('../../../services/production');
 const view = require('../../../utils/warehouse-page');
@@ -9,11 +9,13 @@ const hm = minutes => {
   return m >= 60 ? `${Math.floor(m / 60)} 小时 ${m % 60} 分` : `${m} 分钟`;
 };
 const num = v => String(Math.round(Number(v || 0) * 10000) / 10000);
-// 开料中：按填的件数估算切完要扣多少库存；已结束：已扣多少、还剩多少没被工单领走。
+// 库存与成本采用实际领用来源和净耗，BOM用量只提供加工参考。
 const materialText = (l, input) => {
   const unit = l.unit_name || '';
   if (l.material_qty !== undefined && l.material_qty !== null) return { text: `已扣库存 ${num(l.material_qty)}${unit} · 未领 ${num(l.left_material_qty)}${unit}`, short: false };
-  if (l.material_per_piece === null || l.material_per_piece === undefined) return { text: l.physical ? '逐张板材：须先领用板材并登记余料' : '', short: false };
+  if (l.source_tracked || l.physical) return { text: '请先选择实际原料或余料，并登记本次余料', short: false };
+  if (l.material_per_piece === null || l.material_per_piece === undefined) return { text: '', short: false };
+  // 旧开料记录沿用冻结时的数量扣料方式，避免更换历史来源口径。
   const need = Number(l.material_per_piece) * Number(input || 0);
   const stock = Number(l.stock_available || 0);
   return { text: `切完扣库存约 ${num(need)}${unit}（仓库可用 ${num(stock)}${unit}）`, short: need > stock + 0.00001 };
@@ -23,6 +25,7 @@ const sizeText = l => l.total_length_mm ? `总长 ${Number(l.total_length_mm)}mm
 
 function runView(run) {
   return Object.assign({}, run, {
+    material_items: run.material_items || run.sheet_items || [],
     laborText: hm(run.labor_minutes), allocatedText: hm(run.allocated_minutes),
     startedText: String(run.started_at || '').slice(5, 16), finishedText: String(run.finished_at || '').slice(5, 16),
     lines: (run.lines || []).map(l => lineView(Object.assign({}, l, { sizeText: sizeText(l) }), l.actual_pieces)),
@@ -155,7 +158,7 @@ Page({
     if (short.length) { view.modal(this, { theme: 'warn', title: '库存不够', content: short.map(l => `${l.component_item_name} ${l.sizeText}：${l.materialText}`).join('\n') + '\n请先办好入库再结束。', showCancel: false }); return; }
     view.modal(this, {
       title: '确认开料完工结算',
-      subtitle: '确认结束后将停止本批次全部人员计时、锁定产出件数，并按件数从仓库扣料',
+      subtitle: '确认结束后停止全部人员计时、锁定产出件数，并按已选来源及实际余料结算库存成本',
       kvRows: [
         { k: '合计产出件数', v: `${total} 件`, red: true },
         { k: '累计作业工时', v: `约 ${this.data.liveText}` },
@@ -165,7 +168,7 @@ Page({
         if (!res.confirm) return;
         this.setData({ busy: true });
         production.cuttingRunAction(run.id, { action: 'finish', expected_version: run.business_version, lines, remark: String(this.data.finishRemark || '').trim() || null }).then(response => {
-          wx.showToast({ title: '开料已完工，各工单可执行备料交接', icon: 'none', duration: 2500 });
+          wx.showToast({ title: response.data.status === 'finished' ? '开料已完工，可执行备料交接' : '产出已登记，请补齐余料登记', icon: 'none', duration: 2500 });
           this.showRun(response.data);
           this.load();
         }).catch(error => view.modal(this, { theme: 'warn', title: '结算失败', content: view.errorText(error), showCancel: false }))
@@ -189,8 +192,8 @@ Page({
       } });
   },
   openSheet(event) {
-    const item = this.data.run.sheet_items[Number(event.currentTarget.dataset.index)];
-    wx.navigateTo({ url: `/pages/production/shared-cutting/index?run_id=${this.data.run.id}&item_id=${item.item_id}` });
+    const item = this.data.run.material_items[Number(event.currentTarget.dataset.index)];
+    wx.navigateTo({ url: `/pages/production/shared-cutting/index?run_id=${this.data.run.id}&item_id=${item.item_id}&item_name=${encodeURIComponent(item.item_name)}&measure_unit=${item.measure_unit}&mode=${item.mode}` });
   },
   openSheetBatches() { wx.navigateTo({ url: `/pages/production/shared-cutting/index?run_id=${this.data.run.id}&tab=batches` }); },
   closePanel() { this.stopTick(); this.setData({ panel: '' }); },

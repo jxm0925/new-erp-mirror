@@ -49,7 +49,7 @@ class MfgCuttingRunController extends Controller
             $auth = app(AuthContextService::class);
             $result = app(\App\Services\Erp\WarehouseCommandService::class)->run('cutting_run.finish', $id, $commandId, $data,
                 $user, $auth->permissionCodes($user), $auth->isSuperAdmin($user))['result'];
-            return response()->json(['message' => $result['status'] === 'awaiting_confirm' ? '实际件数已登记并停止计时，余料确认后自动完成成本阶段。'
+            return response()->json(['message' => $result['status'] === 'awaiting_confirm' ? '实际件数已记录并停止计时，请下料人补齐各来源实际余料登记。'
                 : '已结束，切好的件和实际工时可以按工单领用。', 'data' => $result]);
         }
         if ($action === 'cancel') return response()->json(['message' => '已作废。', 'data' => $runs->cancel($id, $user)]);

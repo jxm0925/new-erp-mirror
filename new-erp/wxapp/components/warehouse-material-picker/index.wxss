@@ -1,0 +1,252 @@
+@import "../../pages/warehouse/shared.wxss";
+
+.material-picker-overlay {
+  z-index: 1200;
+}
+
+.material-picker-dialog {
+  height: 88vh;
+  max-height: calc(100vh - 96rpx);
+}
+
+.material-picker-body {
+  flex: 1;
+  height: 0;
+  min-height: 0;
+}
+
+.material-picker-name {
+  color: #1e293b;
+  font-size: 29rpx;
+  font-weight: 800;
+  line-height: 1.5;
+  word-break: break-all;
+}
+
+.material-picker-demand {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16rpx;
+  padding: 18rpx 0;
+  margin-bottom: 14rpx;
+  border-bottom: 1rpx solid #e2e8f0;
+  font-size: 26rpx;
+  color: #64748b;
+}
+
+.material-picker-search,
+.material-picker-list-head,
+.material-picker-list-actions,
+.material-picker-filter,
+.material-picker-row-title,
+.material-picker-quantity,
+.material-picker-input-wrap,
+.material-picker-row-actions,
+.material-picker-summary,
+.material-picker-serial-row {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+  min-width: 0;
+}
+
+.material-picker-search scan-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.material-picker-small,
+.material-picker-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: auto !important;
+  margin: 0;
+  min-height: 60rpx;
+  padding: 0 18rpx;
+  border-radius: 999rpx;
+  color: #d81e06;
+  background: #fff5f5;
+  font-size: 24rpx;
+  line-height: 1.2;
+  font-weight: 600;
+}
+
+.material-picker-small::after,
+.material-picker-link::after {
+  border: 0;
+}
+
+.material-picker-small[disabled],
+.material-picker-link[disabled] {
+  color: #94a3b8;
+  background: #f8fafc;
+}
+
+.material-picker-link {
+  padding: 0;
+  min-height: 54rpx;
+  background: transparent;
+}
+
+.material-picker-filter {
+  justify-content: space-between;
+  color: #64748b;
+  font-size: 24rpx;
+}
+
+.material-picker-filter > text,
+.material-picker-list-head > text,
+.material-picker-row-title > text,
+.material-picker-serial-row > text:first-child {
+  min-width: 0;
+  word-break: break-all;
+}
+
+.material-picker-list-head {
+  justify-content: space-between;
+  flex-wrap: wrap;
+  margin: 12rpx 0;
+  font-size: 26rpx;
+  font-weight: 700;
+}
+
+.material-picker-list-actions {
+  flex-wrap: wrap;
+  margin-left: auto;
+}
+
+.material-picker-row,
+.material-picker-serial-row {
+  border: 1rpx solid #e2e8f0;
+  border-radius: 16rpx;
+  padding: 20rpx;
+  margin: 12rpx 0;
+}
+
+.material-picker-chosen {
+  border-color: #d81e06;
+  background: #fff8f7;
+}
+
+.material-picker-row-title {
+  justify-content: space-between;
+  align-items: flex-start;
+  font-size: 26rpx;
+  font-weight: 700;
+  color: #1e293b;
+}
+
+.material-picker-row-title > text:last-child {
+  text-align: right;
+}
+
+.material-picker-row-detail,
+.material-picker-source,
+.material-picker-serials {
+  color: #64748b;
+  font-size: 24rpx;
+  line-height: 1.55;
+  margin-top: 8rpx;
+  word-break: break-all;
+}
+
+.material-picker-source {
+  padding: 16rpx;
+  margin: 0 0 16rpx;
+  background: #f8fafc;
+  border-radius: 12rpx;
+}
+
+.material-picker-quantity {
+  justify-content: space-between;
+  margin-top: 16rpx;
+  font-size: 25rpx;
+  color: #475569;
+}
+
+.material-picker-quantity > text {
+  flex-shrink: 0;
+}
+
+.material-picker-input-wrap {
+  flex: 1;
+  justify-content: flex-end;
+}
+
+.material-picker-input-wrap > input,
+.material-picker-serial-qty {
+  width: 160rpx;
+  min-width: 0;
+  height: 64rpx;
+  border: 1rpx solid #dbe2ea;
+  border-radius: 12rpx;
+  background: #ffffff;
+  color: #1e293b;
+  padding: 0 14rpx;
+  font-size: 27rpx;
+  text-align: right;
+}
+
+.material-picker-serial-qty {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  background: #f8fafc;
+}
+
+.material-picker-input-wrap > text:last-child {
+  flex-shrink: 0;
+}
+
+.material-picker-row-actions {
+  justify-content: space-between;
+  flex-wrap: wrap;
+  margin-top: 8rpx;
+}
+
+.material-picker-row-error {
+  margin-top: 4rpx;
+}
+
+.material-picker-summary {
+  justify-content: space-between;
+  flex-wrap: wrap;
+  flex-shrink: 0;
+  padding: 18rpx 28rpx;
+  background: #f8fafc;
+  border-top: 1rpx solid #e2e8f0;
+  color: #475569;
+  font-size: 25rpx;
+  line-height: 1.5;
+}
+
+.material-picker-empty {
+  padding: 36rpx 12rpx;
+  margin-bottom: 0;
+  box-shadow: none;
+}
+
+.material-picker-pager {
+  gap: 12rpx;
+  flex-wrap: wrap;
+  font-size: 23rpx;
+}
+
+.material-picker-pager button {
+  padding: 0 18rpx;
+}
+
+.material-picker-serial-row {
+  justify-content: space-between;
+  font-size: 25rpx;
+  line-height: 1.5;
+}
+
+.material-picker-choice {
+  flex-shrink: 0;
+  color: #d81e06;
+  font-weight: 700;
+}

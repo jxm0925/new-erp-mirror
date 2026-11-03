@@ -31,12 +31,13 @@ class ErpUserDirectoryService
                     ->where('du.department_legacy_id', (int) $filters['department_id']);
             });
         }
-        if ($salesScope) {
+        if ($salesScope || $shareScope) {
             // 业务员候选以业务员档案为准（启用、生效期内），与角色、部门名无关。
             $staff = app(BusinessStaffService::class);
             $staff->ensureBackfilled();
             $staff->applyActive($query, 'sales');
-            if ($actor) app(SalesOrderVisibilityService::class)->applySalesUserScope($query, $actor);
+            // 订单共享可跨销售人员，不沿用订单业务员指派的数据范围。
+            if ($salesScope && $actor) app(SalesOrderVisibilityService::class)->applySalesUserScope($query, $actor);
         }
         if ($warehouseScope) {
             // 仓库负责人候选：业务员档案中有效的仓管员。

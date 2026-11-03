@@ -4,6 +4,9 @@ namespace App\Services\Erp\Sales;
 
 use App\Models\Erp\{InventorySerial, Item, MfgCuttingRun, MfgCuttingRunAllocation, MfgMaterialIssue, MfgReceipt, MfgTaskParticipant, MfgUnitComponent, MfgUnitReport, MfgWorkOrder, MfgWorkOrderLog, MfgWorkOrderOperation, MfgWorkOrderUnit, SalesOrder, SalesOrderLine, SalesShipmentLine, ShipmentDispatch, ShipmentPackingContent, ShipmentPackingOperation, ShipmentRework, ShipmentSerialResult};
 use App\Services\Erp\Manufacturing\TaskCompletionService;
+use App\Services\Erp\SalesOrderFundingGateService;
+use App\Services\Erp\SalesOrderInventoryLockService;
+use App\Services\Erp\SalesOrderFulfillmentPolicy;
 use Illuminate\Database\Query\Builder;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -123,10 +126,16 @@ final class SalesOrderProgressQueryService
     public function unit(SalesOrder $order, int $lineId, string $unitKey, bool $workOrderLinks): array
     {
         $line = $this->line($order, $lineId);
-        if (in_array($line->line_type, ['service', 'deduction', 'no_delivery'], true) || in_array($line->fulfillment_type, ['service', 'no_delivery'], true)) {
+        $quantities = app(SalesOrderInventoryLockService::class)->projection($order, true);
+        $quantitySummary = collect($quantities['lines'])->firstWhere('sales_order_line_id', (int) $line->id);
+        $requiresDelivery = $quantitySummary['requires_delivery'] ?? (SalesOrderFulfillmentPolicy::isPhysical((string) $line->line_type)
+            && !in_array($line->fulfillment_type, ['service', 'no_delivery'], true));
+        if (!$requiresDelivery) {
             abort_unless($unitKey === 'quantity', 404, '该订单行没有逐台设备。');
             return ['view' => 'line', 'subject' => $this->subject($order, $line, null, $workOrderLinks), 'units_mode' => 'quantity', 'selected_unit' => null,
                 'unit_options' => [], 'unit_total' => 0, 'production_nodes' => [], 'shipment_nodes' => [], 'production_records' => [], 'shipment_records' => [],
+                'timeline' => [], 'progress' => null,
+                'quantity_summary' => $quantitySummary,
                 'notice' => '本订单行无需生产及实物发货。', 'permissions' => ['work_order_links' => $workOrderLinks]];
         }
         $query = $this->unitQuery($order, $line);
@@ -140,7 +149,11 @@ final class SalesOrderProgressQueryService
         $wo = $unit?->work_order_id ? MfgWorkOrder::query()->findOrFail($unit->work_order_id) : null;
         $production = $wo ? $this->production($wo, $unit->unit_id ? (int) $unit->unit_id : null, $workOrderLinks)
             : $this->sourceProduction($order, $line, $unit?->inventory_serial_id ? (int) $unit->inventory_serial_id : null, $workOrderLinks);
-        if ($line->line_status === 'removed' || ($wo && ($this->historical($wo, $line) || $this->transferred($wo, $order, $line)))) $production = $this->historicalProduction($production);
+        $subParents = $wo ? collect([$wo]) : collect();
+        if ($line->line_status === 'removed' || ($wo && ($this->historical($wo, $line) || $this->transferred($wo, $order, $line)))) {
+            $production = $this->historicalProduction($production);
+            $subParents = collect();
+        }
         if (! $unit && ! $wo) {
             $direct = MfgWorkOrder::query()->where('sales_order_id', $order->id)->where('sales_order_line_id', $line->id)->where('status', '!=', 'cancelled')->orderBy('id')->get()
                 ->reject(fn ($item) => $this->historical($item, $line));
@@ -154,6 +167,7 @@ final class SalesOrderProgressQueryService
                     $production['destination_label'] = collect([$production['destination_label'], $part['destination_label']])->filter()->unique()->implode(' / ');
                 }
                 $wo = $direct->first();
+                $subParents = $direct;
             }
         }
         $serialId = $unit?->inventory_serial_id ? (int) $unit->inventory_serial_id : null;
@@ -165,11 +179,15 @@ final class SalesOrderProgressQueryService
             $shipment['records'] = array_map(fn ($record) => array_replace($record, ['is_cancelled' => true]), $shipment['records']);
         }
         $options = $total <= 8 ? $this->deviceRows($order, $line, (clone $query)->orderBy('device.serial_no')->get(), $workOrderLinks) : [];
-        return ['view' => 'line', 'subject' => $this->subject($order, $line, $wo, $workOrderLinks, $production['destination_label'] ?? null) + ['shipment_no' => $shipment['shipment_no']], 'units_mode' => $unit ? 'unit' : 'quantity',
+        $payload = ['view' => 'line', 'subject' => $this->subject($order, $line, $wo, $workOrderLinks, $production['destination_label'] ?? null) + ['shipment_no' => $shipment['shipment_no']], 'units_mode' => $unit ? 'unit' : 'quantity',
             'selected_unit' => $unit ? $this->deviceRows($order, $line, collect([$unit]), $workOrderLinks)[0] : null, 'unit_options' => $options, 'unit_total' => $total,
             'production_nodes' => $production['nodes'], 'shipment_nodes' => $shipment['nodes'], 'production_records' => $production['records'], 'shipment_records' => $shipment['records'],
+            'quantity_summary' => $quantitySummary,
             'materials' => $production['materials'] ?? [],
-            'notice' => $anonymous ? '发货按订单行整体数量显示，不能对应到某一台设备。' : null, 'permissions' => ['work_order_links' => $workOrderLinks]];
+            'notice' => $anonymous ? (($quantitySummary['fulfillment_strategy'] ?? null) === 'purchase'
+                ? '外购商品按订单行数量显示备货和发货进度。' : '工厂产品按订单行数量显示备货、生产和发货进度。') : null,
+            'permissions' => ['work_order_links' => $workOrderLinks]];
+        return $payload + $this->timeline($order, $payload, $this->subGroups($subParents, $workOrderLinks));
     }
 
     public function workOrderView(SalesOrder $order, int $workOrderId, ?string $unitKey, bool $workOrderLinks): array
@@ -182,12 +200,56 @@ final class SalesOrderProgressQueryService
         $query = $this->unitQuery($order, $line, (int) $wo->id);
         $total = (clone $query)->count();
         $selected = $unitId ? (clone $query)->where('device.unit_id', $unitId)->first() : null;
-        return ['view' => 'work_order', 'subject' => $this->subject($order, $line, $wo, $workOrderLinks, $production['destination_label']), 'units_mode' => $unitId ? 'unit' : ($total ? 'all' : 'quantity'),
+        $payload = ['view' => 'work_order', 'subject' => $this->subject($order, $line, $wo, $workOrderLinks, $production['destination_label']), 'units_mode' => $unitId ? 'unit' : ($total ? 'all' : 'quantity'),
             'selected_unit' => $selected ? $this->deviceRows($order, $line, collect([$selected]), $workOrderLinks, $historical)[0] : null,
             'unit_options' => $total <= 8 ? $this->deviceRows($order, $line, (clone $query)->orderBy('device.serial_no')->get(), $workOrderLinks, $historical) : [], 'unit_total' => $total,
             'production_nodes' => $production['nodes'], 'shipment_nodes' => [], 'production_records' => $production['records'], 'shipment_records' => [],
             'materials' => $production['materials'] ?? [],
             'notice' => $total ? null : '本工单没有逐台设备记录，按工序数量显示。', 'permissions' => ['work_order_links' => $workOrderLinks]];
+        return $payload + $this->timeline($order, $payload, $historical ? [] : $this->subGroups(collect([$wo]), $workOrderLinks));
+    }
+
+    /**
+     * 把节点、记录和子工单合并成“最新在上”的时间线。
+     * 资金状态只用来提示“定金未到”：仅在生产工序仍未开始时才查，查询失败不影响进度展示。
+     */
+    private function timeline(SalesOrder $order, array $payload, array $groups): array
+    {
+        $funding = null;
+        if (collect($payload['production_nodes'])->contains(fn ($node) => in_array($node['status'], ['pending', 'in_progress'], true))) {
+            try { $funding = app(SalesOrderFundingGateService::class)->status($order); } catch (\Throwable) { $funding = null; }
+        }
+        return app(OrderProgressTimeline::class)->attach($payload, $groups, $funding);
+    }
+
+    /**
+     * 子工单（自制半成品）各自的工序记录，随主工单一起展示；只读、递归、防环。
+     * 子工单与整机序列号目前没有逐台绑定，所以只能按“本工单批次”挂在主工单级别，不能对应到某一台。
+     */
+    private function subGroups(Collection $parents, bool $links, int $depth = 0, array $seen = []): array
+    {
+        $groups = [];
+        foreach ($parents as $parent) {
+            $childIds = DB::table('erp_mfg_work_order_links')->where('parent_work_order_id', $parent->id)->orderBy('id')->pluck('child_work_order_id');
+            $children = MfgWorkOrder::query()->whereIn('id', $childIds)->where('status', '!=', 'cancelled')->orderBy('id')->get();
+            foreach ($children as $child) {
+                if (in_array((int) $child->id, $seen, true)) continue;
+                $production = $this->production($child, null, $links);
+                $planned = (float) $child->planned_qty;
+                $done = (float) $child->stored_qty + 0.00001 >= $planned;
+                $current = $child->operations()->where('execution_context', 'production')->get()->first(fn ($op) => (float) $op->completed_qty + 0.00001 < $planned)?->operation_name;
+                $progress = $this->number($done ? $child->stored_qty : $child->completed_qty).'/'.$this->number($planned);
+                $name = $child->item_name ?: $child->product_name;
+                $groups[] = ['work_order_id' => (int) $child->id, 'work_order_no' => $links ? $child->work_order_no : null, 'name' => $name, 'depth' => $depth,
+                    'status' => $done ? 'completed' : ($child->started_at ? 'in_progress' : 'pending'), 'progress_label' => $progress,
+                    'destination_label' => $production['destination_label'] ?? null, 'current_label' => $done ? null : $name.($current ? '（'.$current.'）' : ''),
+                    'summary' => $done ? $progress.' 已完成'.($production['destination_label'] ? ' · '.$production['destination_label'] : '')
+                        : $progress.' 进行中'.($current ? ' · '.$current : ''),
+                    'nodes' => $production['nodes'], 'records' => $production['records']];
+                $groups = array_merge($groups, $this->subGroups(collect([$child]), $links, $depth + 1, array_merge($seen, [(int) $parent->id, (int) $child->id])));
+            }
+        }
+        return $groups;
     }
 
     private function line(SalesOrder $order, int $lineId): SalesOrderLine
@@ -323,6 +385,7 @@ final class SalesOrderProgressQueryService
                     'completed_at' => $first->result === 'passed' ? $first->created_at?->toDateTimeString() : null,
                     'occurred_at' => $first->created_at?->toDateTimeString(), 'reason' => $first->reason,
                     'description' => implode('；', array_filter([$first->return_operation_name ? '退回'.$first->return_operation_name : null, $first->review_remark])),
+                    'return_to' => $first->result === 'failed' ? ($first->return_operation_name ?: null) : null,
                     'units' => $batch->map(fn ($r) => ['id' => 'unit:'.$r->unit_id, 'serial_no' => $this->deviceLabel($r->serial_no, $wo->work_order_no, $links)])->values()->all(),
                     'quantity' => $batch->count(), 'round' => $round ?: null, 'submission_key' => $first->submission_key, 'media' => $media,
                     'is_cancelled' => $wo->status === 'cancelled', 'scope' => $batch->count() > 1 ? 'work_order' : 'unit',
@@ -706,6 +769,7 @@ final class SalesOrderProgressQueryService
             }
         }
         $nodeFacts = [];
+        $nodeOperationIds = [];
         foreach ($operations as $op) {
             $key = $this->shipmentNodeKey((int) $op->shipment_id, (int) $op->routing_id, $op->routing_operation_id ?: $op->sequence, (int) $op->routing_version_snapshot);
             $opContents = $contents->whereIn('id', $op->packing_content_ids ?: []);
@@ -716,6 +780,7 @@ final class SalesOrderProgressQueryService
             $cancelled = $op->status === 'CANCELLED' || $opLines->every(fn ($line) => $this->cancelledShipmentLine($line));
             $nodes[$key] ??= $this->node($key, $op->operation_name_snapshot, $cancelled ? 'cancelled' : 'pending', 0, 0,
                 ['sequence' => (int) $op->sequence, 'shipment_type' => $op->shipment_operation_type_snapshot]);
+            $nodeOperationIds[$key][] = (int) $op->id;
             $activeOpLines = $opLines->reject(fn ($line) => $this->cancelledShipmentLine($line));
             $currentResults = $opResults->filter(fn ($r) => $activeOpLines->has($r->shipment_line_id) && (int) $r->round === (int) $opLines->get($r->shipment_line_id)?->quality_round);
             $selectedQty = $quantity ? (float) $opContents->whereIn('shipment_line_id', $activeOpLines->keys())->sum('base_qty') : 1.0;
@@ -734,20 +799,27 @@ final class SalesOrderProgressQueryService
             $base = ['package_no' => $op->package?->package_no, 'scope' => $scope, 'scope_label' => $scope === 'package' ? '包裹作业记录' : '逐台作业记录',
                 'is_cancelled' => $cancelled, 'quantity' => $selectedQty];
             if ($opResults->isNotEmpty() && $packingLogs->isEmpty()) {
+                // 质检轮次是整台设备共用的（试水退回会让整台进入下一轮），不能当作本工序的第几次；
+                // 本工序自己的次数 = 该设备在这道工序上已有的结果序号。
+                // 只数真正做过的结果：每轮开始时系统会预建“等待”行，那不是一次作业。
+                $attempts = $opResults->filter(fn ($r) => $r->completed_at || $r->inspected_at || $r->quality_result)
+                    ->groupBy('shipment_line_id')->map(fn ($rows) => $rows->sortBy('round')->values()->pluck('id')->flip());
                 foreach ($opResults as $result) {
                     $line = $opLines->get($result->shipment_line_id);
                     $round = (int) $result->round;
+                    $attempt = ($attempts->get($result->shipment_line_id)[$result->id] ?? 0) + 1;
                     $repair = $data['repairs']->first(fn ($r) => (int) $r->shipment_line_id === (int) $result->shipment_line_id && (int) $r->round === $round);
                     $media = $this->media($result->media ?: []);
                     if ($result->completed_at) $records[] = $this->record('serial-result:'.$result->id.':complete', $key, $op->operation_name_snapshot,
-                        ['status' => 'completed', 'status_label' => $packing ? '打包完成' : '第 '.$round.' 次作业完成', 'person' => $data['names'][$result->completed_by_legacy_id] ?? null,
-                            'completed_at' => $result->completed_at->toDateTimeString(), 'round' => $packing ? null : $round, 'quantity' => 1,
+                        ['status' => 'completed', 'status_label' => $packing ? '打包完成' : '第 '.$attempt.' 次作业完成', 'person' => $data['names'][$result->completed_by_legacy_id] ?? null,
+                            'completed_at' => $result->completed_at->toDateTimeString(), 'round' => $packing ? null : $round, 'attempt' => $packing ? null : $attempt, 'quantity' => 1,
                             'media' => array_values(array_filter($media, fn ($m) => ($m['stage'] ?? 'complete') !== 'inspect')),
                             'is_cancelled' => $this->cancelledShipmentLine($line)] + $base);
                     if ($result->inspected_at || $result->quality_result) $records[] = $this->record('serial-result:'.$result->id.':inspect', $key, $op->operation_name_snapshot,
-                        ['status' => $result->quality_result === 'passed' ? 'completed' : 'failed', 'status_label' => ($packing ? '打包检验' : '第 '.$round.' 次').($result->quality_result === 'passed' ? '合格' : '不合格'),
+                        ['status' => $result->quality_result === 'passed' ? 'completed' : 'failed', 'status_label' => ($packing ? '打包检验' : '第 '.$attempt.' 次').($result->quality_result === 'passed' ? '合格' : '不合格'),
                             'person' => $data['names'][$result->inspected_by_legacy_id] ?? null, 'completed_at' => $result->quality_result === 'passed' ? $result->inspected_at?->toDateTimeString() : null,
-                            'occurred_at' => $result->inspected_at?->toDateTimeString(), 'round' => $packing ? null : $round,
+                            'occurred_at' => $result->inspected_at?->toDateTimeString(), 'round' => $packing ? null : $round, 'attempt' => $packing ? null : $attempt,
+                            'return_to' => $result->quality_result === 'passed' || ! $repair ? null : ($data['returnOperations'][$repair->return_operation_id] ?? '返修区'),
                             'reason' => $result->reason, 'quantity' => 1, 'media' => array_values(array_filter($media, fn ($m) => ($m['stage'] ?? null) === 'inspect')),
                             'description' => $repair ? '退回'.($data['returnOperations'][$repair->return_operation_id] ?? '返修区').($repair->completed_at ? '；返修完成 '.$repair->completed_at->toDateTimeString() : '')
                                 .($repair->returned_at ? '；已返回待发区 '.$repair->returned_at->toDateTimeString() : '') : null,
@@ -790,9 +862,11 @@ final class SalesOrderProgressQueryService
             $nodes[$key]['planned_qty'] = $active->isEmpty() ? collect($facts)->sum('planned') : $active->sum('planned');
             $nodes[$key]['status'] = $active->isEmpty() ? 'cancelled' : ($active->every(fn ($f) => $f['status'] === 'completed') ? 'completed' : ($active->contains('status', 'in_progress') ? 'in_progress' : 'pending'));
             $nodes[$key]['progress_label'] = $this->number($nodes[$key]['completed_qty']).'/'.$this->number($nodes[$key]['planned_qty']);
-            // 发货质量轮次会同时推进所有工序，不能据此认定某箱已经再次打包。
+            // 发货质量轮次会同时推进所有工序，不能据此认定某道工序或某箱已经返工；
+            // 这里只数本工序自己的不合格次数。
             $nodes[$key]['rework_count'] = ($nodes[$key]['shipment_type'] ?? null) === 'packing' ? 0
-                : max(0, (int) $data['results']->filter(fn ($r) => $operations->contains('id', $r->operation_id))->max('round') - 1);
+                : $data['results']->whereIn('operation_id', $nodeOperationIds[$key] ?? [])
+                    ->filter(fn ($r) => $quantity || (int) $r->inventory_serial_id === $serialId)->where('quality_result', 'failed')->count();
             $nodes[$key]['time'] = $nodes[$key]['status'] === 'completed' ? $active->pluck('time')->filter()->max() : null;
         }
         if (count($nodes) === 1 && $sourceWorkOrder) {

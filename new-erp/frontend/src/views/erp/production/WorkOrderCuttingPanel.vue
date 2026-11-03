@@ -47,8 +47,8 @@
             <el-table-column prop="batch_no" label="批次" min-width="170" />
             <el-table-column prop="unit_qty" label="安排套数" width="95" />
             <el-table-column prop="completed_unit_qty" label="实际套数" width="95" />
-            <el-table-column label="状态" width="100"><template slot-scope="{ row }"><el-tag size="mini" :type="row.status === 'settled' ? 'success' : 'warning'">{{ row.status === 'settled' ? '已确认' : '待确认结果' }}</el-tag></template></el-table-column>
-            <el-table-column label="操作" width="125"><template slot-scope="{ row }"><el-button type="text" :disabled="busy" @click="openBatch(row)">{{ canExecute && row.status === 'issued' ? '登记产出与余料' : '查看用料结果' }}</el-button></template></el-table-column>
+            <el-table-column label="状态" width="100"><template slot-scope="{ row }"><el-tag size="mini" :type="row.status === 'settled' ? 'success' : 'warning'">{{ row.status === 'settled' ? '已结算' : '待登记结算' }}</el-tag></template></el-table-column>
+            <el-table-column label="操作" width="125"><template slot-scope="{ row }"><el-button type="text" :disabled="busy" @click="openBatch(row)">{{ canExecute && (row.status === 'issued' || row.can_resubmit) ? '登记产出与余料' : '查看用料结果' }}</el-button></template></el-table-column>
           </el-table>
           <div class="cutting-pager"><el-pagination background small :current-page="page" :page-size="10" :total="Number(batches.total || 0)" layout="total, prev, pager, next" @current-change="changePage" /></div>
         </template>
@@ -75,7 +75,7 @@
             <el-table-column label="实物 / 来源" min-width="180"><template slot-scope="{ row }">{{ row.physical_no || row.batch_no }}<div>{{ row.warehouse_name }} / {{ row.location_name }}</div></template></el-table-column>
             <el-table-column label="尺寸 / 面积 / 长度" min-width="170"><template slot-scope="{ row }"><span :class="{ 'cutting-measure': row.mode === 'length' }">{{ sourceSize(row) }}</span></template></el-table-column>
             <el-table-column label="可用" width="120"><template slot-scope="{ row }">{{ qty(row.available_qty) }} {{ sourceUnit(row) }}<div v-if="row.mode === 'length' && row.unit_kind === 'root'" class="cutting-measure">共 {{ meters(Number(row.available_qty) * Number(row.measure_qty)) }}</div></template></el-table-column>
-            <el-table-column label="本次投入" width="170"><template slot-scope="{ row }"><div v-if="sourceSelected[row.source_key]" class="cutting-source-quantity"><el-input-number v-model="sourceSelected[row.source_key].qty" size="mini" :min="row.unit_kind === 'm' ? 0.00001 : 1" :max="row.physical_material_id ? 1 : Number(row.available_qty)" :step="row.unit_kind === 'm' ? 0.01 : 1" :precision="row.unit_kind === 'm' ? 5 : 0" :step-strictly="row.unit_kind !== 'm'" :controls="false" /><span>{{ sourceUnit(row) }}</span></div></template></el-table-column>
+            <el-table-column label="本次投入" width="170"><template slot-scope="{ row }"><div v-if="sourceSelected[row.source_key]" class="cutting-source-quantity"><el-input-number v-model="sourceSelected[row.source_key].qty" size="mini" :min="row.unit_kind === 'm' ? 0.00001 : (row.unit_kind === 'root' && !row.physical_material_id ? 0.0001 : 1)" :max="row.physical_material_id ? 1 : Number(row.available_qty)" :step="row.unit_kind === 'm' ? 0.01 : 1" :precision="row.unit_kind === 'm' ? 5 : (row.unit_kind === 'root' && !row.physical_material_id ? 4 : 0)" :step-strictly="row.unit_kind !== 'm' && (row.unit_kind !== 'root' || !!row.physical_material_id)" :controls="false" /><span>{{ sourceUnit(row) }}</span></div></template></el-table-column>
           </el-table>
           <div class="cutting-pager"><el-pagination background :current-page="sourceQuery.page" :page-size="10" :total="sourceTotal" layout="total, prev, pager, next" @current-change="sourcePage" /></div>
         </main>
@@ -84,17 +84,17 @@
       <span slot="footer"><el-button size="small" @click="sourceOpen = false">取消</el-button><el-button size="small" type="success" :disabled="sourceLoading || !Object.keys(sourceSelected).length" @click="confirmSources">确认选择</el-button></span>
     </el-dialog>
 
-    <el-dialog :title="batch.status === 'issued' ? '登记产出与余料' : '用料结果'" :visible.sync="batchOpen" append-to-body top="5vh" width="min(960px, calc(100vw - 32px))" custom-class="mfg-cutting-dialog" :close-on-click-modal="false" :show-close="!busy" :close-on-press-escape="!busy">
-      <div class="cutting-summary"><strong>{{ batch.batch_no }}</strong><el-tag size="small">{{ batch.status === 'settled' ? '已结算' : batch.status === 'awaiting_confirm' ? '余料待仓库确认' : '待登记结果' }}</el-tag></div>
+    <el-dialog :title="batchEditable ? '登记产出与余料' : '用料结果'" :visible.sync="batchOpen" append-to-body top="5vh" width="min(960px, calc(100vw - 32px))" custom-class="mfg-cutting-dialog" :close-on-click-modal="false" :show-close="!busy" :close-on-press-escape="!busy">
+      <div class="cutting-summary"><strong>{{ batch.batch_no }}</strong><el-tag size="small">{{ batch.status === 'settled' ? '已结算' : batch.status === 'awaiting_confirm' ? '待登记结算' : '待登记结果' }}</el-tag></div>
       <el-alert v-if="batch.waiting_reason" :title="batch.waiting_reason" type="warning" :closable="false" />
-      <el-button v-if="batch.remnant_receipt && batch.remnant_receipt.id" size="small" type="text" @click="$router.push({ path: '/inventory/inbound-confirmations', query: { kind: 'cutting_remnant', id: batch.remnant_receipt.id } })">查看余料入库申请</el-button>
+      <el-button v-if="batch.remnant_receipt && batch.remnant_receipt.id" size="small" type="text" @click="$router.push({ path: '/inventory/inbound-confirmations', query: { kind: 'cutting_remnant', id: batch.remnant_receipt.id } })">查看历史余料申请</el-button>
       <el-alert v-if="batchError" :title="batchError" type="error" show-icon :closable="false" />
-      <div class="cutting-form"><label>实际加工套数<el-input-number v-model="actualUnits" size="small" :min="1" :max="Number(batch.unit_qty || 1)" :step="1" step-strictly :disabled="batchLocked" @change="batchConfirmed = false" /></label></div>
+      <div class="cutting-form"><label>实际加工套数<el-input-number v-model="actualUnits" size="small" :min="1" :max="Number(batch.unit_qty || 1)" :step="1" step-strictly :disabled="batchLocked || batch.status !== 'issued'" @change="batchConfirmed = false" /></label></div>
       <h4>本批加工结果</h4>
       <el-table :data="actualAssignments" border size="small">
         <el-table-column label="实际来源" min-width="170"><template slot-scope="{ row }">{{ batchSourceName(row.source_key) }}</template></el-table-column>
         <el-table-column label="板件 / 管件" min-width="160"><template slot-scope="{ row }">{{ partName(row.part_key) }}</template></el-table-column>
-        <el-table-column label="实际产出量" width="170"><template slot-scope="{ row }"><el-input v-model="row.qty" size="small" inputmode="decimal" :disabled="batchLocked" @input="suggestActualRemnants"><template slot="append">{{ partUnit(row.part_key) }}</template></el-input></template></el-table-column>
+        <el-table-column label="实际产出量" width="170"><template slot-scope="{ row }"><el-input v-model="row.qty" size="small" inputmode="decimal" :disabled="batchLocked || batch.status !== 'issued'" @input="suggestActualRemnants"><template slot="append">{{ partUnit(row.part_key) }}</template></el-input></template></el-table-column>
       </el-table>
       <h4>余料人工确认</h4>
       <div v-for="row in remnants" :key="row.source_key" class="cutting-remnant">
@@ -105,9 +105,9 @@
           <label v-if="Number(row.measure_qty) > 0">回库库位<el-button size="small" class="cutting-locator" :disabled="batchLocked || !row.warehouse_id" @click="openLocator(row, 'locations')">{{ row.location_name || '选择库位' }}<i class="el-icon-search" /></el-button></label>
         </div>
       </div>
-      <el-input v-if="batch.status === 'issued'" v-model.trim="batchRemark" type="textarea" :rows="2" maxlength="500" :disabled="batchLocked" placeholder="现场说明（选填）" />
-      <div v-if="batch.status === 'issued'" class="cutting-actions"><el-checkbox v-model="batchConfirmed" :disabled="batchLocked">已核对实际产出和余料；板材余料按面积确认</el-checkbox></div>
-      <span slot="footer"><el-button size="small" :disabled="busy" @click="batchOpen = false">关闭</el-button><el-button v-if="canExecute && batch.status === 'issued'" type="success" size="small" :loading="busy" :disabled="!pendingSettle && !batchConfirmed" @click="settle">{{ pendingSettle ? '核对上次登记结果' : '登记产出并提交余料确认' }}</el-button></span>
+      <el-input v-if="batchEditable" v-model.trim="batchRemark" type="textarea" :rows="2" maxlength="500" :disabled="batchLocked" placeholder="现场说明（选填）" />
+      <div v-if="batchEditable" class="cutting-actions"><el-checkbox v-model="batchConfirmed" :disabled="batchLocked">已核对实际产出和余料；板材余料按面积确认</el-checkbox></div>
+      <span slot="footer"><el-button size="small" :disabled="busy" @click="batchOpen = false">关闭</el-button><el-button v-if="batchEditable" type="success" size="small" :loading="busy" :disabled="!pendingSettle && !batchConfirmed" @click="settle">{{ pendingSettle ? '核对上次登记结果' : '确认登记结算' }}</el-button></span>
     </el-dialog>
     <system-record-picker :visible.sync="locator.visible" :type="locator.type" :multiple="false" :value="locatorValue" :warehouse-id="locator.row ? Number(locator.row.warehouse_id || 0) : 0" :location-purposes="['general']" :management-scope="workOrder.management_scope || 'factory'" @confirm="selectLocator" />
   </div>
@@ -139,11 +139,12 @@ export default {
     locator: { visible: false, type: 'warehouses', row: null }
   }),
   computed: {
-    // 只有按实物管理的板材（issue_mode=cutting）走开料批次；按数量管理的管材按定额收料或在小程序点「已备料」
+    // 随单开料沿冻结需求展示；集中开料的实际来源由下料人在小程序登记。
     hasCutting() { return (this.workOrder.kitting || []).some(op => (op.materials || []).some(row => row.issue_mode === 'cutting' && row.cutting_mode && row.cutting_mode !== 'none')) },
     canExecute() { return this.$can('production.work_order.edit') || this.$can('production.task.execute') },
     locked() { return this.busy || this.pendingIssue || !this.canExecute },
-    batchLocked() { return this.busy || this.pendingSettle || !this.canExecute || this.batch.status !== 'issued' },
+    batchEditable() { return this.canExecute && (this.batch.status === 'issued' || Boolean(this.batch.can_resubmit)) },
+    batchLocked() { return this.busy || this.pendingSettle || !this.batchEditable },
     batches() { return this.context && this.context.batches || {} },
     cuttingOperations() { return (this.context && this.context.operations || []).filter(op => this.context.requirements.some(row => Number(row.operation_id) === Number(op.id))) },
     operationRequirements() { return (this.context && this.context.requirements || []).filter(row => Number(row.operation_id) === Number(this.operationId)) },
@@ -219,14 +220,16 @@ export default {
     searchSources() { this.sourceQuery.page = 1; this.loadSources() },
     sourcePage(page) { this.sourceQuery.page = page; this.loadSources() },
     selectCategory(row) { this.sourceQuery.category_id = row.id; this.searchSources() },
-    toggleSource(row, selected) { if (selected) this.$set(this.sourceSelected, row.source_key, { ...row, qty: row.unit_kind === 'm' ? Number(row.available_qty) : 1 }); else this.$delete(this.sourceSelected, row.source_key) },
+    toggleSource(row, selected) { if (selected) this.$set(this.sourceSelected, row.source_key, { ...row, qty: row.unit_kind === 'm' ? Number(row.available_qty) : Math.min(1, Number(row.available_qty)) }); else this.$delete(this.sourceSelected, row.source_key) },
     confirmSources() {
       const sources = []
       for (const row of Object.values(this.sourceSelected)) {
         const count = Number(row.qty)
-        if (!Number.isFinite(count) || count <= 0 || row.unit_kind !== 'm' && !Number.isInteger(count) || count > (row.physical_material_id ? 1 : Number(row.available_qty))) return this.$message.warning('请核对本次投入张数、根数或长度')
+        const fractionalRoot = row.unit_kind === 'root' && !row.physical_material_id
+        if (!Number.isFinite(count) || count <= 0 || (row.unit_kind !== 'm' && !fractionalRoot && !Number.isInteger(count)) || count > (row.physical_material_id ? 1 : Number(row.available_qty))
+          || (fractionalRoot && !/^\d+(?:\.\d{1,4})?$/.test(String(count)))) return this.$message.warning('请核对本次投入张数、根数或长度，管材数量最多四位小数')
         if (row.unit_kind === 'root') {
-          for (let i = 1; i <= count; i++) sources.push({ ...row, original_source_key: row.source_key, source_key: row.source_key + ':' + i, qty: '1' })
+          for (let i = 0; i < count; i++) sources.push({ ...row, original_source_key: row.source_key, source_key: row.source_key + ':' + (i + 1), qty: String(Math.min(1, Number((count - i).toFixed(4)))) })
         } else sources.push({ ...row, original_source_key: row.source_key, qty: String(count) })
       }
       this.selectedSources = sources; this.preview = null; this.planChecked = false; this.planConfirmed = false; this.sourceOpen = false
@@ -265,8 +268,8 @@ export default {
     openBatch(row) {
       this.batch = clone(row); this.batchError = ''; this.batchOpen = true; this.actualUnits = Number(row.completed_unit_qty || row.unit_qty)
       this.actualAssignments = clone(['settled', 'awaiting_confirm'].includes(row.status) ? row.actual_outputs || [] : row.planned_outputs || [])
-      this.batchConfirmed = false; this.batchRemark = ''; this.pendingSettle = Boolean(pendingWarehouseCommand('cutting_batch.request', row.id))
-      if (['settled', 'awaiting_confirm'].includes(row.status)) { this.remnants = clone(row.remnants || row.remnant_receipt?.requested_lines || []); return }
+      this.batchConfirmed = false; this.batchRemark = row.remark || ''; this.pendingSettle = Boolean(pendingWarehouseCommand('cutting_batch.request', row.id))
+      if (['settled', 'awaiting_confirm'].includes(row.status)) { this.remnants = clone((row.remnants || []).length ? row.remnants : row.remnant_receipt?.requested_lines || []); return }
       this.remnants = (row.summaries || row.input_lines || []).map(summary => {
         const source = row.input_lines.find(line => line.source_key === summary.source_key)
         return { source_key: summary.source_key, measure_unit: summary.measure_unit, measure_qty: String(summary.suggested_remnant), warehouse_id: source.warehouse_id, warehouse_name: source.warehouse_name, location_id: source.location_id, location_name: source.location_name }
@@ -295,13 +298,13 @@ export default {
       this.batchConfirmed = false
     },
     async settle() {
-      if (this.busy || !this.pendingSettle && (!this.batchConfirmed || !this.remnants.length)) return
+      if (this.busy || !this.batchEditable || !this.pendingSettle && (!this.batchConfirmed || !this.remnants.length)) return
       const batch = this.batch
       if (!this.pendingSettle && this.remnants.some(row => !/^\d+(?:\.\d+)?$/.test(String(row.measure_qty)) || Number(row.measure_qty) > 0 && (!row.warehouse_id || !row.location_id))) return this.$message.warning('请填写非负余料数量及余料回库位置')
       this.busy = true; this.batchError = ''
       try {
-        const { data } = await settleWorkOrderCutting(batch.id, { expected_version: batch.business_version, unit_qty: this.actualUnits, assignments: this.actualAssignments.map(row => ({ source_key: row.source_key, part_key: row.part_key, qty: String(row.qty) })), remnants: this.remnants.map(row => ({ source_key: row.source_key, measure_qty: String(row.measure_qty), warehouse_id: row.warehouse_id, location_id: row.location_id })), confirmed: true, remark: this.batchRemark || undefined })
-        this.pendingSettle = false; this.batchOpen = false; this.$message.success(data.status === 'awaiting_confirm' ? '产出已登记，余料待仓库确认' : '零余料已登记并结算'); await this.load(); this.$emit('refresh')
+        await settleWorkOrderCutting(batch.id, { expected_version: batch.business_version, unit_qty: this.actualUnits, assignments: this.actualAssignments.map(row => ({ source_key: row.source_key, part_key: row.part_key, qty: String(row.qty) })), remnants: this.remnants.map(row => ({ source_key: row.source_key, measure_qty: String(row.measure_qty), warehouse_id: row.warehouse_id, location_id: row.location_id })), confirmed: true, remark: this.batchRemark || undefined })
+        this.pendingSettle = false; this.batchOpen = false; this.$message.success('实际产出与余料已登记结算'); await this.load(); this.$emit('refresh')
       } catch (e) { this.pendingSettle = Boolean(e.pendingCommand); this.batchError = errorText(e, '用料结果确认失败') }
       finally { this.busy = false }
     }

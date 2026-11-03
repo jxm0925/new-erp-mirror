@@ -15,7 +15,7 @@
         <el-table-column prop="item_name" label="物料" min-width="165" />
         <el-table-column label="数量" width="85" align="right"><template slot-scope="s">{{ quantity(s.row.quantity) }} {{ s.row.unit_name }}</template></el-table-column>
         <el-table-column label="申请库位" min-width="130"><template slot-scope="s">{{ s.row.requested_warehouse_name || s.row.target_warehouse_name || '-' }} / {{ s.row.requested_location_code || '-' }}</template></el-table-column>
-        <el-table-column label="等待时间 / 申请时间" min-width="155"><template slot-scope="s"><span :class="{ 'error-text': s.row.overdue }">{{ s.row.kind === 'cutting_remnant' && s.row.status === 'pending' ? s.row.waiting_hours + ' 小时' : dateTime(s.row.sort_at) }}</span></template></el-table-column>
+        <el-table-column label="申请时间" min-width="155"><template slot-scope="s">{{ dateTime(s.row.sort_at) }}</template></el-table-column>
         <el-table-column label="状态" width="110"><template slot-scope="s"><el-tag size="mini" :type="statusType(s.row.status)">{{ s.row.status_label }}</el-tag></template></el-table-column>
         <el-table-column label="操作" width="80"><template slot-scope="s"><el-button type="text" size="mini" @click.stop="openDetail(s.row)">查看</el-button></template></el-table-column>
       </el-table>
@@ -29,13 +29,13 @@
           <div><span>申请人</span><b>{{ header.operator_name || '-' }}</b></div><div><span>申请时间</span><b>{{ header.requested_at }}</b></div><div><span>申请库位</span><b>{{ header.requested_warehouse_name || '-' }} / {{ header.requested_location_code || '-' }}</b></div>
           <div v-if="$can('inventory.amount.view')"><span>成本</span><b :class="{ 'cost-pending': header.cost_status === 'pending_confirmation' }">{{ header.cost_status === 'pending_confirmation' ? '待仓库确认' : money(header.cost_amount) }}</b></div>
         </div>
-        <div v-else-if="isRemnant" class="detail-grid"><div><span>来源批次</span><b>{{ header.batch_no }}</b></div><div><span>登记人</span><b>{{ header.requested_by_name }}</b></div><div><span>{{ header.status === 'pending' ? '已等待' : '申请时间' }}</span><b :class="{ 'error-text': header.overdue }">{{ header.status === 'pending' ? header.waiting_hours + ' 小时' : header.requested_at }}</b></div></div>
+        <div v-else-if="isRemnant" class="detail-grid"><div><span>来源批次</span><b>{{ header.batch_no }}</b></div><div><span>登记人</span><b>{{ header.requested_by_name }}</b></div><div><span>申请时间</span><b>{{ header.requested_at }}</b></div></div>
         <div v-else class="detail-grid"><div><span>来源仓库</span><b>{{ warehouseName(header.source_warehouse) || header.source_warehouse_name }}</b></div><div><span>目标仓库</span><b>{{ warehouseName(header.target_warehouse) || header.target_warehouse_name }}</b></div><div><span>调出时间</span><b>{{ header.dispatched_at || '-' }}</b></div></div>
         <template v-if="actions.confirm && (detailKind === 'mfg_receipt' || isPhysical)">
           <h2>实际入库库位</h2><div class="scan-row"><el-input v-model="locationCode" size="small" placeholder="扫描或输入库位码后回车" :disabled="locked" @input="locator = {}" @keyup.enter.native="scanLocation"><i slot="suffix" class="el-icon-full-screen" /></el-input><el-button size="small" plain type="success" :disabled="locked" @click="openLocator">选择库位</el-button></div>
           <div v-if="locator.location_id" class="location-caption">{{ locator.warehouse_name }} · {{ locator.location_code }} {{ locator.location_name }}</div>
         </template>
-        <h2>{{ isRemnant ? '核对余料' : isTransfer ? '接收明细' : header.requires_serial_check ? '逐台核对' : '入库明细' }}<small v-if="actions.confirm && header.requires_serial_check">已核对 <b>{{ checkedCount }} / {{ (header.serial_nos || []).length }}</b></small></h2>
+        <h2>{{ isRemnant ? '历史余料明细' : isTransfer ? '接收明细' : header.requires_serial_check ? '逐台核对' : '入库明细' }}<small v-if="actions.confirm && header.requires_serial_check">已核对 <b>{{ checkedCount }} / {{ (header.serial_nos || []).length }}</b></small></h2>
         <div v-if="actions.confirm && header.requires_serial_check" class="scan-row"><el-input v-model="serialCode" size="small" placeholder="扫描或输入序列号后回车" :disabled="locked" @keyup.enter.native="scanSerial"><i slot="suffix" class="el-icon-full-screen" /></el-input><el-button size="small" type="success" plain :disabled="locked" @click="scanSerial">核对</el-button></div>
         <el-table v-if="detailKind === 'mfg_receipt'" :data="lines" border size="small"><el-table-column :label="header.requires_serial_check ? '序列号' : '设备'" min-width="180"><template slot-scope="s">{{ header.requires_serial_check ? s.row.serial_no : '第 ' + s.row.unit_no + ' 台' }}</template></el-table-column><el-table-column label="产品" min-width="180"><template>{{ header.product_name || header.item_name }}</template></el-table-column><el-table-column label="核对状态" width="115"><template slot-scope="s"><el-tag size="mini" :type="checked[s.row.serial_no] ? 'success' : 'info'">{{ actions.confirm && header.requires_serial_check ? (checked[s.row.serial_no] ? '已核对' : '未核对') : s.row.status_label }}</el-tag></template></el-table-column></el-table>
         <div v-if="isRemnant" class="remnant-lines"><div v-for="line in lines" :key="line.source_key" class="remnant-line"><b>{{ line.item_name }} · {{ line.physical_no || line.source_key }}</b><div class="detail-grid"><div><span>原始投入</span><b>{{ line.input_measure }} {{ measureUnit(line) }}</b></div><div><span>实际产出</span><b>{{ line.output_measure == null ? '未逐张分配' : line.output_measure + ' ' + measureUnit(line) }}</b></div><div><span>申请余料</span><b>{{ line.measure_qty }} {{ measureUnit(line) }}</b></div></div><div class="scan-row"><label>确认{{ line.mode === 'length' ? '长度' : '面积' }}</label><el-input v-model="drafts[line.source_key].measure_qty" size="small" :disabled="locked || !remnantEditable"><span slot="append">{{ measureUnit(line) }}</span></el-input><el-button v-if="remnantEditable" size="small" type="success" plain :disabled="locked" @click="openLocator(line.source_key)">选择库位</el-button></div><div v-if="drafts[line.source_key].location_id" class="location-caption">{{ drafts[line.source_key].warehouse_name }} · {{ drafts[line.source_key].location_code }} {{ drafts[line.source_key].location_name }}</div><small>{{ line.mode === 'length' ? '管材按长度确认' : line.shape === 'AREA_ONLY' ? '异形余板，仅按实际面积确认' : '原板尺寸沿用来源' }}</small></div><el-alert v-if="header.waiting_reason" :title="header.waiting_reason" type="warning" :closable="false" /></div>
@@ -68,16 +68,16 @@ export default {
   name: 'InventoryInboundConfirmationList',
   components: { SystemRecordPicker },
   data: () => ({ loading: false, rows: [], total: 0, page: 1, filters: { keyword: '', kind: 'mfg_receipt', status: 'pending' },
-    kinds: [{ value: 'mfg_receipt', label: '生产入库' }, { value: 'cutting_remnant', label: '余料入库' }, { value: 'inventory_transfer', label: '跨仓调入' }, { value: 'material_physical_transfer', label: '实物跨仓调入' }],
+    kinds: [{ value: 'mfg_receipt', label: '生产入库' }, { value: 'cutting_remnant', label: '历史余料申请' }, { value: 'inventory_transfer', label: '跨仓调入' }, { value: 'material_physical_transfer', label: '实物跨仓调入' }],
     detailVisible: false, detailLoading: false, saving: false, header: null, actions: {}, lines: [], linePage: 1, lineLastPage: 1,
     checked: {}, checkedPhysicals: {}, physicalCode: '', detailKind: 'mfg_receipt', drafts: {}, resubmitting: false, locator: {}, locationCode: '', serialCode: '', remark: '', formError: '', pendingActions: [], picker: { visible: false, mode: 'warehouse', warehouse: {}, lineKey: '' } }),
   computed: {
     isRemnant() { return this.detailKind === 'cutting_remnant' },
     isTransfer() { return ['inventory_transfer', 'material_physical_transfer'].includes(this.detailKind) },
     isPhysical() { return this.detailKind === 'material_physical_transfer' },
-    detailTitle() { return (this.kinds.find(kind => kind.value === this.detailKind)?.label || '入库') + '确认' },
-    remnantEditable() { return this.actions.confirm || this.resubmitting },
-    statuses() { return ['inventory_transfer', 'material_physical_transfer'].includes(this.filters.kind) ? [{ value: 'in_transit', label: '在途待接收' }, { value: 'posted', label: '已接收' }] : [{ value: 'pending', label: '待确认' }, { value: 'confirmed', label: '已确认' }, { value: 'rejected', label: '已驳回' }, { value: 'cancelled', label: '已撤回' }] },
+    detailTitle() { return this.isRemnant ? '历史余料申请' : (this.kinds.find(kind => kind.value === this.detailKind)?.label || '入库') + '确认' },
+    remnantEditable() { return !this.isRemnant && (this.actions.confirm || this.resubmitting) },
+    statuses() { return this.filters.kind === 'cutting_remnant' ? [{ value: '', label: '全部历史' }, { value: 'pending', label: '原待确认' }, { value: 'confirmed', label: '已确认' }, { value: 'rejected', label: '已驳回' }, { value: 'cancelled', label: '已撤回' }] : ['inventory_transfer', 'material_physical_transfer'].includes(this.filters.kind) ? [{ value: 'in_transit', label: '在途待接收' }, { value: 'posted', label: '已接收' }] : [{ value: 'pending', label: '待确认' }, { value: 'confirmed', label: '已确认' }, { value: 'rejected', label: '已驳回' }, { value: 'cancelled', label: '已撤回' }] },
     confirmReady() {
       if (!this.header) return false
       const rows = this.header.confirmation_lines || []
@@ -106,7 +106,7 @@ export default {
     async load() {
       const sequence = this.queueSequence = (this.queueSequence || 0) + 1; this.loading = true
       try {
-        const { data } = await listWarehouseQueue({ ...this.filters, direction: 'inbound', status_group: ['pending', 'in_transit'].includes(this.filters.status) ? 'pending' : 'completed', page: this.page, per_page: 10 })
+        const { data } = await listWarehouseQueue({ ...this.filters, direction: 'inbound', status_group: this.filters.kind === 'cutting_remnant' ? 'completed' : ['pending', 'in_transit'].includes(this.filters.status) ? 'pending' : 'completed', page: this.page, per_page: 10 })
         if (sequence !== this.queueSequence) return
         this.rows = data.data || []; this.total = Number(data.total || data.meta?.total || 0)
       } catch (e) { if (sequence === this.queueSequence) this.$message.error(errorText(e, '入库申请加载失败')) }
@@ -128,9 +128,8 @@ export default {
         if (this.header.business_version && this.header.business_version !== header.business_version) {
           this.checked = {}; this.drafts = {}; this.checkedPhysicals = {}; this.locator = {}; this.locationCode = ''; this.formError = '单据已变化，请重新核对库位和实物'
         }
-        this.header = header; this.actions = {}; (body.actions || []).forEach(action => this.$set(this.actions, action.split('.')[1], true))
-        if (header.can_resubmit) this.$set(this.actions, 'resubmit', true)
-        ;(header.confirmation_lines || []).forEach(row => { const key = this.isRemnant ? row.source_key : String(row.id); if (!this.drafts[key]) this.$set(this.drafts, key, { measure_qty: String(row.measure_qty || '0'), location_id: null, location_code: '', warehouse_id: this.isTransfer ? header.target_warehouse_id : null }) })
+        this.header = header; this.actions = {}; if (!this.isRemnant) (body.actions || []).forEach(action => this.$set(this.actions, action.split('.')[1], true))
+        ;(header.confirmation_lines || []).forEach(row => { const key = this.isRemnant ? row.source_key : String(row.id); if (!this.drafts[key]) this.$set(this.drafts, key, { measure_qty: String(row.measure_qty || '0'), location_id: this.isRemnant ? row.location_id : null, location_code: this.isRemnant ? row.location_code : '', location_name: this.isRemnant ? row.location_name : '', warehouse_name: this.isRemnant ? row.warehouse_name : '', warehouse_id: this.isTransfer ? header.target_warehouse_id : this.isRemnant ? row.warehouse_id : null }) })
         this.lines = body.lines?.data || []; this.lineLastPage = Number(body.lines?.last_page || 1)
         this.refreshPending()
       } catch (e) { if (sequence === this.detailSequence) this.formError = errorText(e, '入库详情加载失败') }
@@ -196,7 +195,7 @@ export default {
       } catch (e) { if (!isCancel(e)) this.formError = errorText(e, e.message || '操作失败') }
     },
     async submit(action, payload = {}) {
-      if (this.saving) return
+      if (this.saving || this.isRemnant) return
       this.saving = true; this.formError = ''
       try {
         const result = await submitWarehouseCommand(action === 'resubmit' ? 'cutting_batch.request' : this.detailKind + '.' + action, action === 'resubmit' ? this.header.cutting_batch_id : this.header.id, payload)
@@ -209,7 +208,7 @@ export default {
         if (!e.pendingCommand && [409, 422].includes(e.response?.status)) await this.loadDetail()
       } finally { this.saving = false }
     },
-    refreshPending() { this.pendingActions = ['confirm', 'reject', 'cancel', 'scrap', 'exception'].filter(action => pendingWarehouseCommand(this.detailKind + '.' + action, this.header.id)); if (this.isRemnant && pendingWarehouseCommand('cutting_batch.request', this.header.cutting_batch_id)) this.pendingActions.push('resubmit') }
+    refreshPending() { this.pendingActions = this.isRemnant ? [] : ['confirm', 'reject', 'cancel', 'scrap', 'exception'].filter(action => pendingWarehouseCommand(this.detailKind + '.' + action, this.header.id)) }
   }
 }
 </script>

@@ -6,6 +6,7 @@ use App\Models\Erp\InventoryBalance;
 use App\Models\Erp\SalesOrderLine;
 use App\Models\Erp\Unit;
 use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
 class InventoryAvailabilityService
@@ -29,6 +30,27 @@ class InventoryAvailabilityService
                 fn (InventoryBalance $balance) => $this->availableForOutbound($balance)
             ), 8))
             ->all();
+    }
+
+    /** 账面现存包含全部库存行；可用仍按正式出库边界计算，按物料和基本单位分池。 */
+    public function inventoryBaseQuantities(array $itemIds): array
+    {
+        $ids = array_values(array_unique(array_filter(array_map('intval', $itemIds))));
+        if (!$ids) return [];
+        $pools = [];
+        foreach (InventoryBalance::query()->whereIn('item_id', $ids)->selectRaw('item_id, unit_id, SUM(quantity_on_hand) AS qty')
+            ->groupBy('item_id', 'unit_id')->get() as $row) {
+            $pools[$row->item_id.':'.$row->unit_id] = ['on_hand_qty' => round((float) $row->qty, 8), 'available_qty' => 0.0];
+        }
+        $balances = $this->outboundBalanceQuery($ids)->with('item')->get();
+        $lotIds = $balances->pluck('material_lot_id')->filter()->unique()->all();
+        $lots = $lotIds ? DB::table('erp_material_lots')->whereIn('id', $lotIds)->get()->keyBy('id')->all() : [];
+        foreach ($balances as $balance) {
+            $key = $balance->item_id.':'.$balance->unit_id;
+            $pools[$key] ??= ['on_hand_qty' => 0.0, 'available_qty' => 0.0];
+            $pools[$key]['available_qty'] = round($pools[$key]['available_qty'] + $this->availableForOutbound($balance, 0, $lots), 8);
+        }
+        return $pools;
     }
 
     /** 可出库的库存行（仓库、库位、批次都有效且未过期）；可用量再按 availableForOutbound 计算。 */
@@ -56,7 +78,7 @@ class InventoryAvailabilityService
      * Shared outbound boundary for order/work reservations, supplier returns,
      * exchanges and quality handling.
      */
-    public function availableForOutbound(InventoryBalance $balance, float $ownReserved = 0): float
+    public function availableForOutbound(InventoryBalance $balance, float $ownReserved = 0, ?array $lots = null): float
     {
         // 最终办理只加回调用方已锁定的本次占用，其他占用、不良与待定量仍扣除。
         $ownReserved = max(0, min((float) $balance->quantity_locked, $ownReserved));
@@ -67,7 +89,7 @@ class InventoryAvailabilityService
         if ($balance->material_lot_id) {
             $lotQuery = \Illuminate\Support\Facades\DB::table('erp_material_lots')->where('id', $balance->material_lot_id);
             if ($ownReserved > 0 && \Illuminate\Support\Facades\DB::transactionLevel() > 0) $lotQuery->lockForUpdate();
-            $lot = $lotQuery->first();
+            $lot = $lots === null ? $lotQuery->first() : ($lots[$balance->material_lot_id] ?? null);
             if (! $lot) return 0.0;
             $ordinaryProduct = $lot->material_form === 'PRODUCT'
                 && $balance->item?->item_type === 'finished_product'

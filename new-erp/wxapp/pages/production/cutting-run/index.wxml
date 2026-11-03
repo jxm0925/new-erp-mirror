@@ -15,7 +15,7 @@
   <view wx:if="{{error}}" class="mt-error">{{error}}</view>
 
   <block wx:if="{{tab === 'runs'}}">
-    <view class="mt-note" style="margin-bottom: 18rpx;">单次集中开料对应单一 BOM 并记录实际工时。「切完结束」时按件数从仓库扣料，库存不够不能结束；逐张管理的板材须先领用板材并登记余料。各工单下料工序执行「已备料」时按件数带走料和工时（批次总工时 ÷ 总件数 × 领用件数）。</view>
+    <view class="mt-note" style="margin-bottom: 18rpx;">单次集中开料对应单一 BOM 并记录实际工时。下料人先自选原料或余料并登记实际剩余量，「切完结束」时核对产出件数，系统结算库存和成本。各工单执行「已备料」时按件数带走料和工时。</view>
     <view wx:if="{{loading}}" class="mt-empty">正在读取开料批次…</view>
     <view wx:if="{{!loading && !runs.length}}" class="mt-empty">暂无集中开料批次记录，请切换至「新建开料批次」启动作业</view>
     <view wx:for="{{runs}}" wx:key="id" class="mt-card" data-id="{{item.id}}" bindtap="openRunTap">
@@ -72,7 +72,7 @@
 
 <view wx:if="{{panel === 'run'}}" class="tk-mask" catchtouchmove="stop">
   <view class="tk-sheet">
-    <view wx:if="{{run.waiting_reason}}" class="mt-note">{{run.waiting_reason}}</view><view class="mt-row tk-sheet-head"><text class="mt-title mono">{{run.run_no}}</text><text class="mt-tag {{run.status === 'running' ? 'amber' : 'green'}}">{{run.status_label}}</text></view>
+    <view wx:if="{{run.waiting_reason}}" class="mt-note">{{run.waiting_reason}}</view><view class="mt-row tk-sheet-head"><text class="mt-title mono">{{run.run_no}}</text><text class="mt-tag {{run.status === 'finished' ? 'green' : 'amber'}}">{{run.status_label}}</text></view>
     <scroll-view scroll-y class="tk-sheet-body">
       <view class="mt-product">{{run.output_item_name}} <text class="mt-muted">{{run.bom_no}} · 计划 {{run.set_qty}} 套</text></view>
       <view class="cr-timer">{{run.status === 'running' ? liveText : run.laborText}}</view>
@@ -80,11 +80,11 @@
       <view class="mt-card-title mt-gap">开料作业人员（按实际工时记录）</view>
       <view wx:for="{{run.people}}" wx:key="employee_legacy_id" class="cr-person"><text>{{item.employee_name}}</text><text class="{{item.timing ? 'on' : ''}}">{{item.timing ? '计时中 · ' : ''}}{{item.minutesText}}</text></view>
 
-      <block wx:if="{{run.sheet_items.length && run.status === 'running'}}">
-        <view class="mt-card-title mt-gap">板材领用与余料管理</view>
-        <view wx:for="{{run.sheet_items}}" wx:key="item_id" class="mt-row" style="padding: 10rpx 0;"><text>{{item.item_name}}</text><text class="tk-link red" data-index="{{index}}" bindtap="openSheet">领用板材 ›</text></view>
+      <block wx:if="{{run.material_items.length && run.status === 'running'}}">
+        <view class="mt-card-title mt-gap">原料领用与余料管理</view>
+        <view wx:for="{{run.material_items}}" wx:key="item_id" class="mt-row" style="padding: 10rpx 0;"><text>{{item.item_name}}</text><text class="tk-link red" data-index="{{index}}" bindtap="openSheet">选择原料或余料 ›</text></view>
       </block>
-      <view wx:if="{{run.sheet_batches.length}}" class="mt-row mt-gap"><text class="mt-muted">已关联领板 {{run.sheet_batches.length}} 批</text><text class="tk-link red" bindtap="openSheetBatches">登记余料 / 查看明细 ›</text></view>
+      <view wx:if="{{run.sheet_batches.length}}" class="mt-row mt-gap"><text class="mt-muted">已关联领料 {{run.sheet_batches.length}} 批</text><text class="tk-link red" bindtap="openSheetBatches">登记余料 / 查看明细 ›</text></view>
 
       <view class="mt-card-title mt-gap">{{run.status === 'running' ? '实际开料产出件数（按实核改）' : '物料产出与分摊明细'}}</view>
       <block wx:for="{{run.lines}}" wx:key="line_key">

@@ -121,6 +121,8 @@ Route::prefix('v1/erp/purchase')->group(function () {
     Route::get('attachments/{id}/download', [PurchaseController::class, 'downloadAttachment'])->whereNumber('id');
     Route::delete('attachments/{id}', [PurchaseController::class, 'deleteAttachment'])->whereNumber('id');
     Route::get('items/{itemId}/supplier-recommendations', [PurchaseSupplierRecommendationController::class, 'index'])->whereNumber('itemId');
+    Route::get('requests/sales-candidates', [\App\Http\Controllers\Api\V1\Erp\PurchaseRequestSalesController::class, 'candidates']);
+    Route::get('requests/work-order-candidates', [\App\Http\Controllers\Api\V1\Erp\PurchaseRequestSalesController::class, 'workOrderCandidates']);
     Route::get('requests', [PurchaseController::class, 'requests']);
     Route::post('requests', [PurchaseController::class, 'storeRequest']);
     Route::get('requests/{id}', [PurchaseController::class, 'showRequest'])->whereNumber('id');
@@ -517,6 +519,10 @@ Route::prefix('v1/erp/production')->group(function () {
     Route::get('material-deliveries/pending', [MfgMaterialDeliveryController::class, 'pending']);
     Route::get('material-deliveries', [MfgMaterialDeliveryController::class, 'index']);
     Route::get('work-orders/{id}/operations/{operationId}/delivery-preview', [MfgMaterialDeliveryController::class, 'preview'])->whereNumber(['id', 'operationId']);
+    Route::post('work-orders/{id}/operations/{operationId}/delivery-preview', [MfgMaterialDeliveryController::class, 'preview'])->whereNumber(['id', 'operationId']);
+    Route::post('work-orders/{id}/operations/{operationId}/shortage-purchase-preview', [MfgMaterialDeliveryController::class, 'shortagePurchasePreview'])->whereNumber(['id', 'operationId']);
+    Route::post('work-orders/{id}/operations/{operationId}/shortage-purchase-requests', [MfgMaterialDeliveryController::class, 'shortagePurchaseRequest'])->whereNumber(['id', 'operationId']);
+    Route::get('work-orders/{id}/operations/{operationId}/delivery-candidates', [MfgMaterialDeliveryController::class, 'candidates'])->whereNumber(['id', 'operationId']);
     Route::post('work-orders/{id}/operations/{operationId}/material-deliveries', [MfgMaterialDeliveryController::class, 'store'])->whereNumber(['id', 'operationId']);
     foreach (['dispatch', 'repick', 'cancel', 'redeliver', 'recall', 'sign', 'reject'] as $action) {
         Route::post("material-deliveries/{id}/{$action}", [MfgMaterialDeliveryController::class, $action])->whereNumber('id');
@@ -530,6 +536,7 @@ Route::prefix('v1/erp/production')->group(function () {
     Route::get('work-orders/{id}/cutting', [MfgCuttingController::class, 'context'])->whereNumber('id');
     Route::get('work-orders/{id}/cutting/sources', [MfgCuttingController::class, 'sources'])->whereNumber('id');
     Route::post('work-orders/{id}/cutting/preview', [MfgCuttingController::class, 'preview'])->whereNumber('id');
+    Route::post('work-orders/{id}/cutting/recommend', [MfgCuttingController::class, 'recommend'])->whereNumber('id');
     Route::post('work-orders/{id}/cutting/issue', [MfgCuttingController::class, 'issue'])->whereNumber('id');
     Route::get('remnant-receipts', [MfgCuttingRemnantReceiptController::class, 'index']);
     Route::get('remnant-receipts/{id}', [MfgCuttingRemnantReceiptController::class, 'show'])->whereNumber('id');

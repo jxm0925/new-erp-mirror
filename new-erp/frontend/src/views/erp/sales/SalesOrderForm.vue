@@ -476,9 +476,9 @@ Do not change layout without approval.
           <div class="panel-header"><h3>物流{{ form.trade_type === 'foreign' ? '与外贸' : '' }}</h3></div>
           <div class="field-grid compact">
             <div class="field span-2">
-              <label :class="{ required: form.lines.some(line => lineNeedsItem(line)) }">快递选择</label>
+              <label>客户指定物流</label>
               <div class="inline-pair">
-                <el-input :value="selectedCarrier && selectedCarrier.name" size="small" readonly placeholder="实物发货时选择快递" suffix-icon="el-icon-search" @focus="carrierPickerVisible = true" @click.native="carrierPickerVisible = true" />
+                <el-input :value="selectedCarrier && selectedCarrier.name" size="small" readonly placeholder="选填，发货时预填快递公司，可改" suffix-icon="el-icon-search" @focus="carrierPickerVisible = true" @click.native="carrierPickerVisible = true" />
                 <el-button v-if="form.carrier_id" size="small" type="text" @click="clearCarrier">清除</el-button>
               </div>
             </div>
@@ -538,7 +538,7 @@ Do not change layout without approval.
       </div>
     </div>
 
-    <system-record-picker :visible.sync="shareDialogVisible" :request="loadShareUsers" :value="selectedShareUsers" :categories="shareDepartmentTree" :config="{ title: '选择共享人员', placeholder: '员工姓名 / 账号' }" :columns="[{ prop: 'nickname', label: '员工姓名' }, { prop: 'username', label: '账号' }]" @confirm="selectShareUsers" />
+    <system-record-picker :visible.sync="shareDialogVisible" :request="loadShareUsers" :value="selectedShareUsers" :categories="shareDepartmentTree" :config="{ title: '选择共享销售人员', placeholder: '销售人员姓名 / 账号' }" :columns="[{ prop: 'nickname', label: '销售人员姓名' }, { prop: 'username', label: '账号' }]" @confirm="selectShareUsers" />
 
     <el-dialog title="合同附件清单" :visible.sync="contractDialogVisible" width="640px" append-to-body>
       <el-table :data="contractFiles" border size="mini" empty-text="暂无合同附件">
@@ -830,7 +830,7 @@ export default {
   async created() {
     await this.loadOptions()
     if (this.isEdit) await this.load()
-    else await this.reserveSalesOrderNumber()
+    else await Promise.all([this.reserveSalesOrderNumber(), this.defaultSalesUser()])
     if (!this.selectedLine) this.selectedLine = this.form.lines[0]
     if (process.env.NODE_ENV !== 'production' && this.pageRoute.query.impact_preview === 'master') this.impactDialogVisible = true
     this.$nextTick(() => window.setTimeout(() => this.focusRequestedField(), 300))
@@ -854,10 +854,11 @@ export default {
           await this.load()
         } else {
           this.form = this.emptyForm()
+          this.selectedSalesUser = null
           this.resetDeposit()
           this.loadedAgreedDeposit = null
           this.selectedLine = this.form.lines[0]
-          await this.reserveSalesOrderNumber()
+          await Promise.all([this.reserveSalesOrderNumber(), this.defaultSalesUser()])
         }
       }
     },
@@ -928,6 +929,26 @@ export default {
         this.platformRawOptions = data.platforms || []
       } catch (error) {
         this.$message.warning('销售订单基础选项加载失败，请检查新系统基础数据配置')
+      }
+    },
+    async defaultSalesUser() {
+      const form = this.form
+      const token = localStorage.getItem('erp_token')
+      if (this.isEdit || form.sales_user_legacy_id || !token) return
+      try {
+        const actor = JSON.parse(localStorage.getItem('erp_user') || '{}')
+        const actorId = Number(actor.legacy_id || actor.id || 0)
+        if (!actorId) return
+        const { data } = await listUsers({ scope: 'sales', ids: [actorId], page: 1, per_page: 10 })
+        if (this._isDestroyed || this.isEdit || this.form !== form || form.sales_user_legacy_id || localStorage.getItem('erp_token') !== token) return
+        const currentActor = JSON.parse(localStorage.getItem('erp_user') || '{}')
+        if (Number(currentActor.legacy_id || currentActor.id || 0) !== actorId) return
+        const user = (data.data || []).find(row => Number(row.id) === actorId)
+        if (user) this.applySalesUser(user)
+      } catch (error) {
+        if (!this._isDestroyed && !this.isEdit && this.form === form && !form.sales_user_legacy_id && localStorage.getItem('erp_token') === token) {
+          this.$message.warning(error.userMessage || '销售人员信息加载失败，请手动选择')
+        }
       }
     },
     async load() {
@@ -1087,7 +1108,6 @@ export default {
     applySalesUser(user) {
       this.selectedSalesUser = user
       this.form.sales_user_legacy_id = String(user.id)
-      this.form.created_by = user.nickname || user.username
     },
     applyCarrier(carrier) {
       this.selectedCarrier = carrier
@@ -1642,7 +1662,6 @@ export default {
       if (!this.form.payment_method_id) return this.$message.error('请选择付款方式')
       if (this.form.lines.some(line => !line.sku_id)) return this.$message.error('订单行必须通过全局搜索选择SKU')
       if (this.form.lines.some(line => !line.product_id)) return this.$message.error('所选SKU缺少所属Product，请维护SKU主数据后重试')
-      if (andConfirm && this.form.lines.some(line => this.lineNeedsItem(line)) && !this.form.carrier_id) return this.$message.error('实物订单提交确认前必须先选择快递')
       const badPrice = this.form.lines.find(line => this.linePriceMessage(line))
       if (badPrice) return this.$message.error(this.linePriceMessage(badPrice))
       if (andConfirm && this.totalAmount + Number(this.form.freight_amount || 0) < 0) return this.$message.error('扣减项（红包、优惠）合计不能超过商品金额，订单金额不能小于 0')
@@ -1689,6 +1708,9 @@ export default {
           routing_snapshot: null
         }))
       }
+      delete payload.created_by
+      delete payload.created_by_legacy_id
+      delete payload.creator
       if (this.isConfirmedEdit) {
         payload.expected_version = this.editOrderMeta.business_version
         // 约定定金不走订单变更审核：销售修改后立即生效并留痕，再继续处理其他订单修改。

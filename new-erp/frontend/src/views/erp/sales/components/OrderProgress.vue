@@ -24,7 +24,7 @@
         >
           暂无订单产品
         </div>
-        <div v-else role="tree" aria-label="订单产品">
+        <div v-else class="product-tree-list" role="tree" aria-label="订单产品">
           <button
             v-for="entry in flatNodes"
             :key="entry.node.key"
@@ -37,14 +37,12 @@
               selected: selectedNode && selectedNode.key === entry.node.key,
               'product-node--root': entry.depth === 0
             }"
-            :style="{ paddingLeft: `${14 + entry.depth * 20}px` }"
+            :style="{
+              marginLeft: `${entry.depth * 18}px`,
+              width: `calc(100% - ${entry.depth * 18}px)`
+            }"
             @click="selectNode(entry.node)"
           >
-            <span
-              v-if="entry.depth"
-              class="tree-connector"
-              :style="{ left: `${24 + (entry.depth - 1) * 20}px` }"
-            />
             <el-image
               v-if="entry.node.image_url"
               class="node-image"
@@ -137,12 +135,12 @@
                   >去向：{{ subject.destination_label }}</span
                 >
               </div>
-              <div class="unit-selector">
+              <div v-if="(!quantitySummary || quantitySummary.requires_delivery) && (detail.units_mode !== 'quantity' || isWorkOrder)" class="unit-selector">
                 <span>{{ isWorkOrder ? '查看：' : '选择设备：' }}</span>
                 <span
                   v-if="detail.units_mode === 'quantity'"
                   class="quantity-mode"
-                  >按数量查看</span
+                  >工单计划 {{ number(subject.quantity) }} {{ subject.unit_name || '' }}</span
                 >
                 <template v-else-if="detail.unit_total <= 8">
                   <button
@@ -258,6 +256,23 @@
             </div>
           </div>
 
+          <div v-if="quantitySummary" class="material-quantities">
+            <span>本行汇总 · {{ quantitySummary.fulfillment_label }}</span>
+            <span>{{ quantitySummary.requires_delivery ? '销售需求' : '订单数量' }}<b>{{ summaryQuantity(quantitySummary.order_qty, quantitySummary.sales_unit_name) }}</b></span>
+            <template v-if="quantitySummary.requires_delivery">
+              <span>订单库存需求<b>{{ summaryQuantity(quantitySummary.required_base_qty, quantitySummary.base_unit_name) }}</b></span>
+              <span>库存余额<b>{{ summaryQuantity(quantitySummary.inventory_on_hand_qty, quantitySummary.sales_unit_name) }}</b></span>
+              <span>可再锁库存<b>{{ summaryQuantity(quantitySummary.inventory_available_qty, quantitySummary.sales_unit_name) }}</b></span>
+              <span>本行已锁<b>{{ summaryQuantity(quantitySummary.locked_inventory_qty, quantitySummary.sales_unit_name) }}</b></span>
+              <span v-if="quantitySummary.fulfillment_strategy === 'production' || Number(quantitySummary.pending_production_qty) > 0">生产待补<b>{{ summaryQuantity(quantitySummary.pending_production_qty, quantitySummary.sales_unit_name) }}</b></span>
+              <span v-if="quantitySummary.fulfillment_strategy === 'purchase' || Number(quantitySummary.pending_purchase_qty) > 0">外购待补<b>{{ summaryQuantity(quantitySummary.pending_purchase_qty, quantitySummary.sales_unit_name) }}</b></span>
+              <span>已发<b>{{ summaryQuantity(quantitySummary.shipped_qty, quantitySummary.sales_unit_name) }}</b></span>
+              <span>待发<b>{{ summaryQuantity(quantitySummary.pending_fulfillment_qty, quantitySummary.sales_unit_name) }}</b></span>
+              <span v-if="quantitySummary.inventory_pool_shared">同物料行共用库存</span>
+            </template>
+          </div>
+          <p v-if="quantitySummary && quantitySummary.quantity_notice" class="progress-notice">{{ quantitySummary.quantity_notice }}</p>
+
           <!-- 工单备料与领料情况（原树形物料转移至此处，集中展示） -->
           <div v-if="materials.length" class="materials-overview-bar">
             <div class="materials-bar-header" @click="materialsExpanded = !materialsExpanded">
@@ -311,236 +326,274 @@
             </el-collapse-transition>
           </div>
 
-          <div
-            class="progress-sections"
-            :class="{
-              'progress-sections--single':
-                isWorkOrder || !detail.shipment_nodes.length
-            }"
-          >
-            <div v-if="detail.production_nodes.length" class="route-progress">
-              <div class="route-label">
-                生产 ·
-                {{
-                  isWorkOrder
-                    ? subject.routing_name || '工单路线'
-                    : '主工单路线'
-                }}
-              </div>
-              <div class="route-steps">
+          <template v-if="!quantitySummary || quantitySummary.requires_delivery">
+            <div v-if="overviewGroups.length" class="tl-overview">
+              <template v-for="(group, gi) in overviewGroups">
                 <div
-                  v-for="node in detail.production_nodes"
-                  :key="node.key"
-                  class="route-step"
-                  :class="node.status"
-                >
-                  <span class="route-dot"
-                    ><i
-                      v-if="node.status === 'completed'"
-                      class="el-icon-check" /></span
-                  ><b>{{ node.label }}</b
-                  ><small>{{ stepText(node) }}</small>
-                </div>
-              </div>
-            </div>
-            <div
-              v-if="detail.shipment_nodes.length"
-              class="route-progress route-progress--shipment"
-            >
-              <div class="route-label">发货 · 发货工序</div>
-              <div class="route-steps">
-                <div
-                  v-for="node in detail.shipment_nodes"
-                  :key="node.key"
-                  class="route-step"
-                  :class="node.status"
-                >
-                  <span class="route-dot"
-                    ><i
-                      v-if="node.status === 'completed'"
-                      class="el-icon-check" /></span
-                  ><b>{{ node.label }}</b
-                  ><small>{{ stepText(node) }}</small>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div class="record-sections">
-            <section
-              v-for="section in recordSections"
-              :key="section.key"
-              class="record-section"
-            >
-              <h3 v-if="!isWorkOrder">
-                {{ section.label
-                }}<span
-                  v-if="section.key === 'production' && detail.selected_unit"
-                  >（{{
-                    detail.selected_unit.serial_no ||
-                    detail.selected_unit.label
-                  }}）</span
-                >
-              </h3>
-              <div
-                v-for="node in section.nodes"
-                :key="node.key"
-                class="record-node"
-                :class="node.status"
-              >
-                <div class="record-node-label">
-                  <span class="record-dot"
-                    ><i
-                      v-if="node.status === 'completed'"
-                      class="el-icon-check" /></span
-                  ><b>{{ node.label }}</b
-                  ><small>{{ node.status_label || stepText(node) }}</small>
-                </div>
-                <div class="record-node-body">
-                  <article
-                    v-for="record in recordsFor(section.records, node.key)"
-                    :key="record.key"
-                    class="record-card"
-                    :class="{ 'record-card--cancelled': record.is_cancelled }"
-                  >
-                    <div class="record-copy">
-                      <div class="record-main">
-                        <span class="progress-tag" :class="record.status"
-                          >{{ record.status_label || statusText(record.status)
-                          }}{{ recordQuantity(record) }}</span
-                        ><b v-if="isWorkOrder && unitLabels(record)">{{
-                          unitLabels(record)
-                        }}</b
-                        ><b v-if="record.package_no">{{ record.package_no }}</b
-                        ><b v-if="record.person">{{ record.person }}</b
-                        ><span
-                          v-if="
-                            record.operator_name &&
-                            record.operator_name !== record.person
-                          "
-                          >报工人 {{ record.operator_name }}</span
-                        ><span
-                          v-if="
-                            record.collaborators && record.collaborators.length
-                          "
-                          >协作 {{ people(record.collaborators) }}</span
-                        >
-                      </div>
-                      <div
-                        v-if="
-                          record.claimed_at ||
-                          record.started_at ||
-                          record.completed_at ||
-                          record.occurred_at
-                        "
-                        class="record-times"
-                      >
-                        <span v-if="record.claimed_at"
-                          >接单 {{ date(record.claimed_at) }}</span
-                        ><span v-if="record.started_at"
-                          >开始 {{ date(record.started_at) }}</span
-                        ><span v-if="record.completed_at"
-                          >完成 {{ date(record.completed_at) }}</span
-                        ><span v-else-if="record.occurred_at"
-                          >{{ record.status === 'failed' ? '不合格' : '记录' }}
-                          {{ date(record.occurred_at) }}</span
-                        >
-                      </div>
-                      <p v-if="record.scope_label" class="record-scope">
-                        {{ record.scope_label }}
-                      </p>
-                      <p v-if="record.reason">{{ record.reason }}</p>
-                      <p
-                        v-if="
-                          record.description &&
-                          record.description !== record.reason
-                        "
-                      >
-                        {{ record.description }}
-                      </p>
-                      <div
-                        v-for="run in record.cutting_runs || []"
-                        :key="run.id || run.run_no"
-                        class="cutting-record"
-                      >
-                        <b>{{ run.run_no || run.document_no }}</b
-                        ><span v-if="run.scope_label">{{
-                          run.scope_label
-                        }}</span>
-                        <p v-if="run.items && run.items.length">
-                          切割件：{{
-                            run.items
-                              .map(
-                                (item) =>
-                                  `${item.name || item.item_name} × ${number(
-                                    item.pieces != null
-                                      ? item.pieces
-                                      : item.quantity != null
-                                      ? item.quantity
-                                      : item.qty
-                                  )}`
-                              )
-                              .join('、')
-                          }}
-                        </p>
-                      </div>
-                    </div>
-                    <div class="record-media">
-                      <template v-if="record.media && record.media.length"
-                        ><template v-for="(media, index) in record.media"
-                          ><el-image
-                            v-if="media.type === 'image'"
-                            :key="`image-${index}`"
-                            class="record-thumb"
-                            :src="media.url"
-                            :preview-src-list="imageUrls(record.media)"
-                            fit="cover"
-                            ><div slot="error" class="media-load-error">
-                              图片读取失败
-                            </div></el-image
-                          ><button
-                            v-else-if="media.type === 'video'"
-                            :key="`video-${index}`"
-                            type="button"
-                            class="record-thumb video-thumb"
-                            aria-label="播放报工视频"
-                            @click="openVideo(media)"
-                          >
-                            <img
-                              v-if="media.poster_url"
-                              :src="media.poster_url"
-                              alt="视频封面"
-                            /><video
-                              v-else
-                              :src="media.url"
-                              preload="metadata"
-                              muted
-                            /><i class="el-icon-video-play" /><small>{{
-                              duration(media.duration)
-                            }}</small>
-                          </button></template
-                        ></template
-                      ><span v-else class="missing-media">未上传完工影像</span>
-                    </div>
-                  </article>
+                  v-if="gi"
+                  :key="group.key + '-sep'"
+                  class="tl-sep"
+                  :class="{ 'is-gray': !overviewGroups[gi - 1].done }"
+                />
+                <div :key="group.key" class="tl-grp">
+                  <span class="tl-grp-label" :class="'is-' + group.key">{{
+                    group.label
+                  }}</span>
                   <div
-                    v-if="!recordsFor(section.records, node.key).length"
-                    class="record-pending"
+                    v-for="step in group.steps"
+                    :key="step.key"
+                    class="tl-step"
+                    :class="step.state"
                   >
-                    <span class="progress-tag" :class="node.status">{{
-                      node.status_label || statusText(node.status)
-                    }}</span>
+                    <span class="tl-dot"
+                      ><i v-if="step.state === 'is-done'" class="el-icon-check"
+                    /></span>
+                    <b>{{ step.label }}</b>
+                    <small>{{ step.text }}</small>
+                    <em v-if="step.badge" class="tl-badge">{{ step.badge }}</em>
                   </div>
                 </div>
+              </template>
+            </div>
+
+            <div
+              v-if="progress"
+              class="tl-pin"
+              :class="'is-' + progress.state"
+            >
+              <b>当前进度：{{ progress.title }}</b>
+              <span v-if="progress.detail" class="tl-pin-detail">{{
+                progress.detail
+              }}</span>
+              <template v-if="progress.upcoming && progress.upcoming.length"
+                ><span class="tl-arrow">→</span
+                ><span>后续：{{ progress.upcoming.join(' → ') }}</span></template
+              >
+            </div>
+
+            <div class="tl-filter">
+              <h3>处理过程</h3>
+              <button
+                v-for="option in filterOptions"
+                :key="option.key"
+                type="button"
+                class="tl-chip"
+                :class="{ active: timelineFilter === option.key }"
+                @click="timelineFilter = option.key"
+              >
+                {{ option.label }} {{ option.count }}
+              </button>
+              <span class="tl-hint">最新在上</span>
+            </div>
+
+            <div v-if="filteredTimeline.length" class="tl">
+              <div
+                v-for="item in filteredTimeline"
+                :key="item.key"
+                class="tl-ev"
+                :class="[eventClass(item), { 'is-cancelled': item.is_cancelled }]"
+              >
+                <div class="tl-time">
+                  <b>{{ clock(item.time) }}</b
+                  >{{ day(item.time) }}
+                </div>
+                <div class="tl-rail">
+                  <i>{{ eventIcon(item) }}</i>
+                </div>
+                <div class="tl-body" :class="{ 'is-sub': item.kind === 'sub_group' }">
+                  <template v-if="item.kind === 'sub_group'">
+                    <div class="tl-head is-clickable" @click="toggleGroup(item.key)">
+                      <span class="tl-stage is-sub">子工单</span>
+                      <b>{{ item.name }}</b>
+                      <span class="tl-res" :class="'is-' + item.status">{{
+                        item.summary
+                      }}</span>
+                      <span v-if="item.fail_count" class="tl-res is-failed"
+                        >不合格 {{ item.fail_count }} 次</span
+                      >
+                      <button
+                        v-if="item.work_order_no && permissions.work_order_links"
+                        type="button"
+                        class="tl-sn tl-link"
+                        @click.stop="openWorkOrder(item.work_order_id)"
+                      >
+                        {{ item.work_order_no }}
+                      </button>
+                      <span v-else-if="item.work_order_no" class="tl-sn">{{
+                        item.work_order_no
+                      }}</span>
+                      <span class="tl-caret">{{
+                        groupOpen(item.key)
+                          ? '收起 ▴'
+                          : '展开 ' + item.events.length + ' 条 ▾'
+                      }}</span>
+                    </div>
+                    <div class="tl-sub">
+                      <span v-if="item.time_from">{{ date(item.time_from) }} ~ {{ date(item.time) }}</span>
+                    </div>
+                    <div v-show="groupOpen(item.key)" class="tl-inner">
+                      <div
+                        v-for="inner in item.events"
+                        :key="inner.key"
+                        class="tl-row"
+                        :class="'is-' + inner.status"
+                      >
+                        <time>{{ date(inner.time) }}</time>
+                        <div class="tl-row-main">
+                          <div class="tl-row-line">
+                            <b>{{ inner.label }}</b>
+                            <span class="tl-res" :class="'is-' + inner.status">{{
+                              inner.result_label
+                            }}</span>
+                            <span v-if="inner.round_label" class="tl-res is-round">{{
+                              inner.round_label
+                            }}</span>
+                            <span v-for="sn in inner.unit_labels" :key="sn" class="tl-sn">{{
+                              sn
+                            }}</span>
+                            <span v-if="inner.person" class="tl-person">{{
+                              inner.person
+                            }}</span>
+                          </div>
+                          <div v-if="inner.reason" class="tl-callout">{{ inner.reason }}</div>
+                          <div v-if="inner.return_to" class="tl-callout is-back">
+                            ↩ 已退回「{{ inner.return_to }}」返修
+                          </div>
+                          <div v-if="inner.media && inner.media.length" class="record-media">
+                            <template v-for="(media, index) in inner.media"
+                              ><el-image
+                                v-if="media.type === 'image'"
+                                :key="`image-${index}`"
+                                class="record-thumb"
+                                :src="media.url"
+                                :preview-src-list="imageUrls(inner.media)"
+                                fit="cover"
+                                ><div slot="error" class="media-load-error">图片读取失败</div></el-image
+                              ><button
+                                v-else-if="media.type === 'video'"
+                                :key="`video-${index}`"
+                                type="button"
+                                class="record-thumb video-thumb"
+                                aria-label="播放报工视频"
+                                @click="openVideo(media)"
+                              >
+                                <img v-if="media.poster_url" :src="media.poster_url" alt="视频封面" /><video
+                                  v-else
+                                  :src="media.url"
+                                  preload="metadata"
+                                  muted
+                                /><i class="el-icon-video-play" /><small>{{ duration(media.duration) }}</small>
+                              </button></template
+                            >
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </template>
+                  <template v-else>
+                    <div class="tl-head">
+                      <span class="tl-stage" :class="'is-' + item.stage">{{
+                        stageLabel(item.stage)
+                      }}</span>
+                      <b>{{ item.label }}</b>
+                      <span class="tl-res" :class="'is-' + item.status">{{
+                        item.result_label
+                      }}</span>
+                      <span v-if="item.round_label" class="tl-res is-round">{{
+                        item.round_label
+                      }}</span>
+                      <template v-if="showUnits"
+                        ><span v-for="sn in item.unit_labels" :key="sn" class="tl-sn">{{
+                          sn
+                        }}</span></template
+                      >
+                      <b v-if="item.package_no" class="tl-pkg">{{ item.package_no }}</b>
+                    </div>
+                    <div v-if="hasMeta(item)" class="tl-sub">
+                      <span v-if="item.person">{{ item.person }}</span>
+                      <span v-if="item.operator_name && item.operator_name !== item.person"
+                        >报工人 {{ item.operator_name }}</span
+                      >
+                      <span v-if="item.collaborators && item.collaborators.length"
+                        >协作 {{ people(item.collaborators) }}</span
+                      >
+                      <span v-if="item.claimed_at">接单 {{ date(item.claimed_at) }}</span>
+                      <span v-if="item.started_at">开始 {{ date(item.started_at) }}</span>
+                      <span v-if="quantityText(item)">{{ quantityText(item) }}</span>
+                      <span v-if="item.scope_label">{{ item.scope_label }}</span>
+                      <span v-if="item.description">{{ item.description }}</span>
+                    </div>
+                    <div v-if="item.reason" class="tl-callout">{{ item.reason }}</div>
+                    <div v-if="item.return_to" class="tl-callout is-back">
+                      ↩ 已退回「{{ item.return_to }}」返修，返修完成后继续
+                    </div>
+                    <div
+                      v-for="run in item.cutting_runs || []"
+                      :key="run.id || run.run_no"
+                      class="tl-cut"
+                    >
+                      <b>{{ run.run_no || run.document_no }}</b
+                      ><span v-if="run.scope_label">{{ run.scope_label }}</span>
+                      <p v-if="run.items && run.items.length">
+                        切割件：{{
+                          run.items
+                            .map(
+                              (cut) =>
+                                `${cut.name || cut.item_name} × ${number(
+                                  cut.pieces != null
+                                    ? cut.pieces
+                                    : cut.quantity != null
+                                    ? cut.quantity
+                                    : cut.qty
+                                )}`
+                            )
+                            .join('、')
+                        }}
+                      </p>
+                    </div>
+                    <div v-if="item.media && item.media.length" class="record-media">
+                      <template v-for="(media, index) in item.media"
+                        ><el-image
+                          v-if="media.type === 'image'"
+                          :key="`image-${index}`"
+                          class="record-thumb"
+                          :src="media.url"
+                          :preview-src-list="imageUrls(item.media)"
+                          fit="cover"
+                          ><div slot="error" class="media-load-error">图片读取失败</div></el-image
+                        ><button
+                          v-else-if="media.type === 'video'"
+                          :key="`video-${index}`"
+                          type="button"
+                          class="record-thumb video-thumb"
+                          aria-label="播放报工视频"
+                          @click="openVideo(media)"
+                        >
+                          <img v-if="media.poster_url" :src="media.poster_url" alt="视频封面" /><video
+                            v-else
+                            :src="media.url"
+                            preload="metadata"
+                            muted
+                          /><i class="el-icon-video-play" /><small>{{ duration(media.duration) }}</small>
+                        </button></template
+                      >
+                    </div>
+                    <span
+                      v-else-if="item.stage === 'production' && item.key.indexOf('report:') === 0 && item.status === 'completed'"
+                      class="missing-media"
+                      >未上传完工影像</span
+                    >
+                  </template>
+                </div>
               </div>
-            </section>
-            <div v-if="!recordSections.length" class="progress-empty">
-              暂无进度记录
+            </div>
+            <div v-else class="progress-empty">
+              {{ timelineAll.length ? '没有符合条件的记录' : '暂无处理记录，接单后这里按时间显示每一步。' }}
             </div>
             <p v-if="detail.notice" class="progress-notice">
               {{ detail.notice }}
             </p>
-          </div>
+          </template>
         </template>
         <div v-else-if="!detailLoading" class="progress-empty">
           选择左侧产品查看进度
@@ -596,6 +649,8 @@ export default {
     detailSequence: 0,
     unitsSequence: 0,
     materialsExpanded: false,
+    timelineFilter: 'all',
+    expandedGroups: {},
     videoVisible: false,
     videoMedia: null
   }),
@@ -623,6 +678,9 @@ export default {
     subject() {
       return this.detail.subject || {}
     },
+    quantitySummary() {
+      return this.isWorkOrder ? null : this.detail?.quantity_summary || null
+    },
     isWorkOrder() {
       return this.selectedNode && this.selectedNode.type === 'work_order'
     },
@@ -633,21 +691,84 @@ export default {
         ? [selected, ...this.unitRows]
         : this.unitRows
     },
-    recordSections() {
-      return [
-        {
-          key: 'production',
-          label: '生产阶段',
-          nodes: this.detail.production_nodes,
-          records: this.detail.production_records
-        },
-        {
-          key: 'shipment',
-          label: '发货阶段',
-          nodes: this.detail.shipment_nodes,
-          records: this.detail.shipment_records
-        }
-      ].filter((section) => section.nodes.length)
+    progress() {
+      return (this.detail && this.detail.progress) || null
+    },
+    timelineAll() {
+      return (this.detail && this.detail.timeline) || []
+    },
+    showUnits() {
+      return !this.detail || this.detail.units_mode !== 'unit'
+    },
+    filteredTimeline() {
+      const filter = this.timelineFilter
+      return this.timelineAll.filter((item) => {
+        if (filter === 'all') return true
+        if (filter === 'abnormal') return this.isAbnormal(item)
+        return item.stage === filter
+      })
+    },
+    filterOptions() {
+      const all = this.timelineAll
+      const options = [{ key: 'all', label: '全部', count: all.length }]
+      const labels = { sub: '子工单', production: '生产', shipment: '发货' }
+      Object.keys(labels).forEach((stage) => {
+        const count = all.filter((item) => item.stage === stage).length
+        if (count) options.push({ key: stage, label: labels[stage], count })
+      })
+      const abnormal = all.filter((item) => this.isAbnormal(item)).length
+      if (abnormal) options.push({ key: 'abnormal', label: '只看异常', count: abnormal })
+      return options
+    },
+    overviewGroups() {
+      if (!this.detail) return []
+      // 当前该做的那一步即使还没人接单，也按“进行中”高亮，和置顶的当前进度一致。
+      const currentKey = this.progress && this.progress.state === 'doing' ? this.progress.node_key : null
+      const stateOf = (status, key) =>
+        key && key === currentKey
+          ? 'is-doing'
+          : status === 'completed'
+          ? 'is-done'
+          : status === 'in_progress'
+          ? 'is-doing'
+          : status === 'cancelled'
+          ? 'is-cancelled'
+          : ''
+      const groups = []
+      const subs = this.timelineAll.filter((item) => item.kind === 'sub_group')
+      if (subs.length)
+        groups.push({
+          key: 'sub',
+          label: '子工单',
+          done: subs.every((item) => item.status === 'completed'),
+          steps: subs.map((item) => ({
+            key: item.key,
+            label: item.name,
+            state: stateOf(item.status, item.key),
+            text: item.status === 'completed' ? item.progress_label + ' 已完成' : item.progress_label + ' 进行中',
+            badge: item.fail_count ? `不合格 ${item.fail_count} 次` : ''
+          }))
+        })
+      const purchase =
+        this.quantitySummary && this.quantitySummary.fulfillment_strategy === 'purchase'
+      const make = (key, label, nodes, badgeText) => {
+        if (!nodes || !nodes.length) return
+        groups.push({
+          key,
+          label,
+          done: nodes.every((node) => ['completed', 'cancelled'].includes(node.status)),
+          steps: nodes.map((node) => ({
+            key: node.key,
+            label: node.label,
+            state: stateOf(node.status, node.key),
+            text: this.stepText(node),
+            badge: node.rework_count ? `${badgeText} ${node.rework_count} 次` : ''
+          }))
+        })
+      }
+      make('production', purchase ? '备货' : '生产', this.detail.production_nodes, '返修')
+      make('shipment', '发货', this.detail.shipment_nodes, '不合格')
+      return groups
     }
   },
   watch: {
@@ -671,6 +792,9 @@ export default {
       return value == null
         ? '—'
         : Number(value).toLocaleString('zh-CN', { maximumFractionDigits: 4 })
+    },
+    summaryQuantity(value, unit) {
+      return value == null ? '—' : `${this.number(value)} ${unit || ''}`
     },
     nodeType(node) {
       return (
@@ -716,22 +840,6 @@ export default {
         .filter(Boolean)
         .join('、')
     },
-    unitLabels(record) {
-      return record.unit_labels
-        ? record.unit_labels.join('、')
-        : (record.units || [])
-            .map((unit) => unit.serial_no || unit.label)
-            .filter(Boolean)
-            .join('、')
-    },
-    recordQuantity(record) {
-      return (this.isWorkOrder &&
-        !this.selectedUnitKey &&
-        record.quantity > 1) ||
-        (this.detail.units_mode === 'quantity' && record.quantity > 0)
-        ? ` ${this.number(record.quantity)} ${this.subject.unit_name || ''}`
-        : ''
-    },
     imageUrls(media) {
       return media
         .filter((item) => item.type === 'image')
@@ -745,23 +853,58 @@ export default {
         .toString()
         .padStart(2, '0')}`
     },
-    recordsFor(records, key) {
-      const current = (record) => /(^current:|:current$)/.test(record.key)
-      const time = (record) =>
-        Date.parse(
-          (
-            record.occurred_at ||
-            record.completed_at ||
-            record.started_at ||
-            record.claimed_at ||
-            ''
-          ).replace(' ', 'T')
-        ) || 0
-      return records
-        .filter((record) => record.node_key === key)
-        .sort(
-          (a, b) => Number(current(b)) - Number(current(a)) || time(b) - time(a)
-        )
+    stageLabel(stage) {
+      return { sub: '子工单', production: '生产', shipment: '发货' }[stage] || ''
+    },
+    isAbnormal(item) {
+      return item.status === 'failed' || (item.kind === 'sub_group' && item.fail_count > 0)
+    },
+    eventClass(item) {
+      if (item.kind === 'sub_group')
+        return item.fail_count > 0
+          ? 'is-failed'
+          : { completed: 'is-done', in_progress: 'is-doing' }[item.status] || 'is-todo'
+      return (
+        { completed: 'is-done', failed: 'is-failed', in_progress: 'is-doing', cancelled: 'is-cancelled' }[
+          item.status
+        ] || 'is-todo'
+      )
+    },
+    eventIcon(item) {
+      const cls = this.eventClass(item)
+      return cls === 'is-done' ? '✓' : cls === 'is-failed' ? '!' : cls === 'is-doing' ? '●' : ''
+    },
+    clock(value) {
+      return value ? erpDateTime(value, 19).slice(11, 16) : '—'
+    },
+    day(value) {
+      return value ? erpDateTime(value, 19).slice(5, 10) : ''
+    },
+    hasMeta(item) {
+      return !!(
+        item.person ||
+        (item.operator_name && item.operator_name !== item.person) ||
+        (item.collaborators && item.collaborators.length) ||
+        item.claimed_at ||
+        item.started_at ||
+        this.quantityText(item) ||
+        item.scope_label ||
+        item.description
+      )
+    },
+    quantityText(item) {
+      if (this.detail.units_mode === 'unit' || item.quantity == null || !(item.quantity > 0)) return ''
+      if (item.unit_labels && item.unit_labels.length) return ''
+      return `${this.number(item.quantity)} ${this.subject.unit_name || ''}`
+    },
+    groupOpen(key) {
+      return this.expandedGroups[key] === true
+    },
+    toggleGroup(key) {
+      this.$set(this.expandedGroups, key, !this.groupOpen(key))
+    },
+    openWorkOrder(id) {
+      this.$router.push(`/production/work-orders/${id}`)
     },
     toggleWorkOrders() {
       this.showWorkOrders = !this.showWorkOrders
@@ -802,6 +945,8 @@ export default {
       this.detail = null
       this.detailError = ''
       this.selectedUnitKey = ''
+      this.timelineFilter = 'all'
+      this.expandedGroups = {}
       this.unitRows = []
       this.unitsKeyword = ''
       this.unitsPage = { total: 0, current_page: 1, last_page: 1 }
@@ -905,6 +1050,8 @@ export default {
           shipment_nodes: [],
           production_records: [],
           shipment_records: [],
+          timeline: [],
+          progress: null,
           unit_options: [],
           unit_total: 0,
           ...data
@@ -971,34 +1118,38 @@ export default {
   border-bottom: 1px solid #edf0f4;
   font-size: 14px;
 }
+.product-tree-list {
+  padding: 10px;
+}
 .product-node {
   display: flex;
   position: relative;
   width: 100%;
-  gap: 10px;
+  gap: 8px;
   align-items: center;
-  padding: 12px 12px 12px 14px;
-  background: white;
+  margin: 0 0 6px;
+  padding: 8px 10px;
+  background: #fff;
   color: inherit;
-  border: 0;
-  border-left: 3px solid transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
   text-align: left;
   font: inherit;
   cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
 }
 .product-node.selected {
-  background: #edf9f2;
-  border-left-color: #13a257;
+  background: #f0fdf4;
+  border-color: #bbf7d0;
 }
-.product-node:hover {
-  background: #f4faf6;
+.product-node:hover:not(.selected) {
+  background: #f8fafc;
+  border-color: #e2e8f0;
 }
 .product-node--root:not(:first-child) {
-  border-top: 1px solid #edf0f4;
-  margin-top: 4px;
+  margin-top: 8px;
 }
-.node-image,
-.node-type {
+.node-image {
   width: 42px;
   height: 46px;
   flex: 0 0 42px;
@@ -1006,10 +1157,11 @@ export default {
   background: #f0f3f7;
 }
 .node-type {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #9aa5b5;
+  flex: none;
+  padding: 1px 6px;
+  border-radius: 4px;
+  color: #008b4b;
+  background: #eaf7ef;
   font-size: 11px;
 }
 .node-copy {
@@ -1025,14 +1177,6 @@ export default {
   display: block;
   color: #7b8b9e;
   font-size: 11px;
-}
-.tree-connector {
-  width: 11px;
-  height: 23px;
-  position: absolute;
-  top: 0;
-  border-bottom: 1px solid #d9e0e9;
-  border-left: 1px solid #d9e0e9;
 }
 .progress-tag {
   display: inline-block;
@@ -1261,284 +1405,407 @@ export default {
   color: #0f172a;
 }
 
-.progress-sections {
+.tl-overview {
   display: flex;
-  gap: 12px;
-  margin: 12px 0 0;
-  padding: 0 0 16px;
-  border-bottom: 1px solid #edf0f4;
-}
-.route-progress {
-  flex: 1;
-  padding: 10px 14px;
+  align-items: flex-start;
+  margin-top: 12px;
+  padding: 12px 14px;
   background: #f8fafc;
   border: 1px solid #e2e8f0;
   border-radius: 8px;
+  overflow-x: auto;
 }
-.route-progress--shipment {
-  border-left: 1px solid #e2e8f0;
+.tl-grp {
+  display: flex;
+  align-items: flex-start;
+  flex: none;
 }
-.route-label {
-  display: inline-flex;
-  align-items: center;
+.tl-grp-label {
+  align-self: stretch;
+  margin-right: 10px;
+  padding: 6px 3px;
   border-radius: 4px;
-  padding: 2px 8px;
-  margin: 0 0 10px;
-  color: #008b4b;
+  color: #00763f;
   background: #eaf7ef;
   font-size: 11px;
   font-weight: 600;
+  letter-spacing: 2px;
+  text-align: center;
+  writing-mode: vertical-rl;
 }
-.route-steps {
-  display: flex;
-  align-items: stretch;
-  gap: 0;
-  position: relative;
+.tl-grp-label.is-sub {
+  color: #7c3aed;
+  background: #f3e8ff;
 }
-.route-step {
-  flex: 1;
+.tl-grp-label.is-shipment {
+  color: #334155;
+  background: #e2e8f0;
+}
+.tl-sep {
+  flex: none;
+  width: 26px;
+  height: 2px;
+  margin-top: 11px;
+  background: #10a65e;
+}
+.tl-sep.is-gray {
+  background: #cbd5e1;
+}
+.tl-step {
   position: relative;
+  flex: none;
+  width: 92px;
   text-align: center;
   line-height: 1.5;
 }
-.route-step:not(:last-child)::after {
+.tl-step:not(:last-child)::after {
   content: '';
   position: absolute;
-  top: 12px;
-  left: calc(50% + 14px);
-  width: calc(100% - 28px);
+  top: 11px;
+  left: calc(50% + 13px);
+  width: calc(100% - 26px);
   height: 2px;
   background: #cbd5e1;
-  z-index: 1;
 }
-.route-step.completed:not(:last-child)::after {
+.tl-step.is-done:not(:last-child)::after {
   background: #10a65e;
 }
-.route-step.in_progress:not(:last-child)::after {
-  background: linear-gradient(90deg, #10a65e 0%, #cbd5e1 100%);
-}
-.route-dot {
+.tl-dot {
   position: relative;
   z-index: 2;
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
-  margin: 0 auto 6px;
+  width: 22px;
+  height: 22px;
+  margin: 0 auto 4px;
   border: 2px solid #cbd5e1;
   border-radius: 50%;
-  background: #ffffff;
-  color: #ffffff;
+  background: #fff;
+  color: #fff;
   font-size: 11px;
-  box-shadow: 0 0 0 2px #f8fafc;
-  transition: all 0.2s ease;
 }
-.route-step.completed .route-dot {
-  background: #10a65e;
+.tl-step.is-done .tl-dot {
   border-color: #10a65e;
+  background: #10a65e;
 }
-.route-step.in_progress .route-dot,
-.route-step.rework .route-dot {
+.tl-step.is-doing .tl-dot {
   border-color: #f59e0b;
   background: #fef3c7;
-  color: #d97706;
   box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.2);
 }
-.route-step b {
+.tl-step b {
   display: block;
   padding: 0 3px;
-  font-size: 12px;
   color: #334155;
+  font-size: 12px;
 }
-.route-step small {
+.tl-step small {
   display: block;
+  padding: 0 3px;
   color: #64748b;
   font-size: 10px;
-  padding: 0 3px;
 }
-.route-step.in_progress b,
-.route-step.in_progress small,
-.route-step.rework b {
+.tl-step.is-doing b {
   color: #d97706;
 }
-.record-sections {
-  padding-top: 14px;
-  position: relative;
+.tl-step.is-cancelled b,
+.tl-step.is-cancelled small {
+  color: #94a3b8;
 }
-.record-section h3 {
+.tl-badge {
+  display: inline-block;
+  margin-top: 2px;
+  padding: 0 6px;
+  border-radius: 8px;
+  color: #c2410c;
+  background: #ffedd5;
+  font-size: 10px;
+  font-style: normal;
+}
+.tl-pin {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  margin: 14px 0 16px;
+  gap: 4px 10px;
+  margin-top: 12px;
+  padding: 10px 14px;
+  border: 1px solid #bbf7d0;
+  border-radius: 8px;
+  background: #f0fdf4;
+}
+.tl-pin.is-doing {
+  border-color: #fde68a;
+  background: #fffbeb;
+}
+.tl-pin.is-cancelled {
+  border-color: #e2e8f0;
+  background: #f8fafc;
+}
+.tl-pin b {
+  font-size: 13px;
+}
+.tl-pin span {
+  color: #64748b;
+}
+.tl-pin .tl-pin-detail {
+  color: #b45309;
+}
+.tl-pin .tl-arrow {
+  color: #94a3b8;
+}
+.tl-filter {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  margin: 14px 0 8px;
+}
+.tl-filter h3 {
+  margin: 0 12px 0 0;
   color: #475569;
   font-size: 13px;
   font-weight: 600;
 }
-.record-section h3::after {
-  content: '';
-  height: 1px;
-  background: #e2e8f0;
-  flex: 1;
-  margin-left: 10px;
+.tl-chip {
+  padding: 3px 10px;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  background: #fff;
+  color: #334155;
+  font-size: 12px;
+  cursor: pointer;
 }
-.record-node {
+.tl-chip.active {
+  border-color: #008b4b;
+  background: #f0fdf4;
+  color: #00763f;
+}
+.tl-hint {
+  margin-left: auto;
+  color: #94a3b8;
+}
+.tl {
   position: relative;
+}
+.tl-ev {
   display: grid;
-  grid-template-columns: 110px minmax(0, 1fr);
-  gap: 14px;
-  margin-bottom: 14px;
+  grid-template-columns: 76px 26px minmax(0, 1fr);
+  gap: 0 8px;
+  padding-bottom: 12px;
 }
-/* 贯穿垂直时间轴线 */
-.record-node:not(:last-child)::before {
-  content: '';
-  position: absolute;
-  left: 9px;
-  top: 22px;
-  bottom: -14px;
-  width: 2px;
-  background: #e2e8f0;
-  z-index: 1;
-}
-.record-node.completed:not(:last-child)::before {
-  background: #10a65e;
-}
-.record-node.in_progress:not(:last-child)::before,
-.record-node.rework:not(:last-child)::before {
-  background: #f59e0b;
-}
-.record-node-label {
-  position: relative;
-  padding-left: 28px;
-  padding-top: 2px;
-}
-.record-node-label b {
-  display: block;
-  font-size: 13px;
-  line-height: 1.4;
-  color: #0f172a;
-}
-.record-node-label small {
-  display: block;
-  margin-top: 3px;
+.tl-time {
+  padding-top: 7px;
   color: #64748b;
   font-size: 11px;
+  line-height: 1.35;
+  text-align: right;
 }
-.record-node.completed .record-node-label small {
-  color: #10a65e;
+.tl-time b {
+  display: block;
+  color: #334155;
+  font-size: 12px;
 }
-.record-node.in_progress .record-node-label small,
-.record-node.rework .record-node-label small {
-  color: #d97706;
+.tl-rail {
+  position: relative;
 }
-.record-dot {
+.tl-rail::before {
+  content: '';
   position: absolute;
-  left: 0;
-  top: 2px;
+  top: 0;
+  bottom: -12px;
+  left: 12px;
+  width: 2px;
+  background: #e2e8f0;
+}
+.tl-ev:last-child .tl-rail::before {
+  display: none;
+}
+.tl-rail i {
+  position: absolute;
+  top: 7px;
+  left: 3px;
   z-index: 2;
-  display: flex;
-  align-items: center;
-  justify-content: center;
   width: 20px;
   height: 20px;
   border: 2px solid #cbd5e1;
   border-radius: 50%;
-  background: #ffffff;
-  color: #ffffff;
+  background: #fff;
+  color: #fff;
   font-size: 10px;
-  box-shadow: 0 0 0 2px #fff;
-  transition: all 0.2s ease;
+  font-style: normal;
+  line-height: 16px;
+  text-align: center;
 }
-.record-node.completed .record-dot {
+.tl-ev.is-done .tl-rail i {
   border-color: #10a65e;
   background: #10a65e;
 }
-.record-node.in_progress .record-dot,
-.record-node.rework .record-dot {
-  border-color: #f59e0b;
-  background: #fef3c7;
-  color: #d97706;
-  box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.2);
-}
-.record-node.failed .record-dot {
+.tl-ev.is-failed .tl-rail i {
   border-color: #ef4444;
   background: #fee2e2;
   color: #dc2626;
 }
-.record-node.cancelled .record-dot {
-  border-color: #94a3b8;
-  background: #f1f5f9;
-  color: #94a3b8;
+.tl-ev.is-doing .tl-rail i {
+  border-color: #f59e0b;
+  background: #fef3c7;
+  color: #d97706;
 }
-.record-node-body {
-  border: 1px solid #e2e8f0;
-  border-radius: 6px;
-  background: #ffffff;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02);
-  overflow: hidden;
-}
-.record-card {
-  display: flex;
-  gap: 12px;
-  padding: 10px 14px;
-  min-height: 56px;
-  align-items: flex-start;
-  transition: background 0.15s ease;
-}
-.record-card:hover {
-  background: #f8fafc;
-}
-.record-card + .record-card {
-  border-top: 1px solid #f1f5f9;
-}
-.record-card--cancelled {
+.tl-ev.is-cancelled {
   opacity: 0.58;
 }
-.record-copy {
-  flex: 1;
-  line-height: 1.6;
+.tl-body {
+  padding: 8px 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  background: #fff;
 }
-.record-main {
+.tl-ev.is-failed .tl-body {
+  border-color: #fecaca;
+  background: #fffafa;
+}
+.tl-body.is-sub {
+  border-color: #e9d5ff;
+  background: #faf5ff;
+}
+.tl-head {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 3px 9px;
-  color: #7e8da0;
+  gap: 6px 8px;
 }
-.record-main b {
+.tl-head.is-clickable {
+  cursor: pointer;
+}
+.tl-head b {
+  font-size: 13px;
+}
+.tl-stage {
+  padding: 0 6px;
+  border-radius: 4px;
+  color: #00763f;
+  background: #eaf7ef;
+  font-size: 10px;
+  font-weight: 600;
+}
+.tl-stage.is-sub {
+  color: #7c3aed;
+  background: #f3e8ff;
+}
+.tl-stage.is-shipment {
+  color: #334155;
+  background: #e2e8f0;
+}
+.tl-res {
+  padding: 1px 8px;
+  border-radius: 10px;
+  color: #15803d;
+  background: #dcfce7;
+  font-size: 11px;
+}
+.tl-res.is-failed {
+  color: #dc2626;
+  background: #fee2e2;
+}
+.tl-res.is-in_progress,
+.tl-res.is-pending {
+  color: #b45309;
+  background: #fef3c7;
+}
+.tl-res.is-cancelled,
+.tl-res.is-round {
+  color: #64748b;
+  background: #f1f5f9;
+}
+.tl-sn {
+  padding: 0 5px;
+  border: 0;
+  border-radius: 3px;
+  color: #334155;
+  background: #f1f5f9;
+  font-family: Consolas, monospace;
+  font-size: 11px;
+}
+.tl-link {
+  color: #008b4b;
+  cursor: pointer;
+}
+.tl-pkg {
   color: #304158;
   font-size: 12px;
 }
-.record-copy p {
-  margin: 2px 0 0;
-  color: #6c7889;
-  font-size: 11px;
+.tl-caret {
+  margin-left: auto;
+  color: #7c3aed;
+  font-size: 12px;
+}
+.tl-sub {
+  margin-top: 4px;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.tl-sub span {
+  margin-right: 12px;
+}
+.tl-callout {
+  margin-top: 6px;
+  padding: 6px 10px;
+  border-radius: 4px;
+  color: #b91c1c;
+  background: #fef2f2;
+  font-size: 12px;
   overflow-wrap: anywhere;
 }
-.record-times {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 3px 10px;
+.tl-callout.is-back {
+  color: #b45309;
+  background: #fffbeb;
+}
+.tl-cut {
   margin-top: 3px;
-  color: #8090a6;
-  font-size: 11px;
-}
-.record-copy .record-scope {
-  color: #8b98aa;
-}
-.cutting-record {
   color: #77879d;
   font-size: 11px;
-  margin-top: 3px;
 }
-.cutting-record span {
+.tl-cut span {
   margin-left: 8px;
+}
+.tl-cut p {
+  margin: 2px 0 0;
+}
+.tl-inner {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed #e9d5ff;
+}
+.tl-row {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  gap: 6px;
+  padding: 3px 0;
+  color: #475569;
+  font-size: 12px;
+}
+.tl-row > time {
+  color: #94a3b8;
+  text-align: right;
+}
+.tl-row.is-failed {
+  color: #b91c1c;
+}
+.tl-row-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+}
+.tl-person {
+  color: #64748b;
 }
 .record-media {
   display: flex;
   flex-wrap: wrap;
-  justify-content: flex-end;
   gap: 8px;
-  max-width: 40%;
+  margin-top: 6px;
 }
 .record-thumb {
   width: 76px;
@@ -1598,10 +1865,6 @@ export default {
   justify-content: center;
   height: 100%;
 }
-.record-pending {
-  padding: 11px 12px;
-  min-height: 38px;
-}
 .progress-notice {
   background: #f0f8f4;
   border-radius: 3px;
@@ -1618,6 +1881,7 @@ export default {
 }
 .material-quantities {
   display: flex;
+  flex-wrap: wrap;
   gap: 30px;
   margin-top: 24px;
   padding: 20px;
@@ -1659,22 +1923,14 @@ button:focus-visible {
   .progress-detail {
     padding: 12px;
   }
-  .progress-sections {
-    flex-direction: column;
-    gap: 16px;
+  .tl-ev {
+    grid-template-columns: 56px 26px minmax(0, 1fr);
   }
-  .route-progress--shipment {
-    border-left: 0;
+  .tl-row {
+    grid-template-columns: 1fr;
   }
-  .record-node {
-    grid-template-columns: 72px minmax(0, 1fr);
-  }
-  .record-card {
-    flex-wrap: wrap;
-  }
-  .record-media {
-    max-width: 100%;
-    justify-content: flex-start;
+  .tl-row > time {
+    text-align: left;
   }
   .subject-image {
     width: 64px;

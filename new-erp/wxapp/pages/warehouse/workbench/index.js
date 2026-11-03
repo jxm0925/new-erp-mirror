@@ -4,7 +4,6 @@ const util = require('../../../utils/util');
 
 const KIND_TAGS = {
   mfg_receipt: 'tag-red',
-  cutting_remnant: 'tag-amber',
   material_preparation: 'tag-orange',
   material_delivery: 'tag-blue',
   material_return: 'tag-amber',
@@ -19,7 +18,6 @@ const KIND_TAGS = {
 
 const INBOUND_KINDS = [
   'mfg_receipt',
-  'cutting_remnant',
   'inventory_transfer',
   'material_physical_transfer',
   'purchase_receipt',
@@ -85,7 +83,6 @@ Page({
       { label: '生产配料', subtitle: '按工单齐套拣料', theme: 'orange', icon: 'setting-o', url: '/pages/warehouse/deliveries/index', visible: can('production.material_delivery.manage') },
       { label: '退料接收', subtitle: '车间退料核对', theme: 'amber', icon: 'revoke', url: '/pages/warehouse/list/index?direction=all&kind=material_return', visible: can('inventory.inbound.confirm') || can('production.material_return.approve') },
       { label: '入库确认', subtitle: '生产完工入库', theme: 'green', icon: 'passed', url: '/pages/warehouse/list/index?direction=inbound&kind=mfg_receipt', visible: can('inventory.inbound.confirm') },
-      { label: '余料确认', subtitle: '开料余料回库', theme: 'amber', icon: 'records-o', url: '/pages/warehouse/list/index?direction=inbound&kind=cutting_remnant', visible: can('inventory.inbound.confirm') },
       { label: '调拨', subtitle: '跨仓 · 库位移动', theme: 'purple', icon: 'exchange', url: '/pages/warehouse/transfer/index', visible: can('inventory.transfer.view') || can('inventory.transfer.create') || can('inventory.inbound.confirm') || can('inventory.physical.manage') },
       { label: '库存查询', subtitle: '批次 · 序列号 · 实物', theme: 'blue', icon: 'search', url: '/pages/warehouse/inventory/index', visible: can('inventory.balance.view') },
       { label: '盘点', subtitle: '实盘录入 · 复核', theme: 'red', icon: 'records-o', url: '/pages/warehouse/stocktake/index', visible: can('inventory.stocktake.view') },
@@ -116,13 +113,11 @@ Page({
         const pendingCounts = summary.pending_counts || {};
         const rawTodos = (summary.todos || {}).data || [];
         const todosMeta = (summary.todos || {}).meta || summary.todos || {};
-        const todos = rawTodos.map(row =>
+        const todos = rawTodos.filter(row => row.kind !== 'cutting_remnant').map(row =>
           Object.assign(page.decorate(row), {
             displayTitle: row.kind === 'stocktake' ? row.party : row.item_name || row.number,
             detailText:
-              row.kind === 'cutting_remnant' && row.status === 'pending'
-                ? '已等待 ' + row.waiting_hours + ' 小时'
-                : row.kind === 'material_preparation' && row.waiting_units > 0
+              row.kind === 'material_preparation' && row.waiting_units > 0
                   ? row.waiting_units + ' 台等料'
                   : row.kind === 'stocktake'
                     ? '共 ' + row.item_count + ' 项 · ' + row.status_label

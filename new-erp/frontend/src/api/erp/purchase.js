@@ -4,6 +4,8 @@ export const listPurchase = (type, params) => api.get(`/v1/erp/purchase/${type}`
 export const getPurchase = (type, id, params) => api.get(`/v1/erp/purchase/${type}/${id}`, { params })
 export const previewPurchaseConversion = data => api.post('/v1/erp/purchase/conversion-preview', data)
 export const savePurchaseRequest = data => data.id ? api.put(`/v1/erp/purchase/requests/${data.id}`, data) : api.post('/v1/erp/purchase/requests', data)
+export const listPurchaseSalesCandidates = params => api.get('/v1/erp/purchase/requests/sales-candidates', { params })
+export const listPurchaseWorkOrderCandidates = params => api.get('/v1/erp/purchase/requests/work-order-candidates', { params })
 export const savePurchasePlan = data => data.id ? api.put(`/v1/erp/purchase/plans/${data.id}`, data) : api.post('/v1/erp/purchase/plans', data)
 export const savePurchaseOrder = data => data.id ? api.put(`/v1/erp/purchase/orders/${data.id}`, data) : api.post('/v1/erp/purchase/orders', data)
 export const savePurchaseReceipt = data => data.id ? api.put(`/v1/erp/purchase/receipts/${data.id}`, data) : api.post('/v1/erp/purchase/receipts', data)
