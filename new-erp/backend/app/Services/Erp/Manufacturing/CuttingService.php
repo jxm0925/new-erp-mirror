@@ -133,13 +133,13 @@ final class CuttingService
             foreach ($query->lazy(100) as $balance) {
                 $source = $this->source($balance, $item, $stock);
                 $balanceId = (int) $source['inventory_balance_id'];
-                $available = $balanceAvailable[$balanceId] ?? $source['available_qty'];
+                $available = $balanceAvailable[$balanceId] ?? $source['inventory_available_qty'];
                 $index = 0;
                 while (bccomp($available, '0', 8) > 0) {
                     if (! $parts->contains(fn ($part) => bccomp($pending[$part['part_key']], '0', 8) > 0)) break 2;
-                    $whole = $source['physical_material_id'] || $source['unit_kind'] === 'sheet';
-                    if ($whole && bccomp($available, '1', 8) < 0) break;
-                    $qty = $whole ? '1.0000' : ($source['unit_kind'] === 'root' ? $this->minimum('1', $available) : $available);
+                    $whole = $source['physical_material_id'] || in_array($source['unit_kind'], ['root', 'sheet'], true);
+                    if ($whole && bccomp($available, $source['inventory_qty'], 8) < 0) break;
+                    $qty = $whole ? '1.0000' : $available;
                     $key = in_array($source['unit_kind'], ['root', 'sheet'], true) && ! $source['physical_material_id'] ? $source['source_key'].':'.(++$index) : $source['source_key'];
                     $candidate = array_replace($source, ['source_key' => $key, 'qty' => $qty, 'input_measure' => bcmul($source['measure_qty'], $qty, 8)]);
                     $rows = $this->suggest($parts->values()->all(), [$candidate], $units, $pending);
@@ -158,7 +158,7 @@ final class CuttingService
                     $originalKeys[$key] = $source['source_key'];
                     foreach ($rows as $row) $pending[$row['part_key']] = bcsub($pending[$row['part_key']], $row['qty'], 8);
                     $assignments = array_merge($assignments, $rows);
-                    $available = bcsub($available, $qty, 8);
+                    $available = bcsub($available, $this->inventoryQuantity($source, $qty), 8);
                     $balanceAvailable[$balanceId] = $available;
                     if ($source['physical_material_id'] || ! in_array($source['unit_kind'], ['root', 'sheet'], true)) break;
                 }
@@ -315,19 +315,21 @@ final class CuttingService
             if (! hash_equals($source['source_version'], (string) $row['source_version'])) $this->fail('source_changed', '来源库存、实物尺寸或版本已变化，请重新选料。', 409);
             $qty = CuttingDecimal::value($row['qty']);
             $this->assertSourceQuantity($source, $qty);
+            $inventoryQty = $this->inventoryQuantity($source, $qty);
             if ($source['physical_material_id']) {
                 if (in_array($source['physical_material_id'], $physicalIds, true)) $this->fail('source_duplicate', '同一张板不能重复选择。');
                 $physicalIds[] = $source['physical_material_id'];
                 if ($lock) $this->physicals->assertPhysicalNotInOpenDocument($source['physical_material_id']);
             }
             $id = $source['inventory_balance_id'];
-            $balanceRemaining[$id] ??= $source['available_qty'];
+            $balanceRemaining[$id] ??= $source['inventory_available_qty'];
             $costRemaining[$id] ??= ['qty' => (string) $balance->quantity_on_hand, 'cost' => (string) $balance->inventory_value];
-            if (bccomp($qty, $balanceRemaining[$id], 8) > 0) $this->fail('stock_short', '同一库存来源的累计领入数量超过可用量。');
-            $cost = $source['physical_material_id'] ? $source['cost_amount'] : CuttingDecimal::share($costRemaining[$id]['cost'], $costRemaining[$id]['qty'], $qty);
-            $costRemaining[$id] = ['qty' => bcsub($costRemaining[$id]['qty'], $qty, 8), 'cost' => bcsub($costRemaining[$id]['cost'], $cost, 4)];
-            $balanceRemaining[$id] = bcsub($balanceRemaining[$id], $qty, 8);
-            $sources[] = array_replace($source, ['source_key' => $key, 'qty' => $qty, 'cost_amount' => $cost,
+            if (bccomp($inventoryQty, $balanceRemaining[$id], 8) > 0) $this->fail('stock_short', '同一库存来源的累计领入数量超过可用量。');
+            $cost = $source['physical_material_id'] ? $source['cost_amount'] : CuttingDecimal::share($costRemaining[$id]['cost'], $costRemaining[$id]['qty'], $inventoryQty);
+            if (bccomp($cost, $costRemaining[$id]['cost'], 4) > 0) $this->fail('source_cost_invalid', '所选实物成本超过来源余额，请先核对库存成本。');
+            $costRemaining[$id] = ['qty' => bcsub($costRemaining[$id]['qty'], $inventoryQty, 8), 'cost' => bcsub($costRemaining[$id]['cost'], $cost, 4)];
+            $balanceRemaining[$id] = bcsub($balanceRemaining[$id], $inventoryQty, 8);
+            $sources[] = array_replace($source, ['source_key' => $key, 'qty' => $qty, 'inventory_qty' => $inventoryQty, 'cost_amount' => $cost,
                 'input_measure' => bcmul($source['measure_qty'], $qty, 8)]);
         }
         if (! $sources) $this->fail('source_required', '请选择实际领入的板材或管材来源。');
@@ -344,13 +346,17 @@ final class CuttingService
 
     public function assertSourceQuantity(array $source, string $qty): void
     {
-        if (in_array($source['unit_kind'], ['root', 'm', 'm2'], true) && bccomp($qty, bcadd($qty, '0', 4), 8) !== 0)
+        if (in_array($source['unit_kind'], ['m', 'm2'], true) && bccomp($qty, bcadd($qty, '0', 4), 8) !== 0)
             $this->fail('stock_precision_invalid', '领用的库存数量最多保留四位小数。');
-        if ((! empty($source['physical_material_id']) || $source['unit_kind'] === 'sheet') && bccomp($qty, '1', 8) !== 0)
-            $this->fail('whole_source_required', '实物原料和板材须逐件登记，每条来源数量必须为一。');
-        // 数量库存允许不足一根，但不能把多根拼成一条可切割的来源。
-        if ($source['unit_kind'] === 'root' && bccomp($qty, '1', 8) > 0)
-            $this->fail('whole_source_required', '管材须逐根登记，每条来源数量不能超过一根。');
+        if ((! empty($source['physical_material_id']) || in_array($source['unit_kind'], ['sheet', 'root'], true)) && bccomp($qty, '1', 8) !== 0)
+            $this->fail('whole_source_required', '整板、整根和实物余料须逐件登记，每条来源数量必须为一。');
+    }
+
+    /** 张／根是领用数量，平方米／米是库存数量；余料按实际面积／长度领用。 */
+    public function inventoryQuantity(array $source, string $qty): string
+    {
+        return in_array($source['unit_kind'], ['sheet', 'root'], true) && in_array($source['inventory_unit_kind'] ?? null, ['m2', 'm'], true)
+            ? bcmul((string) $source['measure_qty'], $qty, 8) : $qty;
     }
 
     private function requirements(MfgWorkOrder $wo, int $operationId): array
@@ -544,6 +550,10 @@ final class CuttingService
         if (! $unit) $this->fail('unit_missing', '原料必须维护真实的库存基本单位。');
         $kind = $this->quantities->unitKind($unit);
         $mode = $item->cuttingMode();
+        $whole = ! empty($balance->cutting_physical_id) || $balance->cutting_material_form !== 'REMNANT';
+        $issueKind = $whole ? ($mode === 'sheet' ? 'sheet' : 'root') : $kind;
+        $receiptMeasure = ! $balance->cutting_physical_id && $whole && in_array($kind, ['m2', 'm'], true)
+            ? $this->receiptStockMeasure($balance, $item, $issueKind) : null;
         $dimensions = $balance->cutting_dimensions ? json_decode($balance->cutting_dimensions, true, 512, JSON_THROW_ON_ERROR) : [];
         $shape = strtoupper((string) ($balance->cutting_shape ?: ($mode === 'length' ? 'LENGTH' : '')));
         if ($mode === 'sheet' && $item->materialManagementMode() !== 'physical') {
@@ -552,34 +562,59 @@ final class CuttingService
                 $remnant = collect($origin?->remnants ?? [])->firstWhere('material_lot_id', (int) $balance->material_lot_id);
                 if (! $remnant) $this->fail('remnant_dimensions_missing', '这块板材余料缺少已登记的实际面积，不能套用原板尺寸。');
                 $dimensions = $remnant['dimensions']; $shape = $remnant['shape'];
+                // 无逐件身份的面积余料可部分领用，不能把整块外形当作这次领用部分的矩形。
+                if ($kind === 'm2') {
+                    $area = $this->physicals->areaQuantity(['shape' => $shape, 'dimensions' => $dimensions]);
+                    $dimensions = array_intersect_key($dimensions, array_flip(['thickness_mm', 'nominal_thickness_mm'])) + ['area_m2' => $area];
+                    $shape = 'AREA_ONLY';
+                }
             } else {
                 $dimensions = $stockDimensions;
-                $shape = $kind === 'm2' ? 'AREA_ONLY' : 'RECTANGLE';
-                if ($kind === 'm2') $dimensions['area_m2'] = '1.00000000';
+                $shape = (float) ($dimensions['length_mm'] ?? 0) > 0 && (float) ($dimensions['width_mm'] ?? 0) > 0 ? 'RECTANGLE' : 'AREA_ONLY';
+                if ($receiptMeasure !== null && ($shape !== 'RECTANGLE' || bccomp($receiptMeasure, $this->physicals->areaQuantity(['shape' => $shape, 'dimensions' => $dimensions]), 8) !== 0)) {
+                    $dimensions = array_intersect_key($dimensions, array_flip(['thickness_mm', 'nominal_thickness_mm'])) + ['area_m2' => $receiptMeasure];
+                    $shape = 'AREA_ONLY';
+                }
+                if ($shape === 'AREA_ONLY') {
+                    $dimensions['area_m2'] = $receiptMeasure ?? $this->purchaseStockMeasure($item, 'sheet');
+                    if ($dimensions['area_m2'] === null) $this->fail('source_dimensions_missing', '整板缺少冻结长宽或正式按张采购的面积换算，不能按张领料。');
+                }
             }
         }
         if ($mode === 'sheet') {
-            if (! in_array($kind, ['sheet', 'm2'], true) || ($item->materialManagementMode() === 'physical' && $kind !== 'sheet')) $this->fail('unit_invalid', '板材库存基本单位必须为张或平方米，实物板材必须为张。');
+            if (! in_array($kind, ['sheet', 'm2'], true)) $this->fail('unit_invalid', '板材库存基本单位必须为张或平方米。');
             if (! in_array($shape, ['RECTANGLE', 'AREA_ONLY'], true) || ! isset($dimensions['thickness_mm'])) $this->fail('source_dimensions_missing', '板材缺少可确认的真实形状或厚度。');
-            $measure = $kind === 'm2' ? '1.00000000' : ($shape === 'AREA_ONLY' ? CuttingDecimal::value($dimensions['area_m2'] ?? null)
-                : bcdiv(bcmul(CuttingDecimal::value($dimensions['length_mm'] ?? null, 2), CuttingDecimal::value($dimensions['width_mm'] ?? null, 2), 8), '1000000', 8));
+            $measure = ! $whole && $kind === 'm2' ? '1.00000000'
+                : $this->physicals->areaQuantity(['shape' => $shape, 'dimensions' => $dimensions]);
         } else {
             if (! in_array($kind, ['root', 'm'], true)) $this->fail('unit_invalid', '管材库存单位必须明确为根或米。');
             $length = $dimensions['length_mm'] ?? $balance->cutting_lot_length_mm;
+            if ($receiptMeasure !== null) $length = bcmul($receiptMeasure, '1000', 2);
             if ($balance->cutting_material_form === 'REMNANT' && (float) $length <= 0) $this->fail('remnant_length_missing', '这条管材余料缺少实际余长，不能套用整根标准长度。');
-            if ((float) $length <= 0) $length = $stockDimensions['length_mm'] ?? $item->standard_stock_length_mm;
-            if ($kind === 'root' && (float) $length <= 0) $this->fail('source_dimensions_missing', '按根领料必须有来源真实长度，不能默认补标准长度。');
+            if ((float) $length <= 0 && ! $balance->cutting_physical_id) $length = $stockDimensions['length_mm'] ?? $item->standard_stock_length_mm;
+            if ((float) $length <= 0 && $whole && ! $balance->cutting_physical_id) {
+                $standardMeasure = $this->purchaseStockMeasure($item, 'root');
+                if ($standardMeasure !== null) $length = bcmul($standardMeasure, '1000', 2);
+            }
+            if ($whole && (float) $length <= 0) $this->fail('source_dimensions_missing', '按根领料必须有真实实物长度、冻结标准原长或正式按根采购换算。');
             $dimensions = $length ? ['length_mm' => bcadd((string) $length, '0', 2)] : [];
-            $measure = $kind === 'root' ? bcdiv((string) $length, '1000', 8) : '1.00000000';
+            $measure = $whole || $kind === 'root' ? bcdiv((string) $length, '1000', 8) : '1.00000000';
         }
         $available = bcsub(bcsub(bcsub((string) $balance->quantity_on_hand, (string) $balance->quantity_locked, 8), (string) $balance->quantity_defective, 8), (string) $balance->quantity_pending, 8);
         $available = $this->minimum($available, (string) $balance->quantity_available);
         $held = MaterialDeliveryService::holds()['balances'][(int) $balance->id] ?? 0;
         $available = bcsub($available, sprintf('%.4F', $held), 8);
         if (bccomp($available, '0', 8) < 0) $available = '0.00000000';
+        $inventoryQty = $balance->cutting_physical_id
+            ? $this->physicals->inventoryQuantity($item, ['shape' => $shape, 'dimensions' => $dimensions])
+            : ($whole && in_array($kind, ['m2', 'm'], true) ? $measure : '1.00000000');
+        if (bccomp($inventoryQty, bcadd($inventoryQty, '0', 4), 8) !== 0)
+            $this->fail('stock_precision_invalid', '整张或整根的面积／长度无法按库存四位小数无损保存，请核对来源尺寸。');
+        $issueAvailable = $balance->cutting_physical_id ? (bccomp($available, $inventoryQty, 8) >= 0 ? '1.00000000' : '0.00000000')
+            : ($whole ? bcdiv($available, $inventoryQty, 0) : $available);
         $version = $this->hash([(int) $balance->id, (string) $balance->quantity_on_hand, (string) $balance->quantity_locked,
             (string) $balance->quantity_defective, (string) $balance->quantity_pending, (string) $balance->inventory_value,
-            (string) $balance->last_transaction_at, $balance->material_lot_id, $balance->cutting_physical_id, $balance->cutting_physical_version, $dimensions, $held]);
+            (string) $balance->last_transaction_at, $balance->material_lot_id, $balance->cutting_physical_id, $balance->cutting_physical_version, $dimensions, $held, (int) $unit->id, $inventoryQty]);
         return ['source_key' => $balance->cutting_physical_id ? 'physical:'.$balance->cutting_physical_id : 'balance:'.$balance->id,
             'item_id' => (int) $item->id, 'item_code' => $item->item_code, 'item_name' => $item->item_name, 'specification' => $item->spec ?: $item->model,
             'material_grade' => $item->material_grade,
@@ -588,10 +623,70 @@ final class CuttingService
             'warehouse_id' => (int) $balance->warehouse_id, 'warehouse_name' => $balance->cutting_warehouse_name,
             'location_id' => (int) $balance->location_id, 'location_name' => $balance->cutting_location_name,
             'batch_no' => $balance->batch_no, 'material_lot_id' => $balance->material_lot_id ? (int) $balance->material_lot_id : null,
-            'mode' => $mode, 'unit_kind' => $kind, 'unit_id' => (int) $unit->id, 'available_qty' => $available, 'measure_qty' => $measure,
+            'mode' => $mode, 'unit_kind' => $issueKind, 'unit_id' => (int) $unit->id,
+            'available_qty' => $issueAvailable, 'inventory_available_qty' => $available, 'inventory_unit_kind' => $kind, 'inventory_qty' => $inventoryQty, 'measure_qty' => $measure,
             'measure_unit' => $mode === 'sheet' ? 'm2' : 'm', 'dimensions' => $dimensions, 'shape' => $shape,
             'material_form' => $balance->cutting_material_form ?: 'FULL_STOCK',
             'cost_amount' => $balance->cutting_physical_id ? (string) $balance->cutting_physical_cost : null];
+    }
+
+    /** 采购批次优先用到货时冻结的实际换算；同批不同换算不能混算成当前标准整料。 */
+    private function receiptStockMeasure(InventoryBalance $balance, Item $item, string $kind): ?string
+    {
+        $batch = DB::table('erp_inventory_batches')->where('item_id', $item->id)->where('batch_no', $balance->batch_no)->first(['source_type']);
+        $facts = DB::table('erp_inventory_transaction_items as fact')->join('erp_inventory_transactions as tx', 'tx.id', '=', 'fact.transaction_id')
+            ->where('fact.item_id', $item->id)->where('fact.batch_no', $balance->batch_no)->where('fact.unit_id', $balance->unit_id)
+            ->where('fact.source_type', 'purchase_receipt')->where('fact.change_qty', '>', 0)->where('tx.posting_status', 'posted')
+            ->whereIn('tx.transaction_type', ['purchase_receipt_posting', 'purchase_receipt_quality_release'])
+            ->when(DB::transactionLevel() > 0, fn ($q) => $q->lockForUpdate())->get(['fact.source_id', 'fact.source_item_id']);
+        if ($facts->isEmpty()) {
+            if ($batch?->source_type === 'purchase_receipt' || $balance->cutting_lot_source_type === 'purchase_receipt_item')
+                $this->fail('source_conversion_missing', '采购库存缺少可追溯的到货换算事实，不能套用当前采购换算重新计算张／根数。');
+            return null;
+        }
+        $ids = $facts->pluck('source_item_id')->filter()->unique()->sort()->values();
+        if ($ids->isEmpty() || $facts->contains(fn ($fact) => ! $fact->source_item_id))
+            $this->fail('source_conversion_missing', '采购库存缺少到货明细身份，不能套用当前采购换算。');
+        $lines = \App\Models\Erp\PurchaseReceiptItem::query()->with(['purchaseUnit.standardUnit', 'baseUnit.standardUnit'])
+            ->whereIn('id', $ids)->where('item_id', $item->id)->where('batch_no', $balance->batch_no)->orderBy('id')
+            ->when(DB::transactionLevel() > 0, fn ($q) => $q->lockForUpdate())->get();
+        if ($lines->count() !== $ids->count()) $this->fail('source_conversion_missing', '采购库存来源与到货明细不一致，请先核对原入库事实。');
+        $measure = null;
+        foreach ($lines as $line) {
+            $purchase = $this->units->canonicalUnit($line->purchaseUnit);
+            if (! $purchase || (int) $this->units->canonicalUnit($line->baseUnit)?->id !== (int) $balance->unit_id
+                || (strtoupper(trim((string) $purchase->unit_code)) !== ($kind === 'sheet' ? 'SHEET' : 'ROOT') && trim((string) ($purchase->symbol ?: $purchase->unit_symbol)) !== ($kind === 'sheet' ? '张' : '根'))
+                || $facts->contains(fn ($fact) => (int) $fact->source_item_id === (int) $line->id && (int) $fact->source_id !== (int) $line->receipt_id))
+                $this->fail('source_conversion_missing', '采购来源没有冻结为对应张／根到当前库存单位的换算，不能按当前主档补算。');
+            $factor = bccomp((string) ($line->actual_base_qty ?? '0'), '0', 8) > 0 && bccomp((string) $line->receipt_qty, '0', 4) > 0
+                ? bcdiv((string) $line->actual_base_qty, (string) $line->receipt_qty, 8) : (string) $line->conversion_factor_snapshot;
+            if (bccomp($factor, '0', 8) <= 0 || (bccomp((string) ($line->actual_base_qty ?? '0'), '0', 8) > 0
+                && bccomp(bcmul($factor, (string) $line->receipt_qty, 12), (string) $line->actual_base_qty, 12) !== 0))
+                $this->fail('source_conversion_invalid', '原到货实际面积／长度不能无损换算为每张／每根数量，请先核对采购记录。');
+            if (bccomp($factor, bcadd($factor, '0', 4), 8) !== 0)
+                $this->fail('stock_precision_invalid', '原到货每张／每根的面积／长度超出库存四位小数精度，不能舍入领用。');
+            if ($measure !== null && bccomp($measure, $factor, 8) !== 0)
+                $this->fail('source_conversion_conflict', '同一库存批次混有不同到货换算，不能合并成统一张／根数，请先核对来源。');
+            $measure = $factor;
+        }
+        return $measure;
+    }
+
+    private function purchaseStockMeasure(Item $item, string $kind): ?string
+    {
+        $base = $this->units->canonicalUnit($item->unit);
+        if (! $base || $this->quantities->unitKind($base) !== ($kind === 'sheet' ? 'm2' : 'm')) return null;
+        foreach ($this->units->activePurchaseConversions((int) $item->id)->with(['purchaseUnit.standardUnit', 'baseUnit.standardUnit'])
+            ->orderByDesc('is_default')->orderBy('id')->get() as $conversion) {
+            $unit = $this->units->canonicalUnit($conversion->purchaseUnit);
+            if (! $unit || $unit->status !== 'enabled' || (int) $this->units->canonicalUnit($conversion->baseUnit)?->id !== (int) $base?->id) continue;
+            if (strtoupper(trim((string) $unit->unit_code)) !== ($kind === 'sheet' ? 'SHEET' : 'ROOT') && trim((string) ($unit->symbol ?: $unit->unit_symbol)) !== ($kind === 'sheet' ? '张' : '根')) continue;
+            $measure = CuttingDecimal::value((string) $conversion->factor);
+            if (bccomp($measure, bcadd($measure, '0', 4), 8) !== 0)
+                $this->fail('stock_precision_invalid', '按张／根采购换算超出库存四位小数精度，不能舍入领用。');
+            return $measure;
+        }
+        return null;
     }
 
     private function remainingUnits(MfgWorkOrder $wo, int $operationId, bool $lock = false): int

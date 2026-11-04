@@ -317,7 +317,21 @@ class SalesShipmentApplicationService
                 'operator_legacy_id' => (int) $actor->legacy_id, 'operator_name' => $operator, 'dispatched_at' => now()]);
             $transaction = $legacy ?: $this->inventory->postSalesShipmentDispatch($dispatch, $shipment, $lineIds, $actor);
             $dispatch->update(['inventory_transaction_id' => $transaction->id]);
-            foreach ($lines as $line) $line->update(['line_status' => 'shipped', 'dispatched_at' => now()]);
+            // 半成品单独销售：发货冻结其当前默认 BOM 的节点提成（步骤 1 解析）与下位置整套提成；整机行留空（走产出工单的计划）。
+            $semiService = app(\App\Services\Erp\BomPositionPerformanceService::class);
+            $matcher = app(\App\Services\Erp\BomMatcher::class);
+            foreach ($lines as $line) {
+                $update = ['line_status' => 'shipped', 'dispatched_at' => now()];
+                $itemType = \Illuminate\Support\Facades\DB::table('erp_items')->where('id', $line->item_id)->value('item_type');
+                if ($itemType === 'semi_finished') {
+                    $match = $matcher->match(null, null, (int) $line->item_id, null);
+                    $bom = ($match['status'] ?? null) === 'matched' ? \App\Models\Erp\Bom::query()->find($match['bom_id']) : null;
+                    // 无默认 BOM 也明确冻结为单独销售缺配置，统计不能回退生产时的旧比例。
+                    $update['performance_plan'] = $bom ? $semiService->freezeAloneSale($bom)
+                        : ['source' => 'alone_sale', 'bom_id' => null, 'bom_no' => null, 'own_nodes' => [], 'positions' => [], 'frozen_at' => now()->toDateTimeString()];
+                }
+                $line->update($update);
+            }
             // 本次填的快递公司、运单号同时记到这次发出的每个包裹上
             $shipment->packages()->whereIn('id', $packageIds)->update(array_merge(['package_status' => 'shipped'], array_filter(['carrier_name' => $carrier, 'tracking_no' => $tracking])));
             $remaining = $shipment->lines()->whereNotIn('line_status', ['shipped', 'replaced', 'cancelled'])->exists();

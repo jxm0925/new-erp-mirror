@@ -17,6 +17,8 @@ CREATE TABLE `erp_bom_items` (
   `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
   `bom_id` bigint(20) unsigned NOT NULL,
   `line_no` int(10) unsigned NOT NULL DEFAULT '10',
+  `position_uid` char(36) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL,
+  `child_bom_id` bigint(20) unsigned DEFAULT NULL,
   `component_item_id` bigint(20) unsigned NOT NULL,
   `component_item_code` varchar(80) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
   `component_item_name` varchar(160) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
@@ -41,7 +43,10 @@ CREATE TABLE `erp_bom_items` (
   KEY `erp_bom_items_bom_id_line_no_index` (`bom_id`,`line_no`),
   KEY `erp_bom_items_component_item_id_index` (`component_item_id`),
   KEY `erp_bom_item_cut_idx` (`bom_id`,`component_item_id`,`cut_length_mm`),
+  KEY `erp_bom_items_position_uid_idx` (`bom_id`,`position_uid`),
+  KEY `erp_bom_items_child_bom_id_foreign` (`child_bom_id`),
   CONSTRAINT `erp_bom_items_bom_id_foreign` FOREIGN KEY (`bom_id`) REFERENCES `erp_boms` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `erp_bom_items_child_bom_id_foreign` FOREIGN KEY (`child_bom_id`) REFERENCES `erp_boms` (`id`) ON DELETE SET NULL,
   CONSTRAINT `erp_bom_items_component_item_id_foreign` FOREIGN KEY (`component_item_id`) REFERENCES `erp_items` (`id`),
   CONSTRAINT `erp_bom_items_unit_id_foreign` FOREIGN KEY (`unit_id`) REFERENCES `erp_units` (`id`) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci

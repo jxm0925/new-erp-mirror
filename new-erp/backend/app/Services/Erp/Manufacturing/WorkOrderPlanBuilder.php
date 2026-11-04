@@ -46,7 +46,14 @@ final class WorkOrderPlanBuilder
         if (($bom['phantom_expansion_complete'] ?? null) === false) {
             $blocks = array_merge($blocks, $bom['phantom_expansion_block_reasons'] ?? ['虚拟件用料尚未完整展开，请调整工单重新选择 BOM 后保存。']);
         }
+        // 未指定路线时优先用 BOM 选用的路线（仍须有效且适用于本物料），否则按原默认路线规则匹配。
+        $bomId = isset($bom['id']) ? (int) $bom['id'] : $bomId;
+        if (! $routingId && $bomId) {
+            $bomRouting = (int) (Bom::query()->whereKey($bomId)->value('routing_id') ?? 0);
+            if ($bomRouting && ProductionRouting::query()->where('status', 'active')->applicableToItem((int) $item->id)->whereKey($bomRouting)->exists()) $routingId = $bomRouting;
+        }
         $routing = $this->routing($item, $productId, $skuId, $routingId, $blocks);
+        if ($routing) $routing = $this->applyBomStandards($routing, $bomId, $item, $productId, is_array($bom) ? ($bom['custom_operation_standards'] ?? null) : null);
         $operations = $routing ? $routing['operations'] : [];
         $production = array_values(array_filter($operations, fn ($op) => $op['execution_context'] === 'production'));
         if ($routing && ! $production) $blocks[] = '工艺路线里没有车间工序，请在路线里补上生产工序';
@@ -155,6 +162,28 @@ final class WorkOrderPlanBuilder
         return ['id' => (int) $bom->id, 'bom_no' => $bom->bom_no, 'bom_name' => $bom->bom_name, 'version' => $bom->version, 'is_default' => (bool) $bom->is_default, 'items' => $items];
     }
 
+    /**
+     * 把 BOM 上这条路线每道节点的工时与解析后的比例写入路线快照：工单工序、包装作业都从同一快照取值，口径一致。
+     * 工时未设保持 NULL（不按 0 计）；比例来源 bom/zero/category/default/missing 一并记录，模板后改不追溯。
+     */
+    private function applyBomStandards(array $routing, ?int $bomId, Item $item, ?int $productId, ?array $overrides = null): array
+    {
+        $standards = app(\App\Services\Erp\BomOperationStandardService::class)
+            ->resolveForPlan($bomId, (int) $routing['routing_id'], (int) $item->id, $productId, $overrides);
+        $routing['operations'] = array_map(function (array $op) use ($standards): array {
+            $row = $standards[(int) $op['routing_operation_id']] ?? null;
+            return array_merge($op, [
+                'setup_standard_minutes' => $row['setup_minutes'] ?? null,
+                'unit_standard_minutes' => $row['unit_minutes'] ?? null,
+                'performance_rate' => $row['performance_rate'] ?? null,
+                'performance_source' => $row['performance_source'] ?? 'missing',
+                'performance_template' => $row['performance_template'] ?? null,
+            ]);
+        }, $routing['operations']);
+        $routing['standards_bom_id'] = $bomId;
+        return $routing;
+    }
+
     private function routing(Item $item, ?int $productId, ?int $skuId, ?int $routingId, array &$blocks): ?array
     {
         if ($routingId) {
@@ -188,12 +217,21 @@ final class WorkOrderPlanBuilder
             if (! $phantom) { $out[] = $line; continue; }
             $name = $phantom->item_name ?: $phantom->item_code;
             if (in_array((int) $phantom->id, $path, true) || count($path) > 8) { $blocks[] = '虚拟件 '.$name.' 的 BOM 层级循环或过深，请检查 BOM'; continue; }
-            $match = $this->bomMatcher->match(null, null, (int) $phantom->id, null);
-            if (($match['status'] ?? null) !== 'matched') { $blocks[] = '虚拟件 '.$name.' 没有唯一可用的已审核 BOM（物料级），无法展开用料'; continue; }
-            $children = $this->explodePhantoms($match['bom_snapshot']['items'], [...$path, (int) $phantom->id], $blocks);
+            if (! empty($line['child_bom_id'])) {
+                $childBom = $this->bomMatcher->eligibleQuery()->whereKey((int) $line['child_bom_id'])->where('output_item_id', $phantom->id)->first();
+                if (! $childBom) { $blocks[] = '虚拟件 '.$name.' 指定的子 BOM 不可用，无法展开用料'; continue; }
+                $childItems = $this->lengthCut->resolveBomLines($childBom, null)->all();
+            } else {
+                $match = $this->bomMatcher->match(null, null, (int) $phantom->id, null);
+                if (($match['status'] ?? null) !== 'matched') { $blocks[] = '虚拟件 '.$name.' 没有唯一可用的已审核 BOM（物料级），无法展开用料'; continue; }
+                $childItems = $match['bom_snapshot']['items'];
+            }
+            $children = $this->explodePhantoms($childItems, [...$path, (int) $phantom->id], $blocks);
             $multiplier = (float) $line['qty'] * (1 + (float) ($line['loss_rate'] ?? 0) / 100);
             $parentFixed = (float) ($line['fixed_qty'] ?? 0);
             foreach ($children as $child) {
+                // 位置路径随虚拟件层级下延：父行路径 + '/' + 子行在子 BOM 里的 uid。
+                $child['position_path'] = trim(($line['position_path'] ?? $line['position_uid'] ?? '').'/'.($child['position_path'] ?? $child['position_uid'] ?? ''), '/');
                 $childQty = (float) $child['qty'];
                 $childLoss = (float) ($child['loss_rate'] ?? 0);
                 $child['qty'] = (string) round($multiplier * $childQty, 6);
@@ -282,6 +320,7 @@ final class WorkOrderPlanBuilder
                     'required_qty' => round($total * $target['ratio'], 4), 'issued_qty' => 0,
                     'supply_mode' => $target['supply_mode'], 'participates_in_kitting' => $target['kitting'],
                     'cutting_mode' => $item ? $item->cuttingMode() : null,
+                    'position_path' => $line['position_path'] ?? $line['position_uid'] ?? null,
                     'remark' => ($line['phantom_item_name'] ?? null) ? trim('来自虚拟件 '.$line['phantom_item_name'].' '.($line['remark'] ?? '')) : ($line['remark'] ?? null),
                 ];
             }

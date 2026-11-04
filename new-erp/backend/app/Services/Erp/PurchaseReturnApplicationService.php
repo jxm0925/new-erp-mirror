@@ -698,7 +698,7 @@ class PurchaseReturnApplicationService
             ->lockForUpdate()
             ->first();
         if ($source->item?->materialManagementMode() === 'physical' && $balance) {
-            $currentAvailable = (float) DB::table('erp_material_physicals as physical')
+            $physicals = DB::table('erp_material_physicals as physical')
                 ->join('erp_material_holdings as holding', 'holding.id', '=', 'physical.current_holding_id')
                 ->join('erp_inventory_transaction_items as source_line', 'source_line.id', '=', 'physical.source_transaction_item_id')
                 ->where('holding.inventory_balance_id', $balance->id)
@@ -707,7 +707,9 @@ class PurchaseReturnApplicationService
                 ->where('physical.status', 'AVAILABLE')
                 ->where('source_line.source_type', 'purchase_receipt')
                 ->where('source_line.source_item_id', $source->id)
-                ->count();
+                ->get(['physical.shape', 'physical.dimensions']);
+            $currentAvailable = (float) $physicals->reduce(fn ($total, $physical) => bcadd($total,
+                $this->physicalMaterials->inventoryQuantity($source->item, $physical), 8), '0');
         } else {
             $currentAvailable = $balance ? $this->availability->availableForOutbound($balance) : 0.0;
         }

@@ -24,8 +24,9 @@ class MfgTechController extends Controller
 
     public function show(Request $request, int $id, TechService $tech)
     {
-        [, $canManage] = $this->user($request, ['production.tech.manage', 'production.work_order.view']);
-        $data = $tech->detail($id);
+        [$user, $canManage] = $this->user($request, ['production.tech.manage', 'production.work_order.view']);
+        [$canView, $canEdit] = $this->perfPerms($user);
+        $data = $tech->detail($id, $canView, $canEdit);
         $data['can_manage'] = $canManage;
         return response()->json(['data' => $data]);
     }
@@ -33,12 +34,16 @@ class MfgTechController extends Controller
     public function saveBom(Request $request, int $id, TechService $tech)
     {
         [$user] = $this->user($request, ['production.tech.manage']);
+        [$canView, $canEdit] = $this->perfPerms($user);
         $data = $request->validate(['lines' => 'required|array|min:1|max:300', 'lines.*.component_item_id' => 'required|integer|min:1',
             'lines.*.base_line_id' => 'nullable|integer|min:1', 'lines.*.qty' => 'required|numeric|min:0', 'lines.*.loss_rate' => 'nullable|numeric|min:0|max:99.99',
             'lines.*.fixed_qty' => 'nullable|numeric|min:0', 'lines.*.target_routing_operation_id' => 'nullable|integer|min:1', 'lines.*.remark' => 'nullable|string|max:200',
+            'operation_standards' => 'sometimes|array|max:200', 'operation_standards.*.routing_operation_id' => 'required|integer|min:1',
+            'operation_standards.*.setup_minutes' => 'nullable|numeric|min:0|max:999999', 'operation_standards.*.unit_minutes' => 'nullable|numeric|min:0|max:999999',
+            'operation_standards.*.performance_mode' => 'sometimes|nullable|in:inherit,override,zero', 'operation_standards.*.performance_rate' => 'sometimes|nullable|numeric|min:0|max:1',
             'confirmed' => 'nullable|boolean', 'remark' => 'nullable|string|max:500']);
-        $tech->saveBom($id, $data['lines'], (bool) ($data['confirmed'] ?? false), $data['remark'] ?? null, $user);
-        return response()->json(['message' => ! empty($data['confirmed']) ? '定制 BOM 已确认。' : '定制 BOM 已保存。', 'data' => $tech->detail($id)]);
+        $tech->saveBom($id, $data['lines'], (bool) ($data['confirmed'] ?? false), $data['remark'] ?? null, $user, $data['operation_standards'] ?? null, $canEdit);
+        return response()->json(['message' => ! empty($data['confirmed']) ? '定制 BOM 已确认。' : '定制 BOM 已保存。', 'data' => $tech->detail($id, $canView, $canEdit)]);
     }
 
     public function upload(Request $request, int $id, TechService $tech)
@@ -53,7 +58,7 @@ class MfgTechController extends Controller
             'original_name' => mb_substr($file->getClientOriginalName(), 0, 255), 'storage_path' => $path, 'url' => MfgTaskController::publicUrl($request, $path),
             'mime_type' => $file->getMimeType(), 'file_size' => (int) $file->getSize(), 'file_hash' => hash_file('sha256', $file->getRealPath()) ?: null,
         ], $data['drawing_name'] ?? null, isset($data['replace_drawing_id']) ? (int) $data['replace_drawing_id'] : null, $user);
-        return response()->json(['message' => '图纸已上传（V'.$drawing->version_no.'）。', 'data' => $tech->detail($id)]);
+        return response()->json(['message' => '图纸已上传（V'.$drawing->version_no.'）。', 'data' => $tech->detail($id, ...$this->perfPerms($user))]);
     }
 
     public function deleteDrawing(Request $request, int $drawingId, TechService $tech)
@@ -68,7 +73,17 @@ class MfgTechController extends Controller
         [$user] = $this->user($request, ['production.tech.manage']);
         $remark = $request->validate(['remark' => 'nullable|string|max:500'])['remark'] ?? null;
         $tech->release($id, $remark, $user);
-        return response()->json(['message' => '已下发车间，工单已下达、已按设备生成序列号。', 'data' => $tech->detail($id)]);
+        return response()->json(['message' => '已下发车间，工单已下达、已按设备生成序列号。', 'data' => $tech->detail($id, ...$this->perfPerms($user))]);
+    }
+
+    /** 提成权限：超级管理员照常拥有；编辑同时要求查看。 */
+    private function perfPerms(object $user): array
+    {
+        $auth = app(AuthContextService::class);
+        if ($auth->isSuperAdmin($user)) return [true, true];
+        $codes = $auth->permissionCodes($user);
+        $view = in_array('master.bom.performance.view', $codes, true);
+        return [$view, $view && in_array('master.bom.performance.edit', $codes, true)];
     }
 
     /** @return array{0: object, 1: bool} 当前用户、能否编辑 */

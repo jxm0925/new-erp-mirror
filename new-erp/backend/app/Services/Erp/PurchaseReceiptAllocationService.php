@@ -59,7 +59,7 @@ class PurchaseReceiptAllocationService
         foreach ($receipt->items as $line) {
             app(PurchaseReceiptManagementScopeService::class)->assertLine($line, $receipt->management_scope, $pendingDraftScopeLineIds);
             if (!(bool) $line->is_stock_item_snapshot) continue;
-            $qualified = round((float) $line->qualified_base_qty, 8);
+            $qualified = round((float) ($line->final_stockable_base_qty ?? $line->qualified_base_qty), 8);
             if ($qualified <= 0) continue;
 
             if ($line->allocations->isEmpty()) {

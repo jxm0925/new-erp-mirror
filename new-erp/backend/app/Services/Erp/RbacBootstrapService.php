@@ -31,7 +31,7 @@ class RbacBootstrapService
         ],
         'sales_user' => [
             'sales.customer.view', 'sales.customer.create', 'sales.customer.edit', 'sales_order.view', 'sales_order.amount.view', 'sales_order.invoice_request',
-            'sales_order.create', 'sales_order.edit_draft', 'sales_order.delete_draft', 'sales_order.submit_confirmation',
+            'sales_order.create', 'sales_order.edit_draft', 'sales_order.delete_draft', 'sales_order.submit_confirmation', 'sales_order.production_confirm',
             'sales_order.inventory_lock', 'sales_order.change', 'sales_order.change.submit', 'sales_order.upload_attachment',
             'sales_order.view_attachment', 'sales_order.delete_attachment', 'sales_order.shipment.view', 'sales_order.shipment.packing.view',
             'sales_return.view', 'sales_return.create', 'master.product.view', 'master.sku.view', 'approval.todo', 'approval.task.view', 'approval.processed',
@@ -416,6 +416,8 @@ class RbacBootstrapService
             ['bom.manage.edit', '编辑BOM', 'button', 'bom.manage', null, null, 'el-icon-mouse', 3],
             ['bom.manage.delete', '删除恢复BOM', 'button', 'bom.manage', null, null, 'el-icon-mouse', 4],
             ['bom.manage.toggle_status', '启用/停用BOM', 'button', 'bom.manage', null, null, 'el-icon-mouse', 5],
+            ['master.bom.performance.view', '查看BOM提成', 'button', 'bom.manage', null, null, 'el-icon-mouse', 6],
+            ['master.bom.performance.edit', '编辑BOM提成', 'button', 'bom.manage', null, null, 'el-icon-mouse', 7],
 
             ['bom.expand.calculate', '执行展开计算', 'button', 'bom.expand', null, null, 'el-icon-mouse', 1],
             ['bom.expand.export', '导出BOM展开表', 'button', 'bom.expand', null, null, 'el-icon-mouse', 2],

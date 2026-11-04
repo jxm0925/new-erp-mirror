@@ -56,7 +56,6 @@
         <div class="card-head sub-heading">
           <div class="card-title">
             路线工序清单
-            <el-tag v-if="canManagePerformance" size="small" type="info" class="perf-tag">提成模板：{{ performanceLabel }}</el-tag>
           </div>
           <div class="catalog-actions">
             <el-button
@@ -106,7 +105,7 @@
                       公共工序
                     </el-tag>
                     <span class="op-panel-tip">
-                      <i class="el-icon-info" /> {{ viewOnly ? '查看该道工序的参数、工时及用料规则' : '配置该道工序的参数、工时及用料规则' }}
+                      <i class="el-icon-info" /> {{ viewOnly ? '查看该道工序的参数及用料规则' : '配置该道工序的参数及用料规则' }}
                     </span>
                   </div>
                   <div class="op-panel-btns">
@@ -166,25 +165,8 @@
                 </section>
 
                 <section class="settings-group">
-                  <h3>工时与参数</h3>
-                  <label>
-                    <span>标准工时（每台设备）</span>
-                    <el-input v-model="s.row.unit_hours" type="number" :disabled="viewOnly" min="0" step="0.5" placeholder="例如总装一台 2 小时">
-                      <template slot="append">小时</template>
-                    </el-input>
-                  </label>
-                  <label>
-                    <span>准备工时（每张工单一次）</span>
-                    <el-input v-model="s.row.setup_hours" type="number" :disabled="viewOnly" min="0" step="0.5" placeholder="没有可填 0">
-                      <template slot="append">小时</template>
-                    </el-input>
-                  </label>
-                  <label v-if="canManagePerformance">
-                    <span>提成比例（按模板）</span>
-                    <el-input :value="performanceText(s.row)" disabled>
-                      <template slot="append">%</template>
-                    </el-input>
-                  </label>
+                  <h3>参数</h3>
+                  <p class="setting-note">标准工时和提成在使用这条路线的 BOM 里分别维护。</p>
                   <label>
                     <span>必要参数</span>
                     <el-input v-model="s.row.parameters_text" type="textarea" :rows="2" :disabled="viewOnly" placeholder="填写该工序的加工工艺参数、公差等" />
@@ -299,11 +281,6 @@
               {{ s.row.execution_context==='shipment'?s.row.packaging_materials.length:incomingRules(s.row).length }} 种物料
             </template>
           </el-table-column>
-          <el-table-column label="标准工时" min-width="95">
-            <template slot-scope="s">
-              {{ s.row.unit_hours || 0 }} 小时/台<template v-if="Number(s.row.setup_hours) > 0"><br><small>准备 {{ s.row.setup_hours }} 小时</small></template>
-            </template>
-          </el-table-column>
           <el-table-column label="完成去向" min-width="110">
             <template slot-scope="s">
               {{ s.row.execution_context==='shipment'?shipmentTypeText(s.row.shipment_operation_type):outputModes[s.row.output_mode] }}
@@ -352,23 +329,19 @@ const emptyPercent = value => value === '' || value === null || value === undefi
 const percentFromRate = value => emptyPercent(value) ? '' : String(Number((Number(value) * 100).toFixed(4)))
 const validPercent = value => emptyPercent(value) || (/^\d{1,3}(?:\.\d{1,4})?$/.test(String(value)) && Number(value) <= 100)
 const asBoolean = value => value === true || value === 1 || value === '1'
-// 工时页面上按小时填，后台仍按分钟存。
-const toHours=minutes=>Number((Number(minutes||0)/60).toFixed(2))
-const toMinutes=hours=>Math.round(Number(hours||0)*60*100)/100
 
 export default {
   mixins: [cachedPageRoute],
   name:'ProductionRoutingForm', components:{PurchaseItemPicker,ProductSkuPicker,ProductionProcessCatalogPanel,SystemRecordPicker},
-  data:()=>({performance:null,loading:false,sessionId:'',reservationToken:'',reservation:null,savedId:null,operations:[],operationPickerOpen:false,operationPickerTarget:null,operationPickerValue:[],items:{},catalogs:{stages:{},'packaging-schemes':{}},expanded:[],pickerTarget:null,catalogTarget:null,pendingSave:null,pendingActivation:null,
+  data:()=>({loading:false,sessionId:'',reservationToken:'',reservation:null,savedId:null,operations:[],operationPickerOpen:false,operationPickerTarget:null,operationPickerValue:[],items:{},catalogs:{stages:{},'packaging-schemes':{}},expanded:[],pickerTarget:null,catalogTarget:null,pendingSave:null,pendingActivation:null,
     materialKeywordByOp:{},materialTallByOp:{},
     outputModes:{flow_only:'直接交接',warehouse_optional:'可选入库',warehouse_required:'合格后入库'},
     supplyModes:{dedicated_delivery:'专单配送',workstation_stock:'工位库存',no_per_order_delivery:'无需逐单配送'},
     form:{routing_no:'正在生成…',routing_name:'',product_id:null,sku_id:null,product:null,sku:null,version:1,status:'draft',is_default:false,remark:'',business_version:1,operations:[],applicable_items:[],applicable_category_ids:[]},categoryTree:[],
     rules:{routing_name:[{required:true,message:'请输入路线名称',trigger:'blur'}]}}),
-  computed:{id(){return this.savedId || this.pageRoute.params.id},viewOnly(){return (Boolean(this.pageRoute.params.id)&&!this.pageRoute.path.endsWith('/edit')) || this.form.status!=='draft'},title(){return this.id?(this.viewOnly?'查看工艺路线':'编辑工艺路线'):'新增工艺路线'},canManagePerformance(){return this.$can('production.performance.manage')},performanceLabel(){const p=this.performance;if(!p)return '保存后显示';if(!p.template)return '未配置（不计提成）';return p.template.template_name+(p.source==='default'?'（默认）':'（指定）')},allOperationsExpanded(){return this.form.operations.length>0&&this.form.operations.every(row=>this.expanded.includes(row.key))}},
+  computed:{id(){return this.savedId || this.pageRoute.params.id},viewOnly(){return (Boolean(this.pageRoute.params.id)&&!this.pageRoute.path.endsWith('/edit')) || this.form.status!=='draft'},title(){return this.id?(this.viewOnly?'查看工艺路线':'编辑工艺路线'):'新增工艺路线'},allOperationsExpanded(){return this.form.operations.length>0&&this.form.operations.every(row=>this.expanded.includes(row.key))}},
   async created(){this.loadCategories();if(this.id)await this.load();else await this.reserve()},
   methods:{
-    performanceText(row){const rates=this.performance&&this.performance.rates;if(!rates)return '';const rate=rates[row.operation_id];return rate===undefined||rate===null?'不计提成':percentFromRate(rate)},
     statusText(v){return({draft:'草稿',active:'已生效',retired:'已退役',disabled:'已退役'})[v]||v},
     shipmentTypeText(v){return({water_test:'试水',packing:'发货打包',loading:'装车 / 提货'})[v]||'发货作业'},
     isPublic(value){return asBoolean(value)},
@@ -391,15 +364,14 @@ export default {
       data.applicable_items=scopes.filter(x=>x.scope_type==='item'&&x.item).map(x=>x.item)
       data.applicable_category_ids=scopes.filter(x=>x.scope_type==='category').map(x=>Number(x.item_category_id))
       data.applicable_items.forEach(item=>this.rememberItem(item))
-      if(data.performance!==undefined)this.performance=data.performance
       ;(data.packaging_material_items||[]).forEach(item=>this.rememberItem(item))
       const byId=new Map((data.operations||[]).map(x=>[Number(x.id),`op-${x.id}`]))
       const rows=(data.operations||[]).map(x=>{
         if(x.operation){const index=this.operations.findIndex(o=>Number(o.id)===Number(x.operation.id));const operation={...x.operation,is_public:asBoolean(x.is_public??x.operation.is_public)};if(index<0)this.operations.push(operation);else this.$set(this.operations,index,{...this.operations[index],...operation})}
         this.rememberCatalog({type:'stages',row:x.stage||{id:x.production_stage_id,name:x.stage_name,code:x.stage_code}})
         this.rememberCatalog({type:'packaging-schemes',row:x.packaging_scheme||{id:x.packaging_scheme_id,name:x.packaging_scheme_name,code:x.packaging_scheme_code}})
-        const ordinary={...x};delete ordinary.performance_rate
-        return {...ordinary,key:byId.get(Number(x.id)),production_stage_id:x.production_stage_id||null,execution_context:x.execution_context||'production',shipment_operation_type:x.shipment_operation_type||'packing',packaging_scheme_id:x.packaging_scheme_id||null,packaging_materials:(x.packaging_materials||[]).map(material=>{this.rememberItem(material.component_item);return {...material}}),parameters_text:x.parameters&&x.parameters.text||'',setup_hours:toHours(x.setup_standard_minutes||0),unit_hours:toHours(x.unit_standard_minutes??x.standard_minutes??0),material_supply_rules:(x.material_supply_rules||[]).map(rule=>{this.rememberItem(rule.component_item);return {...rule,target_key:byId.get(Number(rule.target_routing_operation_id)),percent:Number(percentFromRate(rule.required_qty_ratio))}})}
+        const ordinary={...x}
+        return {...ordinary,key:byId.get(Number(x.id)),production_stage_id:x.production_stage_id||null,execution_context:x.execution_context||'production',shipment_operation_type:x.shipment_operation_type||'packing',packaging_scheme_id:x.packaging_scheme_id||null,packaging_materials:(x.packaging_materials||[]).map(material=>{this.rememberItem(material.component_item);return {...material}}),parameters_text:x.parameters&&x.parameters.text||'',material_supply_rules:(x.material_supply_rules||[]).map(rule=>{this.rememberItem(rule.component_item);return {...rule,target_key:byId.get(Number(rule.target_routing_operation_id)),percent:Number(percentFromRate(rule.required_qty_ratio))}})}
       })
       this.form={...this.form,...data,operations:rows};this.expanded=rows.length?[rows[0].key]:[]
     },
@@ -468,7 +440,7 @@ export default {
       const usedShipmentTypes=this.form.operations.filter(r=>r.execution_context==='shipment').map(r=>r.shipment_operation_type);
       const defaultShipmentType=!usedShipmentTypes.includes('water_test')?'water_test':(!usedShipmentTypes.includes('packing')?'packing':'loading');
       const nextSeq=(this.form.operations.length+1)*10;
-      const row={key:uuid(),operation_id:null,production_stage_id:null,execution_context:defaultContext,shipment_operation_type:defaultShipmentType,packaging_scheme_id:null,packaging_materials:[],sequence:nextSeq,is_key_operation:false,parameters:null,parameters_text:'',remark:'',setup_hours:0,unit_hours:0,output_mode:'flow_only',quality_mode:'none',work_mode:'manual',allow_continue_without_warehouse:true,material_supply_rules:[]};
+      const row={key:uuid(),operation_id:null,production_stage_id:null,execution_context:defaultContext,shipment_operation_type:defaultShipmentType,packaging_scheme_id:null,packaging_materials:[],sequence:nextSeq,is_key_operation:false,parameters:null,parameters_text:'',remark:'',output_mode:'flow_only',quality_mode:'none',work_mode:'manual',allow_continue_without_warehouse:true,material_supply_rules:[]};
       this.form.operations.push(row);
       this.orderContexts();
       this.expanded=[row.key];
@@ -609,7 +581,6 @@ export default {
       const opIndex=Math.floor(row.sequence/10);
       if(!row.operation_id){this.$message.warning(`请为第 ${opIndex} 道工序选择工序名称`);return false}
       if(row.execution_context!=='shipment'&&row.output_mode!=='flow_only'&&!this.isLastProduction(row)){this.$message.warning(`第 ${opIndex} 道工序不是最后一道车间工序，只能直接交接；入库只能设在最后一道车间工序`);return false}
-      if([row.setup_hours,row.unit_hours].some(value=>value===''||value===null||!Number.isFinite(Number(value))||Number(value)<0)){this.$message.warning(`第 ${opIndex} 道工序的工时要填大于或等于 0 的小时数`);return false}
       if(row.execution_context==='shipment'){
         if(row.shipment_operation_type==='packing'&&!row.packaging_scheme_id){this.$message.warning(`第 ${opIndex} 道打包工序必须选择包装方案`);return false}
         if(row.shipment_operation_type!=='packing'&&(row.packaging_scheme_id||row.packaging_materials.length)){this.$message.warning(`第 ${opIndex} 道试水或装车工序不能配置包装方案或包装用料`);return false}
@@ -623,7 +594,7 @@ export default {
         applicable_item_ids:this.form.sku_id?[]:this.form.applicable_items.map(item=>item.id),applicable_category_ids:this.form.sku_id?[]:this.form.applicable_category_ids,
         operations:this.form.operations.map(row=>{
           const operation={operation_id:row.operation_id,production_stage_id:row.production_stage_id||null,execution_context:row.execution_context,sequence:row.sequence,is_key_operation:row.is_key_operation,
-            parameters:{...(row.parameters||{}),text:row.parameters_text},remark:row.remark||null,setup_standard_minutes:toMinutes(row.setup_hours),unit_standard_minutes:toMinutes(row.unit_hours),standard_minutes:toMinutes(row.unit_hours),
+            parameters:{...(row.parameters||{}),text:row.parameters_text},remark:row.remark||null,
             output_mode:row.output_mode,quality_mode:row.quality_mode,work_mode:row.work_mode,allow_continue_without_warehouse:row.allow_continue_without_warehouse}
           // 保留明细标识，后端可按原节点保留当前账号不可见的绩效配置。
           if(Number(row.id)>0)operation.id=Number(row.id)
@@ -802,11 +773,6 @@ export default {
   background: #008b4b;
   border-radius: 2px;
 }
-.perf-tag {
-  font-weight: normal;
-  margin-left: 6px;
-}
-
 .seq-num-badge {
   display: inline-flex;
   align-items: center;

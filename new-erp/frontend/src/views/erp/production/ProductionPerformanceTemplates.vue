@@ -12,7 +12,7 @@
             </el-tag>
           </div>
           <div class="sub-row">
-            统一配置标准工序销售提成比例与计酬规则，支持默认模板与指定工艺路线绑定；已生成的工单保持原计酬口径
+            统一配置标准工序销售提成比例与计酬规则，支持默认模板与按商品分类指定；BOM 节点上的指定比例优先，已生成的工单保持原计酬口径
           </div>
         </div>
       </div>
@@ -45,7 +45,7 @@
             </div>
             <div class="perf-tpl-card-sub">{{ row.lines.length }} 道工序 · 比例合计 <b class="total-rate">{{ percent(row.total_rate) }}%</b></div>
             <div class="perf-tpl-card-ops">{{ row.lines.map(l => `${l.operation_name} ${percent(l.performance_rate)}%`).join('、') }}</div>
-            <div v-if="row.routing_count" class="perf-tpl-card-routings">指定生效路线 {{ row.routing_count }} 条</div>
+            <div v-if="row.category_count" class="perf-tpl-card-scope">适用分类 {{ row.category_count }} 个</div>
           </div>
         </div>
         <div v-if="total > 10" class="list-pagination">
@@ -124,92 +124,63 @@
 
           <div v-if="form.id" class="section-block">
             <div class="card-head">
-              <div class="card-title">适用工艺路线范围</div>
-              <span class="sub-explain">{{ detail.is_default ? '当前为系统默认模板：所有未指定独立模板的工艺路线均按本模板核算' : '当前为专属模板：仅对下列已绑定的工艺路线生效' }}</span>
+              <div class="card-title">适用范围</div>
+              <span class="sub-explain">兜底顺序：BOM 本行指定 → 商品分类（本级，再逐级上级）→ 默认模板 → 未配置；已生成的工单不受影响</span>
             </div>
-            <div class="perf-tpl-ops">
-              <el-tag v-for="r in detail.routings" :key="r.id" size="small" type="success" effect="plain" closable class="routing-tag" @close="unbind(r)">
-                {{ r.routing_no }} V{{ r.version }} {{ r.routing_name }}
+            <div class="scope-row">
+              <span class="scope-label">默认模板</span>
+              <el-tag v-if="detail.is_default" size="small" type="success" effect="plain">是</el-tag>
+              <el-tag v-else size="small" type="info" effect="plain">否</el-tag>
+              <span class="empty-hint">所有没有命中分类模板、也没有在 BOM 里指定的工序，按默认模板计提成</span>
+            </div>
+            <div class="scope-row">
+              <span class="scope-label">商品分类</span>
+              <el-tag v-for="c in detail.categories" :key="c.id" size="small" type="success" effect="plain" closable class="scope-tag" @close="unbindCategory(c)">
+                {{ c.category_name }}
               </el-tag>
-              <span v-if="!detail.routings.length" class="empty-hint">暂无单独绑定的工艺路线</span>
+              <span v-if="!detail.categories.length" class="empty-hint">暂无绑定的商品分类</span>
+              <el-button size="mini" type="success" plain class="btn-theme-plain" icon="el-icon-plus" @click="openCategoryPicker">选择商品分类</el-button>
             </div>
+            <div class="scope-tip">商品未填分类时按默认模板计提成。</div>
           </div>
 
           <div class="form-actions">
             <el-button v-if="form.id" type="danger" plain class="btn-danger-plain" @click="remove">删除模板</el-button>
             <el-button v-if="form.id" icon="el-icon-star-off" :disabled="detail.is_default" @click="makeDefault">{{ detail.is_default ? '已是默认模板' : '设为默认模板' }}</el-button>
-            <el-button icon="el-icon-connection" :disabled="!form.id" @click="openApply">指定工艺路线</el-button>
+            <el-button icon="el-icon-connection" :disabled="!form.id" @click="openCategoryPicker">选择商品分类</el-button>
             <el-button type="success" icon="el-icon-check" class="btn-theme-create" @click="save">保存模板</el-button>
           </div>
         </template>
       </main>
     </div>
 
-    <!-- 指定工艺路线弹窗 -->
-    <el-dialog :visible.sync="apply.open" :title="apply.step === 1 ? '选择要指定本模板的工艺路线' : '确认工序比例变化'" width="820px" custom-class="perf-tpl-dialog" append-to-body>
-      <template v-if="apply.step === 1">
-        <div class="perf-tpl-apply-filter">
-          <el-input v-model="apply.keyword" size="small" clearable prefix-icon="el-icon-search" placeholder="路线编码 / 名称" class="filter-input" @change="loadRoutings(1)" />
-          <el-select v-model="apply.status" size="small" placeholder="路线状态" class="filter-select" @change="loadRoutings(1)">
-            <el-option label="已生效" value="active" />
-            <el-option label="草稿" value="draft" />
-            <el-option label="全部状态" value="" />
-          </el-select>
-          <span class="selected-count">已选 <b>{{ apply.selected.length }}</b> 条路线</span>
-        </div>
-        <el-table ref="routingTable" :data="apply.routings" border size="small" row-key="id" v-loading="apply.loading" @selection-change="rows => syncSelection(rows)">
-          <el-table-column type="selection" width="44" reserve-selection :selectable="row => !['retired', 'disabled'].includes(row.status)" />
-          <el-table-column prop="routing_no" label="路线编码" min-width="130" />
-          <el-table-column prop="routing_name" label="路线名称" min-width="150" />
-          <el-table-column label="适用物料 / 类目" min-width="150"><template slot-scope="{ row }">{{ row.applicable_scope || (row.applicabilities || []).map(x => x.item ? x.item.item_name : (x.category ? x.category.category_name + '（类目）' : '')).filter(Boolean).join('、') || '-' }}</template></el-table-column>
-          <el-table-column label="版本" width="60" align="center"><template slot-scope="{ row }">V{{ row.version }}</template></el-table-column>
-          <el-table-column prop="operations_count" label="工序数" width="70" align="center" />
-        </el-table>
-        <div class="table-footer">
-          <span>共 {{ apply.total }} 条</span>
-          <el-pagination small layout="prev, pager, next" :current-page="apply.page" :page-size="10" :total="apply.total" @current-change="loadRoutings" />
-        </div>
-      </template>
-      <template v-else>
-        <p class="perf-tpl-tip">提示：指定后所选路线将按本模板核算工序提成，不在本模板中的工序不计提成；工艺路线本身不存储提成比例，已生成的工单不受影响。</p>
-        <div class="perf-tpl-preview" v-loading="apply.loading">
-          <div v-for="r in apply.preview" :key="r.routing_id" class="perf-tpl-preview-card">
-            <div class="perf-tpl-preview-head">
-              <b>{{ r.routing_no }} V{{ r.version }}</b>
-              <span>{{ r.routing_name }}</span>
-              <span class="muted">当前模板：{{ r.current_template ? r.current_template.template_name + (r.current_template.source === 'default' ? '（默认）' : '（指定）') : '未配置' }}</span>
-              <el-tag v-if="r.blocked_reason" size="mini" type="info">{{ r.blocked_reason }}</el-tag>
-              <el-tag v-else-if="r.already_bound" size="mini" type="success">已绑定本模板</el-tag>
-              <el-tag v-else-if="r.changed_count" size="mini" type="warning">{{ r.changed_count }} 道工序比例发生变化</el-tag>
-              <el-tag v-else size="mini" type="success">比例一致</el-tag>
-            </div>
-            <div class="perf-tpl-ops">
-              <div v-for="op in r.operations" :key="op.routing_operation_id" :class="['perf-tpl-op', { changed: op.changed, unmatched: !op.matched }]">
-                <span class="name">{{ op.operation_name }}</span>
-                <span v-if="op.changed">{{ op.current_rate === null ? '不计' : percent(op.current_rate) + '%' }} → <b>{{ op.new_rate === null ? '不计' : percent(op.new_rate) + '%' }}</b></span>
-                <span v-else-if="op.matched">{{ percent(op.new_rate) }}%</span>
-                <span v-else class="muted">不计提成（未在模板中定义）</span>
-              </div>
-            </div>
-          </div>
-        </div>
-      </template>
+    <!-- 选择商品分类弹窗 -->
+    <el-dialog :visible.sync="categoryPicker.open" title="选择商品分类" width="560px" custom-class="perf-tpl-dialog" append-to-body>
+      <p class="perf-tpl-tip">勾选使用本模板的商品分类；取消已勾选的分类将解除该分类与本模板的绑定。下级分类未单独指定时自动沿用上级的模板。</p>
+      <div class="category-tree-box" v-loading="categoryPicker.loading">
+        <el-tree
+          v-if="categoryPicker.tree.length"
+          ref="categoryTree"
+          :data="categoryPicker.tree"
+          show-checkbox
+          check-strictly
+          node-key="id"
+          :props="{ label: 'category_name', children: 'children' }"
+          :default-checked-keys="categoryPicker.checked"
+        />
+        <div v-else-if="!categoryPicker.loading" class="perf-tpl-empty">暂无商品分类</div>
+      </div>
       <span slot="footer">
-        <template v-if="apply.step === 1">
-          <el-button size="small" @click="apply.open = false">取消</el-button>
-          <el-button size="small" type="success" :disabled="!apply.selected.length" @click="loadPreview">下一步：预览变化</el-button>
-        </template>
-        <template v-else>
-          <el-button size="small" @click="apply.step = 1">上一步</el-button>
-          <el-button size="small" type="success" :loading="apply.saving" :disabled="!changedRoutings" @click="confirmApply">确认指定（{{ changedRoutings }} 条路线）</el-button>
-        </template>
+        <el-button size="small" @click="categoryPicker.open = false">取消</el-button>
+        <el-button size="small" type="success" :loading="categoryPicker.saving" @click="confirmCategories">确认指定</el-button>
       </span>
     </el-dialog>
   </section>
 </template>
 
 <script>
-import { listPerformanceTemplates, getPerformanceTemplate, createPerformanceTemplate, updatePerformanceTemplate, deletePerformanceTemplate, previewPerformanceTemplate, applyPerformanceTemplate, unbindPerformanceTemplate, setDefaultPerformanceTemplate, listPerformanceTemplateOperations, listProductionRoutings } from '../../../api/erp/production'
+import { listPerformanceTemplates, getPerformanceTemplate, createPerformanceTemplate, updatePerformanceTemplate, deletePerformanceTemplate, bindPerformanceTemplateCategories, unbindPerformanceTemplateCategories, setDefaultPerformanceTemplate, listPerformanceTemplateOperations } from '../../../api/erp/production'
+import { listEntity } from '../../../api/erp/master'
 
 function percentToRate (value) {
   const text = String(value ?? '').trim()
@@ -227,12 +198,11 @@ function rateToPercent (value) {
 export default {
   name: 'ProductionPerformanceTemplates',
   data: () => ({
-    listLoading: false, saving: false, templates: [], total: 0, page: 1, keyword: '', operations: [], form: null, detail: { is_default: false, routings: [] },
-    apply: { open: false, step: 1, keyword: '', status: 'active', routings: [], total: 0, page: 1, selected: [], preview: [], loading: false, saving: false }
+    listLoading: false, saving: false, templates: [], total: 0, page: 1, keyword: '', operations: [], form: null, detail: { is_default: false, categories: [] },
+    categoryPicker: { open: false, loading: false, saving: false, tree: [], checked: [] }
   }),
   computed: {
-    totalPercent () { return rateToPercent(this.form ? this.form.lines.reduce((sum, row) => sum + Number(percentToRate(row.percent) || 0), 0).toFixed(6) : 0) || '0' },
-    changedRoutings () { return this.apply.preview.filter(r => !r.blocked_reason && !r.already_bound).length }
+    totalPercent () { return rateToPercent(this.form ? this.form.lines.reduce((sum, row) => sum + Number(percentToRate(row.percent) || 0), 0).toFixed(6) : 0) || '0' }
   },
   created () { this.load(); listPerformanceTemplateOperations().then(r => { this.operations = r.data.data || [] }).catch(() => {}) },
   methods: {
@@ -246,21 +216,21 @@ export default {
     search () { this.page = 1; this.load() },
     changePage (p) { this.page = p; this.load() },
     toForm (t) { return { id: t.id, template_name: t.template_name, remark: t.remark || '', enabled: t.status === 'enabled', business_version: t.business_version, lines: t.lines.map(l => ({ operation_id: l.operation_id, percent: rateToPercent(l.performance_rate) })) } },
-    select (row) { this.form = this.toForm(row); this.detail = { is_default: row.is_default, routings: [] }; this.loadDetail(row.id) },
+    select (row) { this.form = this.toForm(row); this.detail = { is_default: row.is_default, categories: [] }; this.loadDetail(row.id) },
     async loadDetail (id) {
-      try { const r = await getPerformanceTemplate(id); if (this.form && this.form.id === id) this.detail = { is_default: r.data.data.is_default, routings: r.data.data.routings || [] } } catch (e) { this.$message.error(e.userMessage || '使用范围加载失败') }
+      try { const r = await getPerformanceTemplate(id); if (this.form && this.form.id === id) this.detail = { is_default: r.data.data.is_default, categories: r.data.data.categories || [] } } catch (e) { this.$message.error(e.userMessage || '使用范围加载失败') }
     },
     async makeDefault () {
       const saved = this.templates.find(t => t.id === this.form.id)
       if (!this.form.enabled || (saved && saved.status !== 'enabled')) return this.$message.warning('模板已停用，请先启用并保存')
-      try { await this.$confirm('设为默认后，所有未指定独立模板的工艺路线都将按本模板核算提成（已生成工单不受影响）。确认？', '设为默认模板', { type: 'warning' }) } catch (e) { return }
+      try { await this.$confirm('设为默认后，未命中商品分类模板、也未在 BOM 里指定的工序都将按本模板计提成（已生成工单不受影响）。确认？', '设为默认模板', { type: 'warning' }) } catch (e) { return }
       try { const r = await setDefaultPerformanceTemplate(this.form.id); this.$message.success(r.data.message || '已设为默认模板'); this.loadDetail(this.form.id); this.load() } catch (e) { this.$message.error(e.userMessage || '设置失败') }
     },
-    async unbind (routing) {
-      try { await this.$confirm(`取消后路线“${routing.routing_no} V${routing.version}”将改按系统默认模板核算提成。确认？`, '取消指定路线', { type: 'warning' }) } catch (e) { return }
-      try { const r = await unbindPerformanceTemplate(this.form.id, { routing_ids: [routing.id] }); this.$message.success(r.data.message || '已取消指定'); this.loadDetail(this.form.id); this.load() } catch (e) { this.$message.error(e.userMessage || '取消失败') }
+    async unbindCategory (category) {
+      try { await this.$confirm(`取消后分类“${category.category_name}”及其下级将改按上级分类或默认模板计提成。确认？`, '取消指定分类', { type: 'warning' }) } catch (e) { return }
+      try { const r = await unbindPerformanceTemplateCategories(this.form.id, { category_ids: [category.id] }); this.$message.success(r.data.message || '已取消指定'); this.loadDetail(this.form.id); this.load() } catch (e) { this.$message.error(e.userMessage || '取消失败') }
     },
-    createNew () { this.detail = { is_default: false, routings: [] }; this.form = { id: null, template_name: '', remark: '', enabled: true, business_version: 0, lines: [{ operation_id: null, percent: '' }] } },
+    createNew () { this.detail = { is_default: false, categories: [] }; this.form = { id: null, template_name: '', remark: '', enabled: true, business_version: 0, lines: [{ operation_id: null, percent: '' }] } },
     addLine () { this.form.lines.push({ operation_id: null, percent: '' }) },
     payload () {
       const f = this.form
@@ -275,34 +245,35 @@ export default {
       this.saving = true
       try {
         const r = this.form.id ? await updatePerformanceTemplate(this.form.id, data) : await createPerformanceTemplate(data)
-        this.$message.success(r.data.message || '提成模板已保存'); this.form = this.toForm(r.data.data); this.detail = { is_default: r.data.data.is_default, routings: r.data.data.routings || [] }; this.load()
+        this.$message.success(r.data.message || '提成模板已保存'); this.form = this.toForm(r.data.data); this.detail = { is_default: r.data.data.is_default, categories: r.data.data.categories || [] }; this.load()
       } catch (e) { this.$message.error(e.userMessage || '保存失败') } finally { this.saving = false }
     },
     async remove () {
       try { await this.$confirm('正在作为默认模板或已被工艺路线指定的模板不可删除。确认删除该模板？', '删除提成模板', { type: 'warning' }) } catch (e) { return }
       try { await deletePerformanceTemplate(this.form.id); this.$message.success('模板已删除'); this.form = null; this.load() } catch (e) { this.$message.error(e.userMessage || '删除失败') }
     },
-    async openApply () {
+    async openCategoryPicker () {
+      if (!this.form.id) return
       const saved = this.templates.find(t => t.id === this.form.id)
       if (saved && JSON.stringify(this.toForm(saved)) !== JSON.stringify(this.form)) return this.$message.warning('模板有未保存的修改，请先保存再指定')
       if (!this.form.enabled) return this.$message.warning('模板已停用，请先启用并保存')
-      Object.assign(this.apply, { open: true, step: 1, selected: [], preview: [], keyword: '', status: 'active' })
-      this.$nextTick(() => { if (this.$refs.routingTable) this.$refs.routingTable.clearSelection() })
-      this.loadRoutings(1)
+      Object.assign(this.categoryPicker, { open: true, loading: true, checked: this.detail.categories.map(c => c.id) })
+      try { const r = await listEntity('categories', { category_type: 'product', tree: 1 }); this.categoryPicker.tree = r.data.data || [] } catch (e) { this.$message.error(e.userMessage || '商品分类加载失败') } finally { this.categoryPicker.loading = false }
     },
-    async loadRoutings (p) {
-      this.apply.page = p || this.apply.page; this.apply.loading = true
-      try { const r = await listProductionRoutings({ keyword: this.apply.keyword, status: this.apply.status, page: this.apply.page, per_page: 10 }); this.apply.routings = r.data.data || []; this.apply.total = r.data.total || 0 } catch (e) { this.$message.error(e.userMessage || '工艺路线加载失败') } finally { this.apply.loading = false }
-    },
-    syncSelection (rows) { this.apply.selected = rows.map(r => r.id) },
-    async loadPreview () {
-      if (this.apply.selected.length > 50) return this.$message.warning('一次最多指定 50 条工艺路线')
-      this.apply.step = 2; this.apply.loading = true
-      try { const r = await previewPerformanceTemplate(this.form.id, { routing_ids: this.apply.selected }); this.apply.preview = r.data.data || [] } catch (e) { this.$message.error(e.userMessage || '预览失败'); this.apply.step = 1 } finally { this.apply.loading = false }
-    },
-    async confirmApply () {
-      this.apply.saving = true
-      try { const r = await applyPerformanceTemplate(this.form.id, { routing_ids: this.apply.selected }); this.$message.success(r.data.message || '已指定至路线'); this.apply.open = false; this.load(); this.loadDetail(this.form.id) } catch (e) { this.$message.error(e.userMessage || '指定失败') } finally { this.apply.saving = false }
+    async confirmCategories () {
+      const checked = (this.$refs.categoryTree ? this.$refs.categoryTree.getCheckedKeys() : this.categoryPicker.checked).map(Number)
+      const bound = this.detail.categories.map(c => Number(c.id))
+      const add = checked.filter(id => !bound.includes(id))
+      const remove = bound.filter(id => !checked.includes(id))
+      if (!add.length && !remove.length) { this.categoryPicker.open = false; return }
+      this.categoryPicker.saving = true
+      try {
+        if (add.length) await bindPerformanceTemplateCategories(this.form.id, { category_ids: add })
+        if (remove.length) await unbindPerformanceTemplateCategories(this.form.id, { category_ids: remove })
+        this.$message.success('适用范围已更新')
+        this.categoryPicker.open = false
+        this.load(); this.loadDetail(this.form.id)
+      } catch (e) { this.$message.error(e.userMessage || '指定失败') } finally { this.categoryPicker.saving = false }
     }
   }
 }
@@ -478,7 +449,7 @@ export default {
   line-height: 1.5;
   word-break: break-all;
 }
-.perf-tpl-card-routings {
+.perf-tpl-card-scope {
   font-size: 11px;
   color: #008b4b;
   margin-top: 6px;
@@ -635,17 +606,41 @@ export default {
   background: #f0fdf4 !important;
 }
 
-.perf-tpl-ops {
+.scope-row {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 8px;
+  margin-bottom: 12px;
 }
-.routing-tag {
+.scope-label {
+  width: 64px;
+  flex-shrink: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: #475569;
+}
+.scope-tag {
   font-size: 12px;
+}
+.scope-tip {
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  color: #92400e;
 }
 .empty-hint {
   font-size: 12px;
   color: #94a3b8;
+}
+.category-tree-box {
+  max-height: 50vh;
+  overflow-y: auto;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  padding: 10px;
 }
 
 .form-actions {
@@ -668,93 +663,11 @@ export default {
 }
 
 /* 弹窗 */
-.perf-tpl-apply-filter {
-  display: flex;
-  gap: 12px;
-  align-items: center;
-  margin-bottom: 14px;
-  flex-wrap: wrap;
-}
-.perf-tpl-apply-filter .filter-input {
-  width: 220px;
-}
-.perf-tpl-apply-filter .filter-select {
-  width: 130px;
-}
-.selected-count {
-  font-size: 13px;
-  color: #64748b;
-  margin-left: auto;
-}
-.selected-count b {
-  color: #008b4b;
-}
-.table-footer {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 12px 16px;
-  background: #ffffff;
-  border-top: 1px solid #f1f5f9;
-  color: #64748b;
-  font-size: 13px;
-}
-.table-footer ::v-deep .el-pagination.is-background .el-pager li:not(.disabled).active {
-  background-color: #008b4b !important;
-  color: #ffffff;
-}
-
 .perf-tpl-tip {
   margin: 0 0 12px;
   color: #64748b;
   font-size: 13px;
   line-height: 1.5;
-}
-.perf-tpl-preview {
-  max-height: 56vh;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-.perf-tpl-preview-card {
-  border: 1px solid #e2e8f0;
-  border-radius: 6px;
-  padding: 12px 14px;
-  background: #ffffff;
-}
-.perf-tpl-preview-head {
-  display: flex;
-  gap: 10px;
-  align-items: center;
-  flex-wrap: wrap;
-  margin-bottom: 8px;
-  font-size: 13px;
-}
-.perf-tpl-preview-head span {
-  color: #475569;
-}
-.perf-tpl-op {
-  border-radius: 4px;
-  background: #f1f5f9;
-  padding: 4px 8px;
-  font-size: 12px;
-  display: flex;
-  gap: 6px;
-}
-.perf-tpl-op.changed {
-  background: #fef3c7;
-}
-.perf-tpl-op.changed b {
-  color: #d97706;
-}
-.perf-tpl-op.unmatched {
-  opacity: 0.7;
-}
-.perf-tpl-op .muted,
-.perf-tpl-preview-head .muted {
-  color: #94a3b8;
-  font-size: 12px;
 }
 
 @media (max-width: 900px) {

@@ -142,9 +142,9 @@
         <view class="mt-muted">{{item.mode === 'length' ? '' : item.sizeText + ' · '}}{{item.placeText}}</view>
         <view wx:if="{{picked[item.source_key]}}" class="ct-line mt-gap">
           <text class="k">本次领用数量</text>
-          <input wx:if="{{item.countable}}" class="ct-input" type="digit" disabled="{{autoLoading}}" value="{{picked[item.source_key].measureInput}}" data-key="{{item.source_key}}" bindinput="pickedQtyInput" />
+          <input wx:if="{{item.countable}}" class="ct-input" type="{{item.unit_kind === 'sheet' || item.unit_kind === 'root' ? 'number' : 'digit'}}" disabled="{{autoLoading}}" value="{{picked[item.source_key].measureInput}}" data-key="{{item.source_key}}" bindinput="pickedQtyInput" />
           <text wx:else>{{picked[item.source_key].measureInput}}</text>
-          <text>{{item.unitText}}</text>
+          <text>{{item.inputUnitText}}</text>
         </view>
         <view wx:if="{{picked[item.source_key].qty > 0 && picked[item.source_key].stockText}}" class="mt-muted">折合 {{picked[item.source_key].stockText}}</view>
       </view>

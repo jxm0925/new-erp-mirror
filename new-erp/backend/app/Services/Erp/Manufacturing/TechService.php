@@ -2,13 +2,16 @@
 
 namespace App\Services\Erp\Manufacturing;
 
+use App\Models\Erp\BomOperationStandard;
 use App\Models\Erp\Item;
 use App\Models\Erp\MfgDrawing;
 use App\Models\Erp\MfgWorkOrder;
 use App\Models\Erp\MfgWorkOrderLog;
 use App\Models\Erp\MfgWorkOrderTech;
+use App\Models\Erp\ProductionRoutingOperation;
 use App\Models\Erp\SalesOrderAttachment;
 use App\Models\Erp\SalesOrderLine;
+use App\Services\Erp\BomOperationStandardService;
 use App\Services\Erp\InventoryAvailabilityService;
 use Illuminate\Support\Facades\DB;
 
@@ -63,7 +66,7 @@ final class TechService
         return $page->toArray() + ['summary' => ['pending' => (int) ($counts['pending'] ?? 0), 'released' => (int) ($counts['released'] ?? 0)]];
     }
 
-    public function detail(int $workOrderId): array
+    public function detail(int $workOrderId, bool $canViewPerformance = false, bool $canEditPerformance = false): array
     {
         $wo = MfgWorkOrder::query()->with('operations')->findOrFail($workOrderId);
         $tech = MfgWorkOrderTech::query()->where('work_order_id', $wo->id)->first();
@@ -131,6 +134,7 @@ final class TechService
             'bom_lines' => $rows,
             'bom_changes' => ['changed' => collect($rows)->where('change', 'changed')->count(), 'added' => collect($rows)->where('change', 'added')->count(),
                 'removed' => collect($rows)->where('change', 'removed')->count(), 'same' => collect($rows)->where('change', 'same')->count()],
+            'operation_standards' => $this->operationStandards($wo, $tech, $canViewPerformance, $canEditPerformance),
             'operations' => $ops->map(fn ($op) => ['routing_operation_id' => $op->routing_operation_id, 'operation_name' => $op->operation_name, 'sequence' => $op->sequence])->values()->all(),
             'routing' => $wo->routing_id ? ['id' => $wo->routing_id, 'routing_no' => $wo->routing_no, 'routing_name' => $wo->routing_name, 'version' => $wo->routing_version,
                 'path' => $wo->operations->pluck('operation_name')->implode(' › ')] : null,
@@ -145,10 +149,66 @@ final class TechService
         ];
     }
 
-    /** 保存定制 BOM；confirmed=true 表示技术确认可以按这份做。下发后不能再改。 */
-    public function saveBom(int $workOrderId, array $rows, bool $confirmed, ?string $remark, object $actor): void
+    /** 本单工时提成：基础值按 BOM 解析（不含覆盖），生效值含本单覆盖；无查看权限时不返回任何比例字段。 */
+    private function operationStandards(MfgWorkOrder $wo, MfgWorkOrderTech $tech, bool $canView, bool $canEdit): array
     {
-        DB::transaction(function () use ($workOrderId, $rows, $confirmed, $remark, $actor) {
+        $block = ['editable' => $tech->status === 'pending' && $wo->status === 'planned',
+            'permissions' => ['view' => $canView, 'edit' => $canEdit], 'nodes' => []];
+        if (! $wo->routing_id) return $block;
+        $service = app(BomOperationStandardService::class);
+        $custom = is_array($tech->custom_bom) && is_array($tech->custom_bom['operation_standards'] ?? null) ? $tech->custom_bom['operation_standards'] : [];
+        $itemId = (int) $wo->item_id;
+        $productId = $wo->product_id ? (int) $wo->product_id : null;
+        $bomId = $wo->bom_id ? (int) $wo->bom_id : null;
+        $released = $tech->status === 'released';
+        $base = $service->resolveForPlan($bomId, (int) $wo->routing_id, $itemId, $productId);
+        $resolved = $released ? collect((array) data_get($wo->routing_snapshot, 'operations', []))->mapWithKeys(fn ($op) => [
+            (int) $op['routing_operation_id'] => ['setup_minutes' => $op['setup_standard_minutes'] ?? null,
+                'unit_minutes' => $op['unit_standard_minutes'] ?? null, 'performance_rate' => $op['performance_rate'] ?? null,
+                'performance_source' => $op['performance_source'] ?? 'missing', 'performance_template' => $op['performance_template'] ?? null],
+        ])->all() : $service->resolveForPlan($bomId, (int) $wo->routing_id, $itemId, $productId, $custom ?: null);
+        foreach (ProductionRoutingOperation::query()->with('operation')->where('routing_id', $wo->routing_id)->orderBy('sequence')->get() as $node) {
+            $b = $base[(int) $node->id] ?? [];
+            $r = $resolved[(int) $node->id] ?? [];
+            $entry = $custom[$node->id] ?? $custom[(string) $node->id] ?? null;
+            $hasEntry = is_array($entry);
+            $hasTime = $hasEntry && (array_key_exists('setup_minutes', $entry) || array_key_exists('unit_minutes', $entry));
+            $hasRate = $hasEntry && array_key_exists('performance_mode', $entry);
+            $row = [
+                'routing_operation_id' => (int) $node->id,
+                'operation_name' => $node->operation?->operation_name,
+                'sequence' => (int) $node->sequence,
+                'execution_context' => $node->execution_context ?: 'production',
+                'base_setup_minutes' => $b['setup_minutes'] ?? null,
+                'base_unit_minutes' => $b['unit_minutes'] ?? null,
+                'setup_minutes' => $r['setup_minutes'] ?? null,
+                'unit_minutes' => $r['unit_minutes'] ?? null,
+                'setup_customized' => $hasEntry && array_key_exists('setup_minutes', $entry),
+                'unit_customized' => $hasEntry && array_key_exists('unit_minutes', $entry),
+                'time_customized' => $hasTime,
+                'customized' => $hasTime || $hasRate,
+            ];
+            if ($canView) {
+                $mode = $hasRate && in_array($entry['performance_mode'], BomOperationStandard::MODES, true) ? $entry['performance_mode'] : 'inherit';
+                $row += [
+                    'base_performance_rate' => $b['performance_rate'] ?? null,
+                    'base_performance_source' => $b['performance_source'] ?? 'missing',
+                    'base_performance_template' => $b['performance_template'] ?? null,
+                    'performance_mode' => $mode,
+                    'performance_rate' => $mode === 'override' && $hasRate ? ($entry['performance_rate'] ?? null) : null,
+                    'performance_customized' => $hasRate,
+                    'resolved' => ['rate' => $r['performance_rate'] ?? null, 'source' => $r['performance_source'] ?? 'missing', 'template' => $r['performance_template'] ?? null],
+                ];
+            }
+            $block['nodes'][] = $row;
+        }
+        return $block;
+    }
+
+    /** 保存定制 BOM；confirmed=true 表示技术确认可以按这份做。下发后不能再改。 */
+    public function saveBom(int $workOrderId, array $rows, bool $confirmed, ?string $remark, object $actor, ?array $standards = null, bool $canEditRate = false): void
+    {
+        DB::transaction(function () use ($workOrderId, $rows, $confirmed, $remark, $actor, $standards, $canEditRate) {
             [$wo, $tech] = $this->lock($workOrderId);
             if ($tech->status !== 'pending' || $wo->status !== 'planned') $this->fail('released', '已下发车间，定制 BOM 不能再改；要改请找生产主管调整工单。');
             $base = $this->baseItems($tech, $wo);
@@ -176,8 +236,52 @@ final class TechService
                     'remark' => mb_substr(trim((string) ($row['remark'] ?? '')), 0, 200) ?: null];
             }
             if (! $lines) $this->fail('lines_required', '定制 BOM 至少要有一行物料。');
-            $tech->update(['custom_bom' => ['base_bom_id' => $wo->bom_id, 'base_routing_id' => $wo->routing_id, 'base_routing_version' => $wo->routing_version,
-                'base_items' => $base, 'lines' => $lines], 'bom_confirmed' => $confirmed,
+            $customStandards = null;
+            if ($standards !== null) {
+                $prev = is_array($tech->custom_bom) && is_array($tech->custom_bom['operation_standards'] ?? null) ? $tech->custom_bom['operation_standards'] : [];
+                $nodeIds = $wo->routing_id ? ProductionRoutingOperation::query()->where('routing_id', $wo->routing_id)->pluck('id')->map(fn ($v) => (int) $v)->all() : [];
+                $customStandards = [];
+                $seenNodes = [];
+                foreach (array_values($standards) as $i => $row) {
+                    $n = $i + 1;
+                    $nodeId = (int) ($row['routing_operation_id'] ?? 0);
+                    if (! in_array($nodeId, $nodeIds, true) || isset($seenNodes[$nodeId])) $this->fail('standards_invalid', "第 {$n} 道工序不属于当前路线，请刷新后重试。");
+                    $seenNodes[$nodeId] = true;
+                    $minutes = [];
+                    foreach (['setup_minutes' => '准备工时', 'unit_minutes' => '单件工时'] as $key => $label) {
+                        if (! array_key_exists($key, $row)) continue;
+                        $v = $row[$key] ?? null;
+                        if ($v === null || $v === '') { $minutes[$key] = null; continue; }
+                        if (! is_numeric($v) || (float) $v < 0 || (float) $v > 999999) $this->fail('standards_invalid', "第 {$n} 道工序{$label}必须是 0 或正数。");
+                        $minutes[$key] = (float) $v;
+                    }
+                    $old = $prev[$nodeId] ?? $prev[(string) $nodeId] ?? null;
+                    $performance = ! $canEditRate && is_array($old) ? array_intersect_key($old, array_flip(['performance_mode', 'performance_rate'])) : [];
+                    if ($canEditRate && array_key_exists('performance_mode', $row)) {
+                        $mode = (string) $row['performance_mode'];
+                        if (! in_array($mode, BomOperationStandard::MODES, true)) $this->fail('standards_invalid', "第 {$n} 道工序提成方式不正确。");
+                        $rate = null;
+                        if ($mode === 'override') {
+                            $v = $row['performance_rate'] ?? null;
+                            if (! is_numeric($v) || (float) $v <= 0 || (float) $v > 1) $this->fail('standards_invalid', "第 {$n} 道工序指定比例必须大于 0% 且不超过 100%。");
+                            $rate = (string) $v;
+                        }
+                        $performance = ['performance_mode' => $mode, 'performance_rate' => $rate];
+                    }
+                    if ($minutes || $performance) $customStandards[$nodeId] = $minutes + $performance;
+                }
+                // 无提成编辑权限时，恢复工时或省略整行都不能删除本单已有的提成覆盖。
+                if (! $canEditRate) foreach ($prev as $nodeId => $old) {
+                    if (! in_array((int) $nodeId, $nodeIds, true) || isset($seenNodes[(int) $nodeId]) || ! is_array($old)) continue;
+                    $performance = array_intersect_key($old, array_flip(['performance_mode', 'performance_rate']));
+                    if ($performance) $customStandards[(int) $nodeId] = $performance;
+                }
+            }
+            $customBom = ['base_bom_id' => $wo->bom_id, 'base_routing_id' => $wo->routing_id, 'base_routing_version' => $wo->routing_version,
+                'base_items' => $base, 'lines' => $lines];
+            if ($standards !== null) $customBom['operation_standards'] = $customStandards;
+            elseif (isset($tech->custom_bom['operation_standards'])) $customBom['operation_standards'] = $tech->custom_bom['operation_standards'];
+            $tech->update(['custom_bom' => $customBom, 'bom_confirmed' => $confirmed,
                 'remark' => $remark !== null ? (mb_substr($remark, 0, 500) ?: null) : $tech->remark] + $this->ownerFields($tech, $actor));
             $byBase = collect($lines)->whereNotNull('base_line_id')->keyBy('base_line_id');
             $changed = collect($base)->filter(fn ($b) => ($l = $byBase->get($b['id'])) && ((int) $l['component_item_id'] !== (int) $b['component_item_id']
@@ -253,12 +357,15 @@ final class TechService
                         'id' => $line['base_line_id'], 'component_item_id' => $line['component_item_id'], 'component_item_code' => $line['component_item_code'],
                         'component_item_name' => $line['component_item_name'], 'qty' => $line['qty'], 'loss_rate' => $line['loss_rate'], 'fixed_qty' => $line['fixed_qty'],
                         'remark' => $line['remark'], 'target_routing_operation_id' => $line['target_routing_operation_id'], 'custom' => true,
+                        // 位置标识只认被替换的基线行；新增定制行没有 BOM 位置，留空由后续按未配置处理。
+                        'position_uid' => $b['position_uid'] ?? null, 'position_path' => $b['position_path'] ?? $b['position_uid'] ?? null,
                     ]);
                     if (isset($out['cutting_quantity_snapshot']) && is_array($out['cutting_quantity_snapshot'])) $out['cutting_quantity_snapshot']['theoretical_qty'] = $line['qty'];
                     return $out;
                 }, $tech->custom_bom['lines'] ?? []);
             }
             $snapshot['custom'] = true;
+            $snapshot['custom_operation_standards'] = $tech->custom_bom['operation_standards'] ?? null;
             $tech->update(['status' => 'released', 'released_by_legacy_id' => $this->actorId($actor), 'released_by_name' => $this->actorName($actor),
                 'released_at' => now(), 'remark' => $remark !== null && $remark !== '' ? mb_substr($remark, 0, 500) : $tech->remark] + $this->ownerFields($tech, $actor));
             $this->workOrders->releaseCustom($wo, $snapshot, $actor);
@@ -291,6 +398,8 @@ final class TechService
             ->groupBy(fn ($op) => (int) ($op['operation_id'] ?? 0))->map(fn ($ops) => (int) $ops->first()['routing_operation_id']);
         return array_values(array_map(fn ($l) => [
             'id' => isset($l['id']) ? (int) $l['id'] : null, 'component_item_id' => (int) ($l['component_item_id'] ?? 0),
+            'position_uid' => $l['position_uid'] ?? null, 'position_path' => $l['position_path'] ?? $l['position_uid'] ?? null,
+            'child_bom_id' => $l['child_bom_id'] ?? null,
             'component_item_code' => $l['component_item_code'] ?? null, 'component_item_name' => $l['component_item_name'] ?? null,
             'qty' => (float) (data_get($l, 'cutting_quantity_snapshot.theoretical_qty') ?? ($l['qty'] ?? 0)),
             'loss_rate' => (float) ($l['loss_rate'] ?? 0), 'fixed_qty' => (float) ($l['fixed_qty'] ?? 0),

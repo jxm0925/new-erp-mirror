@@ -128,6 +128,7 @@ class PurchaseInventoryPosting
                         'source_item_id' => $line->id,
                         'physical_operation' => $line->item?->materialManagementMode() === 'physical' ? 'purchase_receipt' : null,
                         'physical_entry_count' => $allocation->physicalEntries()->count(),
+                        'physical_allocation_id' => $allocation->id,
                         'remark' => '采购到货合格数量按库位分配入库',
                     ] + ($pipeLotId ? ['material_lot_id' => $pipeLotId] : []));
                     if ($line->item?->materialManagementMode() === 'physical') {
@@ -344,7 +345,7 @@ class PurchaseInventoryPosting
                         ]);
                     }
                 } elseif ($line->item?->materialManagementMode() === 'physical') {
-                    if (!$balance || $line->physicalLinks->count() !== (int) round($quantity)
+                    if (!$balance || $line->physicalLinks->isEmpty()
                         || (float) $balance->quantity_on_hand + 0.00000001 < $quantity) {
                         throw ValidationException::withMessages(['stock' => '采购退货所选具体实物与当前原采购批次库存不一致。']);
                     }
@@ -389,14 +390,15 @@ class PurchaseInventoryPosting
                             (int) $line->item_id,
                             (int) $balance->id,
                         );
+                        $physicalQuantity = $this->physicalMaterials->inventoryQuantity($line->item, $physical);
                         $transactionItem = $this->kernel->apply($transaction, [
                             'item_id' => $line->item_id,
                             'warehouse_id' => $line->warehouse_id,
                             'location_id' => $line->location_id,
                             'batch_no' => $line->batch_no,
                             'unit_id' => $line->base_unit_id ?: $line->item?->unit_id,
-                            'change_qty' => '-1',
-                            'unit_cost' => (float) $physical->total_cost,
+                            'change_qty' => bcsub('0', $physicalQuantity, 8),
+                            'unit_cost' => bcdiv((string) $physical->total_cost, $physicalQuantity, 8),
                             'cost_amount' => bcsub('0', (string) $physical->total_cost, 4),
                             'purchase_amount_snapshot' => null,
                             'cost_source_type' => 'purchase_return_physical_fact',

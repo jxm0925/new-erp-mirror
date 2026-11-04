@@ -26,6 +26,7 @@ abstract class InitialTableMigration extends Migration
 
     private static ?WeakMap $plans = null;
     private static ?WeakMap $unsafePdos = null;
+    private static array $requiredPathCache = [];
 
     public static function baseline(): array
     {
@@ -40,7 +41,9 @@ abstract class InitialTableMigration extends Migration
             if (!preg_match('/^[a-zA-Z0-9_]+$/D', $table) || !preg_match('/^[a-zA-Z0-9_]+$/D', $name)) {
                 throw new RuntimeException('Invalid initial migration manifest entry.');
             }
-            $definition = require __DIR__.'/../migrations/'.$name.'.php';
+            $path = __DIR__.'/../migrations/'.$name.'.php';
+            // 重复 require 会持续注册匿名类；只缓存定义原型，逐次校验并返回独立实例。
+            $definition = self::$requiredPathCache[$path] ??= require $path;
             if (!$definition instanceof self || $definition::TABLE !== $table) {
                 throw new RuntimeException('Initial migration definition mismatch: '.$table);
             }
@@ -48,7 +51,7 @@ abstract class InitialTableMigration extends Migration
             if ($header !== ['create', 'table', static::quoteIdentifier($table)]) {
                 throw new RuntimeException('CREATE TABLE target differs from manifest: '.$table);
             }
-            $definitions[$table] = $definition;
+            $definitions[$table] = clone $definition;
         }
 
         return $definitions;

@@ -171,6 +171,13 @@
                 </el-radio-group>
               </el-form-item>
 
+              <el-form-item v-if="!isOffice && form.cutting_mode !== 'none'" label="逐件实物编码管理" class="col-span-2">
+                <div class="status-switch-wrap">
+                  <el-switch v-model="form.material_management_mode" active-value="physical" inactive-value="quantity" active-color="#008b4b" inactive-color="#dcdfe6" />
+                  <span class="switch-status-text" :class="{ 'is-active': form.material_management_mode === 'physical' }">{{ form.material_management_mode === 'physical' ? '已开启' : '未开启' }}</span>
+                </div>
+              </el-form-item>
+
               <!-- 标准原料长度 (定长时显示，跨2列) -->
               <el-form-item v-if="form.cutting_mode === 'length'" label="标准原料定长 (mm)" prop="standard_stock_length_mm" required class="col-span-2">
                 <el-input-number
@@ -1216,7 +1223,7 @@ export default {
     },
     normalizeCuttingMode(value) {
       this.form.is_length_cut_material = value === 'length'
-      this.form.material_management_mode = value === 'sheet' ? 'physical' : 'quantity'
+      if (value === 'none') this.form.material_management_mode = 'quantity'
       if (value !== 'length') this.form.standard_stock_length_mm = null
     },
     applyTemplate(value) {

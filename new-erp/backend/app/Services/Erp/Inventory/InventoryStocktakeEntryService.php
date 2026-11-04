@@ -8,6 +8,7 @@ use App\Models\Erp\InventorySerial;
 use App\Models\Erp\InventoryStocktakeEntry;
 use App\Models\Erp\InventoryStocktakeLine;
 use App\Models\Erp\Item;
+use App\Services\Erp\MaterialPhysicalService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
@@ -66,7 +67,12 @@ class InventoryStocktakeEntryService
                 'created_at' => $now, 'updated_at' => $now,
             ])->values()->all());
         }
-        $line->update(['unnumbered_book_qty' => max(0, round((float) $line->book_qty - $rows->count(), 4))]);
+        $numbered = $line->count_mode === 'physical'
+            ? $this->physicalQuantity(Item::query()->findOrFail($line->item_id), $rows) : (string) $rows->count();
+        if ($line->count_mode === 'physical' && bccomp((string) $line->book_qty, $numbered, 4) !== 0) {
+            throw ValidationException::withMessages(['stock' => '逐件实物对应的库存数量与账面不一致，请先核对实物和库存。']);
+        }
+        $line->update(['unnumbered_book_qty' => max(0, round((float) $line->book_qty - (float) $numbered, 4))]);
         return $rows->count();
     }
 
@@ -92,7 +98,7 @@ class InventoryStocktakeEntryService
         }
         $item = Item::query()->findOrFail($line->item_id);
         foreach ($input['new_entries'] ?? [] as $new) {
-            $line->count_mode === 'serial' ? $this->addSerial($line, $item, $new, $operatorId) : $this->addPhysical($line, $new, $operatorId);
+            $line->count_mode === 'serial' ? $this->addSerial($line, $item, $new, $operatorId) : $this->addPhysical($line, $item, $new, $operatorId);
         }
         $unnumbered = $line->unnumbered_counted_qty;
         if ($line->count_mode === 'serial' && array_key_exists('unnumbered_counted_qty', $input)) {
@@ -114,6 +120,11 @@ class InventoryStocktakeEntryService
         if ($complete) {
             $counted = $stats['present'] + $stats['new'] + $stats['locked']
                 + ($line->count_mode === 'serial' ? (float) ($unnumbered ?? 0) : $unnumberedBook);
+            if ($line->count_mode === 'physical') {
+                $entries = InventoryStocktakeEntry::query()->where('line_id', $line->id)
+                    ->where(fn ($q) => $q->where('counted_present', true)->orWhere('is_new', true)->orWhere('is_locked', true))->get();
+                $counted = (float) $this->physicalQuantity(Item::query()->findOrFail($line->item_id), $entries);
+            }
             $counted = round($counted, 4);
         }
         $difference = $counted === null ? null : round($counted - (float) $line->book_qty, 4);
@@ -155,8 +166,8 @@ class InventoryStocktakeEntryService
         if (abs($unnumberedDiff) >= 0.00005 && $item->serialTrackingMode() === 'required') {
             throw ValidationException::withMessages(['lines' => "{$item->item_code}（批次 {$line->batch_no}）必须逐件编号，请把盘到的件录入编号，无编号数量须与账面一致。"]);
         }
-        $decrease = -$missing->count() + min(0, $unnumberedDiff);
-        $increase = $new->count() + max(0, $unnumberedDiff);
+        $decrease = -($line->count_mode === 'physical' ? (float) $this->physicalQuantity($item, $missing) : $missing->count()) + min(0, $unnumberedDiff);
+        $increase = ($line->count_mode === 'physical' ? (float) $this->physicalQuantity($item, $new) : $new->count()) + max(0, $unnumberedDiff);
         if (abs(round($decrease + $increase - $remaining, 4)) >= 0.00005) {
             throw ValidationException::withMessages(['lines' => "{$item->item_code}（批次 {$line->batch_no}）逐件盘点结果与账面不一致（可能开盘后编号档案或实物发生变化），请取消后重新盘点。"]);
         }
@@ -207,14 +218,15 @@ class InventoryStocktakeEntryService
         ]);
     }
 
-    private function addPhysical(InventoryStocktakeLine $line, array $new, ?int $operatorId): void
+    private function addPhysical(InventoryStocktakeLine $line, Item $item, array $new, ?int $operatorId): void
     {
         if (! app(\App\Services\Erp\InventoryAmountVisibilityService::class)->canView()) {
             throw ValidationException::withMessages(['new_entries' => '补录盘盈实物需要查看库存金额与成本权限，请由有权限的人员核对成本。']);
         }
         $dimensions = $new['dimensions'] ?? null;
-        if (! is_array($dimensions) || ! isset($dimensions['length_mm'], $dimensions['width_mm'], $dimensions['thickness_mm'])) {
-            throw ValidationException::withMessages(['new_entries' => '补录实物必须填写实际长、宽、厚。']);
+        if (! is_array($dimensions) || ! isset($dimensions['length_mm'])
+            || ($item->cuttingMode() === 'sheet' && ! isset($dimensions['width_mm'], $dimensions['thickness_mm']))) {
+            throw ValidationException::withMessages(['new_entries' => '补录管材须填写实际长度，板材须填写实际长、宽、厚。']);
         }
         $clean = [];
         foreach (['length_mm', 'width_mm', 'thickness_mm', 'nominal_thickness_mm'] as $key) {
@@ -225,6 +237,7 @@ class InventoryStocktakeEntryService
             }
             $clean[$key] = bcadd($value, '0', 2);
         }
+        app(MaterialPhysicalService::class)->inventoryQuantity($item, ['dimensions' => $clean]);
         $cost = (string) ($new['total_cost'] ?? '');
         if (! preg_match('/^\d{1,14}(?:\.\d{1,4})?$/', $cost)) {
             throw ValidationException::withMessages(['new_entries' => '实物总成本必须填写，且不能为负数，最多四位小数。']);
@@ -242,5 +255,15 @@ class InventoryStocktakeEntryService
         if (! $dimensions) return '';
         $parts = array_filter([$dimensions['length_mm'] ?? null, $dimensions['width_mm'] ?? null, $dimensions['thickness_mm'] ?? null], fn ($v) => $v !== null);
         return $parts ? implode('×', array_map(fn ($v) => rtrim(rtrim((string) $v, '0'), '.'), $parts)).'mm' : '';
+    }
+
+    private function physicalQuantity(Item $item, iterable $entries): string
+    {
+        $quantity = '0';
+        foreach ($entries as $entry) {
+            $dimensions = is_array($entry) ? $entry['dimensions'] : $entry->dimensions;
+            $quantity = bcadd($quantity, app(MaterialPhysicalService::class)->inventoryQuantity($item, ['dimensions' => $dimensions]), 8);
+        }
+        return $quantity;
     }
 }

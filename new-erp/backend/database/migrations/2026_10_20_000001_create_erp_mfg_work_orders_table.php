@@ -48,6 +48,7 @@ CREATE TABLE `erp_mfg_work_orders` (
   `routing_name` varchar(200) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `routing_version` int(10) unsigned DEFAULT NULL,
   `routing_snapshot` json DEFAULT NULL,
+  `performance_plan` json DEFAULT NULL,
   `configuration_snapshot` json DEFAULT NULL,
   `special_requirement` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci,
   `order_info_snapshot` json DEFAULT NULL,

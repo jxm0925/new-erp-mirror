@@ -20,7 +20,7 @@ function batchView(batch) {
   const measure = batch.measure_unit || (batch.inputs || [])[0]?.measure_unit || 'm2';
   return Object.assign({}, batch, {
     unitText: measureUnit(measure), editable: batch.status === 'issued' || Boolean(batch.can_resubmit),
-    inputText: num(batch.input_measure), netText: num(batch.net_measure), poolText: num(batch.pool_measure), allocatedText: num(batch.allocated_measure), leftText: num(batch.left_measure),
+    inputText: ['sheet', 'root'].includes(batch.unit_kind) ? `${num(batch.input_qty)} ${sourceUnit(batch)}（${num(batch.input_measure)} ${measureUnit(measure)}）` : `${num(batch.input_measure)} ${measureUnit(measure)}`, netText: num(batch.net_measure), poolText: num(batch.pool_measure), allocatedText: num(batch.allocated_measure), leftText: num(batch.left_measure),
     issuedText: String(batch.issued_at || '').replace('T', ' ').slice(5, 16),
     allocations: (batch.allocations || []).map(a => Object.assign({}, a, { measure: num(a.measure) })),
   });
@@ -100,7 +100,7 @@ Page({
   loadSources(page) {
     this.setData({ sourceLoading: true, sourceError: '' });
     return production.sharedCuttingSources({ item_id: this.data.current.item_id, cutting_run_id: this.runId, keyword: this.data.keyword, page, per_page: 10 }).then(response => {
-      const rows = (response.data || []).map(row => Object.assign({}, row, { sizeText: sizeText(row), measureText: num(row.measure_qty), unitText: measureUnit(row.measure_unit), countUnitText: sourceUnit(row), availableText: num(row.available_qty), countable: !row.physical_material_id }));
+      const rows = (response.data || []).map(row => Object.assign({}, row, { sizeText: sizeText(row), measureText: num(row.measure_qty), unitText: measureUnit(row.measure_unit), countUnitText: sourceUnit(row), availableText: ['m', 'm2'].includes(row.inventory_unit_kind) ? `${num(row.inventory_available_qty)} ${measureUnit(row.inventory_unit_kind)}（可领 ${num(row.available_qty)} ${sourceUnit(row)}）` : `${num(row.available_qty)} ${sourceUnit(row)}`, countable: !row.physical_material_id }));
       this.setData({ rows: page === 1 ? rows : this.data.rows.concat(rows), sourcePage: page, sourceLastPage: response.last_page || 1, sourceLoading: false });
     }).catch(error => this.setData({ sourceLoading: false, sourceError: view.errorText(error) }));
   },
@@ -134,10 +134,9 @@ Page({
     for (const row of list) {
       const qty = Number(row.qty);
       const max = row.physical_material_id ? 1 : Number(row.available_qty);
-      const fractionalRoot = row.unit_kind === 'root' && !row.physical_material_id;
-      if (!Number.isFinite(qty) || qty <= 0 || qty > max + 1e-8 || (row.physical_material_id || row.unit_kind === 'sheet') && !Number.isInteger(qty)
-        || (fractionalRoot && !/^\d+(?:\.\d{1,4})?$/.test(String(qty)))) {
-        wx.showToast({ title: `${row.physical_no || row.batch_no || row.source_key}：请核对实际领用数量`, icon: 'none' }); return;
+      if (!Number.isFinite(qty) || qty <= 0 || qty > max + 1e-8 || (row.physical_material_id || ['sheet', 'root'].includes(row.unit_kind)) && !Number.isInteger(qty)
+        || (['m', 'm2'].includes(row.unit_kind) && !/^\d+(?:\.\d{1,4})?$/.test(String(qty)))) {
+        wx.showToast({ title: `${row.physical_no || row.batch_no || row.source_key}：请核对领用量，余料最多四位小数`, icon: 'none' }); return;
       }
     }
     const sourceCount = list.reduce((sum, row) => sum + (!row.physical_material_id && ['root', 'sheet'].includes(row.unit_kind) ? Math.ceil(Number(row.qty)) : 1), 0);
@@ -146,7 +145,7 @@ Page({
     list.forEach(row => {
       const source = { source_key: row.source_key, inventory_balance_id: row.inventory_balance_id, physical_material_id: row.physical_material_id, source_version: row.source_version, qty: String(row.qty) };
       if (!row.physical_material_id && ['root', 'sheet'].includes(row.unit_kind)) {
-        for (let i = 0; i < Number(row.qty); i++) sources.push(Object.assign({}, source, { source_key: `${row.source_key}:${i + 1}`, qty: String(Math.min(1, Number((Number(row.qty) - i).toFixed(4)))) }));
+        for (let i = 0; i < Number(row.qty); i++) sources.push(Object.assign({}, source, { source_key: `${row.source_key}:${i + 1}`, qty: '1' }));
       } else sources.push(source);
     });
     const payload = { item_id: this.data.current.item_id, cutting_run_id: this.runId, sources };

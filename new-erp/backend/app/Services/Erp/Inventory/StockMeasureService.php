@@ -27,7 +27,7 @@ class StockMeasureService
     {
         $mode = $item->cuttingMode();
         if (! in_array($mode, ['length', 'sheet'], true)) return null;
-        $unit = $item->unit;
+        $unit = app(\App\Services\Erp\UnitConversionDomainService::class)->canonicalUnit($item->loadMissing('unit.standardUnit')->unit);
         $code = strtoupper(trim((string) ($unit?->unit_code)));
         $symbol = strtoupper(str_replace(['²', '㎡', '^'], ['2', 'M2', ''], trim((string) ($unit?->symbol ?: $unit?->unit_symbol))));
         $kind = match (true) {
@@ -89,8 +89,9 @@ class StockMeasureService
                     'length_m' => $per === null ? null : round((float) $b->quantity_on_hand * $per, 4),
                     'available_length_m' => $per === null ? null : round((float) $b->quantity_available * $per, 4)];
             } else {
-                $area = $areas[(int) $b->id] ?? 0;
-                $row += ['area_m2' => round($area, 4)];
+                $area = $profile['kind'] === 'm2' ? (float) $b->quantity_on_hand : ($areas[(int) $b->id] ?? 0);
+                $row += ['area_m2' => round($area, 4),
+                    'available_area_m2' => $profile['kind'] === 'm2' ? round((float) $b->quantity_available, 4) : null];
             }
             $out[(int) $b->id] = $row;
         }
@@ -108,6 +109,7 @@ class StockMeasureService
     /** 某物料在仓库里的实物（板材逐张）。 */
     public function physicals(int $itemId, array $filters = []): array
     {
+        $item = Item::query()->with('unit')->findOrFail($itemId);
         $query = DB::table('erp_material_physicals as p')
             ->join('erp_material_holdings as h', 'h.id', '=', 'p.current_holding_id')
             ->join('erp_inventory_balances as b', 'b.id', '=', 'h.inventory_balance_id')
@@ -123,10 +125,12 @@ class StockMeasureService
             ->orderBy('b.batch_no')->orderBy('p.id');
         $columns = ['p.id', 'p.physical_no', 'p.shape', 'p.dimensions', 'p.status', 'p.first_cut_at', 'p.business_version', 'p.total_cost',
             'lot.material_form', 'b.batch_no', 'b.warehouse_id', 'w.warehouse_name', 'b.location_id', 'l.location_code', 'l.location_name'];
-        $present = function ($row) {
+        $present = function ($row) use ($item) {
             $d = json_decode((string) $row->dimensions, true) ?: [];
             return ['id' => (int) $row->id, 'physical_no' => $row->physical_no, 'shape' => $row->shape, 'dimensions' => $d, 'status' => $row->status,
                 'area_m2' => round($this->area($row->shape, $d), 4), 'material_form' => $row->material_form, 'batch_no' => $row->batch_no,
+                'length_m' => $item->cuttingMode() === 'length' ? bcdiv((string) ($d['length_mm'] ?? '0'), '1000', 8) : null,
+                'inventory_qty' => app(MaterialPhysicalService::class)->inventoryQuantity($item, $row),
                 'warehouse_id' => (int) $row->warehouse_id, 'warehouse_name' => $row->warehouse_name,
                 'location_id' => (int) $row->location_id, 'location_code' => $row->location_code, 'location_name' => $row->location_name,
                 'business_version' => (int) $row->business_version, 'total_cost' => (string) $row->total_cost,
@@ -161,6 +165,10 @@ class StockMeasureService
             foreach (['length_mm', 'width_mm', 'thickness_mm'] as $key) $new[$key] = $this->mm($data[$key] ?? null, $key);
             if (isset($old['nominal_thickness_mm']) && ! isset($data['nominal_thickness_mm'])) $new['nominal_thickness_mm'] = $old['nominal_thickness_mm'];
             if (isset($data['nominal_thickness_mm']) && $data['nominal_thickness_mm'] !== '') $new['nominal_thickness_mm'] = $this->mm($data['nominal_thickness_mm'], 'nominal_thickness_mm');
+            $physicals = app(MaterialPhysicalService::class);
+            if (bccomp($physicals->inventoryQuantity($item, $physical), $physicals->inventoryQuantity($item, ['shape' => 'RECTANGLE', 'dimensions' => $new]), 8) !== 0) {
+                $this->fail('dimensions', '修改尺寸会改变库存基本数量，请通过正式库存调整同时核对数量与实物，不能只改实物尺寸。');
+            }
             DB::table('erp_material_physicals')->where('id', $id)->update([
                 'dimensions' => json_encode($new, JSON_THROW_ON_ERROR), 'shape' => 'RECTANGLE',
                 'business_version' => (int) $physical->business_version + 1, 'updated_at' => now(),

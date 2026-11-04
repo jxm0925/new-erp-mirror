@@ -902,6 +902,16 @@
           </div>
 
           <el-alert
+            v-if="(detail.block_reasons || []).length"
+            title="暂不能结算的原因"
+            type="warning"
+            :closable="false"
+            show-icon
+            class="issue-alert"
+          >
+            <div v-for="(text, i) in detail.block_reasons" :key="'b' + i" class="block-reason-item">{{ text }}</div>
+          </el-alert>
+          <el-alert
             v-for="(text, i) in detail.issues"
             :key="'i' + i"
             :title="text"

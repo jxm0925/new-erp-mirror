@@ -28,7 +28,9 @@ class ErpDualFilterMaterialSeeder extends Seeder
             $categories[$categoryKey] ??= $this->category($row['category_code'], $row['category_name']);
             $row['category_id'] = $categories[$categoryKey];
             $row['unit_id'] = $units[$row['unit_code']];
-            unset($row['category_code'], $row['category_name'], $row['unit_code']);
+            $purchaseUnitCode = $row['purchase_unit_code'] ?? null;
+            $purchaseFactor = $row['purchase_conversion_factor'] ?? null;
+            unset($row['category_code'], $row['category_name'], $row['unit_code'], $row['purchase_unit_code'], $row['purchase_conversion_factor']);
 
             $query = DB::table('erp_items');
             if ($row['item_code'] === null) {
@@ -59,8 +61,8 @@ class ErpDualFilterMaterialSeeder extends Seeder
             }
 
             $this->policy($itemId, $row['production_execution_mode'], $row['serial_tracking_mode']);
-            if ($row['cutting_mode'] === 'length') {
-                $this->conversion($itemId, $units['M'], $units['ROOT'], '0.20000000', '方管每根5米，1米对应0.2根');
+            if ($purchaseUnitCode !== null) {
+                $this->conversion($itemId, $units[$purchaseUnitCode], $row['unit_id'], $purchaseFactor, $row['remark']);
             } elseif (($row['item_code'] ?? null) === 'ITEM00000057') {
                 $this->conversion($itemId, $units['BATCH'], $units['M'], '25.00000000', '电线每批25米');
             }
@@ -73,6 +75,7 @@ class ErpDualFilterMaterialSeeder extends Seeder
             'EA' => ['个', 'quantity', 0, 0, 0, 70],
             'ROOT' => ['根', 'quantity', 0, 0, 0, 80],
             'M' => ['米', 'length', 1, 3, 1, 30],
+            'M2' => ['平方米', 'area', 1, 4, 1, 35],
             'BATCH' => ['批', 'quantity', 0, 0, 0, 90],
             'SET' => ['套', 'quantity', 0, 0, 0, 100],
             'SHEET' => ['张', 'quantity', 0, 0, 0, 110],
@@ -82,7 +85,7 @@ class ErpDualFilterMaterialSeeder extends Seeder
         foreach ($definitions as $code => [$name, $type, $decimal, $places, $base, $sort]) {
             $expected = ['unit_name' => $name, 'unit_type' => $type, 'allow_decimal' => $decimal, 'decimal_places' => $places, 'status' => 'enabled'];
             SeedSafety::insertMissing('erp_units', ['unit_code' => $code], $expected + [
-                'symbol' => $code === 'M' ? 'm' : $name, 'is_base' => $base,
+                'symbol' => ['M' => 'm', 'M2' => 'm²'][$code] ?? $name, 'is_base' => $base,
                 'is_legacy' => 0, 'standard_unit_id' => null, 'sort_order' => $sort,
             ]);
             $unit = DB::table('erp_units')->where('unit_code', $code)->lockForUpdate()->first();
@@ -182,7 +185,10 @@ class ErpDualFilterMaterialSeeder extends Seeder
         $key = ['document_type' => $type, 'number_date' => '1970-01-01'];
         $counter = DB::table('erp_document_numbers')->where($key)->lockForUpdate()->first();
         if ($counter && (int) $counter->current_sequence < $minimum) {
-            throw new RuntimeException('已有编号计数不足：'.$type.'，Seeder不覆盖人工计数，请通过编号维护处理。');
+            // 只向前占用已存在或即将导入的编码区间，不降低计数或改写编号规则。
+            DB::table('erp_document_numbers')->where($key)->update([
+                'current_sequence' => $minimum, 'updated_at' => now(),
+            ]);
         }
         // 固定物料编码也必须占用编号区间，否则页面下次建档可能撞上本批编码。
         SeedSafety::insertMissing('erp_document_numbers', $key, ['current_sequence' => $minimum]);

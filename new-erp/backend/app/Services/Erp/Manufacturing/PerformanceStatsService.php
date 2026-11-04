@@ -68,13 +68,14 @@ final class PerformanceStatsService
         $employees = [];
         $out = [];
         $goodsAmount = '0';
+        $blocks = [];
         foreach ($lines as $line) {
             if (in_array($line->line_type, self::SKIP_TYPES, true) || $line->line_status === 'cancelled') continue;
             $qty = bccomp((string) ($line->item_base_required_qty ?? 0), '0', 8) > 0 ? (string) $line->item_base_required_qty : (string) $line->order_qty;
             if (bccomp($qty, '0', 8) <= 0) continue;
             $amount = $rate === null || $line->amount_incl_tax === null ? null : bcmul((string) $line->amount_incl_tax, $rate, 4);
             if ($amount !== null) $goodsAmount = bcadd($goodsAmount, $amount, 4);
-            $ctx = ['amount' => $amount, 'qty' => $qty, 'issues' => &$issues, 'employees' => &$employees, 'line' => $line];
+            $ctx = ['amount' => $amount, 'qty' => $qty, 'issues' => &$issues, 'employees' => &$employees, 'line' => $line, 'blocks' => &$blocks];
             $sources = [];
             $covered = '0';
             foreach ($this->lineSources($line, $qty) as $src) {
@@ -85,6 +86,10 @@ final class PerformanceStatsService
                         'used_qty' => $this->num($src['qty']), 'note' => '这部分是期初/外购等库存，没有生产记录，不计工时和提成。', 'operations' => [], 'children' => []];
                     continue;
                 }
+                // 根计划：半成品单独销售用发货行上冻结的计划；其余用产出工单冻结的计划。
+                $ctx['root_plan'] = $src['shipment_plan'] ?? null
+                    ? (is_array($src['shipment_plan']) ? $src['shipment_plan'] : json_decode((string) $src['shipment_plan'], true))
+                    : (is_string($src['wo']->performance_plan ?? null) ? json_decode($src['wo']->performance_plan, true) : null);
                 $sources[] = ['kind' => $src['kind'], 'kind_label' => $src['label']] + $this->node($src['wo'], $src['qty'], $fraction, $ctx, 0, []);
             }
             $packing = $this->packing($line, $ctx);
@@ -114,7 +119,7 @@ final class PerformanceStatsService
             $e['performance_amount'] = $amounts ? $this->calc->round($e['performance_amount']) : null;
         }
         unset($e);
-        $settleable = $readiness['entire_order_shipped'];
+        $settleable = $readiness['entire_order_shipped'] && ! $blocks;
         return [
             'order' => ['id' => (int) $order->id, 'sales_order_no' => $order->sales_order_no, 'customer_name' => $order->customer_name,
                 'order_date' => $order->order_date, 'currency' => $order->currency, 'exchange_rate' => $foreign ? $rate : null],
@@ -126,6 +131,7 @@ final class PerformanceStatsService
                 'performance_amount' => $amounts ? $this->calc->round($perfTotal) : null, 'labor_minutes' => round($laborTotal, 1),
                 'rework_minutes' => round($reworkTotal, 1)],
             'issues' => array_values(array_unique($issues)), 'amount_visible' => $amounts,
+            'block_reasons' => array_values(array_unique($blocks)),
         ];
     }
 
@@ -134,13 +140,13 @@ final class PerformanceStatsService
     {
         $sources = [];
         $shippedByBatch = [];
-        foreach ($this->shippedLines((int) $line->sales_order_id)->where('sales_order_line_id', $line->id)->groupBy(fn ($r) => (int) $r->item_id.'|'.$r->batch_no) as $rows) {
-            $first = $rows->first();
-            $q = (string) $rows->sum(fn ($r) => (float) $r->base_qty);
-            $wo = $first->batch_no ? $this->woByBatch((string) $first->batch_no, (int) $first->item_id) : null;
+        // 同一批次的多次发货可能冻结不同方案，来源必须保留到发货行。
+        foreach ($this->shippedLines((int) $line->sales_order_id)->where('sales_order_line_id', $line->id) as $shipment) {
+            $q = (string) $shipment->base_qty;
+            $wo = $shipment->batch_no ? $this->woByBatch((string) $shipment->batch_no, (int) $shipment->item_id) : null;
             if ($wo) $shippedByBatch[$wo->id] = bcadd($shippedByBatch[$wo->id] ?? '0', $q, 8);
             $sources[] = ['kind' => 'shipped', 'label' => $wo && $wo->source_type !== 'sales_order' ? '已发货（用库存现货）' : '已发货',
-                'wo' => $wo, 'qty' => $q, 'batch_no' => $first->batch_no];
+                'wo' => $wo, 'qty' => $q, 'batch_no' => $shipment->batch_no, 'shipment_plan' => $shipment->performance_plan ?? null];
         }
         $left = bcsub($qty, array_reduce($sources, fn ($s, $r) => bcadd($s, $r['qty'], 8), '0'), 8);
         $orderWos = DB::table('erp_mfg_work_orders')->where('sales_order_line_id', $line->id)->where('source_type', 'sales_order')
@@ -157,9 +163,10 @@ final class PerformanceStatsService
         return $sources;
     }
 
-    /** 一张工单的工序工时/提成，以及它用到的半成品来源（递归）。 */
-    private function node(object $wo, string $used, string $fraction, array &$ctx, int $depth, array $path): array
+    /** 一张工单的工序工时/提成，以及它用到的半成品来源（递归）。$positionPath 是这张工单在根 BOM 里的位置路径，空串表示根工单本身。 */
+    private function node(object $wo, string $used, string $fraction, array &$ctx, int $depth, array $path, string $positionPath = ''): array
     {
+        $isRoot = $depth === 0;
         $scrapped = (string) DB::table('erp_mfg_unit_reports')->where('work_order_id', $wo->id)->where('result', 'scrap')->where('review_status', 'approved')->distinct()->count('unit_id');
         $output = $this->output($wo);
         // 工时按“合格 + 报废”平摊，报废那部分单独列出，不摊给订单。
@@ -178,7 +185,22 @@ final class PerformanceStatsService
             ->groupBy('a.work_order_operation_id', 'a.cutting_run_id', 'r.run_no')
             ->selectRaw('a.work_order_operation_id, a.cutting_run_id, r.run_no, SUM(a.pieces) AS n, SUM(a.labor_minutes) AS m')->get()->groupBy('work_order_operation_id');
         $notes = [];
+        // 子工单节点比例：按 (operation_id, 第几次出现) 回到根工单整套提成计划查；查不到记未配置，不回退自身比例。
+        $aloneSale = $isRoot && ($ctx['root_plan']['source'] ?? null) === 'alone_sale';
+        $occMap = ! $isRoot || $aloneSale ? app(PerformancePlanRateService::class)->occurrenceMap($wo) : [];
         foreach ($ops as $op) {
+            $rate = $op->performance_rate;
+            if (! $isRoot || $aloneSale) {
+                $identity = $occMap[(int) $op->id] ?? null;
+                $resolved = ! $identity ? ['rate' => null, 'source' => 'missing'] : ($aloneSale
+                    ? app(PerformancePlanRateService::class)->ownPlanRate($ctx['root_plan'], $identity['operation_id'], $identity['occurrence'])
+                    : app(PerformancePlanRateService::class)->positionRate($ctx['root_plan'] ?? null, $positionPath, $identity['operation_id'], $identity['occurrence']));
+                $rate = $resolved['rate'];
+                if ($resolved['source'] === 'missing' || $rate === null) {
+                    $location = $aloneSale ? '本次单独销售方案' : "根 BOM 位置 {$positionPath}";
+                    $ctx['blocks'][] = $ctx['issues'][] = "未配置提成：{$wo->item_name} {$op->operation_name}（{$location}）";
+                }
+            }
             $people = [];
             foreach ($participants->get($op->id, collect()) as $p) $people[(int) $p->employee_legacy_id] = ['name' => $p->employee_name, 'minutes' => 0.0, 'fixed' => $p->share_percent];
             foreach ($sessions->get($op->id, collect()) as $s) {
@@ -203,7 +225,7 @@ final class PerformanceStatsService
                 $rework[(int) $s->employee_legacy_id] ??= ['name' => $s->employee_name, 'minutes' => 0.0];
                 $rework[(int) $s->employee_legacy_id]['minutes'] += (float) $s->m;
             }
-            $operations[] = $this->operationRow($op->operation_name, $op->status, $op->performance_rate, $people, $fraction, $laborRatio, $ctx, $rework);
+            $operations[] = $this->operationRow($op->operation_name, $op->status, $rate, $people, $fraction, $laborRatio, $ctx, $rework);
         }
         // 总装退回不良件开的返工工单：工时记在这张工单名下，全部算返工，不算提成。
         $reworkOrders = [];
@@ -226,18 +248,27 @@ final class PerformanceStatsService
         $children = [];
         if ((float) $scrapped > 0) $notes[] = "这批报废 {$scrapped} 件，报废那部分工时单独列出（见“工时去向”），不摊到订单。";
         if ($depth < self::MAX_DEPTH) {
-            foreach ($this->consumed($wo) as $itemId => $batches) {
-                $total = array_reduce($batches, fn ($s, $b) => bcadd($s, $b['qty'], 8), '0');
+            foreach ($this->consumed($wo) as $pos) {
+                // 位置提成池：外购/期初批占分母但不计酬；超领/报废不放大池子。
+                $total = array_reduce($pos['batches'], fn ($s, $b) => bcadd($s, $b['qty'], 8), '0');
                 if (bccomp($total, '0', 8) <= 0) continue;
-                foreach ($batches as $b) {
+                // 提成池按完整位置需求封顶，分批发货不能放大池子；工时继续沿原有用量分摊。
+                $denom = bccomp($total, (string) $pos['required'], 8) >= 0 ? $total : (string) $pos['required'];
+                if (bccomp($denom, '0', 8) <= 0) continue;
+                $fullPath = $positionPath === '' ? (string) $pos['position_path'] : $positionPath.'/'.$pos['position_path'];
+                foreach ($pos['batches'] as $b) {
                     if (bccomp($b['qty'], '0', 8) <= 0) continue;
-                    $childUsed = bcmul($b['qty'], number_format($laborRatio, 10, '.', ''), 8);
-                    $child = $b['batch_no'] ? $this->woByBatch($b['batch_no'], (int) $itemId) : null;
+                    $share = bcdiv($b['qty'], $denom, 12);
+                    $reqUsed = bccomp($output, '0', 8) > 0 ? bcmul((string) $b['material_required'], bcdiv($used, $output, 12), 8) : '0';
+                    $laborDenom = bccomp($b['material_total'], $reqUsed, 8) >= 0 ? $b['material_total'] : $reqUsed;
+                    $childUsed = bcmul($used, bcdiv($b['qty'], $laborDenom, 12), 8);
+                    $child = $b['batch_no'] ? $this->woByBatch((string) $b['batch_no'], (int) $pos['item_id']) : null;
                     if (! $child || $child->id === $wo->id || in_array($child->id, $path, true)) {
-                        if ($this->isMadeItem((int) $itemId)) $notes[] = $b['item_name'].' '.$this->num($childUsed).' 来自期初/外购库存（批次 '.($b['batch_no'] ?: '无').'），没有生产记录，不计。';
+                        if ($this->isMadeItem((int) $pos['item_id'])) $notes[] = $pos['item_name'].' '.$this->num($childUsed).' 来自期初/外购库存（批次 '.($b['batch_no'] ?: '无').'），没有生产记录，不计。';
                         continue;
                     }
-                    $children[] = $this->node($child, $childUsed, bcmul($fraction, bcdiv($b['qty'], $total, 12), 12), $ctx, $depth + 1, [...$path, $wo->id]);
+                    if ($pos['position_path'] === '') $ctx['issues'][] = "半成品 {$pos['item_name']} 的用料行缺位置标识，整套提成无法定位，按未配置处理。";
+                    $children[] = $this->node($child, $childUsed, bcmul($fraction, $share, 12), $ctx, $depth + 1, [...$path, $wo->id], $fullPath);
                 }
             }
         }
@@ -259,7 +290,8 @@ final class PerformanceStatsService
     {
         $contents = DB::table('erp_shipment_packing_contents as c')->join('erp_sales_shipments as s', 's.id', '=', 'c.shipment_id')
             ->join('erp_sales_shipment_lines as sl', 'sl.id', '=', 'c.shipment_line_id')->whereNotIn('sl.line_status', ['cancelled', 'replaced'])
-            ->where('c.sales_order_line_id', $line->id)->where('s.shipment_status', '!=', 'cancelled')->get(['c.id', 'c.shipment_id', 'c.base_qty', 's.shipment_no']);
+            ->where('c.sales_order_line_id', $line->id)->where('s.shipment_status', '!=', 'cancelled')
+            ->get(['c.id', 'c.shipment_id', 'c.base_qty', 'c.routing_snapshot', 's.shipment_no', 'sl.batch_no', 'sl.item_id', 'sl.performance_plan']);
         if ($contents->isEmpty()) return [];
         $rows = [];
         $ops = DB::table('erp_shipment_packing_operations')->whereIn('shipment_id', $contents->pluck('shipment_id')->unique())->where('status', '!=', 'CANCELLED')->orderBy('sequence')->get();
@@ -278,9 +310,21 @@ final class PerformanceStatsService
                 $people[(int) $s->employee_legacy_id] ??= ['name' => '员工#'.$s->employee_legacy_id, 'minutes' => 0.0, 'fixed' => null];
                 $people[(int) $s->employee_legacy_id]['minutes'] += (float) $s->m;
             }
-            $row = $this->operationRow($op->operation_name_snapshot, strtolower((string) $op->status), $op->performance_rate_snapshot, $people,
-                bcdiv($mineQty, $ctx['qty'], 12), $laborRatio, $ctx);
-            $rows[] = ['shipment_no' => $mine->first()->shipment_no, 'packed_qty' => $this->num($mineQty)] + $row;
+            // D4：混批包裹按包裹内容各自的产出工单冻结路线比例计酬，再合计；工时仍按数量占比分摊。
+            foreach ($mine->groupBy(function ($c) use ($op) {
+                $r = app(PerformancePlanRateService::class)->packingContentRate($c, $op, fn ($b, $i) => $this->woByBatch($b, $i));
+                return (string) ($r['rate'] ?? 'x').'|'.$r['source'];
+            }) as $key => $group) {
+                [$rate] = explode('|', $key);
+                $groupQty = (string) $group->sum(fn ($c) => (float) $c->base_qty);
+                if ($rate === 'x' || $rate === '') {
+                    $ctx['blocks'][] = $ctx['issues'][] = "未配置提成：{$op->operation_name_snapshot}（发货包裹）";
+                    $rate = null;
+                }
+                $row = $this->operationRow($op->operation_name_snapshot, strtolower((string) $op->status), $rate === null ? null : $rate, $people,
+                    bcdiv($groupQty, $ctx['qty'], 12), $laborRatio * ($allQty > 0 ? (float) $groupQty / $allQty : 0), $ctx);
+                $rows[] = ['shipment_no' => $group->first()->shipment_no, 'packed_qty' => $this->num($groupQty)] + $row;
+            }
         }
         return $rows;
     }
@@ -330,23 +374,44 @@ final class PerformanceStatsService
             'rework_minutes_total' => round($reworkTotal, 1), 'rework_minutes' => round($reworkTotal * $laborRatio, 1), 'rework_employees' => $reworkRows];
     }
 
-    /** 工单实际领用（扣掉退料）的物料，按物料、库存批次汇总。 */
+    /** 退料先按 material_id 回冲；提成按位置合池，工时仍保留每条物理用料行的原分母。 */
     private function consumed(object $wo): array
     {
+        $materials = DB::table('erp_mfg_work_order_materials')->where('work_order_id', $wo->id)->get()->keyBy('id');
         $issued = DB::table('erp_inventory_transaction_items as ti')->join('erp_mfg_material_issues as i', 'i.id', '=', 'ti.source_id')
             ->where('ti.source_type', 'mfg_material_issue')->where('i.work_order_id', $wo->id)
-            ->groupBy('ti.item_id', 'ti.item_name', 'ti.batch_no')->selectRaw('ti.item_id, ti.item_name, ti.batch_no, SUM(-ti.change_qty) AS qty')->get();
+            ->groupBy('ti.source_item_id', 'ti.item_id', 'ti.item_name', 'ti.batch_no')
+            ->selectRaw('ti.source_item_id, ti.item_id, ti.item_name, ti.batch_no, SUM(-ti.change_qty) AS qty')->get();
         if ($issued->isEmpty()) return [];
         $returned = DB::table('erp_mfg_material_return_lines as l')->join('erp_mfg_material_returns as r', 'r.id', '=', 'l.return_id')
             ->where('r.status', 'approved')->where('l.work_order_id', $wo->id)
-            ->groupBy('l.component_item_id', 'l.batch_no')->selectRaw('l.component_item_id, l.batch_no, SUM(l.qty) AS qty')->get()
-            ->keyBy(fn ($r) => $r->component_item_id.'|'.$r->batch_no);
+            ->groupBy('l.material_id', 'l.component_item_id', 'l.batch_no')->selectRaw('l.material_id, l.component_item_id, l.batch_no, SUM(l.qty) AS qty')->get()
+            ->keyBy(fn ($r) => (int) ($r->material_id ?? 0).'|'.$r->component_item_id.'|'.$r->batch_no);
         $out = [];
+        $required = [];
+        $materialTotals = [];
+        foreach ($materials as $material) {
+            $posKey = $material->position_path ?: '#'.$material->id;
+            $required[$posKey] = ($required[$posKey] ?? 0) + (float) $material->required_qty;
+        }
         foreach ($issued as $r) {
             if (! $this->isMadeItem((int) $r->item_id) && ! ($r->batch_no && $this->woByBatch((string) $r->batch_no, (int) $r->item_id))) continue;
-            $net = bcsub((string) $r->qty, (string) ($returned[$r->item_id.'|'.$r->batch_no]->qty ?? '0'), 8);
-            $out[(int) $r->item_id][] = ['item_name' => $r->item_name, 'batch_no' => $r->batch_no, 'qty' => $net];
+            $key = (int) $r->source_item_id.'|'.$r->item_id.'|'.$r->batch_no;
+            $net = bcsub((string) $r->qty, (string) ($returned[$key]->qty ?? '0'), 8);
+            $mat = $materials->get((int) $r->source_item_id);
+            $positionPath = (string) ($mat?->position_path ?? '');
+            $posKey = $positionPath !== '' ? $positionPath : '#'.$r->source_item_id;
+            $materialTotals[(int) $r->source_item_id] = bcadd($materialTotals[(int) $r->source_item_id] ?? '0', bccomp($net, '0', 8) > 0 ? $net : '0', 8);
+            $out[$posKey] ??= ['item_id' => (int) $r->item_id, 'item_name' => $r->item_name,
+                'position_path' => $positionPath, 'required' => $required[$posKey] ?? 0, 'batches' => []];
+            $out[$posKey]['batches'][] = ['batch_no' => $r->batch_no, 'qty' => bccomp($net, '0', 8) > 0 ? $net : '0',
+                'material_id' => (int) $r->source_item_id, 'material_required' => (float) ($mat?->required_qty ?? 0)];
         }
+        foreach ($out as &$position) {
+            foreach ($position['batches'] as &$batch) $batch['material_total'] = $materialTotals[$batch['material_id']] ?? '0';
+            unset($batch);
+        }
+        unset($position);
         return $out;
     }
 
@@ -356,7 +421,7 @@ final class PerformanceStatsService
             ->where('s.sales_order_id', $orderId)->where('s.shipment_status', '!=', 'cancelled')
             ->whereNotIn('l.line_status', ['cancelled', 'replaced'])
             ->where(fn ($w) => $w->whereNotNull('l.dispatched_at')->orWhereIn('s.shipment_status', ['shipped', 'completed']))
-            ->get(['l.sales_order_line_id', 'l.item_id', 'l.batch_no', 'l.sales_qty', 'l.base_qty']);
+            ->get(['l.sales_order_line_id', 'l.item_id', 'l.batch_no', 'l.sales_qty', 'l.base_qty', 'l.performance_plan']);
     }
 
     private function woByBatch(string $batchNo, int $itemId): ?object

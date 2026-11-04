@@ -107,7 +107,7 @@ final class CuttingRemnantReceiptService
         foreach ($inputs as $input) {
             $row = $bySource->get($input['source_key']);
             $measure = CuttingDecimal::value($row['measure_qty'] ?? '', 8, true);
-            if (in_array($input['unit_kind'], ['m', 'm2'], true) && bccomp($measure, bcadd($measure, '0', 4), 8) !== 0)
+            if (in_array($input['inventory_unit_kind'] ?? $input['unit_kind'], ['m', 'm2'], true) && bccomp($measure, bcadd($measure, '0', 4), 8) !== 0)
                 $this->fail('stock_precision_invalid', '按米或平方米入库的实际余料最多保留四位小数，不能让库存数量被四舍五入。');
             if ($input['mode'] === 'length' && bccomp($measure, bcdiv(bcmul($measure, '1000', 2), '1000', 8), 8) !== 0)
                 $this->fail('remnant_precision_invalid', '管材余料以米登记，最多五位小数，必须能无损保存毫米长度。');

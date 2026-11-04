@@ -103,7 +103,7 @@ class ItemIntegratedFormController extends Controller
         $mode = $item['cutting_mode'] ?? (($item['is_length_cut_material'] ?? false) ? 'length' : 'none');
         $item['cutting_mode'] = $mode;
         $item['is_length_cut_material'] = $mode === 'length';
-        $item['material_management_mode'] = $mode === 'sheet' ? 'physical' : 'quantity';
+        abort_if($item['material_management_mode'] === 'physical' && ! in_array($mode, ['sheet', 'length'], true), 422, '逐件实物编码管理只适用于板材或管材。');
         if ($mode === 'length') {
             abort_if(empty($item['standard_stock_length_mm']), 422, '长度下料类 Item 必须维护标准原料长度。');
         } else {

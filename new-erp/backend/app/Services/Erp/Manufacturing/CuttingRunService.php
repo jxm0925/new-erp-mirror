@@ -191,7 +191,7 @@ final class CuttingRunService
                 $inputs = collect($batch->input_lines)->keyBy('source_key');
                 foreach ($batch->remnants as $remnant) {
                     $input = $inputs->get($remnant['source_key']);
-                    $qty = bcdiv(bcmul((string) $input['qty'], (string) $remnant['consumed_measure'], 16), (string) $input['input_measure'], 8);
+                    $qty = bcdiv(bcmul((string) ($input['inventory_qty'] ?? $input['qty']), (string) $remnant['consumed_measure'], 16), (string) $input['input_measure'], 8);
                     $quantities[$batch->item_id] = bcadd($quantities[$batch->item_id] ?? '0', $qty, 8);
                 }
             }

@@ -205,6 +205,152 @@
         </section>
       </div>
 
+      <!-- 卡片 2.5: 工艺路线与工时提成 -->
+      <section class="form-card standards-card">
+        <div class="card-header">
+          <div class="header-main">
+            <span class="card-icon-badge"><i class="el-icon-guide" /></span>
+            <div>
+              <h2 class="card-title">工艺路线与工时提成</h2>
+              <span class="card-subtitle">选择工艺路线，按路线每道节点维护准备工时、单件工时与提成方式；空白表示未设，与填 0 区分</span>
+            </div>
+          </div>
+        </div>
+        <div class="card-body">
+          <div class="routing-select-row">
+            <span class="routing-select-label">工艺路线</span>
+            <el-select
+              v-model="form.routing_id"
+              size="small"
+              clearable
+              filterable
+              class="routing-select"
+              :disabled="!canEdit || !form.output_item_id || standardsLoading"
+              :placeholder="form.output_item_id ? '只列出适用于产出物料的有效路线' : '请先选择产出物料'"
+              @change="onRoutingChange"
+            >
+              <el-option
+                v-for="r in routingOptions"
+                :key="r.id"
+                :value="r.id"
+                :label="`${r.routing_no} V${r.version} · ${r.routing_name}`"
+              />
+            </el-select>
+            <span class="muted-hint">只列出适用于产出物料的有效路线；工单默认使用这里选的路线</span>
+          </div>
+          <div v-if="newerRouting" class="standards-tip warn">
+            <i class="el-icon-warning-outline" />
+            <span>所选路线已有新版本 V{{ newerRouting.version }}，请重新选择并核对工时提成</span>
+          </div>
+          <div v-if="form.routing_id" v-loading="standardsLoading">
+            <el-table :data="standards.nodes" border size="mini" class="standards-table">
+              <el-table-column label="顺序" width="60" align="center">
+                <template slot-scope="{ row }">{{ row.sequence }}</template>
+              </el-table-column>
+              <el-table-column label="工序" min-width="110">
+                <template slot-scope="{ row }"><b>{{ row.operation_name }}</b></template>
+              </el-table-column>
+              <el-table-column label="执行域" width="76" align="center">
+                <template slot-scope="{ row }">
+                  <el-tag size="mini" :type="row.execution_context === 'shipment' ? 'info' : 'success'" effect="plain">
+                    {{ row.execution_context === 'shipment' ? '发货' : '生产' }}
+                  </el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column label="准备工时（小时/张工单）" min-width="150" align="center">
+                <template slot-scope="{ row }">
+                  <el-input v-model="row.setup_hours" size="mini" :disabled="!canEdit" placeholder="未设" class="hours-input" />
+                </template>
+              </el-table-column>
+              <el-table-column label="单件工时（小时/台）" min-width="130" align="center">
+                <template slot-scope="{ row }">
+                  <el-input v-model="row.unit_hours" size="mini" :disabled="!canEdit" placeholder="未设" class="hours-input" />
+                </template>
+              </el-table-column>
+              <el-table-column v-if="perfView" label="提成方式" min-width="210" align="center">
+                <template slot-scope="{ row }">
+                  <el-radio-group v-model="row.performance_mode" size="mini" class="perf-mode-group" :disabled="!canEdit || !perfEdit">
+                    <el-radio-button label="inherit">沿用模板</el-radio-button>
+                    <el-radio-button label="override">指定比例</el-radio-button>
+                    <el-radio-button label="zero">不计</el-radio-button>
+                  </el-radio-group>
+                </template>
+              </el-table-column>
+              <el-table-column v-if="perfView" label="比例" min-width="105" align="center">
+                <template slot-scope="{ row }">
+                  <el-input
+                    v-if="row.performance_mode === 'override'"
+                    v-model="row.performance_percent"
+                    size="mini"
+                    :disabled="!canEdit || !perfEdit"
+                    placeholder="如 2.5"
+                    class="rate-input"
+                  >
+                    <template slot="append">%</template>
+                  </el-input>
+                  <span v-else class="rate-static">{{ row.performance_mode === 'zero' ? '0' : '—' }}</span>
+                </template>
+              </el-table-column>
+              <el-table-column v-if="perfView" label="生效结果" min-width="150" align="center">
+                <template slot-scope="{ row }">
+                  <span class="std-pill" :class="resolvedDisplay(row).type">{{ resolvedDisplay(row).text }}</span>
+                </template>
+              </el-table-column>
+            </el-table>
+            <div class="standards-summary">
+              <span>工时：<b>{{ standardsSummary.statusText }}</b></span>
+              <span>每台标准人时 <b>{{ standardsSummary.unitHours }}</b> 小时 + 每张工单准备 <b>{{ standardsSummary.setupHours }}</b> 小时</span>
+              <span v-if="perfView">提成：<b>{{ standardsSummary.perfConfigured }} / {{ standards.nodes.length }} 道已确定</b>，合计 <b>{{ standardsSummary.perfTotalRate }}%</b><template v-if="standardsSummary.perfMissing">，{{ standardsSummary.perfMissing }} 道未配置</template></span>
+              <span class="muted-hint">工时未设、提成未配置都不阻止生产，只提示</span>
+            </div>
+          </div>
+          <div v-else class="muted-hint standards-empty">
+            {{ form.output_item_id ? '不选工艺路线则不维护工时与提成。' : '请先选择产出物料，再选择工艺路线。' }}
+          </div>
+
+          <!-- 半成品工序提成（整机整套）：位置来自服务端 position_performance 树 -->
+          <div v-if="perfView && posPerfPositions.length" class="pos-perf">
+            <div class="pos-perf-head">
+              <span class="pos-perf-title">半成品工序提成（整机整套）</span>
+              <span class="muted-hint">半成品自己的 BOM 提成只在它单独销售时使用；随整机使用时按这里计算。</span>
+            </div>
+            <div v-if="posPerfStale" class="muted-hint pos-perf-stale">保存后刷新半成品位置</div>
+            <div v-for="pos in posPerfPositions" :key="pos.position_path" class="pos-block" :style="{ marginLeft: (pos.depth * 20) + 'px' }">
+              <div class="pos-head" @click="$set(posPerfExpanded, pos.position_path, posPerfExpanded[pos.position_path] === false)">
+                <i :class="posPerfExpanded[pos.position_path] === false ? 'el-icon-arrow-right' : 'el-icon-arrow-down'" />
+                <span class="pos-name">{{ pos.item_name }}</span>
+                <span class="muted-hint">× {{ pos.qty_per_root }}</span>
+                <el-tag v-if="pos.child_bom" size="mini" type="success" effect="plain" class="pos-bom-tag">{{ pos.child_bom.bom_no }} {{ pos.child_bom.version }}</el-tag>
+                <span v-else class="muted-hint">{{ pos.reason || '无子 BOM' }}</span>
+              </div>
+              <div v-if="posPerfExpanded[pos.position_path] !== false && pos.nodes.length" class="pos-rows">
+                <div v-for="n in pos.nodes" :key="pos.position_path + '|' + n.operation_id + '|' + n.occurrence" class="pos-row">
+                  <span class="pos-op-name">{{ n.operation_name }}</span>
+                  <span class="pos-occ muted-hint">第 {{ n.occurrence }} 次</span>
+                  <el-radio-group v-model="posPerfEdit(pos, n).performance_mode" size="mini" class="perf-mode-group" :disabled="!canEdit || !perfEdit">
+                    <el-radio-button label="inherit">沿用模板</el-radio-button>
+                    <el-radio-button label="override">指定比例</el-radio-button>
+                    <el-radio-button label="zero">不计</el-radio-button>
+                  </el-radio-group>
+                  <el-input
+                    v-if="posPerfEdit(pos, n).performance_mode === 'override'"
+                    v-model="posPerfEdit(pos, n).performance_percent"
+                    size="mini"
+                    :disabled="!canEdit || !perfEdit"
+                    placeholder="如 2.5"
+                    class="rate-input"
+                  >
+                    <template slot="append">%</template>
+                  </el-input>
+                  <span v-else class="rate-static">{{ posPerfEdit(pos, n).performance_mode === 'zero' ? '0' : '—' }}</span>
+                  <span class="std-pill" :class="resolvedDisplay(posPerfEdit(pos, n)).type">{{ resolvedDisplay(posPerfEdit(pos, n)).text }}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <!-- 卡片 3: BOM 组成物料清单明细 -->
       <section class="form-card detail-card">
         <div class="card-header items-card-header">
@@ -325,13 +471,33 @@
             <el-table-column label="用料工序" width="130" align="center">
               <template slot-scope="{ row }">
                 <el-select v-model="row.operation_id" size="mini" :disabled="!canEdit" clearable filterable :placeholder="form.output_item_id ? '按路线规则' : '先选产出物料'" :no-data-text="form.output_item_id ? '适用工艺路线里没有车间工序' : '请先选择产出物料'">
-                  <el-option v-for="op in operationOptions" :key="op.id" :label="op.operation_name" :value="op.id">
+                  <el-option v-for="op in lineOperationOptions" :key="op.id" :label="op.operation_name" :value="op.id">
                     <span>{{ op.operation_name }}</span>
                     <span class="operation-routing-hint">{{ op.routings.map(r => r.routing_name || r.routing_no).join('、') }}</span>
                   </el-option>
                   <!-- 已保存但已不在适用路线中的工序：只用于显示名称，不作为候选；保存时后端会要求重新选择。 -->
                   <el-option v-if="row.operation_id && !operationValid(row.operation_id)" v-show="false" :key="'selected-' + row.operation_id" :label="operationLabel(row.operation_id) + '（不在适用路线）'" :value="row.operation_id" />
                 </el-select>
+              </template>
+            </el-table-column>
+            <el-table-column label="子 BOM" width="150" align="center">
+              <template slot-scope="{ row }">
+                <el-select
+                  v-if="madeComponent(row)"
+                  v-model="row.child_bom_id"
+                  size="mini"
+                  :disabled="!canEdit"
+                  clearable
+                  filterable
+                  placeholder="默认 BOM"
+                  :loading="!!childBomLoading[row.component_item_id]"
+                  :no-data-text="'该物料没有已审核的 BOM'"
+                  @focus="loadChildBoms(row)"
+                  @change="posPerfStale = true"
+                >
+                  <el-option v-for="bom in childBomOptions[row.component_item_id] || []" :key="bom.id" :label="bom.bom_no + ' ' + (bom.version || '')" :value="bom.id" />
+                </el-select>
+                <span v-else class="muted-hint">—</span>
               </template>
             </el-table-column>
             <el-table-column label="操作" width="60" align="center" fixed="right">
@@ -653,6 +819,7 @@
 import PagedRecordSelect from '@/components/common/PagedRecordSelect.vue'
 import { listEntity } from '@/api/erp/master'
 import { listBoms, getBom, saveBom, submitBom, getBomOperationOptions } from '@/api/erp/bom'
+import { listProductionRoutings, getProductionRouting } from '@/api/erp/production'
 import { clearCreatePageReservation, reserveForCreatePage } from '@/utils/documentNumberReservation'
 import { cuttingUnitKind, cuttingQuantityBasis, previewCuttingQuantity, totalLengthMetres, totalLengthMillimetres } from '@/utils/cutting-quantity.mjs'
 
@@ -679,7 +846,8 @@ const emptyLine = i => ({
   fixed_qty: 0,
   replaceable: false,
   remark: '',
-  operation_id: null
+  operation_id: null,
+  child_bom_id: null
 })
 
 export default {
@@ -689,6 +857,12 @@ export default {
     operationOptions: [],
     operationNames: {},
     operationOptionsSeq: 0,
+    posPerf: [],
+    posPerfEdits: {},
+    posPerfExpanded: {},
+    posPerfStale: false,
+    childBomOptions: {},
+    childBomLoading: {},
     form: {
       bom_no: '',
       bom_name: '',
@@ -696,6 +870,7 @@ export default {
       sku_id: null,
       output_item_id: null,
       output_item: null,
+      routing_id: null,
       bom_type: 'standard',
       version: 'V1.0',
       effective_date: '',
@@ -715,6 +890,14 @@ export default {
     units: [],
     categories: [],
     boms: [],
+    routingOptions: [],
+    routingFetched: null,
+    lastRoutingId: null,
+    standardsLoading: false,
+    standards: { nodes: [] },
+    standardsMeta: { routing: null, newer_routing: null },
+    savedStandards: { routing_id: null, nodes: [], newer_routing: null },
+    performancePermissions: { view: false, edit: false },
     bomColumns: [{ prop: 'bom_no', label: 'BOM编码' }, { prop: 'bom_name', label: 'BOM名称' }, { prop: 'version', label: '版本' }],
     numberReservation: null,
     saving: false,
@@ -738,6 +921,7 @@ export default {
     // 用料工序候选来自产出物料的适用工艺路线；换产出物料时，原绑定不在新路线里的行改回按路线规则。
     'form.output_item_id'(value, oldValue) {
       this.loadOperationOptions({ clearInvalid: Boolean(oldValue) && Number(value) !== Number(oldValue) })
+      this.onOutputItemForRouting(value, oldValue)
     },
     'form.items': {
       deep: true,
@@ -758,12 +942,61 @@ export default {
     isCustomBom() {
       return this.form.bom_type === 'custom'
     },
+    posPerfPositions() {
+      const out = []
+      const walk = (list, depth) => (list || []).forEach(pos => {
+        out.push({ ...pos, depth })
+        walk(pos.children, depth + 1)
+      })
+      walk(this.posPerf, 0)
+      return out
+    },
     bomTypeLabel() {
       const map = { standard: '标准BOM', custom: '定制BOM', trial: '试制BOM' }
       return map[this.form.bom_type] || '标准BOM'
     },
     isFormReady() {
       return !!(this.form.bom_name && this.form.bom_type && this.form.version && this.form.output_item_id && this.form.items && this.form.items.length > 0)
+    },
+    perfView() {
+      return Boolean(this.performancePermissions.view)
+    },
+    perfEdit() {
+      return Boolean(this.performancePermissions.edit)
+    },
+    newerRouting() {
+      return this.form.routing_id && this.standardsMeta.newer_routing ? this.standardsMeta.newer_routing : null
+    },
+    // 明细行的用料工序候选：已选路线时只留该路线生产节点对应的工序，未选路线时保持全部适用工序。
+    lineOperationOptions() {
+      if (!this.form.routing_id || this.standardsLoading) return this.operationOptions
+      const ids = new Set(this.standards.nodes.filter(node => node.execution_context !== 'shipment').map(node => Number(node.operation_id)))
+      return this.operationOptions.filter(op => ids.has(Number(op.id)))
+    },
+    standardsSummary() {
+      const nodes = this.standards.nodes
+      const total = nodes.length
+      const unset = nodes.filter(row => String(row.setup_hours).trim() === '' || String(row.unit_hours).trim() === '').length
+      const statusText = !total ? '未设' : (unset === 0 ? '完整' : (unset === total ? '未设' : `部分设置（${unset} 道未设）`))
+      const unitHours = Number(nodes.reduce((sum, row) => sum + (Number(row.unit_hours) || 0), 0).toFixed(4))
+      const setupHours = Number(nodes.reduce((sum, row) => sum + (Number(row.setup_hours) || 0), 0).toFixed(4))
+      let perfConfigured = 0
+      let perfMissing = 0
+      let perfTotalRate = 0
+      for (const row of nodes) {
+        if (row.performance_mode === 'override') {
+          perfConfigured += 1
+          perfTotalRate += Number(row.performance_percent) || 0
+        } else if (row.performance_mode === 'zero') {
+          perfConfigured += 1
+        } else if (row.saved_mode === 'inherit' && row.resolved && row.resolved.source !== 'missing' && row.resolved.rate !== null) {
+          perfConfigured += 1
+          perfTotalRate += Number(this.rateToPercentText(row.resolved.rate)) || 0
+        } else {
+          perfMissing += 1
+        }
+      }
+      return { statusText, unitHours, setupHours, perfConfigured, perfMissing, perfTotalRate: Number(perfTotalRate.toFixed(4)) }
     },
     formValidationTip() {
       if (!this.form.bom_name) return '请填写 BOM 方案名称'
@@ -832,6 +1065,8 @@ export default {
     }
   },
   async created() {
+    // 新建 BOM 尚无服务端返回的提成权限，先按本地授权码判断；编辑时以详情返回的 performance_permissions 为准。
+    this.performancePermissions = { view: this.$can('master.bom.performance.view'), edit: this.$can('master.bom.performance.edit') }
     await this.loadRefs()
     if (this.isEdit) await this.loadDetail()
     else await this.reserveBomNumber()
@@ -864,7 +1099,7 @@ export default {
       }
     },
     operationValid(id) {
-      return this.operationOptions.some(op => Number(op.id) === Number(id))
+      return this.lineOperationOptions.some(op => Number(op.id) === Number(id))
     },
     // 已选工序名称单独保存，候选被搜索结果替换后仍能显示名称。
     rememberOperations(rows) {
@@ -872,6 +1107,211 @@ export default {
     },
     operationLabel(id) {
       return this.operationNames[Number(id)] || `工序 ${id}`
+    },
+    // 路线候选只取适用于产出物料的已生效与草稿路线；已选但不再符合条件的路线保留为只读选项用于显示。
+    // routingFetched 只装接口真正返回的路线，注入的当前路线不算数，否则“不再适用”永远判不出来。
+    async loadRoutingOptions() {
+      const itemId = this.form.output_item_id
+      const currentOption = () => (this.form.routing_id && this.standardsMeta.routing ? [this.standardsMeta.routing] : [])
+      this.routingFetched = null
+      if (!itemId) { this.routingOptions = currentOption(); return }
+      try {
+        const [active, draft] = await Promise.all([
+          listProductionRoutings({ output_item_id: itemId, status: 'active', per_page: 100 }),
+          listProductionRoutings({ output_item_id: itemId, status: 'draft', per_page: 100 })
+        ])
+        const rows = [...(active.data.data || []), ...(draft.data.data || [])]
+        this.routingFetched = rows
+        this.routingOptions = (this.form.routing_id && this.standardsMeta.routing && !rows.some(r => Number(r.id) === Number(this.form.routing_id)))
+          ? [this.standardsMeta.routing, ...rows]
+          : rows
+      } catch (e) {
+        this.routingOptions = currentOption()
+      }
+    },
+    async onOutputItemForRouting(value, oldValue) {
+      await this.loadRoutingOptions()
+      const changed = Boolean(oldValue) && Number(value) !== Number(oldValue)
+      if (!changed || !this.form.routing_id || this.routingFetched === null) return
+      if (this.routingFetched.some(r => Number(r.id) === Number(this.form.routing_id))) return
+      this.form.routing_id = null
+      this.lastRoutingId = null
+      this.standards = { nodes: [] }
+      this.standardsMeta = { routing: null, newer_routing: null }
+      this.$message.warning('产出物料已更换，原工艺路线不适用于新物料，已清除路线与工时提成设置')
+    },
+    async onRoutingChange(id, isRevert = false) {
+      const previous = this.lastRoutingId
+      if (!id) {
+        this.standards = { nodes: [] }
+        this.standardsMeta = { routing: null, newer_routing: null }
+        this.lastRoutingId = null
+        return
+      }
+      const option = this.routingOptions.find(r => Number(r.id) === Number(id))
+      this.standardsMeta = { routing: option || this.standardsMeta.routing, newer_routing: null }
+      // 选回本 BOM 已保存的路线时还原已存设置，不把未保存的节点值带到其他路线。
+      if (Number(id) === Number(this.savedStandards.routing_id)) {
+        this.standards = { nodes: this.buildStandardRows(this.savedStandards.nodes) }
+        this.standardsMeta.newer_routing = this.savedStandards.newer_routing
+        this.lastRoutingId = Number(id)
+        return
+      }
+      this.standardsLoading = true
+      try {
+        const r = await getProductionRouting(id)
+        const nodes = (r.data.data.operations || [])
+          .slice()
+          .sort((a, b) => Number(a.sequence) - Number(b.sequence))
+          .map(op => ({
+            routing_operation_id: op.id,
+            operation_id: op.operation_id,
+            operation_name: (op.operation && op.operation.operation_name) || '',
+            sequence: op.sequence,
+            execution_context: op.execution_context || 'production',
+            shipment_operation_type: op.shipment_operation_type || null
+          }))
+        this.standards = { nodes: this.buildStandardRows(nodes) }
+        this.lastRoutingId = Number(id)
+      } catch (e) {
+        this.$message.error(e.userMessage || '工艺路线节点加载失败')
+        // 节点拉不到就退回原选择：留下空表又保存会把已存工时提成全部清掉。
+        if (isRevert) {
+          this.standards = { nodes: [] }
+        } else {
+          this.form.routing_id = previous
+          await this.onRoutingChange(previous, true)
+        }
+      } finally {
+        this.standardsLoading = false
+      }
+    },
+    // 页面按小时录入、按百分数录入比例；服务端分别存分钟与小数比例，空串与 0 要区分。
+    buildStandardRows(nodes) {
+      return (nodes || []).map(node => {
+        const mode = node.performance_mode || 'inherit'
+        const blank = value => value === null || value === undefined
+        return {
+          routing_operation_id: Number(node.routing_operation_id),
+          operation_id: Number(node.operation_id),
+          operation_name: node.operation_name || `工序 ${node.operation_id || ''}`,
+          sequence: node.sequence,
+          execution_context: node.execution_context || 'production',
+          shipment_operation_type: node.shipment_operation_type || null,
+          setup_hours: blank(node.setup_minutes) ? '' : this.minutesToHoursText(node.setup_minutes),
+          unit_hours: blank(node.unit_minutes) ? '' : this.minutesToHoursText(node.unit_minutes),
+          performance_mode: mode,
+          performance_percent: mode === 'override' && !blank(node.performance_rate) ? this.rateToPercentText(node.performance_rate) : '',
+          resolved: node.resolved || null,
+          saved_mode: mode
+        }
+      })
+    },
+    posPerfEdit(pos, node) {
+      const key = pos.position_path + '|' + node.operation_id + '|' + node.occurrence
+      return this.posPerfEdits[key] || { performance_mode: 'inherit', performance_percent: '', saved_mode: 'inherit', resolved: null }
+    },
+    initPosPerf(tree) {
+      this.posPerf = (tree && tree.positions) || []
+      this.posPerfStale = false
+      const edits = {}
+      const walk = list => (list || []).forEach(pos => {
+        (pos.nodes || []).forEach(node => {
+          const mode = node.mode || 'inherit'
+          edits[pos.position_path + '|' + node.operation_id + '|' + node.occurrence] = {
+            performance_mode: mode,
+            performance_percent: mode === 'override' && node.rate !== null && node.rate !== undefined ? this.rateToPercentText(node.rate) : '',
+            resolved: node.resolved || null,
+            saved_mode: mode
+          }
+        })
+        walk(pos.children)
+      })
+      walk(this.posPerf)
+      this.posPerfEdits = edits
+    },
+    flattenPosPerf() {
+      const rows = []
+      const walk = list => (list || []).forEach(pos => {
+        (pos.nodes || []).forEach(node => {
+          const edit = this.posPerfEdit(pos, node)
+          rows.push({
+            position_path: pos.position_path,
+            operation_id: node.operation_id,
+            occurrence: node.occurrence,
+            performance_mode: edit.performance_mode,
+            performance_rate: edit.performance_mode === 'override' && String(edit.performance_percent).trim() !== '' ? Number((Number(edit.performance_percent) / 100).toFixed(6)) : null
+          })
+        })
+        walk(pos.children)
+      })
+      walk(this.posPerf)
+      return rows
+    },
+    madeComponent(row) {
+      const type = row.component_item && row.component_item.item_type
+      return ! type || ['semi_finished', 'finished_product'].includes(type)
+    },
+    async loadChildBoms(row) {
+      const id = row && row.component_item_id
+      if (! id || this.childBomOptions[id] || this.childBomLoading[id]) return
+      this.$set(this.childBomLoading, id, true)
+      try {
+        const res = await listBoms({ output_item_id: id, status: 'active', audit_status: 'approved', per_page: 100 })
+        this.$set(this.childBomOptions, id, res.data.data || res.data || [])
+      } catch (e) {
+        this.$set(this.childBomOptions, id, [])
+      } finally {
+        this.$set(this.childBomLoading, id, false)
+      }
+    },
+    minutesToHoursText(minutes) {
+      return String(Number((Number(minutes) / 60).toFixed(4)))
+    },
+    hoursToMinutes(text) {
+      const value = String(text ?? '').trim()
+      return value === '' ? null : Number((Number(value) * 60).toFixed(2))
+    },
+    rateToPercentText(rate) {
+      return String(Number((Number(rate) * 100).toFixed(4)))
+    },
+    resolvedDisplay(row) {
+      if (row.performance_mode === 'override') {
+        const percent = String(row.performance_percent).trim()
+        return percent === '' ? { type: 'muted', text: '保存后显示' } : { type: 'ok', text: `${percent}% · 本 BOM` }
+      }
+      if (row.performance_mode === 'zero') return { type: 'zero', text: '明确不计' }
+      // 沿用模板：只有已存方式就是沿用模板时服务端的 resolved 才有效，否则保存后才能解析。
+      if (row.saved_mode !== 'inherit' || !row.resolved) return { type: 'muted', text: '保存后显示' }
+      const resolved = row.resolved
+      if (resolved.source === 'missing' || resolved.rate === null) return { type: 'warn', text: '未配置' }
+      const percent = this.rateToPercentText(resolved.rate)
+      const template = (resolved.template && resolved.template.template_name) || ''
+      if (resolved.source === 'category') return { type: 'ok', text: `${percent}% · 分类模板「${template}」` }
+      if (resolved.source === 'default') return { type: 'ok', text: `${percent}% · 默认模板「${template}」` }
+      if (resolved.source === 'bom') return { type: 'ok', text: `${percent}% · 本 BOM` }
+      return { type: 'muted', text: '保存后显示' }
+    },
+    validateStandards() {
+      if (!this.form.routing_id) return true
+      for (const [index, row] of this.standards.nodes.entries()) {
+        const seq = index + 1
+        for (const [key, label] of [['setup_hours', '准备工时'], ['unit_hours', '单件工时']]) {
+          const value = String(row[key]).trim()
+          if (value !== '' && (!/^\d+(\.\d+)?$/.test(value) || Number(value) * 60 > 999999)) {
+            this.$message.error(`第 ${seq} 道节点「${row.operation_name}」的${label}须为不小于 0 的小时数，留空表示未设`)
+            return false
+          }
+        }
+        if (row.performance_mode === 'override') {
+          const percent = String(row.performance_percent).trim()
+          if (!/^\d+(\.\d{1,4})?$/.test(percent) || Number(percent) <= 0 || Number(percent) > 100) {
+            this.$message.error(`第 ${seq} 道节点「${row.operation_name}」的指定比例须大于 0% 且不超过 100%`)
+            return false
+          }
+        }
+      }
+      return true
     },
     async reserveBomNumber() {
       try {
@@ -918,12 +1358,32 @@ export default {
           replaceable: Boolean(item.replaceable)
         }))
       }
+      const standardsData = data.operation_standards || {}
+      this.standards = { nodes: this.buildStandardRows(standardsData.nodes || []) }
+      this.initPosPerf(data.position_performance || {})
+      this.standardsMeta = { routing: standardsData.routing || null, newer_routing: standardsData.newer_routing || null }
+      // 深拷贝已存节点，用户改选其他路线再选回时按这份还原，不用重新拉详情。
+      this.savedStandards = {
+        routing_id: this.form.routing_id || null,
+        nodes: JSON.parse(JSON.stringify(standardsData.nodes || [])),
+        newer_routing: standardsData.newer_routing || null
+      }
+      this.lastRoutingId = this.form.routing_id || null
+      if (data.performance_permissions) {
+        this.performancePermissions = {
+          view: Boolean(data.performance_permissions.view),
+          edit: Boolean(data.performance_permissions.edit)
+        }
+      }
+      await this.loadRoutingOptions()
     },
     addLine() {
+      this.posPerfStale = true
       if (!this.canEdit) return
       this.openPicker('component', this.form.items.findIndex(row => !row.component_item_id))
     },
     removeLine(index) {
+      this.posPerfStale = true
       if (this.form.items.length === 1) return this.$message.warning('至少保留一行物料明细')
       this.form.items.splice(index, 1)
       this.form.items.forEach((line, idx) => { line.line_no = idx + 1 })
@@ -1048,6 +1508,9 @@ export default {
     },
     applyComponentItem(row, item) {
       this.$set(row, 'component_item_id', item.id)
+      this.$set(row, 'component_item', item)
+      this.$set(row, 'child_bom_id', null)
+      this.posPerfStale = true
       this.$set(row, 'component_item_code', item.item_code)
       this.$set(row, 'component_item_name', item.item_name)
       this.$set(row, 'component_item_spec', item.spec || '')
@@ -1072,10 +1535,27 @@ export default {
         ...this.form,
         items: this.form.items.map((line, index) => ({
           ...line,
+          child_bom_id: line.child_bom_id || null,
           line_no: (index + 1) * 10,
           stock_dimensions: Object.fromEntries(Object.entries(line.stock_dimensions || {}).filter(([, value]) => value !== null && value !== undefined && value !== ''))
         }))
       }
+      // 详情返回的 operation_standards 是展示结构，保存时必须转成服务端要求的节点数组；无提成编辑权限时不提交比例字段，服务端保留原值。
+      payload.operation_standards = this.form.routing_id
+        ? this.standards.nodes.map(row => {
+          const record = {
+            routing_operation_id: row.routing_operation_id,
+            setup_minutes: this.hoursToMinutes(row.setup_hours),
+            unit_minutes: this.hoursToMinutes(row.unit_hours)
+          }
+          if (this.perfEdit) {
+            record.performance_mode = row.performance_mode
+            record.performance_rate = row.performance_mode === 'override' ? Number((Number(row.performance_percent) / 100).toFixed(6)) : null
+          }
+          return record
+        })
+        : []
+      if (this.perfEdit) payload.position_performance = this.flattenPosPerf()
       if (!this.isEdit) {
         if (!this.numberReservation) return this.$message.error('BOM 编号尚未生成，请刷新页面后重试')
         payload.reservation_token = this.numberReservation.reservation_token
@@ -1098,11 +1578,13 @@ export default {
       if (invalidCut) return this.$message.error(`${invalidCut.component_item_name}：${previewCuttingQuantity(invalidCut, this.rowUnit(invalidCut)).error}`)
       if (payload.items.some(item => item.cutting_mode === 'length' && item.cutting_quantity_basis !== 'total_length' && (!(Number(item.cut_length_mm) > 0) || !(Number(item.piece_qty) > 0)))) return this.$message.error('按单段尺寸的长料必须填写每段长度和段数')
       if (payload.items.some(item => item.cutting_mode === 'sheet' && ['cut_length_mm', 'cut_width_mm', 'cut_thickness_mm', 'piece_qty'].some(key => !(Number(item[key]) > 0)))) return this.$message.error('板材必须填写单件长、宽、厚和每份产出的件数')
+      if (!this.validateStandards()) return
       this.saving = true
       let savedId = null
       try {
         const { data } = await saveBom(payload)
         savedId = data.data.id
+        this.initPosPerf((data.data && data.data.position_performance) || {})
         if (!this.isEdit) clearCreatePageReservation(this.numberReservation)
         if (andSubmit) await submitBom(savedId)
         this.$message.success(andSubmit ? 'BOM 已保存并提交审核' : 'BOM 草稿已保存')
@@ -2423,5 +2905,134 @@ export default {
   margin-left: 12px;
   color: #909399;
   font-size: 12px;
+}
+
+/* 工艺路线与工时提成卡片 */
+.standards-card .card-body {
+  padding: 14px 16px 16px;
+}
+
+.routing-select-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.routing-select-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #374151;
+  flex-shrink: 0;
+}
+
+.routing-select {
+  width: 340px;
+  max-width: 100%;
+}
+
+.muted-hint {
+  font-size: 12px;
+  color: #94a3b8;
+}
+
+.standards-empty {
+  padding: 4px 0;
+}
+
+.standards-tip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  margin-bottom: 10px;
+}
+
+.standards-tip.warn {
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  color: #92400e;
+}
+
+.standards-tip.warn i {
+  color: #d97706;
+}
+
+.standards-table .hours-input,
+.standards-table .rate-input {
+  max-width: 110px;
+}
+
+.standards-table .hours-input ::v-deep .el-input__inner,
+.standards-table .rate-input ::v-deep .el-input__inner {
+  text-align: right;
+}
+
+.rate-static {
+  color: #94a3b8;
+}
+
+.perf-mode-group ::v-deep .el-radio-button__inner {
+  padding: 5px 8px;
+}
+
+.perf-mode-group ::v-deep .el-radio-button__orig-radio:checked + .el-radio-button__inner {
+  background-color: #008b4b;
+  border-color: #008b4b;
+  box-shadow: -1px 0 0 0 #008b4b;
+}
+
+.std-pill {
+  display: inline-block;
+  font-size: 11px;
+  border-radius: 10px;
+  padding: 1px 8px;
+  background: #f1f5f9;
+  color: #64748b;
+  white-space: nowrap;
+}
+
+.std-pill.ok {
+  background: #dcfce7;
+  color: #15803d;
+}
+
+.pos-perf { margin-top: 14px; border-top: 1px dashed #e4e7ed; padding-top: 12px; }
+.pos-perf-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 8px; flex-wrap: wrap; }
+.pos-perf-title { font-weight: 600; color: #303133; font-size: 13px; }
+.pos-perf-stale { color: #e6a23c; margin-bottom: 8px; }
+.pos-block { margin-bottom: 4px; }
+.pos-head { display: flex; align-items: center; gap: 8px; cursor: pointer; padding: 4px 0; user-select: none; }
+.pos-head:hover .pos-name { color: #008b4b; }
+.pos-name { font-weight: 600; color: #303133; }
+.pos-bom-tag { border-color: #008b4b; color: #008b4b; }
+.pos-rows { margin: 2px 0 8px 22px; display: flex; flex-direction: column; gap: 6px; }
+.pos-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.pos-op-name { min-width: 90px; color: #303133; }
+.pos-occ { min-width: 52px; }
+.std-pill.warn {
+  background: #fef3c7;
+  color: #b45309;
+}
+
+.std-pill.zero {
+  background: #e2e8f0;
+  color: #475569;
+}
+
+.standards-summary {
+  display: flex;
+  gap: 18px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+  font-size: 12px;
+  color: #64748b;
+}
+
+.standards-summary b {
+  color: #1e293b;
 }
 </style>

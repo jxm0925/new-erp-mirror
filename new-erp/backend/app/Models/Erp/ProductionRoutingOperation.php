@@ -7,9 +7,7 @@ class ProductionRoutingOperation extends MasterModel
     protected $table = 'erp_production_routing_operations';
     protected $casts = [
         'sequence' => 'integer', 'parameters' => 'array', 'is_key_operation' => 'boolean',
-        'standard_minutes' => 'decimal:2', 'setup_standard_minutes' => 'decimal:2',
-        'unit_standard_minutes' => 'decimal:2', 'allow_continue_without_warehouse' => 'boolean',
-        'performance_rate' => 'decimal:6', 'packaging_materials' => 'array',
+        'allow_continue_without_warehouse' => 'boolean', 'packaging_materials' => 'array',
     ];
 
     public function operation() { return $this->belongsTo(ProductionOperation::class, 'operation_id'); }

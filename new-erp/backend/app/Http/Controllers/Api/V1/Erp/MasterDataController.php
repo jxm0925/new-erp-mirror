@@ -476,7 +476,8 @@ class MasterDataController extends Controller
         abort_if($mode === 'length' && (float) $length <= 0, 422, '定长材料必须维护标准原料长度。');
         $data['cutting_mode'] = $mode;
         $data['is_length_cut_material'] = $mode === 'length';
-        $data['material_management_mode'] = $mode === 'sheet' ? 'physical' : 'quantity';
+        $data['material_management_mode'] = $data['material_management_mode'] ?? $item?->materialManagementMode() ?? 'quantity';
+        abort_if($data['material_management_mode'] === 'physical' && ! in_array($mode, ['sheet', 'length'], true), 422, '逐件实物编码管理只适用于板材或管材。');
         if ($mode !== 'length') $data['standard_stock_length_mm'] = null;
     }
 

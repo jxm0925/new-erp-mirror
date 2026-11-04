@@ -37,6 +37,8 @@ final class PerformanceLedgerService
     private array $stock = [];
     private array $packing = [];
     private array $memo = [];
+    private array $issues = [];
+    private array $occMaps = [];
     private array $lineShipped = [];
     private array $lineReturns = [];
     private array $returnsByWo = [];
@@ -45,7 +47,7 @@ final class PerformanceLedgerService
     private array $runs = [];
     private array $runAlloc = [];
     private array $runShare = [];
-    private array $opRate = [];
+    private array $runOps = [];
     private array $runMinutes = [];
     /** 返工工时：员工 => [[日期, 分钟, 工单ID, 工序名]] */
     private array $rework = [];
@@ -67,6 +69,10 @@ final class PerformanceLedgerService
                 $sb = $this->scrapFraction($unit, $start, false);
                 $se = $this->scrapFraction($unit, $end, true);
                 $events = array_filter($this->events($unit), fn ($e) => $e['date'] >= $start && $e['date'] <= $end);
+                if ($unit['kind'] === 'work_order') {
+                    foreach ($events as &$event) $event['rf'] = $this->opRateFor((int) $unit['wo']->id, $op['operation'], $event);
+                    unset($event);
+                }
                 foreach ($this->labor[$unit['key']][$opId] ?? [] as $emp => $rows) {
                     if ($employeeId && $emp !== $employeeId) continue;
                     $lb = $this->sumLabor($rows, $start, false);
@@ -82,9 +88,9 @@ final class PerformanceLedgerService
                     if ($op['rate'] !== null) {
                         foreach ($events as $e) {
                             $amount = $this->lines[$e['line_id']]['amount'] ?? null;
-                            // 集中开料：每个事件带自己的比例（领用工单下料工序的提成比例 × 这批工时在那道工序里的占比）。
+                            // 同批产出可以进入不同整机位置或单独销售方案，比例跟着实际销售事件取。
                             $factor = $op['rate'] === 'event' ? ($e['rf'] ?? '0') : $op['rate'];
-                            if ($amount === null || bccomp($factor, '0', 12) <= 0) continue;
+                            if ($amount === null || $factor === null || bccomp($factor, '0', 12) <= 0) continue;
                             $commission = bcadd($commission, bcmul(bcmul(bcmul($amount, $e['lf'], 12), $factor, 12), $share, 12), 12);
                         }
                     }
@@ -133,6 +139,7 @@ final class PerformanceLedgerService
             'labor_adjustment' => null, 'commission_adjustment' => null, 'adjustment_status' => '待定（售后按责任手动处理）'];
         usort($returns, fn ($a, $b) => $a['date'] <=> $b['date']);
         return ['month' => $month, 'start' => $start, 'end' => $end, 'employees' => $out, 'returns' => $returns, 'totals' => $this->roundRow($totals, $amounts), 'amount_visible' => $amounts,
+            'issues' => array_values(array_unique($this->issues)),
             'rule' => '月初未结（上月结转）+ 本月新做 − 本月出库结算 − 本月报废 = 结转下月。报废的工时单独列出，不摊给合格品。工时挂在做出来的产品上，产品出库（或被装进的整机出库）那个月才结算，没出库的往后结转，不会重复累加。集中开料按实际计时，工单领几件带走几件的工时（这批总工时 ÷ 总件数 × 件数），没领的留在开料记录里往后结转。返工工时按本月实际干活单独列，不进结转和结算，不算提成。'];
     }
 
@@ -347,7 +354,7 @@ final class PerformanceLedgerService
             $cw = $this->wos[$c['consumer']];
             $usage[] = ['type' => 'consumed', 'type_label' => '装进 '.$cw->item_name, 'status_label' => ($pending < 0.0001 ? '已出库' : ($shipped > 0.0001 ? '部分出库' : '已领用，未出库')).($lost > 0.0001 ? '（其中随整机报废 '.round($lost, 2).'）' : ''),
                 'shipped' => $pending < 0.0001, 'target' => $cw->work_order_no, 'target_work_order_id' => (int) $cw->id, 'sales_order_no' => $cw->sales_order_no,
-                'qty' => round($c['n'], 4), 'shipped_qty' => round($shipped, 4), 'pending_qty' => round($pending, 4), 'scrapped_qty' => round($lost, 4), 'date' => null,
+                'qty' => round($c['n'], 4), 'shipped_qty' => round($shipped, 4), 'pending_qty' => round($pending, 4), 'scrapped_qty' => round($lost, 4), 'date' => null, 'position_path' => $c['position_path'],
                 'labor_minutes' => round($per * $c['n'], 1)];
         }
         $info = $this->unitInfo($unit, $today);
@@ -435,7 +442,11 @@ final class PerformanceLedgerService
             $cu = $this->woUnit($this->wos[$c['consumer']]);
             if ($cu['base'] <= 0 || $c['N'] <= 0) continue;
             foreach ($this->events($cu) as $e) {
-                $events[] = ['qty' => $c['n'] * $e['qty'] / $cu['base'], 'lf' => bcmul($e['lf'], bcdiv((string) $c['n'], (string) $c['N'], 12), 12)] + $e;
+                $position = $c['position_path'] === '' || $e['position_path'] === null ? null
+                    : ($e['position_path'] === '' ? $c['position_path'] : $e['position_path'].'/'.$c['position_path']);
+                // qty 只管原有工时结算；lf 按本位置完整需求/净领用分母分提成，外购批次同样占池。
+                $events[] = ['qty' => $c['n'] * $e['qty'] / $cu['base'], 'lf' => bcmul($e['lf'], bcdiv((string) $c['n'], (string) $c['N'], 12), 12),
+                    'position_path' => $position] + $e;
             }
         }
         return $this->memo[$id] = $events;
@@ -451,9 +462,11 @@ final class PerformanceLedgerService
             if (! isset($this->wos[$c['consumer']])) continue;
             $cu = $this->woUnit($this->wos[$c['consumer']]);
             if ($cu['base'] <= 0) continue;
-            $rate = $this->opRate[$c['op']] ?? null;
-            $rf = $rate === null ? '0' : bcmul($rate, $this->runShare[(int) $r->id][$c['consumer']][$c['op']] ?? '0', 12);
-            foreach ($this->events($cu) as $e) $events[] = ['qty' => $c['n'] * $e['qty'] / $cu['base'], 'rf' => $rf] + $e;
+            foreach ($this->events($cu) as $e) {
+                $rate = isset($this->runOps[$c['op']]) ? $this->opRateFor($c['consumer'], $this->runOps[$c['op']], $e) : null;
+                $rf = $rate === null ? '0' : bcmul($rate, $this->runShare[(int) $r->id][$c['consumer']][$c['op']] ?? '0', 12);
+                $events[] = ['qty' => $c['n'] * $e['qty'] / $cu['base'], 'rf' => $rf] + $e;
+            }
         }
         return $this->memo[$key] = $events;
     }
@@ -638,40 +651,62 @@ final class PerformanceLedgerService
         $ships = DB::table('erp_sales_shipment_lines as l')->join('erp_sales_shipments as s', 's.id', '=', 'l.shipment_id')
             ->whereNotIn('l.line_status', ['cancelled', 'replaced'])
             ->where('s.shipment_status', '!=', 'cancelled')->where(fn ($w) => $w->whereNotNull('l.dispatched_at')->orWhereIn('s.shipment_status', ['shipped', 'completed']))
-            ->get(['l.shipment_id', 's.shipment_no', 'l.sales_order_line_id', 'l.item_id', 'l.batch_no', 'l.base_qty', DB::raw('DATE(COALESCE(l.dispatched_at, s.shipped_at, s.updated_at)) AS d')]);
+            ->get(['l.id', 'l.shipment_id', 's.shipment_no', 'l.sales_order_line_id', 'l.item_id', 'l.batch_no', 'l.base_qty', 'l.performance_plan', DB::raw('DATE(COALESCE(l.dispatched_at, s.shipped_at, s.updated_at)) AS d')]);
         foreach ($ships as $s) {
             $shipDates[(int) $s->shipment_id] = min($shipDates[(int) $s->shipment_id] ?? $s->d, $s->d);
             $woId = $this->woByKey[$s->item_id.'|'.$s->batch_no] ?? null;
             $line = $this->lines[(int) $s->sales_order_line_id] ?? null;
             if (! $woId || ! $line || bccomp($line['qty'], '0', 8) <= 0) continue;
             $this->direct[$woId][] = ['type' => 'ship', 'date' => $s->d, 'line_id' => (int) $s->sales_order_line_id, 'order_no' => $line['order_no'], 'shipment_no' => $s->shipment_no,
-                'qty' => (float) $s->base_qty, 'lf' => bcdiv((string) $s->base_qty, $line['qty'], 12)];
+                'qty' => (float) $s->base_qty, 'lf' => bcdiv((string) $s->base_qty, $line['qty'], 12), 'shipment_line_id' => (int) $s->id,
+                'root_work_order_id' => $woId, 'position_path' => '',
+                'root_plan' => json_decode((string) ($s->performance_plan ?: $this->wos[$woId]->performance_plan), true)];
             $this->lineShipped[(int) $s->sales_order_line_id][$woId] = ($this->lineShipped[(int) $s->sales_order_line_id][$woId] ?? 0) + (float) $s->base_qty;
         }
         $this->loadReturns();
-        // 领用（扣退料）：谁领了哪批
+        // 领退料先按物理用料行回冲，再按 BOM 位置归池；同一位置可拆给多道工序领料。
         $net = [];
         $dated = [];
+        $materials = DB::table('erp_mfg_work_order_materials')->get()->keyBy('id');
+        $required = [];
+        foreach ($materials as $material) {
+            $posKey = $material->position_path ?: '#'.$material->id;
+            $required[(int) $material->work_order_id][$posKey] = ($required[(int) $material->work_order_id][$posKey] ?? 0) + (float) $material->required_qty;
+        }
         foreach (DB::table('erp_inventory_transaction_items as ti')->join('erp_mfg_material_issues as i', 'i.id', '=', 'ti.source_id')->where('ti.source_type', 'mfg_material_issue')
-            ->groupBy('i.work_order_id', 'ti.item_id', 'ti.batch_no', DB::raw('DATE(ti.created_at)'))->selectRaw('i.work_order_id, ti.item_id, ti.batch_no, DATE(ti.created_at) AS d, SUM(-ti.change_qty) AS q')->get() as $r) {
-            $net[$r->work_order_id][$r->item_id][(string) $r->batch_no] = ($net[$r->work_order_id][$r->item_id][(string) $r->batch_no] ?? 0) + (float) $r->q;
-            $dated[$r->work_order_id][$r->item_id][(string) $r->batch_no][] = [$r->d, (float) $r->q];
+            ->groupBy('i.work_order_id', 'ti.source_item_id', 'ti.item_id', 'ti.batch_no', DB::raw('DATE(ti.created_at)'))
+            ->selectRaw('i.work_order_id, ti.source_item_id, ti.item_id, ti.batch_no, DATE(ti.created_at) AS d, SUM(-ti.change_qty) AS q')->get() as $r) {
+            $net[$r->work_order_id][$r->source_item_id][$r->item_id][(string) $r->batch_no] = ($net[$r->work_order_id][$r->source_item_id][$r->item_id][(string) $r->batch_no] ?? 0) + (float) $r->q;
+            $dated[$r->work_order_id][$r->source_item_id][$r->item_id][(string) $r->batch_no][] = [$r->d, (float) $r->q];
         }
         foreach (DB::table('erp_mfg_material_return_lines as l')->join('erp_mfg_material_returns as r', 'r.id', '=', 'l.return_id')->where('r.status', 'approved')
-            ->groupBy('l.work_order_id', 'l.component_item_id', 'l.batch_no', DB::raw('DATE(COALESCE(r.reviewed_at, r.updated_at))'))
-            ->selectRaw('l.work_order_id, l.component_item_id, l.batch_no, DATE(COALESCE(r.reviewed_at, r.updated_at)) AS d, SUM(l.qty) AS q')->get() as $r)
-            if (isset($net[$r->work_order_id][$r->component_item_id][(string) $r->batch_no])) {
-                $net[$r->work_order_id][$r->component_item_id][(string) $r->batch_no] -= (float) $r->q;
-                $dated[$r->work_order_id][$r->component_item_id][(string) $r->batch_no][] = [$r->d, -(float) $r->q];
+            ->groupBy('l.work_order_id', 'l.material_id', 'l.component_item_id', 'l.batch_no', DB::raw('DATE(COALESCE(r.reviewed_at, r.updated_at))'))
+            ->selectRaw('l.work_order_id, l.material_id, l.component_item_id, l.batch_no, DATE(COALESCE(r.reviewed_at, r.updated_at)) AS d, SUM(l.qty) AS q')->get() as $r)
+            if (isset($net[$r->work_order_id][$r->material_id][$r->component_item_id][(string) $r->batch_no])) {
+                $net[$r->work_order_id][$r->material_id][$r->component_item_id][(string) $r->batch_no] -= (float) $r->q;
+                $dated[$r->work_order_id][$r->material_id][$r->component_item_id][(string) $r->batch_no][] = [$r->d, -(float) $r->q];
             }
-        foreach ($net as $consumer => $items) {
+        foreach ($net as $consumer => $materialRows) {
             if (! isset($this->wos[$consumer])) continue;
-            foreach ($items as $itemId => $batches) {
-                $total = array_sum(array_map(fn ($q) => max(0, $q), $batches));
-                foreach ($batches as $batch => $q) {
-                    $producer = $this->woByKey[$itemId.'|'.$batch] ?? null;
-                    if ($producer && $producer !== $consumer && $q > 0.00000001)
-                        $this->consumers[$producer][] = ['consumer' => $consumer, 'n' => $q, 'N' => $total, 'dated' => $dated[$consumer][$itemId][$batch] ?? []];
+            $positions = [];
+            foreach ($materialRows as $materialId => $items) {
+                $path = (string) ($materials->get($materialId)?->position_path ?? '');
+                $posKey = $path !== '' ? $path : '#'.$materialId;
+                $positions[$posKey] ??= ['path' => $path, 'total' => 0.0, 'rows' => []];
+                foreach ($items as $itemId => $batches) foreach ($batches as $batch => $q) {
+                    $positions[$posKey]['total'] += max(0, $q);
+                    $positions[$posKey]['rows'][] = ['material' => $materialId, 'item' => $itemId, 'batch' => $batch, 'qty' => $q];
+                }
+            }
+            // 未领用的拆分用料行也属于该位置完整需求，不能因只领了一道工序而提前分完池子。
+            foreach ($positions as $posKey => $position) {
+                $total = max($position['total'], $required[(int) $consumer][$posKey] ?? 0);
+                foreach ($position['rows'] as $row) {
+                    $producer = $this->woByKey[$row['item'].'|'.$row['batch']] ?? null;
+                    if ($producer && $producer !== $consumer && $row['qty'] > 0.00000001)
+                        $this->consumers[$producer][] = ['consumer' => $consumer, 'n' => $row['qty'], 'N' => $total,
+                            'material_id' => $row['material'], 'position_path' => $position['path'],
+                            'dated' => $dated[$consumer][$row['material']][$row['item']][$row['batch']] ?? []];
                 }
             }
         }
@@ -691,7 +726,7 @@ final class PerformanceLedgerService
         $this->loadRuns();
         $woIds = array_map(fn ($k) => (int) substr($k, 1), array_filter(array_keys($this->labor), fn ($k) => $k[0] === 'W'));
         foreach (DB::table('erp_mfg_work_order_operations')->whereIn('work_order_id', $woIds ?: [0])->get() as $op)
-            $this->ops['W'.$op->work_order_id][(int) $op->id] = ['name' => $op->operation_name, 'rate' => $op->performance_rate !== null && (float) $op->performance_rate > 0 ? (string) $op->performance_rate : null];
+            $this->ops['W'.$op->work_order_id][(int) $op->id] = ['name' => $op->operation_name, 'rate' => 'event', 'operation' => $op];
         $fixed = DB::table('erp_mfg_task_participants')->whereIn('work_order_id', $woIds ?: [0])->where('lane', 'normal')->where('is_active', true)->get()->groupBy('work_order_operation_id');
         foreach ($this->labor as $key => $opsLabor) {
             if ($key[0] !== 'W') continue;
@@ -739,8 +774,8 @@ final class PerformanceLedgerService
             $this->runAlloc[$g['run']][] = $g;
             $this->runMinutes[$g['consumer']][$g['op']][$g['run']] = ($this->runMinutes[$g['consumer']][$g['op']][$g['run']] ?? 0) + $g['m'];
         }
-        foreach (DB::table('erp_mfg_work_order_operations')->whereIn('id', array_unique(array_column($group, 'op')) ?: [0])->get(['id', 'performance_rate']) as $op)
-            $this->opRate[(int) $op->id] = $op->performance_rate !== null && (float) $op->performance_rate > 0 ? (string) $op->performance_rate : null;
+        foreach (DB::table('erp_mfg_work_order_operations')->whereIn('id', array_unique(array_column($group, 'op')) ?: [0])->get() as $op)
+            $this->runOps[(int) $op->id] = $op;
     }
 
     /**
@@ -787,7 +822,7 @@ final class PerformanceLedgerService
     {
         $ops = DB::table('erp_shipment_packing_operations as op')->join('erp_sales_shipments as s', 's.id', '=', 'op.shipment_id')->leftJoin('erp_sales_orders as o', 'o.id', '=', 's.sales_order_id')
             ->where('op.status', '!=', 'CANCELLED')->where('s.shipment_status', '!=', 'cancelled')
-            ->get(['op.id', 'op.shipment_id', 'op.operation_name_snapshot', 'op.performance_rate_snapshot', 'op.packing_content_ids', 's.shipment_no', 'o.sales_order_no']);
+            ->get(['op.id', 'op.shipment_id', 'op.operation_id', 'op.routing_operation_id', 'op.operation_name_snapshot', 'op.performance_rate_snapshot', 'op.packing_content_ids', 's.shipment_no', 'o.sales_order_no']);
         if ($ops->isEmpty()) return;
         $sessions = DB::table('erp_shipment_packing_labor_sessions')->whereIn('operation_id', $ops->pluck('id'))->whereNotNull('ended_at')
             ->groupBy('operation_id', 'employee_legacy_id', DB::raw('DATE(ended_at)'))->selectRaw('operation_id, employee_legacy_id, DATE(ended_at) AS d, SUM(actual_labor_minutes) AS m')->get()->groupBy('operation_id');
@@ -807,19 +842,58 @@ final class PerformanceLedgerService
                     ->join('erp_sales_shipments as s', 's.id', '=', 'c.shipment_id')->whereIn('c.id', $ids ?: [0])
                     ->whereNotIn('sl.line_status', ['cancelled', 'replaced'])
                     ->where(fn ($query) => $query->whereNotNull('sl.dispatched_at')->orWhereIn('s.shipment_status', ['shipped', 'completed']))
-                    ->get(['c.*', 'sl.dispatched_at']);
+                    ->get(['c.*', 'sl.dispatched_at', 'sl.batch_no', 'sl.item_id', 'sl.performance_plan']);
+                // D4：混批包裹按各内容行自己的产出工单冻结比例分别计提（事件级比例 rf），同一作业的工时/份额只记一次；查不到记未配置，不回退包装作业单一快照。
                 foreach ($contents as $c) {
+                    $r = app(PerformancePlanRateService::class)->packingContentRate($c, $op,
+                        fn ($b, $i) => ($this->wos[$this->woByKey[$i.'|'.$b] ?? 0] ?? null)
+                            ?: DB::table('erp_mfg_work_orders')->where('work_order_no', $b)->where('item_id', $i)->first());
                     $line = $this->lines[(int) $c->sales_order_line_id] ?? null;
                     if (! $line || bccomp($line['qty'], '0', 8) <= 0) continue;
+                    if ($r['rate'] === null) $this->issues[] = "未配置提成：{$op->operation_name_snapshot}（发货包裹，{$line['order_no']}）";
                     $events[] = ['date' => $c->dispatched_at ? substr((string) $c->dispatched_at, 0, 10) : $date, 'line_id' => (int) $c->sales_order_line_id, 'order_no' => $line['order_no'], 'shipment_no' => $op->shipment_no,
-                        'qty' => 0.0, 'lf' => bcdiv((string) $c->base_qty, $line['qty'], 12)];
+                        'qty' => 0.0, 'lf' => bcdiv((string) $c->base_qty, $line['qty'], 12),
+                        'rf' => $r['rate'] !== null && (float) $r['rate'] > 0 ? bcadd((string) $r['rate'], '0', 12) : '0'];
                 }
                 if ($events) $events[0]['qty'] = 1.0;
             }
-            $rate = $op->performance_rate_snapshot !== null && (float) $op->performance_rate_snapshot > 0 ? (string) $op->performance_rate_snapshot : null;
             $this->packing[] = ['key' => $key, 'kind' => 'packing', 'output' => 1.0, 'events' => $events, 'shipment_no' => $op->shipment_no, 'order_no' => $op->sales_order_no,
-                'name' => $op->operation_name_snapshot, 'ops' => [0 => ['name' => $op->operation_name_snapshot, 'rate' => $rate]]];
+                'name' => $op->operation_name_snapshot, 'ops' => [0 => ['name' => $op->operation_name_snapshot, 'rate' => 'event']]];
         }
+    }
+
+    /** 按这次实际消费去向取比例，不按生产工单缓存；同一批可进入多个整机、位置或单独销售方案。 */
+    private function opRateFor(int $woId, object $op, array $event): ?string
+    {
+        $root = (int) $event['root_work_order_id'] === $woId && $event['position_path'] === '';
+        $plan = $event['root_plan'];
+        if ($root && ($plan['source'] ?? null) !== 'alone_sale') return $op->performance_rate !== null ? (string) $op->performance_rate : null;
+        $occ = $this->woOpOccurrence($woId, $op);
+        $service = app(PerformancePlanRateService::class);
+        $resolved = ! $occ ? ['rate' => null, 'source' => 'missing'] : ($root
+            ? $service->ownPlanRate($plan, (int) $op->operation_id, $occ)
+            : ($event['position_path'] !== null ? $service->positionRate($plan, $event['position_path'], (int) $op->operation_id, $occ)
+                : ['rate' => null, 'source' => 'missing']));
+        if ($resolved['rate'] === null || $resolved['source'] === 'missing') {
+            $wo = $this->wos[$woId];
+            $location = $root ? '本次单独销售方案' : '根 BOM 位置 '.($event['position_path'] ?? '无法匹配');
+            $this->issues[] = "未配置提成：{$wo->item_name} {$op->operation_name}（{$event['order_no']}，{$location}）";
+        }
+        return $resolved['rate'] !== null ? (string) $resolved['rate'] : null;
+    }
+
+    /** (operation_id, 在工单生产工序按序第几次出现)，与 PerformancePlanRateService::occurrenceMap 同口径。 */
+    private function woOpOccurrence(int $woId, object $op): ?int
+    {
+        $this->occMaps[$woId] ??= DB::table('erp_mfg_work_order_operations')->where('work_order_id', $woId)
+            ->where('execution_context', 'production')->orderBy('sequence')->get(['id', 'operation_id']);
+        $occ = 0;
+        foreach ($this->occMaps[$woId] as $row) {
+            if ((int) $row->operation_id !== (int) $op->operation_id) continue;
+            $occ++;
+            if ((int) $row->id === (int) $op->id) return $occ;
+        }
+        return null;
     }
 
     /**

@@ -95,7 +95,7 @@
                     <template v-if="isPhysicalManaged(row)">
                       <div v-for="(group,groupIndex) in physicalGroups(row)" :key="`${row.item_id}-${groupIndex}`" class="physical-group">
                         <h3>{{ warehouseName(group.warehouse_id) }} / {{ locationName(group.location_id) }}</h3>
-                        <receipt-physical-entries :entries="group.physical_entries || []" :quantity="Number(group.base_qty)" @change="setPhysicalEntries(row,groupIndex,$event)" />
+                        <receipt-physical-entries :entries="group.physical_entries || []" :quantity="Number(group.base_qty)" :mode="itemById(row.item_id).cutting_mode" :measure-unit="physicalMeasureUnit(row)" @change="setPhysicalEntries(row,groupIndex,$event)" />
                       </div>
                     </template>
                     <template v-else>
@@ -129,7 +129,7 @@
           <el-table-column label="批次" min-width="112"><template slot-scope="{row}">{{ isStockManaged(row) ? (row.batch_no || '系统生成') : '非库存' }}</template></el-table-column>
           <el-table-column label="仓库 / 库位" min-width="166"><template slot-scope="{row}">{{ isStockManaged(row) ? allocationSummary(row) : '无需入库' }}</template></el-table-column>
           <el-table-column label="实物 / 编号" width="118">
-            <template slot-scope="{row}"><span v-if="isPhysicalManaged(row)">{{ physicalEntryCount(row) }} / {{ number(qualifiedBaseQty(row)) }} 张</span><span v-else-if="isPipeLine(row)" class="pipe-length-cell">每根 {{ pipeLength(row) ? pipeLength(row) + ' mm' : '未填' }}</span><div v-else-if="isStockManaged(row)" class="serial-progress"><span>{{ serialNumberList(row).length }} / {{ serialRequiredCount(row) }}</span><i><b :style="{width:serialProgress(row)+'%'}" /></i></div><span v-else>无需编号</span></template>
+            <template slot-scope="{row}"><span v-if="isPhysicalManaged(row)">{{ physicalEntryCount(row) }}{{ physicalPurchaseCount(row) === null ? '' : ' / ' + number(physicalPurchaseCount(row)) }} {{ itemById(row.item_id).cutting_mode === 'length' ? '根' : '张' }}</span><span v-else-if="isPipeLine(row)" class="pipe-length-cell">每根 {{ pipeLength(row) ? pipeLength(row) + ' mm' : '未填' }}</span><div v-else-if="isStockManaged(row)" class="serial-progress"><span>{{ serialNumberList(row).length }} / {{ serialRequiredCount(row) }}</span><i><b :style="{width:serialProgress(row)+'%'}" /></i></div><span v-else>无需编号</span></template>
           </el-table-column>
           <el-table-column v-if="!isReplacement || $can('inventory.amount.view')" :label="isReplacement ? '库存成本金额' : taxMode === 'tax_included' ? '金额（含税）' : '金额（未税）'" width="116" align="right"><template slot-scope="{row}">¥{{ money(lineAmount(row)) }}</template></el-table-column>
           <el-table-column label="操作" width="150">
@@ -450,16 +450,40 @@ export default {
     pipeStandardLength(line) { const value = Number(this.itemById(line && line.item_id).standard_stock_length_mm || 0); return value > 0 ? Number(value.toFixed(2)) : 0 },
     pipeLength(line) { const value = Number(line && line.stock_length_mm); return value > 0 ? Number(value.toFixed(2)) : this.pipeStandardLength(line) },
     pipeTotalMeters(line) { return `${Number((this.pipeLength(line) * this.qualifiedBaseQty(line) / 1000).toFixed(3))} 米` },
-    isPhysicalManaged(line) { const item = this.itemById(line.item_id); return this.isStockManaged(line) && item.material_management_mode === 'physical' && item.cutting_mode === 'sheet' },
+    isPhysicalManaged(line) { const item = this.itemById(line.item_id); return this.isStockManaged(line) && item.material_management_mode === 'physical' && ['sheet', 'length'].includes(item.cutting_mode) },
+    physicalMeasureUnit(line) {
+      const item = this.itemById(line.item_id)
+      const selected = this.selectedConversion(line)?.base_unit || item.unit || {}
+      const unit = selected.standard_unit || selected.standardUnit || selected
+      const code = String(unit.unit_code || '').toUpperCase()
+      const symbol = String(unit.symbol || unit.unit_symbol || '').toLowerCase()
+      return ['M2', 'SQM'].includes(code) || ['m2', 'm²', '㎡'].includes(symbol) ? 'm²' : code === 'M' || symbol === 'm' ? 'm' : ''
+    },
+    physicalPurchaseCount(line) {
+      const selected = this.selectedConversion(line)?.purchase_unit || {}
+      const unit = selected.standard_unit || selected.standardUnit || selected
+      const code = String(unit.unit_code || '').toUpperCase()
+      const name = unit.unit_name || line.purchase_unit_name_snapshot || line.purchase_unit_name_preview
+      return ['SHEET', 'ROOT'].includes(code) || ['张', '根'].includes(name) ? Number(line.qualified_qty || 0) : null
+    },
+    physicalInventoryQty(line, entries) {
+      if (!this.physicalMeasureUnit(line)) return entries.length
+      const length = this.itemById(line.item_id).cutting_mode === 'length'
+      return entries.reduce((sum, entry) => sum + Number(entry.dimensions?.length_mm || 0) * (length ? 1 / 1000 : Number(entry.dimensions?.width_mm || 0) / 1000000), 0)
+    },
     physicalEntryCount(line) { return this.physicalGroups(line).reduce((sum, group) => sum + (group.physical_entries || []).length, 0) },
     physicalGroups(line) { return this.allocations(line).length ? this.allocations(line) : [{ warehouse_id: line.warehouse_id, location_id: line.location_id, base_qty: this.qualifiedBaseQty(line), physical_entries: line._physicalEntries || [] }] },
     setPhysicalEntries(line, index, entries) { if (this.allocations(line).length) this.$set(line._allocations[index], 'physical_entries', entries); else this.$set(line, '_physicalEntries', entries) },
     physicalEntriesValid(line) {
       if (!this.isPhysicalManaged(line)) return true
       const valid = value => /^\d+(\.\d{1,2})?$/.test(String(value)) && Number(value) > 0
-      return this.physicalGroups(line).every(group => Number.isInteger(Number(group.base_qty)) && (group.physical_entries || []).length === Number(group.base_qty) && (group.physical_entries || []).every(entry => {
+      // 采购按张／根核对件数，库存另按实测面积／长度核对，不能把平方米或米当成件数。
+      const count = this.physicalPurchaseCount(line)
+      if (count !== null && (!Number.isInteger(count) || this.physicalEntryCount(line) !== count)) return false
+      const length = this.itemById(line.item_id).cutting_mode === 'length'
+      return this.physicalGroups(line).every(group => Math.abs(this.physicalInventoryQty(line, group.physical_entries || []) - Number(group.base_qty)) < 0.000001 && (group.physical_entries || []).every(entry => {
         const dims = entry.dimensions || {}
-        return ['length_mm', 'width_mm', 'thickness_mm'].every(key => valid(dims[key])) && (!dims.nominal_thickness_mm || valid(dims.nominal_thickness_mm))
+        return (length ? ['length_mm'] : ['length_mm', 'width_mm', 'thickness_mm']).every(key => valid(dims[key])) && (length || !dims.nominal_thickness_mm || valid(dims.nominal_thickness_mm))
       }))
     },
     allocationSummary(line) {
@@ -573,7 +597,7 @@ export default {
       if (this.form.items.some(line => Math.abs(Number(line.qualified_qty || 0) + Number(line.unqualified_qty || 0) - Number(line.qty || 0)) > 0.000001)) return '合格数量与不合格数量之和必须等于到货数量'
       if (this.form.items.some(line => this.hasDifference(line) && !String(line.difference_reason || '').trim())) return '存在基本数量差异时必须填写差异原因'
       if (strict && this.form.items.some(line => this.serialTrackingMode(line) === 'required' && this.serialNumberList(line).length !== this.serialRequiredCount(line))) return '必须逐件编号的物料，已录入编号数量必须与合格实际入库数量一致'
-      if (strict && this.form.items.some(line => !this.physicalEntriesValid(line))) return '请逐张补齐板材实际长宽厚，张数须与各库位合格基本数量一致'
+      if (strict && this.form.items.some(line => !this.physicalEntriesValid(line))) return '请补齐逐张板材长宽厚或逐根管材长度，件数须与合格采购数量一致，面积或长度合计须与各库位基本数量一致'
       if (strict && this.form.items.some(line => !this.lineAllocationValid(line))) return '每一行合格基本数量必须完整分配到有效仓库和库位；设备编号不得漏分或重复分配'
       return ''
     },

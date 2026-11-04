@@ -23,6 +23,7 @@ CREATE TABLE `erp_sales_shipment_lines` (
   `warehouse_id` bigint(20) unsigned NOT NULL,
   `location_id` bigint(20) unsigned NOT NULL,
   `batch_no` varchar(80) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `performance_plan` json DEFAULT NULL,
   `unit_id` bigint(20) unsigned DEFAULT NULL,
   `sales_qty` decimal(18,8) NOT NULL,
   `base_qty` decimal(18,8) NOT NULL,

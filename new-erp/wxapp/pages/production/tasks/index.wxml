@@ -3,7 +3,6 @@
   <view class="wo-hero">
     <view class="wo-hero-top">
       <text class="wo-hero-title">工单任务{{userName ? ' · ' + userName : ''}}</text>
-      <text class="wo-hero-pill" bindtap="openSharedCutting">集中开料 ›</text>
     </view>
     <view wx:if="{{tab !== 'review'}}" class="wo-hero-search">
       <input class="wo-hero-input" value="{{keyword}}" bindinput="keywordInput" placeholder="搜工单号 / 产品 / 规格型号 / 序列号" confirm-type="search" bindconfirm="search" />

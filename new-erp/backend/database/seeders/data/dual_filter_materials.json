@@ -249,8 +249,10 @@
     "manufacturing_strategy": "unspecified",
     "category_code": null,
     "category_name": "方管",
-    "unit_code": "ROOT",
-    "remark": "每根5米，库存按根，采购米转根：1米=0.2根。"
+    "unit_code": "M",
+    "purchase_unit_code": "ROOT",
+    "purchase_conversion_factor": "5.00000000",
+    "remark": "每根5米，库存按米，采购按根：1根=5米。"
   },
   {
     "item_code": "ITEM00000027",
@@ -272,8 +274,10 @@
     "manufacturing_strategy": "unspecified",
     "category_code": null,
     "category_name": "方管",
-    "unit_code": "ROOT",
-    "remark": "每根5米，库存按根，采购米转根：1米=0.2根。"
+    "unit_code": "M",
+    "purchase_unit_code": "ROOT",
+    "purchase_conversion_factor": "5.00000000",
+    "remark": "每根5米，库存按米，采购按根：1根=5米。"
   },
   {
     "item_code": "ITEM00000028",
@@ -295,8 +299,10 @@
     "manufacturing_strategy": "unspecified",
     "category_code": null,
     "category_name": "方管",
-    "unit_code": "ROOT",
-    "remark": "每根5米，库存按根，采购米转根：1米=0.2根。"
+    "unit_code": "M",
+    "purchase_unit_code": "ROOT",
+    "purchase_conversion_factor": "5.00000000",
+    "remark": "每根5米，库存按米，采购按根：1根=5米。"
   },
   {
     "item_code": "ITEM00000029",
@@ -318,8 +324,10 @@
     "manufacturing_strategy": "unspecified",
     "category_code": null,
     "category_name": "方管",
-    "unit_code": "ROOT",
-    "remark": "每根5米，库存按根，采购米转根：1米=0.2根。"
+    "unit_code": "M",
+    "purchase_unit_code": "ROOT",
+    "purchase_conversion_factor": "5.00000000",
+    "remark": "每根5米，库存按米，采购按根：1根=5米。"
   },
   {
     "item_code": "ITEM00000047",
@@ -579,7 +587,7 @@
     "item_name": "不锈钢板",
     "item_type": "raw_material",
     "management_scope": "factory",
-    "spec": "4000×2000×0.7mm",
+    "spec": "3550×1220×0.7mm",
     "material_grade": "201不锈钢",
     "standard_stock_length_mm": null,
     "is_length_cut_material": 0,
@@ -594,8 +602,10 @@
     "manufacturing_strategy": "purchase",
     "category_code": null,
     "category_name": "不锈钢板",
-    "unit_code": "SHEET",
-    "remark": null
+    "unit_code": "M2",
+    "purchase_unit_code": "SHEET",
+    "purchase_conversion_factor": "4.33100000",
+    "remark": "每张3550×1220mm，库存按平方米，采购按张：1张=4.331平方米。"
   },
   {
     "item_code": null,

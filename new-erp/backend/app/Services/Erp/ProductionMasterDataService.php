@@ -5,7 +5,6 @@ namespace App\Services\Erp;
 use App\Models\Erp\Item;
 use App\Models\Erp\Product;
 use App\Models\Erp\ProductionOperation;
-use App\Models\Erp\ProductionPerformanceBinding;
 use App\Models\Erp\ProductionStage;
 use App\Models\Erp\ProductionPackagingScheme;
 use App\Models\Erp\ProductionRouting;
@@ -190,7 +189,7 @@ class ProductionMasterDataService
             ->pluck('component_item_id')->filter(fn ($itemId) => (int) $itemId > 0)->map(fn ($itemId) => (int) $itemId)->unique()->values();
         $routing->setRelation('packaging_material_items', $itemIds->isEmpty() ? collect()
             : Item::with('unit.standardUnit')->whereIn('id', $itemIds)->get(['id', 'item_code', 'item_name', 'unit_id', 'item_type', 'management_scope']));
-        return $this->withPerformance($routing);
+        return $this->withoutStandards($routing);
     }
 
     public function createRouting(array $data, object $user, array $permissions, bool $superAdmin): ProductionRouting
@@ -216,7 +215,7 @@ class ProductionMasterDataService
             $this->syncOperations($routing, $data['operations'], $user);
             $this->assertRoutingManagementScope($routing);
             $this->numbers->consume($data['reservation_token'], 'routing', $number, $this->userId($user), 'production_routing', $routing->id);
-            return $this->withPerformance($routing->load(['product', 'sku', 'applicabilities.item:id,item_code,item_name,spec,item_type,management_scope', 'applicabilities.category:id,category_code,category_name', 'operations.operation']));
+            return $this->withoutStandards($routing->load(['product', 'sku', 'applicabilities.item:id,item_code,item_name,spec,item_type,management_scope', 'applicabilities.category:id,category_code,category_name', 'operations.operation']));
         });
     }
 
@@ -238,7 +237,7 @@ class ProductionMasterDataService
             $this->syncApplicabilities($routing, $data);
             if (isset($data['operations'])) $this->syncOperations($routing, $data['operations'], $user);
             $this->assertRoutingManagementScope($routing);
-            return $this->withPerformance($routing->load(['product', 'sku', 'applicabilities.item:id,item_code,item_name,spec,item_type,management_scope', 'applicabilities.category:id,category_code,category_name', 'operations.operation']));
+            return $this->withoutStandards($routing->load(['product', 'sku', 'applicabilities.item:id,item_code,item_name,spec,item_type,management_scope', 'applicabilities.category:id,category_code,category_name', 'operations.operation']));
         });
     }
 
@@ -341,8 +340,7 @@ class ProductionMasterDataService
             $copiedBySequence = collect();
             foreach ($source->operations as $row) {
                 $newRow = $copy->operations()->create($row->only([
-                    'operation_id', 'sequence', 'parameters', 'is_key_operation', 'remark', 'standard_minutes',
-                    'setup_standard_minutes', 'unit_standard_minutes',
+                    'operation_id', 'sequence', 'parameters', 'is_key_operation', 'remark',
                     'output_mode', 'quality_mode', 'work_mode', 'allow_continue_without_warehouse',
                     'production_stage_id', 'execution_context', 'shipment_operation_type', 'packaging_scheme_id', 'packaging_materials',
                 ]));
@@ -362,12 +360,7 @@ class ProductionMasterDataService
             foreach ($source->applicabilities()->get() as $scope) {
                 $copy->applicabilities()->create($scope->only(['scope_type', 'item_id', 'item_category_id', 'scope_key']));
             }
-            // 新版本沿用来源路线指定的提成模板；未指定的继续走默认模板。
-            $binding = ProductionPerformanceBinding::query()->where('binding_key', ProductionPerformanceBinding::routingKey((int) $source->id))->first();
-            if ($binding) ProductionPerformanceBinding::query()->create(['binding_key' => ProductionPerformanceBinding::routingKey((int) $copy->id),
-                'routing_id' => $copy->id, 'template_id' => $binding->template_id,
-                'created_by_legacy_id' => $this->userId($user), 'updated_by_legacy_id' => $this->userId($user)]);
-            return $this->withPerformance($copy->load(['product', 'sku', 'applicabilities.item:id,item_code,item_name,spec,item_type,management_scope', 'applicabilities.category:id,category_code,category_name', 'operations.operation']));
+            return $this->withoutStandards($copy->load(['product', 'sku', 'applicabilities.item:id,item_code,item_name,spec,item_type,management_scope', 'applicabilities.category:id,category_code,category_name', 'operations.operation']));
         });
     }
 
@@ -488,12 +481,9 @@ class ProductionMasterDataService
         ];
     }
 
-    /** 比例只来自提成模板（路线指定或默认），路线工序上的旧比例列不再读取；无权限时由控制器整体脱敏。 */
-    private function withPerformance(ProductionRouting $routing): ProductionRouting
+    /** 路线不再保存工时和提成：工时与比例在使用该路线的 BOM 里按节点维护（BomOperationStandardService）。 */
+    private function withoutStandards(ProductionRouting $routing): ProductionRouting
     {
-        $resolved = app(ProductionPerformanceRateResolver::class)->forRouting((int) $routing->id);
-        $routing->operations->each(fn ($row) => $row->setAttribute('performance_rate', $resolved['rates'][(int) $row->operation_id] ?? null));
-        $routing->setRelation('performance', collect(['template' => $resolved['template'], 'source' => $resolved['source'], 'rates' => (object) $resolved['rates']]));
         return $routing;
     }
 
@@ -518,7 +508,6 @@ class ProductionMasterDataService
     private function routingSnapshot(ProductionRouting $routing): array
     {
         $routing->loadMissing(['product', 'sku', 'operations.operation', 'operations.materialSupplyRules', 'operations.stage', 'operations.packagingScheme']);
-        $performance = app(ProductionPerformanceRateResolver::class)->forRouting((int) $routing->id);
         return [
             'routing_id' => (int) $routing->id, 'routing_no' => $routing->routing_no,
             'routing_name' => $routing->routing_name, 'version' => (int) $routing->version,
@@ -528,8 +517,6 @@ class ProductionMasterDataService
             'snapshot_scope' => 'complete_route',
             'operation_count' => $routing->operations->count(),
             'production_operation_count' => $routing->operations->filter(fn ($row) => ($row->execution_context ?: 'production') === 'production')->count(),
-            // 生成时所用的提成模板（null=未配置模板，不计提成）；工单/包装作业按此快照，模板后改不追溯。
-            'performance_template' => $performance['template'] ? $performance['template'] + ['source' => $performance['source']] : null,
             'operations' => $routing->operations->map(fn ($row) => [
                 'routing_operation_id' => (int) $row->id, 'operation_id' => (int) $row->operation_id,
                 'operation_no' => $row->operation?->operation_no, 'operation_name' => $row->operation?->operation_name,
@@ -542,14 +529,12 @@ class ProductionMasterDataService
                 'shipment_operation_type' => ($row->execution_context ?: 'production') === 'shipment' ? ($row->shipment_operation_type ?: 'packing') : null,
                 'packaging_scheme_id' => $row->packaging_scheme_id ? (int) $row->packaging_scheme_id : null,
                 'packaging_scheme_code' => $row->packagingScheme?->code, 'packaging_scheme_name' => $row->packagingScheme?->name,
-                'performance_rate' => $performance['rates'][(int) $row->operation_id] ?? null,
+                // 工时与比例由工单规划按 BOM 节点设置写入（WorkOrderPlanBuilder::applyBomStandards）。
+                'performance_rate' => null,
                 'packaging_materials' => (array) ($row->packaging_materials ?? []),
                 'auto_assignment_enabled' => (bool) $row->operation?->auto_assignment_enabled,
-                'standard_minutes' => $row->standard_minutes === null ? null : (float) $row->standard_minutes,
-                'setup_standard_minutes' => (float) ($row->setup_standard_minutes ?? 0),
-                'unit_standard_minutes' => $row->unit_standard_minutes === null
-                    ? ($row->standard_minutes === null ? null : (float) $row->standard_minutes)
-                    : (float) $row->unit_standard_minutes,
+                'setup_standard_minutes' => null,
+                'unit_standard_minutes' => null,
                 'output_mode' => $row->output_mode ?: 'flow_only',
                 'quality_mode' => $row->quality_mode ?: 'none',
                 'work_mode' => $row->work_mode ?: 'manual',
@@ -575,8 +560,8 @@ class ProductionMasterDataService
         foreach ($rows as &$row) {
             $old = isset($row['id']) ? $previous->get((int) $row['id']) : $previous->first(fn ($node) => (int) $node->sequence === (int) $row['sequence'] && (int) $node->operation_id === (int) $row['operation_id']);
             if (isset($row['id']) && ! $old) throw ValidationException::withMessages(['operations' => '工序明细标识不属于当前草稿路线。']);
-            // 提成比例只能通过提成模板指定，路线保存不再写比例。
-            unset($row['performance_rate']);
+            // 工时与提成在 BOM 里按节点维护，路线保存不再接受这些字段。
+            unset($row['performance_rate'], $row['standard_minutes'], $row['setup_standard_minutes'], $row['unit_standard_minutes']);
             $row['execution_context'] = $row['execution_context'] ?? 'production';
             $row['shipment_operation_type'] = $row['execution_context'] === 'shipment' ? ($row['shipment_operation_type'] ?? 'packing') : null;
             if ($row['execution_context'] === 'shipment' && ! in_array($row['shipment_operation_type'], ['water_test', 'packing', 'loading'], true)) throw ValidationException::withMessages(['operations' => '请选择试水、打包或装车作业类型。']);
@@ -617,12 +602,13 @@ class ProductionMasterDataService
         // 已生效路线只能复制新版本，历史执行快照不会进入此重建路径。
         $operationIds = $routing->operations()->pluck('id');
         DB::table('erp_routing_operation_material_supply_rules')->whereIn('routing_operation_id', $operationIds)->delete();
+        // 草稿路线重建节点后旧节点 ID 失效：引用这些节点的 BOM 工时提成设置一并清除，需在 BOM 里重新核对。
+        DB::table('erp_bom_operation_standards')->whereIn('routing_operation_id', $operationIds)->delete();
         $routing->operations()->delete();
         $createdBySequence = collect();
         foreach (collect($rows)->sortBy('sequence')->values() as $row) {
             $created = $routing->operations()->create(collect($row)->only([
-                'operation_id', 'sequence', 'parameters', 'is_key_operation', 'remark', 'standard_minutes',
-                'setup_standard_minutes', 'unit_standard_minutes',
+                'operation_id', 'sequence', 'parameters', 'is_key_operation', 'remark',
                 'output_mode', 'quality_mode', 'work_mode', 'allow_continue_without_warehouse',
                 'production_stage_id', 'execution_context', 'shipment_operation_type', 'packaging_scheme_id', 'packaging_materials',
             ])->all() + [

@@ -882,14 +882,14 @@
               </div>
               <div class="spec-kv-row">
                 <span class="kv-label">标准工时</span>
-                <span class="kv-val code-mono font-medium">每台设备 {{ stdHours(wo.standard_minutes_per_unit) }} 小时</span>
+                <span class="kv-val code-mono font-medium">{{ standardMinutesText(wo.standard_minutes_per_unit) }}</span>
               </div>
               <p class="cost-footnote text-muted">
                 {{ hasActualMaterialCost ? (wo.material_cost_collection_complete ? '依据正式收料金额与已结算开料净耗汇总；人工、外协及后到费用仍待制造结算。' : '仅汇总已发生的收料与已结算开料净耗，按计划数量折算每台；其余材料及制造费用仍待归集和结算。') : '按现存加权平均成本或物料标准成本、最近采购价估算；实际材料按正式用料归集，人工及其他费用待制造结算。' }}
               </p>
             </template>
             <div v-else class="text-muted p-2">
-              当前账号无权查看成本金额数据。标准工时：每台设备 {{ stdHours(wo.standard_minutes_per_unit) }} 小时。
+              当前账号无权查看成本金额数据。标准工时：{{ standardMinutesText(wo.standard_minutes_per_unit) }}。
             </div>
           </section>
 
@@ -1325,6 +1325,9 @@ export default {
     },
     stdHours(minutes) {
       return Number((Number(minutes || 0) / 60).toFixed(2))
+    },
+    standardMinutesText(minutes) {
+      return minutes === null || minutes === undefined ? '未设' : `每台设备 ${this.stdHours(minutes)} 小时`
     },
     hours(minutes) {
       return minutes >= 60 ? `${Number((minutes / 60).toFixed(1))} 小时` : `${Math.round(minutes)} 分钟`

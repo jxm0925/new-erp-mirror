@@ -118,7 +118,7 @@ class MasterDataApplicationService
                 }
             }
             if ($entity === 'items') $this->assertItemCategory($data['category_id'] ?? $record->category_id, true);
-            if ($entity === 'items') $this->assertItemBaseUnitChangeAllowed($record, $data['unit_id'] ?? null);
+            if ($entity === 'items') $this->assertItemInventoryIdentityChangeAllowed($record, $data);
             if ($entity === 'items') $this->assertManufacturingStrategy($data, $record);
             if ($entity === 'skus') $this->assertSkuSalesUnitChangeAllowed($record, $data['sales_unit_id'] ?? null);
             $categoryIds = $data['category_ids'] ?? null;
@@ -452,9 +452,13 @@ class MasterDataApplicationService
         abort_if($category->children()->where('category_type', 'item')->exists(), 422, '只能选择末级 Item 类目。');
     }
 
-    private function assertItemBaseUnitChangeAllowed(Model $record, ?int $newUnitId): void
+    private function assertItemInventoryIdentityChangeAllowed(Model $record, array $data): void
     {
-        if (!$newUnitId || (int) $record->unit_id === (int) $newUnitId) return;
+        $unitChanged = isset($data['unit_id']) && (int) $record->unit_id !== (int) $data['unit_id'];
+        $modeChanged = isset($data['material_management_mode']) && $record->materialManagementMode() !== $data['material_management_mode'];
+        $shapeChanged = isset($data['cutting_mode']) && $record->cuttingMode() !== $data['cutting_mode']
+            && ($record->materialManagementMode() === 'physical' || ($data['material_management_mode'] ?? null) === 'physical');
+        if (! $unitChanged && ! $modeChanged && ! $shapeChanged) return;
         $itemId = (int) $record->getKey();
         $references = [
             ['erp_inventory_balances', 'item_id'],
@@ -464,11 +468,15 @@ class MasterDataApplicationService
             ['erp_purchase_order_items', 'item_id'],
             ['erp_purchase_receipt_items', 'item_id'],
             ['erp_sales_order_lines', 'item_id'],
+            ['erp_material_physicals', 'item_id'],
         ];
         foreach ($references as [$table, $column]) {
             if (DB::table($table)->where($column, $itemId)->exists()) {
-                abort(422, '该物料已存在库存或正式业务引用，库存基本单位不能直接修改。');
+                abort(422, '该物料已存在库存或业务引用，不能直接修改库存基本单位、逐件实物编码管理或实物下料类型。');
             }
+        }
+        if (DB::table('erp_mfg_cutting_batches')->whereJsonContains('input_lines', ['item_id' => $itemId])->exists()) {
+            abort(422, '该物料已有开料记录，不能直接修改库存基本单位或逐件实物编码管理。');
         }
     }
 

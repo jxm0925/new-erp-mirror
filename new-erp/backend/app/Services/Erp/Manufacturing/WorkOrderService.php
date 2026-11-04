@@ -713,11 +713,15 @@ final class WorkOrderService
             if (abs($qty - round($qty)) > 0.00001) $plan['block_reasons'][] = '车间按一台台设备报工，工单数量必须是整数，请调整数量';
             elseif ($qty > self::UNIT_LIMIT) $plan['block_reasons'][] = '一张工单最多 '.self::UNIT_LIMIT.' 台设备，请拆成几张工单';
         }
+        // 整套提成冻结：子工单工序计酬一律回到这张工单的 performance_plan 按位置路径查（见 PerformancePlanRateService）。
+        $planBomId = (int) ($bom['id'] ?? 0);
+        $planBom = $planBomId ? \App\Models\Erp\Bom::query()->find($planBomId) : null;
         $wo->update([
             'bom_id' => $bom['id'] ?? $bomId, 'bom_no' => $bom['bom_no'] ?? null, 'bom_version' => isset($bom['version']) ? (string) $bom['version'] : null,
             'bom_snapshot' => $bom, 'routing_id' => $routing['routing_id'] ?? $routingId, 'routing_no' => $routing['routing_no'] ?? null,
             'routing_name' => $routing['routing_name'] ?? null, 'routing_version' => $routing['version'] ?? null,
             'routing_snapshot' => $routing,
+            'performance_plan' => $planBom ? app(\App\Services\Erp\BomPositionPerformanceService::class)->freezePlan($planBom) : null,
             'block_reason' => $plan['block_reasons'] ? implode('；', $plan['block_reasons']) : null,
         ]);
         $opIds = [];
@@ -727,8 +731,8 @@ final class WorkOrderService
                 'sequence' => $op['sequence'], 'operation_no' => $op['operation_no'], 'operation_name' => $op['operation_name'] ?: '工序',
                 'execution_context' => $op['execution_context'], 'production_stage_id' => $op['production_stage_id'], 'stage_name' => $op['stage_name'],
                 'work_mode' => $op['work_mode'], 'output_mode' => $op['output_mode'], 'quality_mode' => $op['quality_mode'],
-                'is_key_operation' => $op['is_key_operation'], 'setup_standard_minutes' => $op['setup_standard_minutes'] ?? 0,
-                'unit_standard_minutes' => $op['unit_standard_minutes'] ?? 0, 'performance_rate' => $op['performance_rate'],
+                'is_key_operation' => $op['is_key_operation'], 'setup_standard_minutes' => $op['setup_standard_minutes'] ?? null,
+                'unit_standard_minutes' => $op['unit_standard_minutes'] ?? null, 'performance_rate' => $op['performance_rate'] ?? null,
                 'packaging_scheme_name' => $op['packaging_scheme_name'], 'status' => 'pending',
             ])->id;
         }

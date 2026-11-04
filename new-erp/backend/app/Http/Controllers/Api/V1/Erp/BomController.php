@@ -12,6 +12,7 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 
 class BomController extends Controller
@@ -19,6 +20,7 @@ class BomController extends Controller
     private const RELATIONS = [
         'product', 'sku.product', 'outputItem.unit', 'items.componentItem.category', 'items.componentItem.unit.standardUnit',
         'items.unit.standardUnit', 'items.operationBinding.operation:id,operation_no,operation_name', 'sourceProduct', 'sourceSku', 'sourceStandardBom', 'logs',
+        'routing:id,routing_no,routing_name,version,status',
     ];
 
     public function index(Request $request)
@@ -66,7 +68,9 @@ class BomController extends Controller
         $this->assertProductionTarget($payload);
         $this->assertNoCycleForCandidate((int) $payload['output_item_id'], $payload['items']);
         $operatorId = (int) $operator->legacy_id;
-        return DB::transaction(function () use ($payload, $operatorId) {
+        $canEditRate = $this->canPerformance($request, 'edit');
+        return DB::transaction(function () use ($payload, $operatorId, $operator, $canEditRate, $request) {
+            $this->standards()->assertRouting($payload['routing_id'] ?? null, (int) $payload['output_item_id']);
             $numbers = app(DocumentNumberService::class);
             $bomNo = $numbers->reservedNumber($payload['reservation_token'], 'bom', $operatorId, $payload['creation_session_id']);
             $bom = Bom::create($this->mainPayload($payload) + [
@@ -77,10 +81,12 @@ class BomController extends Controller
                 'is_default' => false,
             ]);
             $this->saveItems($bom, $payload['items']);
+            $this->standards()->save($bom, $payload['operation_standards'] ?? [], $canEditRate, $operator);
+            if (isset($payload['position_performance'])) $this->positionPerformance()->save($bom->fresh('items'), $payload['position_performance'], $canEditRate, $operator);
             $this->assertNoCycle($bom->fresh(['items.componentItem']));
             $numbers->consume($payload['reservation_token'], 'bom', $bomNo, $operatorId, 'bom', $bom->id);
             $this->log($bom, 'create', '新增 BOM 草稿', $operatorId);
-            return response()->json(['message' => 'BOM 已保存为草稿', 'data' => $bom->fresh(self::RELATIONS)], 201);
+            return response()->json(['message' => 'BOM 已保存为草稿', 'data' => $this->withStandards($request, $bom->fresh(self::RELATIONS))], 201);
         }, 5);
     }
 
@@ -99,29 +105,36 @@ class BomController extends Controller
         if ($request->input('deleted') === 'only') $query->onlyTrashed();
         $bom = $query->findOrFail($id);
         $bom->setAttribute('version_history', $this->versionHistory($bom));
-        return response()->json($bom);
+        return response()->json($this->withStandards($request, $bom));
     }
 
     public function update(Request $request, int $id)
     {
         $operator = $this->authorizePermission($request, 'bom.manage.edit');
         $payload = $this->validateBom($request, $id);
-        return DB::transaction(function () use ($id, $payload, $operator) {
+        $canEditRate = $this->canPerformance($request, 'edit');
+        return DB::transaction(function () use ($id, $payload, $operator, $canEditRate, $request) {
             $bom = Bom::query()->lockForUpdate()->findOrFail($id);
             $reopen = $bom->status === 'inactive';
             abort_unless($reopen || $bom->status === 'draft', 422, '只有草稿或停用 BOM 可以编辑。');
             abort_if($bom->submitted_at && (! $reopen || $bom->audit_status === 'pending'), 422, 'BOM 已提交审核，不能继续编辑；如需修改请先驳回或复制新版本。');
             $this->assertProductionTarget($payload);
             $this->assertNoCycleForCandidate((int) $payload['output_item_id'], $payload['items'], $bom->id);
+            $this->standards()->assertRouting($payload['routing_id'] ?? null, (int) $payload['output_item_id']);
             // 停用版本修改后必须重新提交审核，不能沿用修改前的审批结论。
             $state = $reopen ? ['status' => 'draft', 'audit_status' => 'pending', 'submitted_at' => null, 'is_default' => false] : [];
+            $previousPositions = $canEditRate && isset($payload['position_performance'])
+                ? $this->positionPerformance()->tree($bom, false)['positions'] : [];
             $bom->update($this->mainPayload($payload) + $state + ['updated_by' => $operator->legacy_id]);
             // 旧明细可能已被下料产出引用，仅软删并以新行保存当前明细。
             BomItem::where('bom_id', $bom->id)->delete();
             $this->saveItems($bom, $payload['items']);
+            // 旧客户端不提交工时提成时保留原设置；换路线时由服务删除不属于新路线的节点设置。
+            $this->standards()->save($bom, $payload['operation_standards'] ?? [], $canEditRate, $operator);
+            if (isset($payload['position_performance'])) $this->positionPerformance()->save($bom->fresh('items'), $payload['position_performance'], $canEditRate, $operator, $previousPositions);
             $this->assertNoCycle($bom->fresh(['items.componentItem']));
             $this->log($bom, 'update', $reopen ? '编辑停用 BOM，已转为草稿，须重新提交审核。' : '编辑 BOM 草稿', (int) $operator->legacy_id);
-            return response()->json(['message' => $reopen ? 'BOM 已保存为草稿，请重新提交审核' : 'BOM 已更新', 'data' => $bom->fresh(self::RELATIONS)]);
+            return response()->json(['message' => $reopen ? 'BOM 已保存为草稿，请重新提交审核' : 'BOM 已更新', 'data' => $this->withStandards($request, $bom->fresh(self::RELATIONS))]);
         }, 5);
     }
 
@@ -231,7 +244,7 @@ class BomController extends Controller
             'bom_name' => 'nullable|string|max:160',
             'output_item_id' => 'nullable|integer|exists:erp_items,id',
         ]);
-        return DB::transaction(function () use ($id, $data, $operator) {
+        return DB::transaction(function () use ($id, $data, $operator, $request) {
             $source = Bom::with('items.operationBinding')->lockForUpdate()->findOrFail($id);
             $this->assertFactoryBom($source);
             // 指定其他产出物料时为“复制到其他物料”：同类不同规格先复制再改尺寸，不带产品/SKU 限定。
@@ -250,6 +263,8 @@ class BomController extends Controller
                 'product_id' => $crossItem ? null : $source->product_id,
                 'sku_id' => $crossItem ? null : $source->sku_id,
                 'output_item_id' => $targetItemId,
+                // 复制到其他物料时路线可能不适用，不带路线和工时提成，需重新选择。
+                'routing_id' => $crossItem ? null : $source->routing_id,
                 'bom_type' => $source->bom_type,
                 'version' => $data['version'] ?? ($crossItem ? 'V1.0' : $this->nextVersion($source->version)),
                 'is_default' => false,
@@ -268,11 +283,14 @@ class BomController extends Controller
             $allowedOperations = app(\App\Services\Erp\BomOperationBindingService::class)->allowedOperationIds($targetItemId,
                 $source->items->pluck('operationBinding.operation_id')->filter()->all());
             $unbound = [];
+            $uidMap = [];
             foreach ($source->items as $line) {
+                $newUid = (string) Str::uuid();
+                if ($line->position_uid) $uidMap[$line->position_uid] = $newUid;
                 $created = BomItem::create($line->only([
-                    'line_no', 'component_item_id', 'component_item_code', 'component_item_name',
+                    'line_no', 'component_item_id', 'component_item_code', 'component_item_name', 'child_bom_id',
                     'cut_length_mm', 'cut_width_mm', 'cut_thickness_mm', 'allow_cut_rotation', 'piece_qty', 'cutting_quantity_snapshot', 'qty', 'unit_id', 'loss_rate', 'fixed_qty', 'replaceable', 'remark',
-                ]) + ['bom_id' => $copy->id]);
+                ]) + ['bom_id' => $copy->id, 'position_uid' => $newUid]);
                 if (! $line->operationBinding) continue;
                 if (in_array((int) $line->operationBinding->operation_id, $allowedOperations, true)) {
                     BomItemOperation::create(['bom_item_id' => $created->id, 'operation_id' => $line->operationBinding->operation_id]);
@@ -280,9 +298,13 @@ class BomController extends Controller
                     $unbound[] = $line->component_item_name;
                 }
             }
+            if (! $crossItem) {
+                $this->standards()->copy($source, $copy);
+                $this->positionPerformance()->copy($source, $copy, $uidMap);
+            }
             $unboundNote = $unbound ? '；物料 '.implode('、', array_unique($unbound)).' 原指定的用料工序不在当前适用路线中，已改按路线规则，请确认' : '';
             $this->log($copy, 'copy_version', ($crossItem ? "由 {$source->bom_no} 复制到物料 {$targetItem->item_code}" : "由 {$source->bom_no} 复制为新版本").$unboundNote, (int) $operator->legacy_id);
-            return response()->json(['message' => ($crossItem ? '已复制到所选物料，生成草稿' : '已复制为新版本草稿').$unboundNote, 'data' => $copy->fresh(self::RELATIONS), 'unbound_component_names' => array_values(array_unique($unbound))], 201);
+            return response()->json(['message' => ($crossItem ? '已复制到所选物料，生成草稿' : '已复制为新版本草稿').$unboundNote, 'data' => $this->withStandards($request, $copy->fresh(self::RELATIONS)), 'unbound_component_names' => array_values(array_unique($unbound))], 201);
         }, 5);
     }
 
@@ -354,6 +376,83 @@ class BomController extends Controller
         ]);
     }
 
+    public function exportOperationStandards(Request $request)
+    {
+        $this->authorizePermission($request, 'bom.manage.view');
+        $data = $request->validate(['bom_ids' => 'required|array|min:1|max:200', 'bom_ids.*' => 'integer|min:1|distinct']);
+        return response()->json($this->batchStandards()->export($data['bom_ids'], $this->canPerformance($request, 'view')));
+    }
+
+    public function batchOperationStandardsPreview(Request $request)
+    {
+        $this->authorizePermission($request, 'bom.manage.edit');
+        $data = $this->validateBatchStandards($request);
+        $this->checkBatchRatePermission($request, $data);
+        return response()->json($this->batchStandards()->preview($data));
+    }
+
+    public function batchOperationStandardsApply(Request $request)
+    {
+        $user = $this->authorizePermission($request, 'bom.manage.edit');
+        $data = $this->validateBatchStandards($request);
+        $this->checkBatchRatePermission($request, $data);
+        return response()->json($this->batchStandards()->apply($data, $user));
+    }
+
+    public function importOperationStandardsPreview(Request $request)
+    {
+        $this->authorizePermission($request, 'bom.manage.edit');
+        $rows = $this->validateImportStandards($request);
+        return response()->json($this->batchStandards()->importPreview($rows, $this->canPerformance($request, 'edit')));
+    }
+
+    public function importOperationStandardsApply(Request $request)
+    {
+        $user = $this->authorizePermission($request, 'bom.manage.edit');
+        $rows = $this->validateImportStandards($request);
+        $result = $this->batchStandards()->importApply($rows, $this->canPerformance($request, 'edit'), $user);
+        if (! $result['ok']) return response()->json(array_diff_key($result, ['ok' => 1]), 422);
+        return response()->json(array_diff_key($result, ['ok' => 1]));
+    }
+
+    private function validateBatchStandards(Request $request): array
+    {
+        $data = $request->validate([
+            'bom_ids' => 'required|array|min:1|max:100', 'bom_ids.*' => 'integer|min:1|distinct',
+            'source_type' => 'required|in:template,bom',
+            'template_id' => 'required_if:source_type,template|integer|min:1',
+            'source_bom_id' => 'required_if:source_type,bom|integer|min:1',
+            'scope' => 'required|array|min:1', 'scope.*' => 'in:minutes,rates',
+            'overwrite' => 'nullable|boolean',
+        ]);
+        if ($data['source_type'] === 'template' && ! in_array('rates', $data['scope'], true)) {
+            abort(422, '提成模板来源只能写入提成设置。');
+        }
+        $data['overwrite'] = (bool) ($data['overwrite'] ?? false);
+        return $data;
+    }
+
+    private function checkBatchRatePermission(Request $request, array $data): void
+    {
+        abort_if(in_array('rates', $data['scope'], true) && ! $this->canPerformance($request, 'edit'), 403, '无提成编辑权限');
+    }
+
+    private function validateImportStandards(Request $request): array
+    {
+        return $request->validate([
+            'rows' => 'required|array|min:1|max:2000',
+            'rows.*.bom_no' => 'required|string|max:80', 'rows.*.version_token' => 'nullable|string|max:40',
+            'rows.*.routing_operation_id' => 'required|integer|min:1',
+            'rows.*.setup_minutes' => 'nullable|numeric|min:0|max:999999', 'rows.*.unit_minutes' => 'nullable|numeric|min:0|max:999999',
+            'rows.*.performance_mode' => 'nullable|string|max:20', 'rows.*.performance_rate' => 'nullable|numeric|min:0|max:1',
+        ])['rows'];
+    }
+
+    private function batchStandards(): \App\Services\Erp\BomOperationStandardBatchService
+    {
+        return app(\App\Services\Erp\BomOperationStandardBatchService::class);
+    }
+
     private function validateBom(Request $request, ?int $id = null): array
     {
         $data = $request->validate([
@@ -364,6 +463,19 @@ class BomController extends Controller
             'product_id' => 'nullable|required_with:sku_id|exists:erp_products,id',
             'sku_id' => 'nullable|required_with:product_id|exists:erp_skus,id',
             'output_item_id' => 'required|exists:erp_items,id',
+            'routing_id' => 'nullable|integer|exists:erp_production_routings,id',
+            'operation_standards' => 'sometimes|array|max:200',
+            'operation_standards.*.routing_operation_id' => 'required|integer|min:1',
+            'operation_standards.*.setup_minutes' => 'nullable|numeric|min:0|max:999999',
+            'operation_standards.*.unit_minutes' => 'nullable|numeric|min:0|max:999999',
+            'operation_standards.*.performance_mode' => 'sometimes|nullable|in:inherit,override,zero',
+            'operation_standards.*.performance_rate' => 'sometimes|nullable|numeric|min:0|max:1',
+            'position_performance' => 'sometimes|array|max:2000',
+            'position_performance.*.position_path' => 'required|string|max:512',
+            'position_performance.*.operation_id' => 'required|integer',
+            'position_performance.*.occurrence' => 'required|integer|min:1',
+            'position_performance.*.performance_mode' => 'required|in:inherit,override,zero',
+            'position_performance.*.performance_rate' => 'nullable|numeric|min:0|max:1',
             'bom_type' => 'required|in:standard,custom,trial',
             'version' => 'required|string|max:40',
             'effective_date' => 'nullable|date',
@@ -375,6 +487,8 @@ class BomController extends Controller
             'remark' => 'nullable|string',
             'items' => 'required|array|min:1',
             'items.*.line_no' => 'nullable|integer|min:1',
+            'items.*.position_uid' => 'nullable|string|uuid',
+            'items.*.child_bom_id' => ['nullable', 'integer', Rule::exists('erp_boms', 'id')->whereNull('deleted_at')],
             'items.*.component_item_id' => 'required|exists:erp_items,id',
             'items.*.cutting_quantity_basis' => 'nullable|in:dimensions_pieces,total_length',
             'items.*.total_length_mm' => 'nullable|numeric|min:0.01|max:9999999999.99',
@@ -425,10 +539,40 @@ class BomController extends Controller
         return $user;
     }
 
+    private function standards(): \App\Services\Erp\BomOperationStandardService
+    {
+        return app(\App\Services\Erp\BomOperationStandardService::class);
+    }
+
+    private function positionPerformance(): \App\Services\Erp\BomPositionPerformanceService
+    {
+        return app(\App\Services\Erp\BomPositionPerformanceService::class);
+    }
+
+    /** 提成权限：超级管理员照常拥有；编辑同时要求查看。 */
+    private function canPerformance(Request $request, string $level): bool
+    {
+        $auth = app(AuthContextService::class);
+        $user = $auth->currentUser($request);
+        if (! $user) return false;
+        if ($auth->isSuperAdmin($user)) return true;
+        $codes = $auth->permissionCodes($user);
+        $view = in_array('master.bom.performance.view', $codes, true);
+        return $level === 'view' ? $view : $view && in_array('master.bom.performance.edit', $codes, true);
+    }
+
+    private function withStandards(Request $request, Bom $bom): Bom
+    {
+        $bom->setAttribute('operation_standards', $this->standards()->describe($bom, $this->canPerformance($request, 'view')));
+        $bom->setAttribute('performance_permissions', ['view' => $this->canPerformance($request, 'view'), 'edit' => $this->canPerformance($request, 'edit')]);
+        $bom->setAttribute('position_performance', $this->positionPerformance()->tree($bom, $this->canPerformance($request, 'view')));
+        return $bom;
+    }
+
     private function mainPayload(array $payload): array
     {
         return collect($payload)->only([
-            'bom_name', 'product_id', 'sku_id', 'output_item_id', 'bom_type', 'version',
+            'bom_name', 'product_id', 'sku_id', 'output_item_id', 'routing_id', 'bom_type', 'version',
             'effective_date', 'expire_date', 'source_product_id', 'source_sku_id',
             'source_standard_bom_id', 'custom_description', 'remark',
         ])->all();
@@ -448,6 +592,8 @@ class BomController extends Controller
             return ((int) $line['component_item_id']).'|'.$length.'|'.number_format((float) ($line['cut_width_mm'] ?? 0), 2, '.', '').'|'.number_format((float) ($line['cut_thickness_mm'] ?? 0), 2, '.', '');
         })->filter(fn (int $count) => $count > 1);
         abort_if($duplicates->isNotEmpty(), 422, '同一 BOM 中相同物料与相同下料尺寸不能重复；请合并件数。');
+        // 位置标识跨编辑沿用（编辑会软删旧行另存新行），重复或缺失时生成新的；行号只用于显示排序。
+        $usedUids = [];
         foreach (array_values($items) as $index => $line) {
             abort_if((int) $line['component_item_id'] === (int) $bom->output_item_id, 422, 'BOM 组成物料不能等于产出物料。');
             $item = Item::with('unit')->lockForUpdate()->findOrFail($line['component_item_id']);
@@ -484,10 +630,19 @@ class BomController extends Controller
                 $fixed = (float) ($line['fixed_qty'] ?? 0);
                 abort_if(abs($fixed - round($fixed, 4)) > 0.00000001 || $fixed > 9999999999.9999, 422, '下料固定用量最多保留四位小数。');
             }
+            $childBomId = (int) ($line['child_bom_id'] ?? 0) ?: null;
+            if ($childBomId && ! Bom::query()->whereKey($childBomId)->where('output_item_id', $item->id)->exists()) {
+                abort(422, "半成品 {$item->item_name} 指定的子 BOM 不是该物料的 BOM。");
+            }
             $operationId = (int) ($line['operation_id'] ?? 0);
+            $uid = strtolower((string) ($line['position_uid'] ?? ''));
+            if ($uid === '' || isset($usedUids[$uid])) $uid = (string) Str::uuid();
+            $usedUids[$uid] = true;
             $created = BomItem::create([
                 'bom_id' => $bom->id,
                 'line_no' => $line['line_no'] ?? (($index + 1) * 10),
+                'position_uid' => $uid,
+                'child_bom_id' => $childBomId,
                 'component_item_id' => $item->id,
                 'component_item_code' => $item->item_code,
                 'component_item_name' => $item->item_name,

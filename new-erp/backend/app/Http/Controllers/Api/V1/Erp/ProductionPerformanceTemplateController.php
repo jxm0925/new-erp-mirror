@@ -49,33 +49,24 @@ class ProductionPerformanceTemplateController extends Controller
         return response()->json(['message' => '提成模板已删除。']);
     }
 
-    public function preview(Request $request, int $id, ProductionPerformanceTemplateService $service)
-    {
-        $this->user($request);
-        $data = $request->validate(['routing_ids' => 'required|array|min:1|max:50', 'routing_ids.*' => 'integer|min:1|distinct']);
-        return response()->json(['data' => $service->preview($id, array_map('intval', $data['routing_ids']))]);
-    }
-
-    public function apply(Request $request, int $id, ProductionPerformanceTemplateService $service)
+    public function bindCategories(Request $request, int $id, ProductionPerformanceTemplateService $service)
     {
         $user = $this->user($request);
-        $data = $request->validate(['routing_ids' => 'required|array|min:1|max:50', 'routing_ids.*' => 'integer|min:1|distinct']);
-        $result = $service->apply($id, array_map('intval', $data['routing_ids']), $user);
-        return response()->json(['message' => "已指定 {$result['routings']} 条路线使用本模板（{$result['operations']} 道工序比例有变化）；已生成的工单仍按原比例。", 'data' => $result]);
+        $data = $request->validate(['category_ids' => 'required|array|min:1|max:100', 'category_ids.*' => 'integer|min:1|distinct']);
+        return response()->json(['message' => '已指定商品分类使用本模板；已生成的工单仍按原比例。', 'data' => $service->bindCategories($id, array_map('intval', $data['category_ids']), $user)]);
     }
 
-    public function unbind(Request $request, int $id, ProductionPerformanceTemplateService $service)
+    public function unbindCategories(Request $request, int $id, ProductionPerformanceTemplateService $service)
     {
         $user = $this->user($request);
-        $data = $request->validate(['routing_ids' => 'required|array|min:1|max:50', 'routing_ids.*' => 'integer|min:1|distinct']);
-        $result = $service->unbind($id, array_map('intval', $data['routing_ids']), $user);
-        return response()->json(['message' => "已取消 {$result['routings']} 条路线的指定，改按默认模板计提成。", 'data' => $result]);
+        $data = $request->validate(['category_ids' => 'required|array|min:1|max:100', 'category_ids.*' => 'integer|min:1|distinct']);
+        return response()->json(['message' => '已取消商品分类的指定，改按上级分类或默认模板计提成。', 'data' => $service->unbindCategories($id, array_map('intval', $data['category_ids']), $user)]);
     }
 
     public function setDefault(Request $request, int $id, ProductionPerformanceTemplateService $service)
     {
         $user = $this->user($request);
-        return response()->json(['message' => '已设为默认提成模板，未指定模板的路线按它计提成；已生成的工单仍按原比例。', 'data' => $service->setDefault($id, $user)]);
+        return response()->json(['message' => '已设为默认提成模板：BOM 未指定、商品分类也未指定模板的工序按它计提成；已生成的工单仍按原比例。', 'data' => $service->setDefault($id, $user)]);
     }
 
     private function payload(Request $request, bool $update = false): array

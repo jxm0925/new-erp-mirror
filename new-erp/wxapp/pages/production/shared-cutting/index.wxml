@@ -44,7 +44,7 @@
     <view wx:for="{{batches}}" wx:key="id" class="mt-card" data-id="{{item.id}}" bindtap="openBatch">
       <view class="mt-row"><text class="mono" style="font-weight: 700;">{{item.batch_no}}</text><text class="mt-tag {{item.status === 'settled' ? 'green' : 'amber'}}">{{item.status === 'issued' ? '切割中 · 待登记余料' : item.status === 'awaiting_confirm' ? '待下料人完成登记' : '已登记结算'}}</text></view>
       <view class="mt-product">{{item.item_name}} <text class="mt-muted">{{item.specification || ''}}</text></view>
-      <view class="mt-muted">投入 {{item.inputText}} {{item.unitText}}<text wx:if="{{item.status === 'settled'}}"> · 净耗 {{item.netText}} {{item.unitText}}<text wx:if="{{item.pool_tracked}}"> · 已备料 {{item.allocatedText}} {{item.unitText}} · 剩余 {{item.leftText}} {{item.unitText}}</text></text></view>
+      <view class="mt-muted">投入 {{item.inputText}}<text wx:if="{{item.status === 'settled'}}"> · 净耗 {{item.netText}} {{item.unitText}}<text wx:if="{{item.pool_tracked}}"> · 已备料 {{item.allocatedText}} {{item.unitText}} · 剩余 {{item.leftText}} {{item.unitText}}</text></text></view>
       <view class="mt-muted">领料人：{{item.issued_by_name}} · {{item.issuedText}}</view>
     </view>
     <view wx:if="{{lastPage > 1}}" class="mt-pager">
@@ -72,11 +72,11 @@
           <view><text class="mono" style="font-weight: 700;">{{item.physical_no || item.batch_no || item.source_key}}</text> <text wx:if="{{item.material_form === 'REMNANT'}}" class="mt-tag blue">余料</text></view>
           <view class="mt-muted">{{item.sizeText}} · {{item.warehouse_name}} / {{item.location_name}}</view>
         </view>
-        <text style="font-weight: 700;">可用 {{item.availableText}} {{item.countUnitText}}</text>
+        <text style="font-weight: 700;">可用 {{item.availableText}}</text>
       </view>
       <view wx:if="{{picked[item.source_key] && item.countable}}" class="ct-line mt-gap">
         <text class="k">本次实际领用</text>
-        <input class="ct-input" type="{{item.unit_kind === 'm' || item.unit_kind === 'm2' || (item.unit_kind === 'root' && !item.physical_material_id) ? 'digit' : 'number'}}" value="{{picked[item.source_key].qty}}" data-key="{{item.source_key}}" bindinput="pickedQtyInput" />
+        <input class="ct-input" type="{{item.unit_kind === 'm' || item.unit_kind === 'm2' ? 'digit' : 'number'}}" value="{{picked[item.source_key].qty}}" data-key="{{item.source_key}}" bindinput="pickedQtyInput" />
         <text>{{item.countUnitText}}</text>
       </view>
       </view>
@@ -115,7 +115,7 @@
         </view>
       </block>
       <block wx:else>
-        <view class="mt-kv"><text class="k">实际投入</text><text class="v">{{batch.inputText}} {{batch.unitText}}</text></view>
+        <view class="mt-kv"><text class="k">实际投入</text><text class="v">{{batch.inputText}}</text></view>
         <block wx:if="{{batch.status === 'settled'}}">
         <view class="mt-kv"><text class="k">实际净耗（投入 − 余料）</text><text class="v">{{batch.netText}} {{batch.unitText}}</text></view>
         <block wx:if="{{batch.pool_tracked}}">

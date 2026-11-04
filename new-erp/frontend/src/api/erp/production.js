@@ -27,9 +27,8 @@ export const getPerformanceTemplate = id => api.get(`/v1/erp/production/performa
 export const createPerformanceTemplate = data => api.post('/v1/erp/production/performance/templates', data)
 export const updatePerformanceTemplate = (id, data) => api.put(`/v1/erp/production/performance/templates/${id}`, data)
 export const deletePerformanceTemplate = id => api.delete(`/v1/erp/production/performance/templates/${id}`)
-export const previewPerformanceTemplate = (id, data) => api.post(`/v1/erp/production/performance/templates/${id}/preview`, data)
-export const applyPerformanceTemplate = (id, data) => api.post(`/v1/erp/production/performance/templates/${id}/apply`, data)
-export const unbindPerformanceTemplate = (id, data) => api.post(`/v1/erp/production/performance/templates/${id}/unbind`, data)
+export const bindPerformanceTemplateCategories = (id, data) => api.post(`/v1/erp/production/performance/templates/${id}/categories`, data)
+export const unbindPerformanceTemplateCategories = (id, data) => api.post(`/v1/erp/production/performance/templates/${id}/categories/unbind`, data)
 export const setDefaultPerformanceTemplate = id => api.post(`/v1/erp/production/performance/templates/${id}/set-default`)
 export const listPerformanceTemplateOperations = params => api.get('/v1/erp/production/performance/template-operations', { params })
 

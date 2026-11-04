@@ -27,7 +27,7 @@
               <el-table-column prop="item_name" label="原材料" min-width="130" />
               <el-table-column label="尺寸 / 面积 / 长度" min-width="170"><template slot-scope="{ row }"><span :class="{ 'cutting-measure': row.mode === 'length' }">{{ sourceSize(row) }}</span></template></el-table-column>
               <el-table-column label="来源" min-width="140"><template slot-scope="{ row }">{{ row.warehouse_name }} / {{ row.location_name }}</template></el-table-column>
-              <el-table-column label="投入" width="120"><template slot-scope="{ row }">{{ row.qty }} {{ sourceUnit(row) }}<div v-if="row.mode === 'length' && row.unit_kind === 'root'" class="cutting-measure">= {{ meters(Number(row.qty) * Number(row.measure_qty)) }}</div></template></el-table-column>
+              <el-table-column label="投入" width="120"><template slot-scope="{ row }">{{ row.qty }} {{ sourceUnit(row) }}<div v-if="row.mode === 'length' && row.unit_kind === 'root'" class="cutting-measure">= {{ meters(Number(row.qty) * Number(row.measure_qty)) }}</div><div v-if="row.unit_kind === 'sheet'">= {{ qty(Number(row.qty) * Number(row.measure_qty)) }} m²</div></template></el-table-column>
             </el-table>
             <div class="cutting-actions"><el-button size="small" :disabled="locked || !selectedSources.length" :loading="previewLoading" @click="calculate(false)">计算建议方案</el-button></div>
             <template v-if="preview">
@@ -74,8 +74,8 @@
             <el-table-column label="物料 / 规格" min-width="170"><template slot-scope="{ row }">{{ row.item_code }} / {{ row.item_name }}<div>{{ row.specification }}</div></template></el-table-column>
             <el-table-column label="实物 / 来源" min-width="180"><template slot-scope="{ row }">{{ row.physical_no || row.batch_no }}<div>{{ row.warehouse_name }} / {{ row.location_name }}</div></template></el-table-column>
             <el-table-column label="尺寸 / 面积 / 长度" min-width="170"><template slot-scope="{ row }"><span :class="{ 'cutting-measure': row.mode === 'length' }">{{ sourceSize(row) }}</span></template></el-table-column>
-            <el-table-column label="可用" width="120"><template slot-scope="{ row }">{{ qty(row.available_qty) }} {{ sourceUnit(row) }}<div v-if="row.mode === 'length' && row.unit_kind === 'root'" class="cutting-measure">共 {{ meters(Number(row.available_qty) * Number(row.measure_qty)) }}</div></template></el-table-column>
-            <el-table-column label="本次投入" width="170"><template slot-scope="{ row }"><div v-if="sourceSelected[row.source_key]" class="cutting-source-quantity"><el-input-number v-model="sourceSelected[row.source_key].qty" size="mini" :min="row.unit_kind === 'm' ? 0.00001 : (row.unit_kind === 'root' && !row.physical_material_id ? 0.0001 : 1)" :max="row.physical_material_id ? 1 : Number(row.available_qty)" :step="row.unit_kind === 'm' ? 0.01 : 1" :precision="row.unit_kind === 'm' ? 5 : (row.unit_kind === 'root' && !row.physical_material_id ? 4 : 0)" :step-strictly="row.unit_kind !== 'm' && (row.unit_kind !== 'root' || !!row.physical_material_id)" :controls="false" /><span>{{ sourceUnit(row) }}</span></div></template></el-table-column>
+            <el-table-column label="可用" width="120"><template slot-scope="{ row }">{{ ['m', 'm2'].includes(row.inventory_unit_kind) ? qty(row.inventory_available_qty) + ' ' + measureUnit(row.inventory_unit_kind) : qty(row.available_qty) + ' ' + sourceUnit(row) }}<div v-if="row.mode === 'length' && row.unit_kind === 'root'" class="cutting-measure">共 {{ meters(Number(row.available_qty) * Number(row.measure_qty)) }}</div><div v-if="['sheet', 'root'].includes(row.unit_kind)">可领 {{ qty(row.available_qty) }} {{ sourceUnit(row) }}</div></template></el-table-column>
+            <el-table-column label="本次投入" width="170"><template slot-scope="{ row }"><div v-if="sourceSelected[row.source_key]" class="cutting-source-quantity"><el-input-number v-model="sourceSelected[row.source_key].qty" size="mini" :min="['m', 'm2'].includes(row.unit_kind) ? 0.0001 : 1" :max="row.physical_material_id ? 1 : Number(row.available_qty)" :step="['m', 'm2'].includes(row.unit_kind) ? 0.01 : 1" :precision="['m', 'm2'].includes(row.unit_kind) ? 4 : 0" :step-strictly="!['m', 'm2'].includes(row.unit_kind)" :controls="false" /><span>{{ sourceUnit(row) }}</span></div></template></el-table-column>
           </el-table>
           <div class="cutting-pager"><el-pagination background :current-page="sourceQuery.page" :page-size="10" :total="sourceTotal" layout="total, prev, pager, next" @current-change="sourcePage" /></div>
         </main>
@@ -194,7 +194,7 @@ export default {
     },
     meters(value) { return Number(Number(value || 0).toFixed(3)) + ' 米' },
     sourceName(key) { const row = (this.preview && this.preview.sources || this.selectedSources).find(row => row.source_key === key); return row ? row.physical_no || row.batch_no || key : key },
-    batchSourceName(key) { const row = (this.batch.input_lines || []).find(row => row.source_key === key); return row ? row.physical_no || row.batch_no || key : key },
+    batchSourceName(key) { const row = (this.batch.input_lines || []).find(row => row.source_key === key); return row ? (row.physical_no || row.batch_no || key) + (['sheet', 'root'].includes(row.unit_kind) ? ' · ' + this.qty(row.qty) + ' ' + this.sourceUnit(row) + '（' + this.qty(row.input_measure) + ' ' + this.measureUnit(row.measure_unit) + '）' : '') : key },
     partName(key) { const row = (this.context && this.context.requirements || []).find(row => row.part_key === key); return row ? row.part_name + ' · ' + this.requirementText(row) : key },
     sourceAssignments(key) { return this.preview.assignments.filter(row => row.source_key === key) },
     openSources() {
@@ -220,16 +220,16 @@ export default {
     searchSources() { this.sourceQuery.page = 1; this.loadSources() },
     sourcePage(page) { this.sourceQuery.page = page; this.loadSources() },
     selectCategory(row) { this.sourceQuery.category_id = row.id; this.searchSources() },
-    toggleSource(row, selected) { if (selected) this.$set(this.sourceSelected, row.source_key, { ...row, qty: row.unit_kind === 'm' ? Number(row.available_qty) : Math.min(1, Number(row.available_qty)) }); else this.$delete(this.sourceSelected, row.source_key) },
+    toggleSource(row, selected) { if (selected) this.$set(this.sourceSelected, row.source_key, { ...row, qty: ['m', 'm2'].includes(row.unit_kind) ? Number(row.available_qty) : Math.min(1, Number(row.available_qty)) }); else this.$delete(this.sourceSelected, row.source_key) },
     confirmSources() {
       const sources = []
       for (const row of Object.values(this.sourceSelected)) {
         const count = Number(row.qty)
-        const fractionalRoot = row.unit_kind === 'root' && !row.physical_material_id
-        if (!Number.isFinite(count) || count <= 0 || (row.unit_kind !== 'm' && !fractionalRoot && !Number.isInteger(count)) || count > (row.physical_material_id ? 1 : Number(row.available_qty))
-          || (fractionalRoot && !/^\d+(?:\.\d{1,4})?$/.test(String(count)))) return this.$message.warning('请核对本次投入张数、根数或长度，管材数量最多四位小数')
-        if (row.unit_kind === 'root') {
-          for (let i = 0; i < count; i++) sources.push({ ...row, original_source_key: row.source_key, source_key: row.source_key + ':' + (i + 1), qty: String(Math.min(1, Number((count - i).toFixed(4)))) })
+        if (!Number.isFinite(count) || count <= 0 || (!['m', 'm2'].includes(row.unit_kind) && !Number.isInteger(count)) || count > (row.physical_material_id ? 1 : Number(row.available_qty))) return this.$message.warning('请核对本次投入数量，整料按整张或整根领用，余料按实际面积或长度领用')
+        const split = !row.physical_material_id && ['root', 'sheet'].includes(row.unit_kind)
+        if (sources.length + (split ? count : 1) > 1000) return this.$message.warning('单次最多选用 1000 条来源，请分批开料')
+        if (split) {
+          for (let i = 0; i < count; i++) sources.push({ ...row, original_source_key: row.source_key, source_key: row.source_key + ':' + (i + 1), qty: '1' })
         } else sources.push({ ...row, original_source_key: row.source_key, qty: String(count) })
       }
       this.selectedSources = sources; this.preview = null; this.planChecked = false; this.planConfirmed = false; this.sourceOpen = false

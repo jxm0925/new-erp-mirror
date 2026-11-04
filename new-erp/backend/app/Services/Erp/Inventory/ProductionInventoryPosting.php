@@ -406,11 +406,16 @@ class ProductionInventoryPosting
                 $balance = InventoryBalance::query()->lockForUpdate()->findOrFail($input['inventory_balance_id']);
                 $item = Item::query()->lockForUpdate()->findOrFail($input['item_id']);
                 $qty = CuttingDecimal::value($input['qty']);
+                // 旧批次的 qty 已是当时库存单位，缺快照时不能按当前主档重新换算。
+                $inventoryQty = CuttingDecimal::value($input['inventory_qty'] ?? $input['qty']);
+                if (bccomp($inventoryQty, bcadd($inventoryQty, '0', 4), 8) !== 0)
+                    throw ValidationException::withMessages(['sources' => '领入面积或长度无法按库存四位小数无损保存，请核对真实尺寸。']);
                 $validBalance = $this->availability->outboundBalanceQuery([(int) $item->id])->where('erp_inventory_balances.id', $balance->id)->exists();
-                $available = min((float) $balance->quantity_available, $this->availability->calculate((float) $balance->quantity_on_hand,
-                    (float) $balance->quantity_locked, (float) $balance->quantity_defective, (float) $balance->quantity_pending));
+                $available = bcsub(bcsub(bcsub((string) $balance->quantity_on_hand, (string) $balance->quantity_locked, 8), (string) $balance->quantity_defective, 8), (string) $balance->quantity_pending, 8);
+                if (bccomp($available, (string) $balance->quantity_available, 8) > 0) $available = (string) $balance->quantity_available;
+                $available = bcsub($available, sprintf('%.4F', \App\Services\Erp\Manufacturing\MaterialDeliveryService::holds()['balances'][(int) $balance->id] ?? 0), 8);
                 $lot = $balance->material_lot_id ? DB::table('erp_material_lots')->where('id', $balance->material_lot_id)->lockForUpdate()->first() : null;
-                if (! $validBalance || (int) $balance->item_id !== (int) $item->id || $available + 0.00000001 < (float) $qty
+                if (! $validBalance || (int) $balance->item_id !== (int) $item->id || (int) $balance->unit_id !== (int) $input['unit_id'] || bccomp($available, $inventoryQty, 8) < 0
                     || ($balance->material_lot_id && ! $lot)
                     || ($lot && ((int) $lot->item_id !== (int) $item->id || $lot->configuration_id || $lot->stage_id || ! in_array($lot->material_form, ['FULL_STOCK', 'STANDARD_LENGTH', 'REMNANT'], true)))) {
                     throw ValidationException::withMessages(['sources' => '所选开料来源不可用或数量已变化，请重新选料。']);
@@ -419,21 +424,26 @@ class ProductionInventoryPosting
                 if ($item->materialManagementMode() === 'physical') {
                     $physical = $this->physicalMaterials->assertWarehousePhysical((int) ($input['physical_material_id'] ?? 0), (int) $item->id, (int) $balance->id);
                     $this->physicalMaterials->assertPhysicalNotInOpenDocument((int) $physical->id);
-                    if (bccomp($qty, '1', 8) !== 0 || bccomp((string) $physical->total_cost, (string) $input['cost_amount'], 4) !== 0) {
-                        throw ValidationException::withMessages(['sources' => '开料板材身份、整张数量或来源成本不一致。']);
+                    if (bccomp($qty, '1', 8) !== 0 || bccomp((string) $physical->total_cost, (string) $input['cost_amount'], 4) !== 0
+                        || (isset($input['inventory_qty']) && bccomp($inventoryQty, $this->physicalMaterials->inventoryQuantity($item, $physical), 8) !== 0)) {
+                        throw ValidationException::withMessages(['sources' => '开料实物身份、整张／整根数量或来源成本不一致。']);
                     }
                     $cost = (string) $physical->total_cost;
                 } else {
                     if ($input['physical_material_id'] ?? null) throw ValidationException::withMessages(['sources' => '普通管材来源不能冒用板材实物身份。']);
                     if ($item->serialTrackingMode() !== 'none') throw ValidationException::withMessages(['sources' => '按序列号管理的原料须先绑定具体序列号，当前开料入口不能按普通数量耗用。']);
-                    $cost = CuttingDecimal::share((string) $balance->inventory_value, (string) $balance->quantity_on_hand, $qty);
+                    $wholeMeasure = isset($input['inventory_qty']) && in_array($input['unit_kind'], ['sheet', 'root'], true)
+                        && in_array($input['inventory_unit_kind'] ?? null, ['m2', 'm'], true);
+                    if ($wholeMeasure ? (bccomp($qty, '1', 8) !== 0 || bccomp($inventoryQty, (string) $input['input_measure'], 8) !== 0) : bccomp($inventoryQty, $qty, 8) !== 0)
+                        throw ValidationException::withMessages(['sources' => '领用张／根数与本批冻结的库存面积／长度不一致。']);
+                    $cost = CuttingDecimal::share((string) $balance->inventory_value, (string) $balance->quantity_on_hand, $inventoryQty);
                     if (bccomp($cost, (string) $input['cost_amount'], 4) !== 0) throw ValidationException::withMessages(['sources' => '开料来源成本已变化，请重新确认。']);
                 }
                 $fact = $this->kernel->apply($transaction, [
                     'item_id' => $item->id, 'warehouse_id' => $balance->warehouse_id, 'location_id' => $balance->location_id,
                     'batch_no' => $balance->batch_no, 'unit_id' => $balance->unit_id, 'material_lot_id' => $balance->material_lot_id,
-                    'change_qty' => bcsub('0', $qty, 8), 'cost_amount' => bcsub('0', $cost, 4),
-                    'unit_cost' => bcdiv($cost, $qty, 8), 'cost_source_type' => $physical ? 'mfg_cutting_physical_total' : 'mfg_cutting_average',
+                    'change_qty' => bcsub('0', $inventoryQty, 8), 'cost_amount' => bcsub('0', $cost, 4),
+                    'unit_cost' => bcdiv($cost, $inventoryQty, 8), 'cost_source_type' => $physical ? 'mfg_cutting_physical_total' : 'mfg_cutting_average',
                     'physical_operation' => $physical ? 'mfg_cutting_issue' : null, 'physical_material_id' => $physical?->id,
                     'cutting_source_key' => $input['source_key'], 'source_type' => 'mfg_cutting_batch', 'source_id' => $batch->id,
                     'remark' => '开料来源 '.$input['source_key'],
@@ -484,7 +494,8 @@ class ProductionInventoryPosting
                     'source_type' => 'mfg_cutting_batch', 'source_id' => $batch->id, 'parent_lot_id' => $input['material_lot_id'] ?: null,
                     'created_at' => now(), 'updated_at' => now(),
                 ]);
-                $qty = in_array($input['unit_kind'], ['root', 'sheet'], true) ? '1.00000000' : $remnant['measure_qty'];
+                $inventoryKind = $input['inventory_unit_kind'] ?? $input['unit_kind'];
+                $qty = in_array($inventoryKind, ['root', 'sheet'], true) ? '1.00000000' : $remnant['measure_qty'];
                 $batchNo = $batch->batch_no.'-R'.($index + 1);
                 $fact = $this->kernel->apply($transaction, [
                     'item_id' => $item->id, 'warehouse_id' => $remnant['warehouse_id'], 'location_id' => $remnant['location_id'],
@@ -501,7 +512,8 @@ class ProductionInventoryPosting
                     $physicalId = $this->physicalMaterials->createManufacturingRemnant($batch, $input, $remnant, $balance, $fact, $operatorId ?? 0);
                 }
                 $lines[$input['source_key']] = ['transaction_item_id' => (int) $fact->id, 'inventory_balance_id' => (int) $balance->id,
-                    'material_lot_id' => $lotId, 'batch_no' => $batchNo, 'physical_material_id' => $physicalId, 'qty' => $qty];
+                    'material_lot_id' => $lotId, 'batch_no' => $batchNo, 'physical_material_id' => $physicalId, 'qty' => $qty,
+                    'inventory_qty' => $qty, 'inventory_unit_kind' => $inventoryKind];
             }
             InventoryPostingLog::create([
                 'source_type' => 'mfg_cutting_batch', 'source_id' => $batch->id, 'source_no' => $batch->batch_no,

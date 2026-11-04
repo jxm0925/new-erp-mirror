@@ -30,6 +30,15 @@
         <el-button size="small" icon="el-icon-share" class="btn-default" @click="$router.push('/bom/expand')">
           BOM 展开算量
         </el-button>
+        <el-button v-if="$can('bom.manage.edit')" size="small" icon="el-icon-set-up" class="btn-default" :disabled="!selected.length" @click="openBatch">
+          批量设置工时提成
+        </el-button>
+        <el-button v-if="$can('bom.manage.view')" size="small" icon="el-icon-download" class="btn-default" :disabled="!selected.length" :loading="exporting" @click="exportStandards">
+          导出工时提成
+        </el-button>
+        <el-button v-if="$can('bom.manage.edit')" size="small" icon="el-icon-upload2" class="btn-default" @click="openImport">
+          导入工时提成
+        </el-button>
         <el-button
           v-if="$can('bom.manage.create')"
           size="small"
@@ -173,7 +182,8 @@
       </div>
 
       <!-- BOM 数据列表表格 -->
-      <el-table :data="rows" border size="small" class="bom-table erp-page-table" v-loading="loading">
+      <el-table :data="rows" border size="small" class="bom-table erp-page-table" v-loading="loading" @selection-change="onSelection">
+        <el-table-column type="selection" width="44" />
         <el-table-column prop="bom_no" label="BOM编号" min-width="150">
           <template slot-scope="{ row }">
             <span class="item-code-chip" :title="row.bom_no">{{ row.bom_no }}</span>
@@ -721,13 +731,134 @@
         <el-button v-if="detailDialog.deleted && detailDialog.data && $can('bom.manage.delete')" size="small" type="success" icon="el-icon-refresh-left" @click="action(detailDialog.data, 'restore')">恢复</el-button>
       </div>
     </el-dialog>
+
+    <!-- 批量设置工时提成 -->
+    <el-dialog
+      :visible.sync="batchDialog.visible"
+      :title="batchDialog.step === 1 ? '批量设置工时提成 · 选择来源' : '批量设置工时提成 · 预览'"
+      width="760px"
+      custom-class="erp-themed-dialog"
+      append-to-body
+      :close-on-click-modal="false"
+    >
+      <template v-if="batchDialog.step === 1">
+        <div class="batch-form">
+          <div class="batch-row">
+            <span class="batch-label">目标 BOM</span>
+            <span>已选 <b>{{ selected.length }}</b> 个：{{ selected.slice(0, 8).map(r => r.bom_no).join('、') }}{{ selected.length > 8 ? ' 等' : '' }}</span>
+          </div>
+          <div class="batch-row">
+            <span class="batch-label">来源</span>
+            <el-radio-group v-model="batchDialog.source_type" size="small" class="perf-mode-group">
+              <el-radio-button label="template">提成模板</el-radio-button>
+              <el-radio-button label="bom">来源 BOM</el-radio-button>
+            </el-radio-group>
+          </div>
+          <div v-if="batchDialog.source_type === 'template'" class="batch-row">
+            <span class="batch-label">提成模板</span>
+            <el-select v-model="batchDialog.template_id" size="small" filterable placeholder="选择提成模板" class="batch-select" :loading="batchDialog.tplLoading">
+              <el-option v-for="t in batchDialog.templates" :key="t.id" :value="t.id" :label="t.template_name + (t.is_default ? '（默认）' : '')" />
+            </el-select>
+          </div>
+          <div v-else class="batch-row">
+            <span class="batch-label">来源 BOM</span>
+            <el-select v-model="batchDialog.source_bom_id" size="small" filterable remote :remote-method="searchSourceBoms" placeholder="输入编号或名称搜索" class="batch-select" :loading="batchDialog.bomLoading">
+              <el-option v-for="b in batchDialog.sourceBoms" :key="b.id" :value="b.id" :label="`${b.bom_no} ${b.bom_name}`" />
+            </el-select>
+          </div>
+          <div class="batch-row">
+            <span class="batch-label">范围</span>
+            <el-checkbox v-model="batchDialog.scopeMinutes" size="small" :disabled="batchDialog.source_type === 'template'">工时</el-checkbox>
+            <el-checkbox v-model="batchDialog.scopeRates" size="small">提成</el-checkbox>
+            <span v-if="batchDialog.source_type === 'template'" class="text-muted small">提成模板只写提成设置</span>
+          </div>
+          <div class="batch-row">
+            <span class="batch-label">覆盖</span>
+            <el-switch v-model="batchDialog.overwrite" size="small" />
+            <span class="text-muted small">默认只填空白项；开启后覆盖已有设置</span>
+          </div>
+        </div>
+      </template>
+      <template v-else>
+        <div class="batch-preview" v-loading="batchDialog.loading">
+          <div v-for="row in batchDialog.preview" :key="row.bom_id" class="batch-bom-block" :class="{ skipped: row.skipped_reason }">
+            <div class="batch-bom-head">
+              <b>{{ row.bom_no || '#' + row.bom_id }}</b>
+              <span>{{ row.bom_name }}</span>
+              <span v-if="row.skipped_reason" class="text-muted small">（跳过：{{ row.skipped_reason }}）</span>
+              <span v-else-if="!row.changes.length" class="text-muted small">（无变化）</span>
+            </div>
+            <table v-if="row.changes && row.changes.length" class="batch-changes-table">
+              <thead><tr><th>工序</th><th>项目</th><th>原值</th><th>新值</th></tr></thead>
+              <tbody>
+                <tr v-for="(c, i) in row.changes" :key="i">
+                  <td>{{ c.operation_name }}</td>
+                  <td>{{ batchFieldText(c.field) }}</td>
+                  <td>{{ batchValueText(c.field, c.from) }}</td>
+                  <td>{{ batchValueText(c.field, c.to) }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="batch-summary">共 {{ batchDialog.summary.boms_changed || 0 }} 个 BOM、{{ batchDialog.summary.nodes_changed || 0 }} 道节点有改动，跳过 {{ batchDialog.summary.skipped || 0 }} 个</div>
+        </div>
+      </template>
+      <span slot="footer">
+        <el-button size="small" @click="batchDialog.step === 1 ? (batchDialog.visible = false) : (batchDialog.step = 1)">{{ batchDialog.step === 1 ? '取消' : '上一步' }}</el-button>
+        <el-button v-if="batchDialog.step === 1" size="small" type="success" :loading="batchDialog.loading" @click="previewBatch">预览</el-button>
+        <el-button v-else size="small" type="success" :loading="batchDialog.loading" :disabled="!batchDialog.summary.boms_changed" @click="applyBatch">确认应用</el-button>
+      </span>
+    </el-dialog>
+
+    <!-- 导入工时提成 -->
+    <el-dialog
+      :visible.sync="importDialog.visible"
+      title="导入工时提成"
+      width="860px"
+      custom-class="erp-themed-dialog"
+      append-to-body
+      :close-on-click-modal="false"
+    >
+      <template v-if="importDialog.step === 1">
+        <el-upload drag action="#" :auto-upload="false" :limit="1" accept=".xlsx,.xls" :on-change="importFile" :on-remove="() => { importDialog.rows = [] }">
+          <i class="el-icon-upload" />
+          <div class="el-upload__text">将文件拖到此处，或<em>点击选择</em></div>
+          <div slot="tip" class="el-upload__tip">支持「导出工时提成」生成的 xlsx；工时按小时、比例按百分比填写，空白表示未设</div>
+        </el-upload>
+        <div v-if="importDialog.error" class="import-error"><i class="el-icon-warning" />{{ importDialog.error }}</div>
+      </template>
+      <template v-else>
+        <div v-if="importDialog.summary" class="import-summary">
+          变更 {{ importDialog.summary.changed || 0 }} 行 · 一致 {{ importDialog.summary.unchanged || 0 }} 行 · 错误 {{ importDialog.summary.errors || 0 }} 行
+        </div>
+        <el-table :data="importDialog.preview" border size="mini" max-height="420" class="bom-table">
+          <el-table-column type="index" label="行号" width="60" align="center" />
+          <el-table-column prop="bom_no" label="BOM编号" min-width="110" />
+          <el-table-column label="工序" min-width="90"><template slot-scope="{ row }">{{ row.operation_name || '-' }}</template></el-table-column>
+          <el-table-column label="状态" width="80" align="center">
+            <template slot-scope="{ row }">
+              <el-tag size="mini" :type="row.status === 'error' ? 'danger' : (row.status === 'changed' ? 'success' : 'info')" effect="plain">{{ { changed: '变更', unchanged: '一致', error: '错误' }[row.status] || row.status }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="变更内容 / 错误" min-width="220">
+            <template slot-scope="{ row }">{{ row.status === 'error' ? row.message : importChangeText(row) }}</template>
+          </el-table-column>
+        </el-table>
+      </template>
+      <span slot="footer">
+        <el-button size="small" @click="importDialog.step === 1 ? (importDialog.visible = false) : (importDialog.step = 1)">{{ importDialog.step === 1 ? '取消' : '上一步' }}</el-button>
+        <el-button v-if="importDialog.step === 1" size="small" type="success" :disabled="!importDialog.rows.length" :loading="importDialog.loading" @click="previewImport">预览</el-button>
+        <el-button v-else size="small" type="success" :loading="importDialog.loading" :disabled="!importCanApply" @click="applyImport">确认导入</el-button>
+      </span>
+    </el-dialog>
   </div>
 </template>
 
 <script>
 import PagedRecordSelect from '@/components/common/PagedRecordSelect.vue'
 import { listEntity } from '@/api/erp/master'
-import { listBoms, getBom, deleteBom, restoreBom, submitBom, approveBom, rejectBom, activateBom, deactivateBom, setDefaultBom, copyBomVersion } from '@/api/erp/bom'
+import { listBoms, getBom, deleteBom, restoreBom, submitBom, approveBom, rejectBom, activateBom, deactivateBom, setDefaultBom, copyBomVersion, exportBomOperationStandards, batchPreviewBomOperationStandards, batchApplyBomOperationStandards, importPreviewBomOperationStandards, importApplyBomOperationStandards } from '@/api/erp/bom'
+import { listPerformanceTemplates } from '@/api/erp/production'
 import { cuttingQuantityBasis, totalLengthMetres } from '@/utils/cutting-quantity.mjs'
 
 export default {
@@ -757,7 +888,11 @@ export default {
     opDialog: { visible: false, loading: false, row: null, type: '', text: '' },
     versionDialog: { visible: false, loading: false, row: null, version: '', target: 'same', output_item_id: null },
     deletedDialog: { visible: false, loading: false, keyword: '', rows: [], total: 0, page: 1, perPage: 10 },
-    detailDialog: { visible: false, loading: false, activeTab: 'basic', data: null, deleted: false }
+    detailDialog: { visible: false, loading: false, activeTab: 'basic', data: null, deleted: false },
+    selected: [],
+    exporting: false,
+    batchDialog: { visible: false, step: 1, loading: false, source_type: 'template', template_id: null, source_bom_id: null, templates: [], sourceBoms: [], tplLoading: false, bomLoading: false, scopeMinutes: true, scopeRates: true, overwrite: false, preview: [], summary: {} },
+    importDialog: { visible: false, step: 1, loading: false, rows: [], preview: [], summary: null, error: '' }
   }),
   computed: {
     activeFilterTag() {
@@ -767,6 +902,10 @@ export default {
       if (this.query.is_default === 'true') return '筛选: 默认方案'
       if (this.query.keyword) return `搜索: ${this.query.keyword}`
       return ''
+    },
+    importCanApply() {
+      const s = this.importDialog.summary
+      return !!(s && s.errors === 0 && s.changed > 0)
     }
   },
   created() {
@@ -779,6 +918,181 @@ export default {
     }
   },
   methods: {
+    onSelection(rows) { this.selected = rows },
+    // ── 批量设置工时提成 ──
+    openBatch() {
+      if (!this.selected.length) return
+      Object.assign(this.batchDialog, { visible: true, step: 1, source_type: 'template', template_id: null, source_bom_id: null, scopeMinutes: true, scopeRates: true, overwrite: false, preview: [], summary: {}, sourceBoms: [] })
+      this.loadTemplates()
+    },
+    async loadTemplates() {
+      if (this.batchDialog.templates.length) return
+      this.batchDialog.tplLoading = true
+      try {
+        const r = await listPerformanceTemplates({ per_page: 100 })
+        this.batchDialog.templates = r.data.data || []
+      } catch (e) { this.$message.error(e.userMessage || '提成模板加载失败') } finally { this.batchDialog.tplLoading = false }
+    },
+    async searchSourceBoms(keyword) {
+      this.batchDialog.bomLoading = true
+      try {
+        const { data } = await listBoms({ keyword: keyword || undefined, per_page: 20 })
+        this.batchDialog.sourceBoms = data.data || []
+      } catch (e) { this.$message.error(e.userMessage || 'BOM 搜索失败') } finally { this.batchDialog.bomLoading = false }
+    },
+    batchPayload() {
+      const scope = []
+      if (this.batchDialog.source_type === 'bom' && this.batchDialog.scopeMinutes) scope.push('minutes')
+      if (this.batchDialog.scopeRates) scope.push('rates')
+      return { bom_ids: this.selected.map(r => r.id), source_type: this.batchDialog.source_type, template_id: this.batchDialog.template_id, source_bom_id: this.batchDialog.source_bom_id, scope, overwrite: this.batchDialog.overwrite }
+    },
+    async previewBatch() {
+      const payload = this.batchPayload()
+      if (!payload.scope.length) return this.$message.warning('请至少勾选一项范围')
+      if (payload.source_type === 'template' && !payload.template_id) return this.$message.warning('请选择提成模板')
+      if (payload.source_type === 'bom' && !payload.source_bom_id) return this.$message.warning('请选择来源 BOM')
+      this.batchDialog.loading = true
+      try {
+        const { data } = await batchPreviewBomOperationStandards(payload)
+        this.batchDialog.preview = data.data || []
+        this.batchDialog.summary = data.summary || {}
+        this.batchDialog.step = 2
+      } catch (e) { this.$message.error(e.userMessage || '批量预览失败') } finally { this.batchDialog.loading = false }
+    },
+    async applyBatch() {
+      this.batchDialog.loading = true
+      try {
+        const { data } = await batchApplyBomOperationStandards(this.batchPayload())
+        const s = data.summary || {}
+        this.$message.success(`批量设置完成：${s.boms_changed || 0} 个 BOM、${s.nodes_changed || 0} 道节点有改动`)
+        this.batchDialog.visible = false
+        this.load()
+      } catch (e) { this.$message.error(e.userMessage || '批量设置失败') } finally { this.batchDialog.loading = false }
+    },
+    batchFieldText(f) { return { setup_minutes: '准备工时', unit_minutes: '单件工时', performance: '提成' }[f] || f },
+    batchValueText(f, v) {
+      if (f === 'performance') {
+        if (!v) return '—'
+        const map = { inherit: '沿用模板', zero: '不计' }
+        if (v.mode === 'override') return `指定 ${v.rate === null || v.rate === undefined ? '—' : Number((Number(v.rate) * 100).toFixed(4))}%`
+        return map[v.mode] || v.mode
+      }
+      return v === null || v === undefined ? '未设' : Number((Number(v) / 60).toFixed(3)) + ' 小时'
+    },
+    // ── 导出工时提成 ──
+    async exportStandards() {
+      if (!this.selected.length) return
+      this.exporting = true
+      try {
+        const { data } = await exportBomOperationStandards({ bom_ids: this.selected.map(r => r.id) })
+        const rows = data.data || []
+        if (!rows.length) return this.$message.warning('所选 BOM 没有可导出的工时提成节点')
+        const mod = await import('xlsx')
+        const XLSX = mod.default || mod
+        const hasPerf = rows.some(r => 'performance_mode' in r)
+        const MODE = { inherit: '沿用模板', override: '指定比例', zero: '不计' }
+        const out = rows.map(r => {
+          const row = {
+            'BOM编号': r.bom_no, 'BOM名称': r.bom_name, '配置版本': r.version_token,
+            '路线编号': r.routing_no, '路线版本': r.routing_version, '节点ID': r.routing_operation_id,
+            '顺序': r.sequence, '工序': r.operation_name,
+            '执行域(生产/发货)': r.execution_context === 'shipment' ? '发货' : '生产',
+            '准备工时(小时)': r.setup_minutes === null || r.setup_minutes === undefined ? '' : Number((r.setup_minutes / 60).toFixed(3)),
+            '单件工时(小时)': r.unit_minutes === null || r.unit_minutes === undefined ? '' : Number((r.unit_minutes / 60).toFixed(3))
+          }
+          if (hasPerf) {
+            row['提成方式(沿用模板/指定比例/不计)'] = MODE[r.performance_mode] || r.performance_mode
+            row['比例(%)'] = r.performance_rate === null || r.performance_rate === undefined ? '' : Number((r.performance_rate * 100).toFixed(4))
+          }
+          return row
+        })
+        const book = XLSX.utils.book_new()
+        XLSX.utils.book_append_sheet(book, XLSX.utils.json_to_sheet(out), '工时提成')
+        const ts = new Date()
+        const pad = n => String(n).padStart(2, '0')
+        XLSX.writeFile(book, `BOM工时提成_${ts.getFullYear()}${pad(ts.getMonth() + 1)}${pad(ts.getDate())}${pad(ts.getHours())}${pad(ts.getMinutes())}.xlsx`)
+        this.$message.success('导出成功' + ((data.skipped || []).length ? `（跳过 ${data.skipped.length} 个未选工艺路线的 BOM）` : ''))
+      } catch (e) { this.$message.error(e.userMessage || '导出失败') } finally { this.exporting = false }
+    },
+    // ── 导入工时提成 ──
+    openImport() {
+      this.importDialog = { visible: true, step: 1, loading: false, rows: [], preview: [], summary: null, error: '' }
+    },
+    async importFile(file) {
+      this.importDialog.error = ''
+      this.importDialog.rows = []
+      try {
+        const mod = await import('xlsx')
+        const XLSX = mod.default || mod
+        const book = XLSX.read(await file.raw.arrayBuffer(), { type: 'array' })
+        const sheet = book.Sheets[book.SheetNames[0]]
+        const grid = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' })
+        const header = (grid[0] || []).map(h => String(h).trim())
+        const col = (...names) => names.map(n => header.indexOf(n)).find(i => i >= 0) ?? -1
+        const cols = {
+          bom_no: col('BOM编号'), version_token: col('配置版本'), node: col('节点ID'),
+          setup: col('准备工时(小时)', '准备工时（小时）'), unit: col('单件工时(小时)', '单件工时（小时）'),
+          mode: col('提成方式(沿用模板/指定比例/不计)', '提成方式（沿用模板/指定比例/不计）', '提成方式'), rate: col('比例(%)', '比例（%）')
+        }
+        for (const [key, name] of [['bom_no', 'BOM编号'], ['version_token', '配置版本'], ['node', '节点ID'], ['setup', '准备工时(小时)'], ['unit', '单件工时(小时)']]) {
+          if (cols[key] < 0) { this.importDialog.error = `缺少表头「${name}」，请使用导出的模板文件`; return }
+        }
+        const toMinutes = v => { const s = String(v ?? '').trim(); return s === '' ? null : Number((Number(s) * 60).toFixed(2)) }
+        const MODE_CN = { 沿用模板: 'inherit', 指定比例: 'override', 不计: 'zero' }
+        this.importDialog.rows = grid.slice(1)
+          .filter(cells => cells.some(c => String(c).trim() !== ''))
+          .map(cells => {
+            const rec = {
+              bom_no: String(cells[cols.bom_no] ?? '').trim(),
+              version_token: String(cells[cols.version_token] ?? '').trim(),
+              routing_operation_id: Number(cells[cols.node]) || 0,
+              setup_minutes: toMinutes(cells[cols.setup]),
+              unit_minutes: toMinutes(cells[cols.unit])
+            }
+            if (cols.mode >= 0) {
+              const m = String(cells[cols.mode] ?? '').trim()
+              rec.performance_mode = m === '' ? null : (MODE_CN[m] ?? m)
+              const p = cols.rate >= 0 ? String(cells[cols.rate] ?? '').trim() : ''
+              rec.performance_rate = p === '' ? null : Number((Number(p) / 100).toFixed(6))
+            }
+            return rec
+          })
+        if (!this.importDialog.rows.length) this.importDialog.error = '文件里没有可导入的数据行'
+      } catch (e) {
+        this.importDialog.error = '文件解析失败，请使用导出的 xlsx 模板'
+      }
+    },
+    async previewImport() {
+      if (!this.importDialog.rows.length) return
+      this.importDialog.loading = true
+      try {
+        const { data } = await importPreviewBomOperationStandards({ rows: this.importDialog.rows })
+        this.importDialog.preview = data.data || []
+        this.importDialog.summary = data.summary || null
+        this.importDialog.step = 2
+      } catch (e) { this.$message.error(e.userMessage || '导入预览失败') } finally { this.importDialog.loading = false }
+    },
+    async applyImport() {
+      this.importDialog.loading = true
+      try {
+        const { data } = await importApplyBomOperationStandards({ rows: this.importDialog.rows })
+        this.$message.success(`导入完成：变更 ${(data.summary || {}).changed || 0} 行`)
+        this.importDialog.visible = false
+        this.load()
+      } catch (e) {
+        const payload = e.response && e.response.data
+        if (payload && Array.isArray(payload.data)) {
+          this.importDialog.preview = payload.data
+          this.importDialog.summary = payload.summary || null
+          this.importDialog.step = 2
+        }
+        this.$message.error(e.userMessage || '导入失败，存在错误行')
+      } finally { this.importDialog.loading = false }
+    },
+    importChangeText(row) {
+      if (row.status !== 'changed') return '—'
+      return (row.changes || []).map(c => `${this.batchFieldText(c.field)} ${this.batchValueText(c.field, c.from)} → ${this.batchValueText(c.field, c.to)}`).join('；')
+    },
     params() {
       const [date_from, date_to] = this.query.dateRange || []
       return {
@@ -795,6 +1109,7 @@ export default {
       try {
         const { data } = await listBoms(this.params())
         this.rows = data.data || []
+        this.selected = []
         this.total = data.total || 0
         if (data.last_page && this.page > data.last_page) {
           this.page = data.last_page
@@ -2008,6 +2323,79 @@ export default {
     flex-direction: column;
     align-items: flex-start;
   }
+}
+.small {
+  font-size: 12px;
+}
+.batch-form {
+  display: grid;
+  gap: 14px;
+}
+.batch-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.batch-label {
+  width: 80px;
+  flex: none;
+  color: #6b7280;
+  font-size: 13px;
+}
+.batch-select {
+  width: 320px;
+  max-width: 100%;
+}
+.batch-preview {
+  max-height: 55vh;
+  overflow: auto;
+}
+.batch-bom-block {
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 8px 12px;
+  margin-bottom: 8px;
+}
+.batch-bom-block.skipped {
+  background: #f9fafb;
+  color: #9ca3af;
+}
+.batch-bom-head {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
+.batch-changes-table {
+  width: 100%;
+  margin-top: 6px;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.batch-changes-table th,
+.batch-changes-table td {
+  border: 1px solid #e5e7eb;
+  padding: 4px 8px;
+  text-align: left;
+}
+.batch-changes-table th {
+  background: #f9fafb;
+  color: #6b7280;
+  font-weight: 500;
+}
+.batch-summary,
+.import-summary {
+  margin-top: 10px;
+  font-size: 13px;
+  color: #374151;
+}
+.import-summary {
+  margin: 0 0 10px;
+}
+.import-error {
+  margin-top: 10px;
+  color: #b45309;
+  font-size: 13px;
 }
 </style>
 

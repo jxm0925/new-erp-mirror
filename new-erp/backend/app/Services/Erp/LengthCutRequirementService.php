@@ -139,6 +139,7 @@ class LengthCutRequirementService
     {
         return [
             'id' => (int) $line->id, 'line_no' => (int) $line->line_no,
+            'position_uid' => $line->position_uid, 'child_bom_id' => $line->child_bom_id ? (int) $line->child_bom_id : null,
             'component_item_id' => (int) $line->component_item_id, 'component_item_code' => $line->component_item_code,
             'component_item_name' => $line->component_item_name, 'qty' => (string) $line->qty,
             'unit_id' => $line->unit_id ? (int) $line->unit_id : null, 'loss_rate' => (string) $line->loss_rate,

@@ -9,7 +9,8 @@ const num = value => {
 const measureUnit = unit => (unit === 'm2' ? 'm²' : (unit || ''));
 const sourceUnit = row => row.mode === 'length' ? '米' : 'm²';
 const sourceMeasure = (row, qty) => num(Number(qty || 0) * Number(row.measure_qty || 0));
-const stockText = (row, qty) => ['root', 'sheet'].includes(row.unit_kind) ? `${num(qty)} ${row.unit_kind === 'root' ? '根' : '张'}` : '';
+const sourceInput = (row, qty) => ['sheet', 'root'].includes(row.unit_kind) ? num(qty) : sourceMeasure(row, qty);
+const stockText = (row, qty) => ['sheet', 'root'].includes(row.unit_kind) ? `${sourceMeasure(row, qty)} ${sourceUnit(row)}` : '';
 const meters = value => `${num(value)} 米`;
 const clone = value => JSON.parse(JSON.stringify(value));
 const keyOf = () => `wxcut-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}${Math.random().toString(36).slice(2, 8)}`;
@@ -35,7 +36,7 @@ function sourceInfo(source) {
     sourceSpec: [row.specification || '规格未记录', row.material_grade].filter(Boolean).join(' · '),
     sourceCode: row.item_code || '',
     sourceRef: [row.physical_no ? `编号 ${row.physical_no}` : '', row.batch_no ? `批次 ${row.batch_no}` : '', ordinal].filter(Boolean).join(' · ') || row.source_key || '',
-    inputText: row.input_measure !== undefined ? `${num(row.input_measure)} ${sourceUnit(row)}` : `${sourceMeasure(row, row.qty)} ${sourceUnit(row)}`,
+    inputText: `${['sheet', 'root'].includes(row.unit_kind) ? `${num(row.qty)} ${row.unit_kind === 'sheet' ? '张' : '根'}（` : ''}${row.input_measure !== undefined ? num(row.input_measure) : sourceMeasure(row, row.qty)} ${sourceUnit(row)}${['sheet', 'root'].includes(row.unit_kind) ? '）' : ''}`,
     sourcePlace: [row.warehouse_name, row.location_name].filter(Boolean).join(' / '),
   };
 }
@@ -111,7 +112,7 @@ Page({
       if (picked[key]) picked[key].qty = String(Number((Number(picked[key].qty) + Number(row.qty)).toFixed(4)));
       else picked[key] = Object.assign({}, row, { source_key: key, qty: String(row.qty) });
     });
-    Object.values(picked).forEach(row => { row.measureInput = sourceMeasure(row, row.qty); });
+    Object.values(picked).forEach(row => { row.measureInput = sourceInput(row, row.qty); });
     this.setData({ panel: 'sources', itemIndex: 0, showPicked: false, keyword: '', page: 1, rows: [] });
     this.updatePicked(picked);
     this.loadSources();
@@ -120,8 +121,8 @@ Page({
   sourceRow(row) {
     const needed = this.data.requirements.filter(part => Number(part.item_id) === Number(row.item_id))
       .reduce((sum, part) => sum + Number(part.per_unit_measure || 0) * this.data.unitQty, 0);
-    return Object.assign({}, row, { nameText: sourceName(row), sizeText: sizeText(row), unitText: sourceUnit(row),
-      placeText: `${row.warehouse_name || ''} / ${row.location_name || ''}`, availableText: sourceMeasure(row, row.available_qty),
+    return Object.assign({}, row, { nameText: sourceName(row), sizeText: sizeText(row), unitText: sourceUnit(row), inputUnitText: row.unit_kind === 'sheet' ? '张' : row.unit_kind === 'root' ? '根' : sourceUnit(row),
+      placeText: `${row.warehouse_name || ''} / ${row.location_name || ''}`, availableText: ['m', 'm2'].includes(row.inventory_unit_kind) ? num(row.inventory_available_qty) : sourceMeasure(row, row.available_qty),
       needText: `${num(needed)} ${sourceUnit(row)}`, countable: !row.physical_material_id });
   },
   pickSignature(picked) {
@@ -141,7 +142,7 @@ Page({
         if (picked[key]) picked[key].qty = String(Number((Number(picked[key].qty) + Number(row.qty)).toFixed(4)));
         else picked[key] = this.sourceRow(Object.assign({}, row, { source_key: key }));
       });
-      Object.values(picked).forEach(row => { row.measureInput = sourceMeasure(row, row.qty); });
+      Object.values(picked).forEach(row => { row.measureInput = sourceInput(row, row.qty); });
       this.recommended = { signature: this.pickSignature(picked), assignments: plan.assignments };
       this.setData({ showPicked: true });
       this.updatePicked(picked);
@@ -173,7 +174,7 @@ Page({
   },
   updatePicked(picked) {
     const selected = Object.values(picked).map(row => Object.assign({}, row, {
-      measureInput: row.measureInput === undefined ? sourceMeasure(row, row.qty) : row.measureInput, stockText: stockText(row, row.qty) }));
+      measureInput: row.measureInput === undefined ? sourceInput(row, row.qty) : row.measureInput, stockText: stockText(row, row.qty) }));
     const normalized = {};
     selected.forEach(row => { normalized[row.source_key] = row; });
     const available = this.data.rows.filter(row => Number(row.available_qty) > 0);
@@ -186,7 +187,7 @@ Page({
   },
   sourcePick(row) {
     const qty = String(Math.min(1, Number(row.available_qty)));
-    return Object.assign({}, row, { qty, measureInput: sourceMeasure(row, qty) });
+    return Object.assign({}, row, { qty, measureInput: sourceInput(row, qty) });
   },
   togglePageSources() {
     if (this.data.sourceLoading || this.data.autoLoading || this.data.showPicked) return;
@@ -214,8 +215,9 @@ Page({
     const measureInput = event.detail.value;
     const measure = Number(measureInput);
     const factor = Number(row.measure_qty);
-    const qty = Number((measure / factor).toFixed(4));
-    const exact = Number.isFinite(measure) && factor > 0 && Math.abs(qty * factor - measure) < 0.00000001;
+    const counted = ['sheet', 'root'].includes(row.unit_kind);
+    const qty = counted ? measure : measure / factor;
+    const exact = Number.isFinite(measure) && (counted ? Number.isInteger(qty) : factor > 0 && Math.abs(qty * factor - measure) < 0.00000001);
     const picked = Object.assign({}, this.data.picked, { [key]: Object.assign({}, row, { measureInput, qty: exact ? String(qty) : '' }) });
     this.updatePicked(picked);
   },
@@ -225,10 +227,9 @@ Page({
     for (const row of Object.values(this.data.picked)) {
       const count = Number(row.qty);
       const max = row.physical_material_id ? 1 : Number(row.available_qty);
-      const fractionalRoot = row.unit_kind === 'root' && !row.physical_material_id;
-      if (!Number.isFinite(count) || count <= 0 || (!['m', 'm2'].includes(row.unit_kind) && !fractionalRoot && !Number.isInteger(count)) || count > max + 0.000001
-        || (fractionalRoot && !/^\d+(?:\.\d{1,4})?$/.test(String(count)))) {
-        view.modal(this, { theme: 'warn', title: '请核对领用量', content: `${row.item_name}（${sourceName(row)}）最多可用 ${sourceMeasure(row, max)} ${sourceUnit(row)}；领用量须能按来源长度或面积准确换算，实物板材及按张管理的板材须整张领用。`, showCancel: false });
+      if (!Number.isFinite(count) || count <= 0 || (!['m', 'm2'].includes(row.unit_kind) && !Number.isInteger(count)) || count > max + 0.000001
+        || (['m', 'm2'].includes(row.unit_kind) && !/^\d+(?:\.\d{1,4})?$/.test(String(count)))) {
+        view.modal(this, { theme: 'warn', title: '请核对领用量', content: `${row.item_name}（${sourceName(row)}）最多可领 ${sourceInput(row, max)} ${row.inputUnitText || sourceUnit(row)}；整料按整张或整根领用，余料按实际面积或长度领用，最多保留四位小数。`, showCancel: false });
         return;
       }
       const split = !row.physical_material_id && ['root', 'sheet'].includes(row.unit_kind);
@@ -236,11 +237,14 @@ Page({
         wx.showToast({ title: '单次最多选用 1000 条来源，请分批开料', icon: 'none' }); return;
       }
       if (split) {
-        for (let i = 0; i < count; i++) sources.push(Object.assign({}, row, { original_source_key: row.source_key, source_key: `${row.source_key}:${i + 1}`, qty: String(Math.min(1, Number((count - i).toFixed(4)))) }));
+        for (let i = 0; i < count; i++) sources.push(Object.assign({}, row, { original_source_key: row.source_key, source_key: `${row.source_key}:${i + 1}`, qty: '1' }));
       } else sources.push(Object.assign({}, row, { original_source_key: row.source_key, qty: String(count) }));
     }
     this.autoAssignments = this.recommended && this.recommended.signature === this.pickSignature(this.data.picked) ? this.recommended.assignments : null;
-    this.setData({ panel: '', sources: sources.map(row => Object.assign({}, row, sourceInfo(row), { qtyText: `${sourceMeasure(row, row.qty)} ${sourceUnit(row)}${stockText(row, row.qty) ? `（${stockText(row, row.qty)}）` : ''}` })), groups: [], planChecked: false, planConfirmed: false });
+    this.setData({ panel: '', sources: sources.map(row => {
+      const info = sourceInfo(Object.assign({}, row, { input_measure: Number(row.qty) * Number(row.measure_qty) }));
+      return Object.assign({}, row, info, { qtyText: info.inputText });
+    }), groups: [], planChecked: false, planConfirmed: false });
   },
 
   planPayload(assignments) {

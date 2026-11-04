@@ -6,13 +6,13 @@ use App\Exceptions\Erp\WorkOrderDomainException;
 use App\Models\Erp\ProductionOperation;
 use App\Models\Erp\ProductionPerformanceBinding;
 use App\Models\Erp\ProductionPerformanceTemplate;
-use App\Models\Erp\ProductionRouting;
+use App\Models\Erp\ItemCategory;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
 /**
- * 提成模板：按标准工序设一套比例（如 下料 0.5%、焊接 1.5%）。比例只在模板里维护：
- * 一套设为默认模板，个别路线可指定其他模板；路线本身不再保存比例。
+ * 提成模板：按标准工序设一套比例（如 下料 0.5%、焊接 1.5%）。
+ * 适用范围：一套设为默认模板，可再按商品分类指定其他模板；BOM 节点上的指定比例/不计优先于模板。
  * 已生成的工单和包装作业沿用生成时的比例快照，模板之后再改不追溯。
  */
 final class ProductionPerformanceTemplateService
@@ -83,80 +83,46 @@ final class ProductionPerformanceTemplateService
             if ($template->status !== 'enabled') $this->fail('performance_template_disabled', '模板已停用，请先启用。', 422);
             $binding = ProductionPerformanceBinding::query()->lockForUpdate()->firstOrNew(['binding_key' => ProductionPerformanceBinding::DEFAULT_KEY]);
             if (! $binding->exists) $binding->created_by_legacy_id = $actor;
-            $binding->fill(['routing_id' => null, 'template_id' => $template->id, 'updated_by_legacy_id' => $actor])->save();
+            $binding->fill(['category_id' => null, 'template_id' => $template->id, 'updated_by_legacy_id' => $actor])->save();
             $this->log('set_default_performance_template', 'performance_template', (int) $template->id, $actor, ['template_id' => (int) $template->id, 'template_name' => $template->template_name]);
             return $this->show((int) $template->id);
         });
     }
 
-    /** 预览：每条路线逐道工序列出“当前所用模板比例 → 本模板比例”；不在本模板里的工序改用后不计提成。 */
-    public function preview(int $id, array $routingIds): array
-    {
-        $template = ProductionPerformanceTemplate::query()->with('lines')->findOrFail($id);
-        $rates = $template->lines->mapWithKeys(fn ($line) => [(int) $line->operation_id => bcadd((string) $line->performance_rate, '0', 6)])->all();
-        $routings = ProductionRouting::query()->with(['operations.operation:id,operation_name', 'applicabilities.item:id,item_code,item_name', 'applicabilities.category:id,category_name'])
-            ->whereIn('id', $routingIds)->orderBy('id')->get();
-        if ($routings->count() !== count(array_unique($routingIds))) $this->fail('performance_template_routing_missing', '部分工艺路线不存在，请刷新后重新选择。', 422);
-        $resolver = app(ProductionPerformanceRateResolver::class);
-        return $routings->map(function ($routing) use ($rates, $resolver, $template): array {
-            $current = $resolver->forRouting((int) $routing->id);
-            $operations = $routing->operations->map(function ($operation) use ($rates, $current): array {
-                $was = $current['rates'][(int) $operation->operation_id] ?? null;
-                $next = $rates[(int) $operation->operation_id] ?? null;
-                return ['routing_operation_id' => (int) $operation->id, 'sequence' => (int) $operation->sequence,
-                    'operation_name' => $operation->operation?->operation_name, 'current_rate' => $was, 'new_rate' => $next,
-                    'matched' => $next !== null,
-                    'changed' => $was === null ? $next !== null : ($next === null || bccomp($was, $next, 6) !== 0)];
-            })->values()->all();
-            $blocked = in_array($routing->status, ['retired', 'disabled'], true) ? '已停用的路线不能指定' : null;
-            return ['routing_id' => (int) $routing->id, 'routing_no' => $routing->routing_no, 'routing_name' => $routing->routing_name,
-                'version' => (int) $routing->version, 'status' => $routing->status, 'business_version' => (int) $routing->business_version,
-                'applicable_scope' => $this->scopeText($routing),
-                'current_template' => $current['template'] ? $current['template'] + ['source' => $current['source']] : null,
-                'already_bound' => $current['source'] === 'routing' && (int) $current['template']['id'] === (int) $template->id,
-                'operations' => $operations, 'changed_count' => count(array_filter($operations, fn ($row) => $row['changed'])),
-                'unmatched_count' => count(array_filter($operations, fn ($row) => ! $row['matched'])), 'blocked_reason' => $blocked];
-        })->all();
-    }
-
-    /** 指定路线使用本模板（只记绑定，不往路线写比例）；已生成的工单和包装作业沿用各自快照。 */
-    public function apply(int $id, array $routingIds, object $user): array
+    /** 商品分类使用本模板：该分类（及其下级未单独指定的分类）的商品按本模板兜底；已生成的工单仍按原比例。 */
+    public function bindCategories(int $id, array $categoryIds, object $user): array
     {
         $actor = $this->actor($user);
-        return DB::transaction(function () use ($id, $routingIds, $actor): array {
+        return DB::transaction(function () use ($id, $categoryIds, $actor): array {
             $template = ProductionPerformanceTemplate::query()->lockForUpdate()->findOrFail($id);
             if ($template->status !== 'enabled') $this->fail('performance_template_disabled', '模板已停用，请先启用。', 422);
-            ProductionRouting::query()->whereIn('id', $routingIds)->orderBy('id')->lockForUpdate()->get();
-            $preview = $this->preview($id, $routingIds);
-            $applied = 0; $operations = 0;
-            foreach ($preview as $routing) {
-                if ($routing['blocked_reason'] || $routing['already_bound']) continue;
-                $binding = ProductionPerformanceBinding::query()->lockForUpdate()->firstOrNew(['binding_key' => ProductionPerformanceBinding::routingKey($routing['routing_id'])]);
+            $categories = ItemCategory::query()->whereIn('id', $categoryIds)->get(['id', 'category_name']);
+            if ($categories->count() !== count($categoryIds)) $this->fail('performance_category_invalid', '部分商品分类不存在，请刷新后重选。', 422);
+            foreach ($categories as $category) {
+                $binding = ProductionPerformanceBinding::query()->lockForUpdate()->firstOrNew(['binding_key' => ProductionPerformanceBinding::categoryKey((int) $category->id)]);
+                $previous = $binding->exists ? (int) $binding->template_id : null;
                 if (! $binding->exists) $binding->created_by_legacy_id = $actor;
-                $binding->fill(['routing_id' => $routing['routing_id'], 'template_id' => $template->id, 'updated_by_legacy_id' => $actor])->save();
-                $changes = array_values(array_filter($routing['operations'], fn ($row) => $row['changed']));
-                $this->log('apply_performance_template', 'routing', $routing['routing_id'], $actor, ['template_id' => (int) $template->id,
-                    'template_name' => $template->template_name, 'template_version' => (int) $template->business_version,
-                    'previous_template' => $routing['current_template'], 'changes' => $changes]);
-                $applied++; $operations += count($changes);
+                $binding->fill(['category_id' => $category->id, 'template_id' => $template->id, 'updated_by_legacy_id' => $actor])->save();
+                $this->log('bind_performance_template_category', 'item_category', (int) $category->id, $actor,
+                    ['template_id' => (int) $template->id, 'template_name' => $template->template_name, 'previous_template_id' => $previous]);
             }
             $template->update(['last_applied_at' => now()]);
-            return ['routings' => $applied, 'operations' => $operations, 'skipped' => count($preview) - $applied];
+            return $this->show((int) $template->id);
         });
     }
 
-    /** 取消路线的指定，改回按默认模板计提成。 */
-    public function unbind(int $id, array $routingIds, object $user): array
+    /** 取消商品分类的指定，改按上级分类或默认模板兜底。 */
+    public function unbindCategories(int $id, array $categoryIds, object $user): array
     {
         $actor = $this->actor($user);
-        return DB::transaction(function () use ($id, $routingIds, $actor): array {
-            $keys = array_map(fn ($routingId) => ProductionPerformanceBinding::routingKey((int) $routingId), $routingIds);
+        return DB::transaction(function () use ($id, $categoryIds, $actor): array {
+            $keys = array_map(fn ($categoryId) => ProductionPerformanceBinding::categoryKey((int) $categoryId), $categoryIds);
             $removed = ProductionPerformanceBinding::query()->where('template_id', $id)->whereIn('binding_key', $keys)->lockForUpdate()->get();
             foreach ($removed as $binding) {
                 $binding->delete();
-                $this->log('unbind_performance_template', 'routing', (int) $binding->routing_id, $actor, ['template_id' => $id]);
+                $this->log('unbind_performance_template_category', 'item_category', (int) $binding->category_id, $actor, ['template_id' => $id]);
             }
-            return ['routings' => $removed->count()];
+            return $this->show($id);
         });
     }
 
@@ -165,9 +131,9 @@ final class ProductionPerformanceTemplateService
         $bindings = ProductionPerformanceBinding::query()->where('template_id', $template->id)->get();
         if ($bindings->isEmpty()) return;
         $isDefault = $bindings->contains(fn ($row) => $row->binding_key === ProductionPerformanceBinding::DEFAULT_KEY);
-        $routings = $bindings->whereNotNull('routing_id')->count();
-        $usage = implode('、', array_filter([$isDefault ? '默认模板' : null, $routings ? "{$routings} 条工艺路线" : null]));
-        $this->fail('performance_template_in_use', "模板正在被使用（{$usage}），请先把默认模板或这些路线改用其他模板后再{$action}。", 422);
+        $categories = $bindings->whereNotNull('category_id')->count();
+        $usage = implode('、', array_filter([$isDefault ? '默认模板' : null, $categories ? "{$categories} 个商品分类" : null]));
+        $this->fail('performance_template_in_use', "模板正在被使用（{$usage}），请先把默认模板或这些分类改用其他模板后再{$action}。", 422);
     }
 
     private function log(string $type, string $entityType, int $entityId, int $actor, array $snapshot): void
@@ -201,29 +167,19 @@ final class ProductionPerformanceTemplateService
         }, $rows);
     }
 
-    /** 路线适用范围文字：物料名、类目名（类目加“类目:”前缀）。 */
-    private function scopeText(ProductionRouting $routing): string
-    {
-        return $routing->applicabilities->map(fn ($a) => $a->scope_type === 'category'
-            ? '类目:'.($a->category?->category_name ?? $a->item_category_id)
-            : ($a->item?->item_name ?: $a->item?->item_code ?: (string) $a->item_id))->implode('、');
-    }
-
-    private function present(ProductionPerformanceTemplate $template, bool $withRoutings = false): array
+    private function present(ProductionPerformanceTemplate $template, bool $withCategories = false): array
     {
         $bindings = ProductionPerformanceBinding::query()->where('template_id', $template->id)->get();
-        $routingIds = $bindings->whereNotNull('routing_id')->pluck('routing_id')->all();
-        $routings = $withRoutings && $routingIds ? ProductionRouting::query()->with('applicabilities.item:id,item_code,item_name', 'applicabilities.category:id,category_name')->whereIn('id', $routingIds)
-            ->orderBy('routing_no')->orderBy('version')->limit(200)->get()->map(fn ($routing) => ['id' => (int) $routing->id,
-                'routing_no' => $routing->routing_no, 'routing_name' => $routing->routing_name, 'version' => (int) $routing->version,
-                'status' => $routing->status, 'applicable_scope' => $this->scopeText($routing)])->values()->all() : [];
+        $categoryIds = $bindings->whereNotNull('category_id')->pluck('category_id')->all();
+        $categories = $withCategories && $categoryIds ? ItemCategory::query()->whereIn('id', $categoryIds)->orderBy('sort_order')->orderBy('id')
+            ->get(['id', 'category_code', 'category_name'])->map(fn ($c) => ['id' => (int) $c->id, 'category_code' => $c->category_code, 'category_name' => $c->category_name])->values()->all() : [];
         $lines = $template->lines->map(fn ($line) => ['operation_id' => (int) $line->operation_id, 'performance_rate' => (string) $line->performance_rate,
             'operation_no' => $line->operation?->operation_no, 'operation_name' => $line->operation?->operation_name])->values()->all();
         return ['id' => (int) $template->id, 'template_name' => $template->template_name, 'remark' => $template->remark,
             'status' => $template->status, 'business_version' => (int) $template->business_version, 'lines' => $lines,
             'total_rate' => array_reduce($lines, fn ($sum, $line) => bcadd($sum, $line['performance_rate'], 6), '0'),
             'is_default' => $bindings->contains(fn ($row) => $row->binding_key === ProductionPerformanceBinding::DEFAULT_KEY),
-            'routing_count' => count($routingIds), 'routings' => $routings,
+            'category_count' => count($categoryIds), 'categories' => $categories,
             'last_applied_at' => optional($template->last_applied_at)->toDateTimeString(), 'updated_at' => optional($template->updated_at)->toDateTimeString()];
     }
 

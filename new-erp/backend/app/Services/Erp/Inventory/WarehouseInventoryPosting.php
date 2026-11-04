@@ -94,14 +94,15 @@ class WarehouseInventoryPosting
                 if ($line->item?->materialManagementMode() === 'physical') {
                     foreach ($line->physicalEntries as $entry) {
                         if ($entry->direction === 'increase') {
+                            $physicalQuantity = $this->physicalMaterials->inventoryQuantity($line->item, $entry);
                             $transactionItem = $this->kernel->apply($transaction, [
                                 'item_id' => $line->item_id,
                                 'warehouse_id' => $line->warehouse_id,
                                 'location_id' => $line->location_id,
                                 'batch_no' => $line->batch_no,
                                 'unit_id' => $line->unit_id ?: $line->item?->unit_id,
-                                'change_qty' => '1',
-                                'unit_cost' => (float) $entry->total_cost,
+                                'change_qty' => $physicalQuantity,
+                                'unit_cost' => bcdiv((string) $entry->total_cost, $physicalQuantity, 8),
                                 'cost_amount' => (string) $entry->total_cost,
                                 'source_type' => 'inventory_adjustment',
                                 'source_id' => $adjustment->id,
@@ -117,14 +118,15 @@ class WarehouseInventoryPosting
                                 (int) $line->item_id,
                                 (int) $balance->id,
                             );
+                            $physicalQuantity = $this->physicalMaterials->inventoryQuantity($line->item, $physical);
                             $transactionItem = $this->kernel->apply($transaction, [
                                 'item_id' => $line->item_id,
                                 'warehouse_id' => $line->warehouse_id,
                                 'location_id' => $line->location_id,
                                 'batch_no' => $line->batch_no,
                                 'unit_id' => $line->unit_id ?: $line->item?->unit_id,
-                                'change_qty' => '-1',
-                                'unit_cost' => (float) $physical->total_cost,
+                                'change_qty' => bcsub('0', $physicalQuantity, 8),
+                                'unit_cost' => bcdiv((string) $physical->total_cost, $physicalQuantity, 8),
                                 'cost_amount' => bcsub('0', (string) $physical->total_cost, 4),
                                 'source_type' => 'inventory_adjustment',
                                 'source_id' => $adjustment->id,
@@ -304,6 +306,7 @@ class WarehouseInventoryPosting
         if (DB::transactionLevel() < 1) throw new \LogicException('Physical transfer posting requires an application transaction.');
         if (! in_array($direction, ['both', 'out', 'in'], true)) throw new \InvalidArgumentException('Invalid physical transfer direction.');
         $snapshot = json_decode($transfer->source_snapshot ?? '{}', true, 512, JSON_THROW_ON_ERROR);
+        $physicalQuantity = $this->physicalMaterials->inventoryQuantity(\App\Models\Erp\Item::query()->findOrFail($physical->item_id), $physical);
         $transaction = $this->kernel->begin([
             
             'transaction_type' => $direction === 'both' ? 'physical_material_transfer' : 'physical_material_transfer_'.($direction === 'out' ? 'outbound' : 'inbound'),
@@ -321,7 +324,7 @@ class WarehouseInventoryPosting
         $common = [
             'item_id' => $physical->item_id,
             'unit_id' => $snapshot['unit_id'] ?? $source->unit_id,
-            'unit_cost' => (string) $transfer->total_cost,
+            'unit_cost' => bcdiv((string) $transfer->total_cost, $physicalQuantity, 8),
             'material_lot_id' => $snapshot['material_lot_id'] ?? $source->material_lot_id,
             'cost_source_type' => 'physical_transfer_total',
             'source_type' => 'material_physical_transfer',
@@ -334,7 +337,7 @@ class WarehouseInventoryPosting
             'warehouse_id' => $snapshot['warehouse_id'] ?? $source->warehouse_id,
             'location_id' => $snapshot['location_id'] ?? $source->location_id,
             'batch_no' => $snapshot['batch_no'] ?? $source->batch_no,
-            'change_qty' => '-1',
+            'change_qty' => bcsub('0', $physicalQuantity, 8),
             'cost_amount' => bcsub('0', (string) $transfer->total_cost, 4),
             'physical_operation' => 'transfer_out',
             'remark' => '实物调拨出库',
@@ -343,7 +346,7 @@ class WarehouseInventoryPosting
             'warehouse_id' => $transfer->target_warehouse_id,
             'location_id' => $transfer->target_location_id,
             'batch_no' => $transfer->target_batch_no,
-            'change_qty' => '1',
+            'change_qty' => $physicalQuantity,
             'cost_amount' => (string) $transfer->total_cost,
             'physical_operation' => 'transfer_in',
             'remark' => '实物调拨入库',
@@ -359,6 +362,7 @@ class WarehouseInventoryPosting
     public function postPhysicalDisposal(object $disposal, object $physical, InventoryBalance $source, object $operator): InventoryTransaction
     {
         if (DB::transactionLevel() < 1) throw new \LogicException('Physical disposal posting requires an application transaction.');
+        $physicalQuantity = $this->physicalMaterials->inventoryQuantity(\App\Models\Erp\Item::query()->findOrFail($physical->item_id), $physical);
         $transaction = $this->kernel->begin([
             
             'transaction_type' => 'physical_material_disposal',
@@ -379,8 +383,8 @@ class WarehouseInventoryPosting
             'location_id' => $source->location_id,
             'batch_no' => $source->batch_no,
             'unit_id' => $source->unit_id,
-            'change_qty' => '-1',
-            'unit_cost' => (float) $physical->total_cost,
+            'change_qty' => bcsub('0', $physicalQuantity, 8),
+            'unit_cost' => bcdiv((string) $physical->total_cost, $physicalQuantity, 8),
             'cost_amount' => bcsub('0', (string) $physical->total_cost, 4),
             'material_lot_id' => $source->material_lot_id,
             'source_type' => 'material_physical_disposal',

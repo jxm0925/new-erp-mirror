@@ -567,7 +567,7 @@ final class WorkOrderQueryService
             'operation_name' => $op->operation_name, 'operation_no' => $op->operation_no ?? null, 'sequence' => (int) $op->sequence,
             'execution_context' => $op->execution_context ?: 'production', 'stage_name' => $op->stage_name ?? null,
             'quality_mode' => $op->quality_mode ?? 'none', 'output_mode' => $op->output_mode ?? 'flow_only',
-            'unit_standard_minutes' => (float) ($op->unit_standard_minutes ?? 0), 'setup_standard_minutes' => (float) ($op->setup_standard_minutes ?? 0),
+            'unit_standard_minutes' => $op->unit_standard_minutes === null ? null : (float) $op->unit_standard_minutes, 'setup_standard_minutes' => $op->setup_standard_minutes === null ? null : (float) $op->setup_standard_minutes,
             'packaging_scheme_name' => $op->packaging_scheme_name ?? null, 'completed_qty' => (float) ($op->completed_qty ?? 0),
         ];
     }

@@ -20,8 +20,8 @@ use Illuminate\Validation\ValidationException;
  * Owns the identity side of physical-managed inventory.
  *
  * InventoryPostingKernel remains the only quantity/value ledger writer. This service
- * creates or moves exactly one material identity for every accepted +/-1 ledger
- * line, inside the caller's transaction.
+ * keeps each material identity independent from its inventory unit (sheet/area),
+ * inside the caller's transaction.
  */
 final class MaterialPhysicalService
 {
@@ -39,12 +39,14 @@ final class MaterialPhysicalService
             }
             return;
         }
-        $this->assertSheetItem($item);
+        $this->assertPhysicalItem($item);
         foreach (array_values($entries) as $index => $entry) {
+            $dimensions = $this->dimensions($entry['dimensions'] ?? $entry);
+            $this->inventoryQuantity($item, ['dimensions' => $dimensions]);
             PurchaseReceiptAllocationPhysical::create([
                 'allocation_id' => $allocation->id,
                 'sequence_no' => $index + 1,
-                'dimensions' => $this->dimensions($entry['dimensions'] ?? $entry),
+                'dimensions' => $dimensions,
             ]);
         }
     }
@@ -62,23 +64,27 @@ final class MaterialPhysicalService
                 }
                 continue;
             }
-            $this->assertSheetItem($item);
-            $qualified = $this->qualifiedBaseQuantity($line);
-            if (!$this->isWhole($qualified)) {
-                throw ValidationException::withMessages(['physical_entries' => "实物管理物料 {$item->item_code} 的合格基本数量必须是整数张。"]);
-            }
+            $this->assertPhysicalItem($item);
             foreach ($line->allocations as $allocation) {
-                $quantity = (string) $allocation->base_qty;
-                if (!$this->isWhole($quantity)) {
-                    throw ValidationException::withMessages(['physical_entries' => "实物管理物料 {$item->item_code} 的每个库位分配数量必须是整数张。"]);
+                $quantity = '0';
+                foreach ($allocation->physicalEntries as $entry) {
+                    $quantity = bcadd($quantity, $this->inventoryQuantity($item, ['dimensions' => $this->dimensions($entry->dimensions)]), 8);
                 }
-                $expected = (int) round((float) $quantity);
-                if ($allocation->physicalEntries->count() !== $expected) {
+                if (bccomp($quantity, (string) $allocation->base_qty, 8) !== 0) {
                     throw ValidationException::withMessages([
-                        'physical_entries' => "物料 {$item->item_code} 在库位 #{$allocation->location_id} 分配 {$expected} 张，必须逐张填写 {$expected} 份真实尺寸。",
+                        'physical_entries' => "物料 {$item->item_code} 在库位 #{$allocation->location_id} 的逐张实物实际库存数量 {$quantity} 与分配数量 {$allocation->base_qty} 不一致。",
                     ]);
                 }
-                foreach ($allocation->physicalEntries as $entry) $this->dimensions($entry->dimensions);
+            }
+            $line->loadMissing('purchaseUnit.standardUnit');
+            $purchaseUnit = app(UnitConversionDomainService::class)->canonicalUnit($line->purchaseUnit);
+            if (in_array(strtoupper((string) $purchaseUnit?->unit_code), ['SHEET', 'ROOT'], true)) {
+                $count = $line->allocations->sum(fn ($allocation) => $allocation->physicalEntries->count());
+                $unchangedQuality = bccomp($this->qualifiedBaseQuantity($line), (string) $line->qualified_base_qty, 8) === 0;
+                if (! $this->isWhole((string) $line->receipt_qty) || ! $this->isWhole((string) $line->qualified_qty)
+                    || $count > (float) $line->receipt_qty || ($unchangedQuality && $count !== (int) $line->qualified_qty)) {
+                    throw ValidationException::withMessages(['physical_entries' => "物料 {$item->item_code} 按张或根采购，逐件实物数量必须与实际合格件数一致。"]);
+                }
             }
         }
     }
@@ -93,7 +99,10 @@ final class MaterialPhysicalService
             ->orderBy('sequence_no')
             ->lockForUpdate()
             ->get();
-        if ($entries->count() !== (int) round((float) $allocation->base_qty)
+        $line->loadMissing('item');
+        $quantities = $entries->map(fn ($entry) => $this->inventoryQuantity($line->item, ['dimensions' => $this->dimensions($entry->dimensions)]));
+        $totalQuantity = $quantities->reduce(fn ($total, $quantity) => bcadd($total, $quantity, 8), '0');
+        if (bccomp($totalQuantity, (string) $allocation->base_qty, 8) !== 0
             || $entries->contains(fn ($entry) => $entry->physical_material_id !== null)) {
             throw ValidationException::withMessages(['physical_entries' => '采购入库实物明细数量不一致或已经生成过实物，不能继续过账。']);
         }
@@ -106,10 +115,11 @@ final class MaterialPhysicalService
         ])->lockForUpdate()->firstOrFail();
         $holding = $this->warehouseHolding($balance, 'FULL_STOCK');
         $remainingCost = (string) $transactionItem->cost_amount;
-        $remainingCount = (string) $entries->count();
+        $remainingQuantity = $totalQuantity;
         $ids = [];
-        foreach ($entries as $entry) {
-            $cost = CuttingDecimal::share($remainingCost, $remainingCount, '1');
+        foreach ($entries as $index => $entry) {
+            $quantity = $quantities[$index];
+            $cost = CuttingDecimal::share($remainingCost, $remainingQuantity, $quantity);
             $id = $this->createPhysical(
                 (int) $line->item_id,
                 (int) $transactionItem->id,
@@ -124,7 +134,7 @@ final class MaterialPhysicalService
             ]);
             $ids[] = $id;
             $remainingCost = bcsub($remainingCost, $cost, 4);
-            $remainingCount = bcsub($remainingCount, '1', 0);
+            $remainingQuantity = bcsub($remainingQuantity, $quantity, 8);
         }
         if (bccomp($remainingCost, '0', 4) !== 0) {
             throw new \LogicException('Purchase physical cost allocation did not conserve the transaction amount.');
@@ -145,11 +155,9 @@ final class MaterialPhysicalService
             }
             return;
         }
-        $this->assertSheetItem($item);
+        $this->assertPhysicalItem($item);
         $quantity = (string) abs((float) $line->change_qty);
-        if (!$this->isWhole($quantity) || (int) round((float) $quantity) !== count($entries)) {
-            throw ValidationException::withMessages(['physical_entries' => "物料 {$item->item_code} 调整 {$line->change_qty} 张，必须逐张填写 ".(int) round((float) $quantity).' 条实物明细。']);
-        }
+        $actualQuantity = '0';
         $direction = (float) $line->change_qty > 0 ? 'increase' : 'decrease';
         $ids = [];
         foreach (array_values($entries) as $index => $entry) {
@@ -160,6 +168,7 @@ final class MaterialPhysicalService
                 $dimensions = $this->dimensions($entry['dimensions'] ?? null);
                 $cost = $this->money($entry['total_cost'] ?? null);
                 $physicalId = null;
+                $actualQuantity = bcadd($actualQuantity, $this->inventoryQuantity($item, ['dimensions' => $dimensions]), 8);
             } else {
                 $physicalId = (int) ($entry['physical_material_id'] ?? 0);
                 if (!$physicalId || in_array($physicalId, $ids, true)) {
@@ -170,6 +179,7 @@ final class MaterialPhysicalService
                 $dimensions = null;
                 $cost = (string) $physical->total_cost;
                 $ids[] = $physicalId;
+                $actualQuantity = bcadd($actualQuantity, $this->inventoryQuantity($item, $physical), 8);
             }
             InventoryAdjustmentItemPhysical::create([
                 'adjustment_item_id' => $line->id,
@@ -179,6 +189,9 @@ final class MaterialPhysicalService
                 'dimensions' => $dimensions,
                 'total_cost' => $cost,
             ]);
+        }
+        if (bccomp($actualQuantity, $quantity, 8) !== 0) {
+            throw ValidationException::withMessages(['physical_entries' => '调整数量必须等于逐张实物对应的实际库存数量合计。']);
         }
     }
 
@@ -192,12 +205,10 @@ final class MaterialPhysicalService
             return;
         }
         $expectedDirection = (float) $line->change_qty > 0 ? 'increase' : 'decrease';
-        $expectedCount = (int) round(abs((float) $line->change_qty));
-        if (!$this->isWhole((string) abs((float) $line->change_qty))
-            || $line->physicalEntries->count() !== $expectedCount
-            || $line->physicalEntries->contains(fn ($entry) => $entry->direction !== $expectedDirection)) {
-            throw ValidationException::withMessages(['physical_entries' => '实物调整明细与调整方向或张数不一致。']);
+        if ($line->physicalEntries->contains(fn ($entry) => $entry->direction !== $expectedDirection)) {
+            throw ValidationException::withMessages(['physical_entries' => '实物调整明细与调整方向不一致。']);
         }
+        $actualQuantity = '0';
         foreach ($line->physicalEntries as $entry) {
             if ($expectedDirection === 'increase') {
                 if ($entry->physical_material_id || $entry->inventory_transaction_item_id) {
@@ -205,10 +216,15 @@ final class MaterialPhysicalService
                 }
                 $this->dimensions($entry->dimensions);
                 $this->money((string) $entry->total_cost);
+                $actualQuantity = bcadd($actualQuantity, $this->inventoryQuantity($line->item, ['dimensions' => $entry->dimensions]), 8);
             } else {
-                $this->assertWarehousePhysical((int) $entry->physical_material_id, (int) $line->item_id, (int) $balance->id);
+                $physical = $this->assertWarehousePhysical((int) $entry->physical_material_id, (int) $line->item_id, (int) $balance->id);
+                $actualQuantity = bcadd($actualQuantity, $this->inventoryQuantity($line->item, $physical), 8);
                 $this->assertPhysicalNotInOpenDocument((int) $entry->physical_material_id, (int) $line->adjustment_id);
             }
+        }
+        if (bccomp($actualQuantity, (string) abs((float) $line->change_qty), 8) !== 0) {
+            throw ValidationException::withMessages(['physical_entries' => '调整数量与逐张实物的实际库存数量合计不一致。']);
         }
     }
 
@@ -264,11 +280,7 @@ final class MaterialPhysicalService
             }
             return;
         }
-        $this->assertSheetItem($item);
-        if (!$this->isWhole((string) $line->requested_base_qty)
-            || count($physicalIds) !== (int) round((float) $line->requested_base_qty)) {
-            throw ValidationException::withMessages(['physical_material_ids' => "物料 {$item->item_code} 退货 {$line->requested_base_qty} 张，必须逐张选择相同数量的实物。"]);
-        }
+        $this->assertPhysicalItem($item);
         $ids = array_values(array_unique(array_map('intval', $physicalIds)));
         if (count($ids) !== count($physicalIds)) {
             throw ValidationException::withMessages(['physical_material_ids' => '采购退货选择的实物存在重复。']);
@@ -279,8 +291,10 @@ final class MaterialPhysicalService
             'location_id' => $line->location_id,
             'batch_no' => $line->batch_no,
         ])->lockForUpdate()->firstOrFail();
+        $actualQuantity = '0';
         foreach ($ids as $physicalId) {
             $physical = $this->assertWarehousePhysical($physicalId, (int) $line->item_id, (int) $balance->id);
+            $actualQuantity = bcadd($actualQuantity, $this->inventoryQuantity($item, $physical), 8);
             $sourceTransactionLine = DB::table('erp_inventory_transaction_items')->where('id', $physical->source_transaction_item_id)->first();
             if (!$sourceTransactionLine || $sourceTransactionLine->source_type !== 'purchase_receipt'
                 || (int) $sourceTransactionLine->source_item_id !== (int) $line->source_receipt_item_id) {
@@ -291,6 +305,9 @@ final class MaterialPhysicalService
                 'purchase_return_item_id' => $line->id,
                 'physical_material_id' => $physicalId,
             ]);
+        }
+        if (bccomp($actualQuantity, (string) $line->requested_base_qty, 8) !== 0) {
+            throw ValidationException::withMessages(['physical_material_ids' => '采购退货数量必须等于所选逐张实物的实际库存数量合计。']);
         }
     }
 
@@ -304,18 +321,19 @@ final class MaterialPhysicalService
             return;
         }
         $expectedQuantity ??= $line->approved_base_qty;
-        if (!$this->isWhole((string) $expectedQuantity)
-            || $line->physicalLinks->count() !== (int) round((float) $expectedQuantity)) {
-            throw ValidationException::withMessages(['physical_material_ids' => '采购退货审核张数与所选实物数量不一致。']);
-        }
         $balance = InventoryBalance::query()->where([
             'item_id' => $line->item_id,
             'warehouse_id' => $line->warehouse_id,
             'location_id' => $line->location_id,
             'batch_no' => $line->batch_no,
         ])->lockForUpdate()->firstOrFail();
+        $actualQuantity = '0';
         foreach ($line->physicalLinks as $link) {
-            $this->assertWarehousePhysical((int) $link->physical_material_id, (int) $line->item_id, (int) $balance->id);
+            $physical = $this->assertWarehousePhysical((int) $link->physical_material_id, (int) $line->item_id, (int) $balance->id);
+            $actualQuantity = bcadd($actualQuantity, $this->inventoryQuantity($line->item, $physical), 8);
+        }
+        if (bccomp($actualQuantity, (string) $expectedQuantity, 8) !== 0) {
+            throw ValidationException::withMessages(['physical_material_ids' => '采购退货审核数量与所选实物的实际库存数量合计不一致。']);
         }
     }
 
@@ -549,13 +567,13 @@ final class MaterialPhysicalService
         string $cost,
     ): int {
         $id = DB::table('erp_material_physicals')->insertGetId([
-            'physical_no' => $this->numbers->next('material_physical', 'PLATE'),
+            'physical_no' => $this->numbers->next('material_physical', isset($dimensions['width_mm']) ? 'PLATE' : 'TUBE'),
             'item_id' => $itemId,
             'source_transaction_item_id' => $sourceTransactionItemId,
             'material_lot_id' => $lotId,
             'current_holding_id' => $holdingId,
             'material_form' => 'FULL_STOCK',
-            'shape' => 'RECTANGLE',
+            'shape' => isset($dimensions['width_mm']) ? 'RECTANGLE' : 'LENGTH',
             'dimensions' => json_encode($this->dimensions($dimensions), JSON_THROW_ON_ERROR),
             'total_cost' => $cost,
             'status' => 'AVAILABLE',
@@ -569,9 +587,9 @@ final class MaterialPhysicalService
 
     private function dimensions(mixed $value): array
     {
-        if (!is_array($value) || !isset($value['length_mm'], $value['width_mm'], $value['thickness_mm'])
+        if (!is_array($value) || !isset($value['length_mm'])
             || array_diff(array_keys($value), ['length_mm', 'width_mm', 'thickness_mm', 'nominal_thickness_mm']) !== []) {
-            throw ValidationException::withMessages(['dimensions' => '板材必须填写实际长、宽、厚，可另行登记采购公称厚度。']);
+            throw ValidationException::withMessages(['dimensions' => '管材必须填写实际长度，板材必须填写实际长、宽、厚。']);
         }
         $result = [];
         foreach ($value as $key => $number) {
@@ -593,11 +611,64 @@ final class MaterialPhysicalService
         return bcadd((string) $value, '0', 4);
     }
 
-    private function assertSheetItem(Item $item): void
+    private function assertPhysicalItem(Item $item): void
     {
-        if ($item->cuttingMode() !== 'sheet') {
-            throw ValidationException::withMessages(['item_id' => "实物管理物料 {$item->item_code} 必须配置为板材下料模式。"]);
+        if (! in_array($item->cuttingMode(), ['sheet', 'length'], true)) {
+            throw ValidationException::withMessages(['item_id' => "实物管理物料 {$item->item_code} 必须配置为板材或管材下料模式。"]);
         }
+    }
+
+    /** 逐张身份与库存基本单位分开；面积库存只能使用实物真实面积。 */
+    public function inventoryQuantity(Item $item, object|array $physical): string
+    {
+        $this->assertPhysicalItem($item);
+        $profile = app(\App\Services\Erp\Inventory\StockMeasureService::class)->profile($item->loadMissing('unit'));
+        $row = $physical instanceof \Illuminate\Database\Eloquent\Model ? $physical->toArray() : (array) $physical;
+        if ($item->cuttingMode() === 'length') {
+            if (isset($row['shape']) && strtoupper((string) $row['shape']) !== 'LENGTH') throw ValidationException::withMessages(['dimensions' => '管材实物外形必须与长度下料类型一致。']);
+            $dimensions = $row['dimensions'] ?? [];
+            if (is_string($dimensions)) $dimensions = json_decode($dimensions, true, 512, JSON_THROW_ON_ERROR);
+            $dimensions = $this->dimensions($dimensions);
+            if (isset($dimensions['width_mm'])) throw ValidationException::withMessages(['dimensions' => '管材逐根实物只登记实际长度，不能按矩形板材建档。']);
+            if (($profile['kind'] ?? null) === 'root') return '1.00000000';
+            if (($profile['kind'] ?? null) !== 'm') throw ValidationException::withMessages(['unit_id' => '实物管材库存单位必须为根或米。']);
+            $quantity = bcdiv($dimensions['length_mm'], '1000', 8);
+        } else {
+            $quantity = $this->areaQuantity($physical);
+            if (($profile['kind'] ?? null) === 'sheet') return '1.00000000';
+            if (($profile['kind'] ?? null) !== 'm2') throw ValidationException::withMessages(['unit_id' => '实物板材库存单位必须为张或平方米。']);
+        }
+        if (bccomp($quantity, bcadd($quantity, '0', 4), 8) !== 0) {
+            throw ValidationException::withMessages(['dimensions' => '实物对应数量超出库存基本单位的四位小数精度，不能舍入后入账。']);
+        }
+        if (bccomp($quantity, '9999999999.9999', 8) > 0) throw ValidationException::withMessages(['dimensions' => '实物对应数量超出库存可保存范围。']);
+        return $quantity;
+    }
+
+    public function areaQuantity(object|array $physical): string
+    {
+        $row = $physical instanceof \Illuminate\Database\Eloquent\Model ? $physical->toArray() : (array) $physical;
+        $dimensions = $row['dimensions'] ?? [];
+        if (is_string($dimensions)) $dimensions = json_decode($dimensions, true, 512, JSON_THROW_ON_ERROR);
+        if (! is_array($dimensions)) throw ValidationException::withMessages(['dimensions' => '板材缺少真实尺寸或余料面积。']);
+        $shape = strtoupper((string) ($row['shape'] ?? (isset($dimensions['area_m2']) ? 'AREA_ONLY' : 'RECTANGLE')));
+        if ($shape === 'AREA_ONLY') {
+            $area = (string) ($dimensions['area_m2'] ?? '');
+            if (! preg_match('/^\d{1,10}(?:\.\d{1,8})?$/D', $area)) {
+                throw ValidationException::withMessages(['dimensions' => '余板必须保留真实平方米面积。']);
+            }
+        } elseif ($shape === 'RECTANGLE') {
+            $dimensions = $this->dimensions($dimensions);
+            if (! isset($dimensions['width_mm'], $dimensions['thickness_mm'])) throw ValidationException::withMessages(['dimensions' => '板材必须填写实际长、宽、厚。']);
+            $area = bcdiv(bcmul($dimensions['length_mm'], $dimensions['width_mm'], 4), '1000000', 10);
+            if (bccomp($area, bcadd($area, '0', 8), 10) !== 0) {
+                throw ValidationException::withMessages(['dimensions' => '板材实际面积超出可保存精度。']);
+            }
+        } else {
+            throw ValidationException::withMessages(['dimensions' => '板材外形不能确定真实面积。']);
+        }
+        if (bccomp($area, '0', 8) <= 0) throw ValidationException::withMessages(['dimensions' => '板材实际面积必须大于零。']);
+        return bcadd($area, '0', 8);
     }
 
     private function isWhole(string $value): bool

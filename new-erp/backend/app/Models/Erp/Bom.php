@@ -23,4 +23,6 @@ class Bom extends MasterModel
     public function sourceStandardBom() { return $this->belongsTo(self::class, 'source_standard_bom_id')->withTrashed(); }
     public function items() { return $this->hasMany(BomItem::class, 'bom_id')->orderBy('line_no'); }
     public function logs() { return $this->hasMany(BomLog::class, 'bom_id')->latest(); }
+    public function routing() { return $this->belongsTo(ProductionRouting::class, 'routing_id'); }
+    public function operationStandards() { return $this->hasMany(BomOperationStandard::class, 'bom_id'); }
 }

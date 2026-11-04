@@ -53,6 +53,7 @@ final class PhysicalInventoryApplicationService
             InventoryTransferService::assertWarehouseScope((int) $sourceBalance->warehouse_id, $operator);
             $snapshot = $sourceBalance->only(['item_id', 'unit_id', 'material_lot_id', 'warehouse_id', 'location_id', 'batch_no']);
             $snapshot['unit_id'] = $sourceBalance->unit_id ?: \App\Models\Erp\Item::query()->whereKey($physical->item_id)->value('unit_id');
+            $snapshot['inventory_qty'] = $this->physicalMaterials->inventoryQuantity(\App\Models\Erp\Item::query()->findOrFail($physical->item_id), $physical);
             if (! $snapshot['unit_id']) throw ValidationException::withMessages(['unit_id' => '实物来源缺少正式库存单位，不能调拨。']);
             $this->assertLocator((int) $payload['target_warehouse_id'], (int) $payload['target_location_id']);
             app(WarehouseManagementScopeService::class)->assertForward((int) $physical->item_id, (int) $payload['target_warehouse_id']);
@@ -153,10 +154,11 @@ final class PhysicalInventoryApplicationService
                 throw ValidationException::withMessages(['physical_ids' => '在途实物、持有数量或冻结成本已变化，不能接收。']);
             $out = InventoryTransactionItem::query()->where('transaction_id', $transfer->outbound_transaction_id)
                 ->where('source_type', 'material_physical_transfer')->where('source_id', $id)->where('source_item_id', $physical->id)->lockForUpdate()->first();
+            $physicalQuantity = $this->physicalMaterials->inventoryQuantity(\App\Models\Erp\Item::query()->findOrFail($physical->item_id), $physical);
             if (! $out || (int) $out->item_id !== (int) $snapshot['item_id'] || (int) $out->unit_id !== (int) $snapshot['unit_id']
                 || (int) $out->material_lot_id !== (int) $snapshot['material_lot_id'] || (int) $out->warehouse_id !== (int) $snapshot['warehouse_id']
                 || (int) $out->location_id !== (int) $snapshot['location_id'] || (string) $out->batch_no !== (string) $snapshot['batch_no']
-                || bccomp((string) $out->change_qty, '-1', 8) !== 0 || bccomp((string) $out->cost_amount, bcsub('0', (string) $transfer->total_cost, 4), 4) !== 0)
+                || bccomp((string) $out->change_qty, bcsub('0', $physicalQuantity, 8), 8) !== 0 || bccomp((string) $out->cost_amount, bcsub('0', (string) $transfer->total_cost, 4), 4) !== 0)
                 throw ValidationException::withMessages(['source' => '实物调拨的冻结来源与正式调出流水不一致。']);
             $transfer->target_location_id = (int) $payload['target_location_id'];
             DB::table('erp_material_physical_transfers')->where('id', $id)->update(['target_location_id' => $transfer->target_location_id]);
@@ -307,7 +309,8 @@ final class PhysicalInventoryApplicationService
         return array_replace((array) $row, ['id' => (int) $row->id, 'kind' => 'material_physical_transfer', 'transfer_id' => (int) $row->id,
             'physical_material_id' => (int) $row->physical_material_id, 'physical_no' => $physical?->physical_no,
             'item_id' => $item?->id, 'item' => $item?->toArray(), 'unit_id' => $snapshot['unit_id'] ?? $source?->unit_id,
-            'dimensions' => json_decode($physical?->dimensions ?? '{}', true, 512, JSON_THROW_ON_ERROR), 'quantity' => '1.00000000',
+            'dimensions' => json_decode($physical?->dimensions ?? '{}', true, 512, JSON_THROW_ON_ERROR),
+            'quantity' => $physical && $item ? $this->physicalMaterials->inventoryQuantity($item, $physical) : ($snapshot['inventory_qty'] ?? null), 'physical_count' => 1,
             'source_warehouse_id' => $sourceWarehouseId, 'source_location_id' => $sourceLocationId,
             'source_warehouse' => $warehouses->get($sourceWarehouseId)?->toArray(), 'target_warehouse' => $warehouses->get($row->target_warehouse_id)?->toArray(),
             'source_location' => $locations->get($sourceLocationId)?->toArray(), 'target_location' => $locations->get($row->target_location_id)?->toArray(),

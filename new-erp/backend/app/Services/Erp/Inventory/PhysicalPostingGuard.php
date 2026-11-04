@@ -5,6 +5,7 @@ namespace App\Services\Erp\Inventory;
 use App\Models\Erp\InventoryBalance;
 use App\Models\Erp\InventoryTransaction;
 use App\Models\Erp\Item;
+use App\Services\Erp\MaterialPhysicalService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
@@ -33,7 +34,9 @@ class PhysicalPostingGuard
             || $transaction->transaction_type !== 'mfg_cutting_issue_outbound'
             || ($line['physical_operation'] ?? null) !== 'mfg_cutting_issue'
             || $item->materialManagementMode() !== 'physical')) throw ValidationException::withMessages(['cost_amount' => '开料实物总成本必须来自正式开料批次及逐张来源。']);
-        return [$packingPhysicalTotal || $transferPhysicalTotal, $cuttingPhysicalTotal];
+        $identityPhysicalTotal = $item->materialManagementMode() === 'physical'
+            && in_array($line['physical_operation'] ?? null, ['adjustment_decrease', 'purchase_return', 'disposal'], true);
+        return [$packingPhysicalTotal || $transferPhysicalTotal || $identityPhysicalTotal, $cuttingPhysicalTotal];
     }
 
     public function assertChange(
@@ -44,6 +47,7 @@ class PhysicalPostingGuard
     ): void {
         $quantity = (string) $line['change_qty'];
         $operation = $line['physical_operation'] ?? null;
+        $physicals = app(MaterialPhysicalService::class);
 
         if (in_array($operation, ['mfg_cutting_issue', 'mfg_cutting_remnant'], true)) {
             $batch = \App\Models\Erp\MfgCuttingBatch::query()->lockForUpdate()->find($transaction->source_id);
@@ -55,25 +59,38 @@ class PhysicalPostingGuard
                 && (int) $physical->item_id === (int) $item->id && (int) ($line['physical_material_id'] ?? 0) === (int) $physical->id;
             if ($valid && $batch->status === 'issued' && $operation === 'mfg_cutting_issue' && ! $batch->inventory_issue_transaction_id
                 && $transaction->transaction_type === 'mfg_cutting_issue_outbound'
-                && (int) $input['inventory_balance_id'] === (int) $balance->id && bccomp($quantity, '-1', 8) === 0
+                && (int) $input['inventory_balance_id'] === (int) $balance->id
+                && bccomp($quantity, bcsub('0', (string) ($input['inventory_qty'] ?? $input['qty']), 8), 8) === 0
+                && bccomp($physicals->inventoryQuantity($item, $physical), (string) ($input['inventory_qty'] ?? $input['qty']), 8) === 0
                 && bccomp((string) $line['cost_amount'], bcsub('0', (string) $physical->total_cost, 4), 4) === 0
                 && $this->atBalance((int) $physical->id, (int) $item->id, (int) $balance->id)) return;
             $remnant = $batch ? collect($batch->remnants ?? [])->firstWhere('source_key', $line['cutting_source_key'] ?? null) : null;
             if ($valid && $batch->status === 'awaiting_confirm' && $batch->settlement_key && ! empty($remnant['self_recorded']) && ! empty($remnant['recorded_by_legacy_id'])
                 && $operation === 'mfg_cutting_remnant' && $batch->inventory_issue_transaction_id && ! $batch->inventory_return_transaction_id
                 && $transaction->transaction_type === 'mfg_cutting_remnant_inbound' && $physical->status === 'CUTTING'
-                && $remnant && bccomp((string) $remnant['measure_qty'], '0', 8) > 0 && bccomp($quantity, '1', 8) === 0
+                && $remnant && bccomp((string) $remnant['measure_qty'], '0', 8) > 0
+                && bccomp($quantity, in_array($input['inventory_unit_kind'] ?? $input['unit_kind'], ['m2', 'm'], true) ? (string) $remnant['measure_qty'] : '1', 8) === 0
                 && (int) $remnant['warehouse_id'] === (int) $line['warehouse_id'] && (int) $remnant['location_id'] === (int) $line['location_id']
                 && bccomp((string) $remnant['cost_amount'], (string) $line['cost_amount'], 4) === 0) return;
         }
 
         if ($operation === 'purchase_receipt') {
-            $whole = bcadd($quantity, '0', 0);
+            $allocation = DB::table('erp_purchase_receipt_item_allocations as allocation')
+                ->join('erp_purchase_receipt_items as item_line', 'item_line.id', '=', 'allocation.receipt_item_id')
+                ->where('allocation.id', (int) ($line['physical_allocation_id'] ?? 0))
+                ->where('item_line.receipt_id', $transaction->source_id)->where('item_line.item_id', $item->id)
+                ->where('item_line.id', $line['source_item_id'] ?? 0)->where('item_line.batch_no', $line['batch_no'])
+                ->where('allocation.warehouse_id', $line['warehouse_id'])->where('allocation.location_id', $line['location_id'])
+                ->select('allocation.*')->lockForUpdate()->first();
+            $entries = $allocation ? DB::table('erp_purchase_receipt_allocation_physicals')->where('allocation_id', $allocation->id)->lockForUpdate()->get() : collect();
+            $actualQuantity = '0';
+            foreach ($entries as $entry) $actualQuantity = bcadd($actualQuantity, $physicals->inventoryQuantity($item, $entry), 8);
             $valid = $transaction->source_type === 'purchase_receipt'
                 && $transaction->transaction_type === 'purchase_receipt_posting'
                 && bccomp($quantity, '0', 8) > 0
-                && bccomp($quantity, $whole, 8) === 0
-                && (int) ($line['physical_entry_count'] ?? -1) === (int) $whole;
+                && $allocation && ! $entries->contains(fn ($entry) => $entry->physical_material_id !== null || $entry->inventory_transaction_item_id !== null)
+                && bccomp($quantity, (string) $allocation->base_qty, 8) === 0 && bccomp($quantity, $actualQuantity, 8) === 0
+                && (int) ($line['physical_entry_count'] ?? -1) === $entries->count();
             if ($valid) return;
         }
 
@@ -87,15 +104,19 @@ class PhysicalPostingGuard
                 ->lockForUpdate()
                 ->first();
             $expectedDirection = $operation === 'adjustment_increase' ? 'increase' : 'decrease';
-            $expectedQty = $operation === 'adjustment_increase' ? '1' : '-1';
+            $physical = $entry && $entry->physical_material_id ? DB::table('erp_material_physicals')->where('id', $entry->physical_material_id)->lockForUpdate()->first() : null;
+            $entryQuantity = $entry ? $physicals->inventoryQuantity($item, $physical ?: $entry) : '0';
+            $expectedQty = $operation === 'adjustment_increase' ? $entryQuantity : bcsub('0', $entryQuantity, 8);
             $valid = $transaction->source_type === 'inventory_adjustment'
                 && $transaction->transaction_type === 'manual_adjustment'
                 && $entry
                 && $entry->direction === $expectedDirection
                 && !$entry->inventory_transaction_item_id
                 && bccomp($quantity, $expectedQty, 8) === 0;
-            if ($valid && $expectedDirection === 'increase' && !$entry->physical_material_id) return;
+            if ($valid && $expectedDirection === 'increase' && !$entry->physical_material_id
+                && bccomp((string) $line['cost_amount'], (string) $entry->total_cost, 4) === 0) return;
             if ($valid && $expectedDirection === 'decrease'
+                && $physical && bccomp((string) $line['cost_amount'], bcsub('0', (string) $physical->total_cost, 4), 4) === 0
                 && (int) $entry->physical_material_id === (int) ($line['physical_material_id'] ?? 0)
                 && $this->atBalance((int) $entry->physical_material_id, (int) $item->id, (int) $balance->id)) return;
         }
@@ -109,11 +130,13 @@ class PhysicalPostingGuard
                 ->select('link.*')
                 ->lockForUpdate()
                 ->first();
+            $physical = $link ? DB::table('erp_material_physicals')->where('id', $link->physical_material_id)->lockForUpdate()->first() : null;
             if ($transaction->source_type === 'purchase_return'
                 && $transaction->transaction_type === 'purchase_return_outbound'
                 && $link && !$link->inventory_transaction_item_id
                 && (int) $link->physical_material_id === (int) ($line['physical_material_id'] ?? 0)
-                && bccomp($quantity, '-1', 8) === 0
+                && $physical && bccomp($quantity, bcsub('0', $physicals->inventoryQuantity($item, $physical), 8), 8) === 0
+                && bccomp((string) $line['cost_amount'], bcsub('0', (string) $physical->total_cost, 4), 4) === 0
                 && $this->atBalance((int) $link->physical_material_id, (int) $item->id, (int) $balance->id)) return;
         }
 
@@ -125,6 +148,7 @@ class PhysicalPostingGuard
                 ->first();
             $physical = $transfer ? DB::table('erp_material_physicals')->where('id', $transfer->physical_material_id)->lockForUpdate()->first() : null;
             $snapshot = $transfer ? json_decode($transfer->source_snapshot ?? '{}', true, 512, JSON_THROW_ON_ERROR) : [];
+            $transferQuantity = $physical ? $physicals->inventoryQuantity($item, $physical) : '0';
             $validBase = $transfer && $physical
                 && isset($snapshot['item_id'], $snapshot['unit_id'], $snapshot['material_lot_id'], $snapshot['warehouse_id'], $snapshot['location_id'], $snapshot['batch_no'])
                 && $transaction->source_type === 'material_physical_transfer'
@@ -142,7 +166,7 @@ class PhysicalPostingGuard
                 && $transfer->status === 'PENDING' && $physical->status === 'AVAILABLE'
                 && (int) $physical->business_version === (int) $transfer->expected_version
                 && in_array($transaction->transaction_type, ['physical_material_transfer', 'physical_material_transfer_outbound'], true)
-                && bccomp($quantity, '-1', 8) === 0
+                && bccomp($quantity, bcsub('0', $transferQuantity, 8), 8) === 0
                 && bccomp((string) $line['cost_amount'], bcsub('0', (string) $transfer->total_cost, 4), 4) === 0
                 && (int) $transfer->source_inventory_balance_id === (int) $balance->id
                 && $this->atBalance((int) $physical->id, (int) $item->id, (int) $balance->id)) return;
@@ -164,12 +188,12 @@ class PhysicalPostingGuard
                 ->where('transfer_out.item_id', $item->id)->where('transfer_out.material_lot_id', $physical->material_lot_id)
                 ->where('transfer_out.unit_id', $snapshot['unit_id'])->where('transfer_out.warehouse_id', $snapshot['warehouse_id'])
                 ->where('transfer_out.location_id', $snapshot['location_id'])->where('transfer_out.batch_no', $snapshot['batch_no'])
-                ->where('transfer_out.change_qty', '-1')->where('transfer_out.cost_amount', bcsub('0', (string) $transfer->total_cost, 4))
+                ->where('transfer_out.change_qty', bcsub('0', $transferQuantity, 8))->where('transfer_out.cost_amount', bcsub('0', (string) $transfer->total_cost, 4))
                 ->where('transfer_tx.source_type', 'material_physical_transfer')->where('transfer_tx.source_id', $transfer->id)->where('transfer_tx.posting_status', 'posted')
                 ->where('transfer_tx.transaction_type', $sameWarehouse ? 'physical_material_transfer' : 'physical_material_transfer_outbound')->exists();
             if ($validBase && $operation === 'transfer_in'
                 && $outboundProven
-                && bccomp($quantity, '1', 8) === 0
+                && bccomp($quantity, $transferQuantity, 8) === 0
                 && bccomp((string) $line['cost_amount'], (string) $transfer->total_cost, 4) === 0
                 && (int) $transfer->target_warehouse_id === (int) $line['warehouse_id']
                 && (int) $transfer->target_location_id === (int) $line['location_id']
@@ -183,11 +207,13 @@ class PhysicalPostingGuard
                 ->where('status', 'PENDING')
                 ->lockForUpdate()
                 ->first();
+            $physical = $disposal ? DB::table('erp_material_physicals')->where('id', $disposal->physical_material_id)->lockForUpdate()->first() : null;
             if ($disposal
                 && $transaction->source_type === 'material_physical_disposal'
                 && $transaction->transaction_type === 'physical_material_disposal'
                 && (int) $transaction->source_id === (int) $disposal->id
-                && bccomp($quantity, '-1', 8) === 0
+                && $physical && bccomp($quantity, bcsub('0', $physicals->inventoryQuantity($item, $physical), 8), 8) === 0
+                && bccomp((string) $line['cost_amount'], bcsub('0', (string) $physical->total_cost, 4), 4) === 0
                 && $this->atBalance((int) $disposal->physical_material_id, (int) $item->id, (int) $balance->id)) return;
         }
 
@@ -203,11 +229,19 @@ class PhysicalPostingGuard
             $valid = $material && ! $material->inventory_transaction_id && count($ids) > 0 && count($ids) === count(array_unique($ids))
                 && bccomp((string) $material->base_qty, (string) count($ids), 8) === 0 && bccomp($quantity, bcsub('0', (string) count($ids), 8), 8) === 0;
             $total = '0';
+            $inventoryQuantity = '0';
             foreach ($ids as $id) {
                 if (! $this->atBalance((int) $id, (int) $item->id, (int) $balance->id)) { $valid = false; break; }
-                $total = bcadd($total, (string) DB::table('erp_material_physicals')->where('id', $id)->value('total_cost'), 4);
+                $physical = DB::table('erp_material_physicals')->where('id', $id)->first();
+                $total = bcadd($total, (string) $physical->total_cost, 4);
+                $inventoryQuantity = bcadd($inventoryQuantity, $physicals->inventoryQuantity($item, $physical), 8);
             }
-            if ($valid && bccomp((string) ($line['cost_amount'] ?? '0'), bcsub('0', $total, 4), 4) === 0) return;
+            if ($material && count($ids) > 0 && (bccomp((string) $material->base_qty, $inventoryQuantity, 8) !== 0
+                || bccomp($quantity, bcsub('0', $inventoryQuantity, 8), 8) !== 0)) {
+                throw ValidationException::withMessages(['physical_material_ids' => '包装用量必须与所选逐件实物的实际面积或长度对应，请核对后再领用，不能把一张或一根当作一个基本库存单位。']);
+            }
+            if ($valid && bccomp((string) $material->base_qty, $inventoryQuantity, 8) === 0
+                && bccomp((string) ($line['cost_amount'] ?? '0'), bcsub('0', $total, 4), 4) === 0) return;
         }
         throw ValidationException::withMessages([
             'physical_material_id' => '实物管理物料禁止通过普通数量接口改变库存；必须逐张绑定已落库的正式实物动作。',

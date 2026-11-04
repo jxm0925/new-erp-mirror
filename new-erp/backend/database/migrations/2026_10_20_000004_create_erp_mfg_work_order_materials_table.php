@@ -20,6 +20,7 @@ CREATE TABLE `erp_mfg_work_order_materials` (
   `work_order_id` bigint(20) unsigned NOT NULL,
   `work_order_operation_id` bigint(20) unsigned DEFAULT NULL,
   `bom_item_id` bigint(20) unsigned DEFAULT NULL,
+  `position_path` varchar(512) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL,
   `component_item_id` bigint(20) unsigned NOT NULL,
   `component_item_code` varchar(120) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `component_item_name` varchar(200) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,

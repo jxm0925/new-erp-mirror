@@ -176,13 +176,15 @@ final class SharedCuttingService
                 if (! hash_equals($source['source_version'], (string) $row['source_version'])) $this->fail('source_changed', '原料库存、尺寸或版本已变化，请重新选。', 409);
                 $qty = CuttingDecimal::value($row['qty'] ?? '1');
                 $this->cutting->assertSourceQuantity($source, $qty);
+                $inventoryQty = $this->cutting->inventoryQuantity($source, $qty);
                 $id = (int) $balance->id;
-                $remaining[$id] ??= ['available' => $source['available_qty'], 'qty' => (string) $balance->quantity_on_hand, 'cost' => (string) $balance->inventory_value];
-                if (bccomp($qty, $remaining[$id]['available'], 8) > 0) $this->fail('stock_short', '同一来源累计领用数量超过当前可用库存。');
+                $remaining[$id] ??= ['available' => $source['inventory_available_qty'], 'qty' => (string) $balance->quantity_on_hand, 'cost' => (string) $balance->inventory_value];
+                if (bccomp($inventoryQty, $remaining[$id]['available'], 8) > 0) $this->fail('stock_short', '同一来源累计领用数量超过当前可用库存。');
                 if ($physicalId) $this->physicals->assertPhysicalNotInOpenDocument($physicalId);
-                $cost = $physicalId ? $source['cost_amount'] : CuttingDecimal::share($remaining[$id]['cost'], $remaining[$id]['qty'], $qty);
-                $remaining[$id] = ['available' => bcsub($remaining[$id]['available'], $qty, 8), 'qty' => bcsub($remaining[$id]['qty'], $qty, 8), 'cost' => bcsub($remaining[$id]['cost'], $cost, 4)];
-                $sources[] = array_replace($source, ['source_key' => $key, 'qty' => $qty, 'cost_amount' => $cost, 'input_measure' => bcmul($source['measure_qty'], $qty, 8)]);
+                $cost = $physicalId ? $source['cost_amount'] : CuttingDecimal::share($remaining[$id]['cost'], $remaining[$id]['qty'], $inventoryQty);
+                if (bccomp($cost, $remaining[$id]['cost'], 4) > 0) $this->fail('source_cost_invalid', '所选实物成本超过来源余额，请先核对库存成本。');
+                $remaining[$id] = ['available' => bcsub($remaining[$id]['available'], $inventoryQty, 8), 'qty' => bcsub($remaining[$id]['qty'], $inventoryQty, 8), 'cost' => bcsub($remaining[$id]['cost'], $cost, 4)];
+                $sources[] = array_replace($source, ['source_key' => $key, 'qty' => $qty, 'inventory_qty' => $inventoryQty, 'cost_amount' => $cost, 'input_measure' => bcmul($source['measure_qty'], $qty, 8)]);
                 $total = bcadd($total, (string) $cost, 4);
             }
             if (! $sources) $this->fail('source_required', '请选择实际领入的原料或余料。');
@@ -357,11 +359,15 @@ final class SharedCuttingService
         $inputs = collect($batch->input_lines);
         $input = '0.00000000';
         foreach ($inputs as $row) $input = bcadd($input, (string) $row['input_measure'], 8);
+        $singleUnit = $inputs->pluck('unit_kind')->unique()->count() === 1;
         $row = $batch->only(['id', 'batch_no', 'item_id', 'cutting_run_id', 'status', 'business_version', 'input_cost_amount', 'remnant_cost_amount', 'net_cost_amount',
             'issued_by_name', 'settled_by_name', 'issued_at', 'settled_at', 'remark']) + [
             'item_code' => $item?->item_code, 'item_name' => $item?->item_name, 'specification' => $item?->spec ?: $item?->model,
             'sheet_count' => $inputs->count(), 'input_measure' => $input, 'measure_unit' => $inputs->first()['measure_unit'] ?? 'm2', 'mode' => $inputs->first()['mode'] ?? 'sheet',
-            'input_qty' => $inputs->sum('qty'), 'unit_kind' => $inputs->first()['unit_kind'] ?? null, 'pool_measure' => (string) $batch->pool_measure,
+            'input_qty' => $singleUnit ? $inputs->sum('qty') : $input,
+            'unit_kind' => $singleUnit ? ($inputs->first()['unit_kind'] ?? null) : ($inputs->first()['measure_unit'] ?? null),
+            'inventory_qty' => $inputs->reduce(fn ($sum, $input) => bcadd($sum, (string) ($input['inventory_qty'] ?? $input['qty']), 8), '0.00000000'),
+            'inventory_unit_kind' => $inputs->first()['inventory_unit_kind'] ?? $inputs->first()['unit_kind'] ?? null, 'pool_measure' => (string) $batch->pool_measure,
             'net_measure' => collect($batch->remnants ?? [])->reduce(fn ($sum, $r) => bcadd($sum, (string) ($r['consumed_measure'] ?? '0'), 8), '0.00000000'),
             'pool_tracked' => ! empty($inputs->first()['physical_material_id']) && ($inputs->first()['mode'] ?? null) === 'sheet',
             'allocated_measure' => (string) $batch->allocated_measure, 'allocated_cost_amount' => (string) $batch->allocated_cost_amount,
@@ -378,7 +384,7 @@ final class SharedCuttingService
         $row = $this->summary($batch, $item, $amounts, $actor);
         $row['inputs'] = $this->cutting->publicData(array_map(fn ($i) => array_intersect_key($i, array_flip(['source_key', 'physical_material_id', 'physical_no',
             'inventory_balance_id', 'warehouse_id', 'warehouse_name', 'location_id', 'location_name', 'batch_no', 'shape', 'dimensions', 'material_form',
-            'input_measure', 'measure_unit', 'mode', 'unit_kind', 'qty', 'measure_qty', 'cost_amount'])), $batch->input_lines), $amounts);
+            'input_measure', 'measure_unit', 'mode', 'unit_kind', 'qty', 'inventory_qty', 'inventory_unit_kind', 'measure_qty', 'cost_amount'])), $batch->input_lines), $amounts);
         $row['remnants'] = $this->cutting->publicData($batch->remnants ?? [], $amounts);
         $row['allocations'] = $this->cutting->publicData(MfgCuttingAllocation::query()->from('erp_mfg_cutting_allocations as a')
             ->join('erp_mfg_work_orders as w', 'w.id', '=', 'a.work_order_id')

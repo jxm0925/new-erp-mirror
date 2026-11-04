@@ -191,6 +191,74 @@
             </template>
           </div>
 
+          <!-- 卡片 3.5：本单工时与提成 -->
+          <div v-if="stdNodes.length" class="content-card">
+            <div class="card-title-bar">
+              <div class="title-left">
+                <h2 class="section-title">工时与提成（本工单）<small class="text-muted">只影响本工单；下发时冻结，之后改 BOM 不影响。</small></h2>
+              </div>
+              <div class="title-right">
+                <el-button v-if="stdEditable" size="mini" icon="el-icon-check" class="btn-theme-plain" :loading="saving" :disabled="!stdDirty" @click="saveStandards">保存工时提成</el-button>
+              </div>
+            </div>
+            <div class="table-shell">
+              <table class="bom-table std-table">
+                <thead>
+                  <tr>
+                    <th style="width: 56px;">顺序</th>
+                    <th>工序</th>
+                    <th style="width: 70px;">执行域</th>
+                    <th>基础值（BOM）</th>
+                    <th style="width: 120px;">本单准备(小时)</th>
+                    <th style="width: 120px;">本单单件(小时)</th>
+                    <th v-if="stdView" style="width: 196px;">提成方式</th>
+                    <th v-if="stdView" style="width: 92px;">比例(%)</th>
+                    <th v-if="stdView" style="width: 130px;">生效</th>
+                    <th style="width: 96px;">本单覆盖</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="r in stdRows" :key="r.routing_operation_id" :class="{ 'row-custom': rowChanged(r) || (r.customized && !r._reverted) }">
+                    <td class="text-secondary">{{ r.sequence }}</td>
+                    <td class="font-medium text-main">{{ r.operation_name }}</td>
+                    <td>
+                      <el-tag size="mini" :type="r.execution_context === 'shipment' ? 'info' : 'success'" effect="plain">
+                        {{ r.execution_context === 'shipment' ? '发货' : '生产' }}
+                      </el-tag>
+                    </td>
+                    <td class="text-secondary small">
+                      <div>{{ stdBaseHours(r) }}</div>
+                      <div v-if="stdView">{{ stdBasePerf(r) }}</div>
+                    </td>
+                    <td><el-input v-model="r.setup_hours" size="mini" :disabled="!stdEditable" placeholder="未设" /></td>
+                    <td><el-input v-model="r.unit_hours" size="mini" :disabled="!stdEditable" placeholder="未设" /></td>
+                    <td v-if="stdView">
+                      <el-radio-group v-model="r.performance_mode" size="mini" class="perf-mode-group" :disabled="!stdEditable || !stdEdit">
+                        <el-radio-button label="bom">沿用BOM</el-radio-button>
+                        <el-radio-button label="inherit">沿用模板</el-radio-button>
+                        <el-radio-button label="override">指定比例</el-radio-button>
+                        <el-radio-button label="zero">不计</el-radio-button>
+                      </el-radio-group>
+                    </td>
+                    <td v-if="stdView">
+                      <el-input v-if="r.performance_mode === 'override'" v-model="r.performance_percent" size="mini" :disabled="!stdEditable || !stdEdit" placeholder="如 2.5" />
+                      <span v-else class="text-muted">{{ r.performance_mode === 'zero' ? '0' : '—' }}</span>
+                    </td>
+                    <td v-if="stdView"><span class="std-pill" :class="stdPillClass(r)">{{ stdResolvedText(r) }}</span></td>
+                    <td>
+                      <template v-if="r.customized && !r._reverted">
+                        <el-tag size="mini" type="success" effect="plain">本单</el-tag>
+                        <span v-if="stdEditable" class="theme-link small" @click="revertStd(r)">恢复BOM</span>
+                      </template>
+                      <span v-else-if="r._reverted" class="text-muted small">将恢复BOM</span>
+                      <span v-else class="text-muted">—</span>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
           <!-- 卡片 4：制造工艺路线 -->
           <div class="content-card">
             <div class="card-title-bar">
@@ -369,12 +437,23 @@ export default {
     showHistory: false,
     replaceTarget: null,
     bomDialog: false,
-    editRows: []
+    editRows: [],
+    stdRows: []
   }),
   computed: {
     wo() { return (this.d && this.d.work_order) || {} },
     tech() { return (this.d && this.d.tech) || {} },
     editable() { return !!(this.d && this.d.can_manage && this.tech.status === 'pending' && this.wo.status === 'planned') },
+    std() { return (this.d && this.d.operation_standards) || {} },
+    stdNodes() { return this.std.nodes || [] },
+    stdView() { return !!(this.std.permissions && this.std.permissions.view) },
+    stdEdit() { return !!(this.std.permissions && this.std.permissions.edit) },
+    stdEditable() { return !!(this.editable && this.std.editable) },
+    stdDirty() {
+      return this.stdRows.some(r => this.normMinutes(r.setup_hours, r.setup_minutes) !== this.minuteValue(r.setup_minutes)
+        || this.normMinutes(r.unit_hours, r.unit_minutes) !== this.minuteValue(r.unit_minutes)
+        || this.stdPerformanceChanged(r) || (r.customized && r._reverted))
+    },
     canUpload() { return !!(this.d && this.d.can_manage && !['completed', 'closed', 'cancelled'].includes(this.wo.status)) },
     dialogWidth() { return window.innerWidth < 1000 ? '96%' : '980px' },
     canRelease() { return this.d && this.d.checks.every(c => c.ok !== false) },
@@ -409,6 +488,125 @@ export default {
       const canManage = data.can_manage === undefined && this.d ? this.d.can_manage : data.can_manage
       this.d = { ...data, can_manage: canManage }
       if (!this.remark && data.tech && data.tech.remark && data.tech.status === 'pending') this.remark = data.tech.remark
+      this.initStandards()
+    },
+    initStandards() {
+      this.stdRows = this.stdNodes.map(n => ({
+        ...n,
+        _reverted: false,
+        _saved_mode: n.performance_customized ? (n.performance_mode || 'inherit') : 'bom',
+        setup_hours: this.minutesToHoursText(n.setup_minutes),
+        unit_hours: this.minutesToHoursText(n.unit_minutes),
+        performance_mode: n.performance_customized ? (n.performance_mode || 'inherit') : 'bom',
+        performance_percent: n.performance_rate === null || n.performance_rate === undefined ? '' : String(Number((Number(n.performance_rate) * 100).toFixed(4)))
+      }))
+    },
+    revertStd(r) {
+      r._reverted = true
+      r.setup_hours = this.minutesToHoursText(r.base_setup_minutes)
+      r.unit_hours = this.minutesToHoursText(r.base_unit_minutes)
+      if (this.stdEdit) {
+        r.performance_mode = 'bom'
+        r.performance_percent = ''
+      }
+    },
+    minutesToHoursText(v) { return v === null || v === undefined ? '' : String(Number((Number(v) / 60).toFixed(4))) },
+    minuteValue(v) { return v === null || v === undefined ? null : Number(v) },
+    normMinutes(v, original) {
+      const s = String(v ?? '').trim()
+      if (s === '') return null
+      // 小时显示会舍入；未修改显示值时保留原分钟，避免保存其他节点时改写工时。
+      if (original !== null && original !== undefined && Number(s) === Number(this.minutesToHoursText(original))) return Number(original)
+      return Number((Number(s) * 60).toFixed(4))
+    },
+    percentText(v) { return v === null || v === undefined ? null : Number((Number(v) * 100).toFixed(4)) },
+    stdPerformanceChanged(r) {
+      if (!this.stdEdit) return false
+      const savedMode = r._reverted ? 'bom' : r._saved_mode
+      return r.performance_mode !== savedMode || (r.performance_mode === 'override'
+        && Number(r.performance_percent) !== this.percentText(r._reverted ? null : r.performance_rate))
+    },
+    rowChanged(r) {
+      if (this.normMinutes(r.setup_hours, r.base_setup_minutes) !== this.minuteValue(r.base_setup_minutes)) return true
+      if (this.normMinutes(r.unit_hours, r.base_unit_minutes) !== this.minuteValue(r.base_unit_minutes)) return true
+      return this.stdView && ((r.performance_customized && !r._reverted) || this.stdPerformanceChanged(r))
+    },
+    stdBaseHours(r) {
+      const setup = r.base_setup_minutes === null || r.base_setup_minutes === undefined ? '未设' : this.minutesToHoursText(r.base_setup_minutes) + 'h'
+      const unit = r.base_unit_minutes === null || r.base_unit_minutes === undefined ? '未设' : this.minutesToHoursText(r.base_unit_minutes) + 'h'
+      return `准备 ${setup} · 单件 ${unit}`
+    },
+    stdBasePerf(r) {
+      const source = r.base_performance_source
+      if (source === 'zero') return '明确不计'
+      const rate = r.base_performance_rate
+      if (rate === null || rate === undefined) return '未配置'
+      const pct = this.percentText(rate) + '%'
+      const label = { bom: '本BOM', category: '分类模板', default: '默认模板' }[source]
+      return label ? `${pct} · ${label}` : pct
+    },
+    stdResolvedText(r) {
+      if (r.performance_mode === 'bom' && this.tech.status === 'pending') return this.stdBasePerf(r)
+      if (r.performance_mode === 'override') {
+        const p = String(r.performance_percent ?? '').trim()
+        return p === '' ? '保存后显示' : `${p}% · 本单`
+      }
+      if (r.performance_mode === 'zero') return '明确不计（本单）'
+      if (!['inherit', 'bom'].includes(r._saved_mode)) return '保存后显示'
+      const res = r.resolved || {}
+      const pct = this.percentText(res.rate)
+      if (pct === null) return res.source === 'zero' ? '明确不计' : '未配置'
+      const label = { bom: '本BOM', category: '分类模板', default: '默认模板' }[res.source]
+      return label ? `${pct}% · ${label}` : `${pct}%`
+    },
+    stdPillClass(r) {
+      if (r.performance_mode === 'override' || r.performance_mode === 'zero') return 'ok'
+      const source = r.performance_mode === 'bom' && this.tech.status === 'pending' ? r.base_performance_source : (r.resolved || {}).source
+      if (source === 'missing' || !source) return 'muted'
+      return source === 'zero' ? 'warn' : 'ok'
+    },
+    async saveStandards() {
+      // 服务端按提交的集合整体替换本单覆盖值：改动的行、已有本单覆盖的行都要提交，标了“恢复BOM”的行则省略以删除覆盖。
+      const dirty = this.stdRows.filter(r => this.rowChanged(r) || (r.customized && !r._reverted))
+      for (const r of dirty) {
+        for (const [key, label] of [['setup_hours', '准备工时'], ['unit_hours', '单件工时']]) {
+          const v = String(r[key] ?? '').trim()
+          if (v !== '' && (!/^\d+(\.\d+)?$/.test(v) || Number(v) * 60 > 999999)) return this.$message.error(`「${r.operation_name}」的${label}须为不小于 0 的小时数，留空表示未设`)
+        }
+        if (this.stdEdit && r.performance_mode === 'override') {
+          const v = String(r.performance_percent ?? '').trim()
+          if (!/^\d+(\.\d{1,4})?$/.test(v) || !(Number(v) > 0) || Number(v) > 100) return this.$message.error(`「${r.operation_name}」的提成比例须大于 0 且不超过 100`)
+        }
+      }
+      const standards = dirty.map(r => {
+        const rec = { routing_operation_id: r.routing_operation_id }
+        // 未改动且未覆盖的字段省略，继续跟随 BOM；不能因保存其他字段就固定当前基础值。
+        for (const key of ['setup', 'unit']) {
+          const minutes = this.normMinutes(r[key + '_hours'], r._reverted ? r['base_' + key + '_minutes'] : r[key + '_minutes'])
+          if ((r[key + '_customized'] && !r._reverted) || minutes !== this.minuteValue(r['base_' + key + '_minutes'])) {
+            rec[key + '_minutes'] = minutes
+          }
+        }
+        if (this.stdEdit && r.performance_mode !== 'bom' && ((r.performance_customized && !r._reverted) || this.stdPerformanceChanged(r))) {
+          rec.performance_mode = r.performance_mode
+          rec.performance_rate = r.performance_mode === 'override' ? Number((Number(r.performance_percent) / 100).toFixed(6)) : null
+        }
+        return rec
+      })
+      const lines = this.d.bom_lines.filter(r => r.change !== 'removed').map(r => ({
+        base_line_id: r.base_line_id || null, component_item_id: r.component_item_id, qty: r.qty,
+        loss_rate: r.loss_rate || 0, fixed_qty: r.fixed_qty || 0, target_routing_operation_id: r.target_routing_operation_id || null, remark: r.remark || null
+      }))
+      this.saving = true
+      try {
+        const { data } = await saveProductionTechBom(this.wo.id, { lines, confirmed: !!this.tech.bom_confirmed, operation_standards: standards })
+        this.$message.success(data.message || '工时提成已保存')
+        this.apply(data.data)
+      } catch (e) {
+        this.$message.error(errorText(e, '工时提成保存失败'))
+      } finally {
+        this.saving = false
+      }
     },
     isImage(g) { return /^image\//.test(g.mime_type || '') },
     pickFile(target) {
@@ -1113,5 +1311,32 @@ export default {
   .drawing-grid { grid-template-columns: 1fr; }
   .page-head { padding: 12px 14px; }
   .title-row { flex-direction: column; align-items: flex-start; }
+}
+.std-table .row-custom td {
+  background: #f0fdf4;
+}
+.std-pill {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 10px;
+  font-size: 12px;
+  background: #f3f4f6;
+  color: #6b7280;
+}
+.std-pill.ok {
+  background: #f0fdf4;
+  color: #15803d;
+}
+.std-pill.warn {
+  background: #fffbeb;
+  color: #b45309;
+}
+.std-pill.muted {
+  color: #9ca3af;
+}
+.perf-mode-group ::v-deep .el-radio-button__orig-radio:checked + .el-radio-button__inner {
+  background-color: #008b4b;
+  border-color: #008b4b;
+  box-shadow: -1px 0 0 0 #008b4b;
 }
 </style>

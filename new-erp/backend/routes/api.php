@@ -362,6 +362,11 @@ Route::prefix('v1/erp/bom')->group(function () {
     Route::post('boms', [BomController::class, 'store']);
     Route::post('expand', [BomController::class, 'expand']);
     Route::get('operation-options', [BomController::class, 'operationOptions']);
+    Route::get('boms/operation-standards/export', [BomController::class, 'exportOperationStandards']);
+    Route::post('boms/operation-standards/batch/preview', [BomController::class, 'batchOperationStandardsPreview']);
+    Route::post('boms/operation-standards/batch/apply', [BomController::class, 'batchOperationStandardsApply']);
+    Route::post('boms/operation-standards/import/preview', [BomController::class, 'importOperationStandardsPreview']);
+    Route::post('boms/operation-standards/import/apply', [BomController::class, 'importOperationStandardsApply']);
     Route::get('boms/{id}', [BomController::class, 'show'])->whereNumber('id');
     Route::put('boms/{id}', [BomController::class, 'update'])->whereNumber('id');
     Route::post('boms/{id}/submit', [BomController::class, 'submit'])->whereNumber('id');
@@ -489,9 +494,8 @@ Route::prefix('v1/erp/production')->group(function () {
     Route::get('performance/templates/{id}', [ProductionPerformanceTemplateController::class, 'show'])->whereNumber('id');
     Route::put('performance/templates/{id}', [ProductionPerformanceTemplateController::class, 'update'])->whereNumber('id');
     Route::delete('performance/templates/{id}', [ProductionPerformanceTemplateController::class, 'destroy'])->whereNumber('id');
-    Route::post('performance/templates/{id}/preview', [ProductionPerformanceTemplateController::class, 'preview'])->whereNumber('id');
-    Route::post('performance/templates/{id}/apply', [ProductionPerformanceTemplateController::class, 'apply'])->whereNumber('id');
-    Route::post('performance/templates/{id}/unbind', [ProductionPerformanceTemplateController::class, 'unbind'])->whereNumber('id');
+    Route::post('performance/templates/{id}/categories', [ProductionPerformanceTemplateController::class, 'bindCategories'])->whereNumber('id');
+    Route::post('performance/templates/{id}/categories/unbind', [ProductionPerformanceTemplateController::class, 'unbindCategories'])->whereNumber('id');
     Route::post('performance/templates/{id}/set-default', [ProductionPerformanceTemplateController::class, 'setDefault'])->whereNumber('id');
     // 新生产工单（第 1 阶段）
     Route::get('work-orders', [MfgWorkOrderController::class, 'index']);
