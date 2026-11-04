@@ -1,5 +1,723 @@
 @import "../shared.wxss";
 
+.tk-v2-page {
+  position: relative;
+  overflow-x: hidden;
+  padding-top: 16rpx;
+}
+
+.tk-top-bg {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 136rpx;
+  background: linear-gradient(180deg, #d81e06 0%, #ef1008 100%);
+  border-radius: 0 0 38rpx 38rpx;
+  z-index: 0;
+  pointer-events: none;
+}
+
+/* ==================== 1. 工单与销售订单关联主卡 ==================== */
+.tk-main-card {
+  position: relative;
+  z-index: 1;
+  background: #ffffff;
+  border-radius: 28rpx;
+  padding: 26rpx 24rpx 22rpx;
+  margin-bottom: 18rpx;
+  box-shadow: 0 12rpx 32rpx rgba(15, 23, 42, 0.08);
+  border: 1rpx solid rgba(15, 23, 42, 0.05);
+}
+
+.tk-mc-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16rpx;
+}
+
+.tk-mc-title-wrap {
+  flex: 1;
+  min-width: 0;
+}
+
+.tk-mc-title {
+  font-size: 32rpx;
+  font-weight: 900;
+  color: #1f2329;
+  line-height: 1.35;
+  word-break: break-all;
+}
+
+.tk-mc-qty {
+  color: #d81e06;
+  margin-left: 10rpx;
+  font-weight: 900;
+}
+
+.tk-mc-spec {
+  font-size: 24rpx;
+  color: #64748b;
+  margin-top: 6rpx;
+  line-height: 1.4;
+}
+
+.tk-mc-detail-btn {
+  flex-shrink: 0;
+  font-size: 23rpx;
+  font-weight: 700;
+  color: #475569;
+  background: #f8fafc;
+  border: 1rpx solid #e2e8f0;
+  padding: 8rpx 18rpx;
+  border-radius: 999rpx;
+}
+
+/* 核心关联信息区：销售订单号 + 销售员 + 客户 + 工单号（严格单行对齐不折行） */
+.tk-order-banner {
+  margin-top: 20rpx;
+  background: #fff8f6;
+  border: 2rpx solid #fee2e2;
+  border-radius: 20rpx;
+  padding: 16rpx 18rpx;
+  display: flex;
+  flex-direction: column;
+  gap: 12rpx;
+}
+
+.tk-ob-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10rpx;
+  flex-wrap: nowrap;
+}
+
+.tk-ob-row.sub {
+  padding-top: 12rpx;
+  border-top: 1rpx dashed #fecaca;
+}
+
+.tk-ob-row.parent {
+  padding-top: 12rpx;
+  border-top: 1rpx dashed #fecaca;
+}
+
+.tk-ob-left {
+  display: flex;
+  align-items: center;
+  gap: 8rpx;
+  flex-wrap: nowrap;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.tk-ob-right {
+  display: flex;
+  align-items: center;
+  gap: 10rpx;
+  flex-wrap: nowrap;
+  flex-shrink: 0;
+}
+
+.tk-ob-badge {
+  background: #d81e06;
+  color: #ffffff;
+  font-size: 19rpx;
+  font-weight: 800;
+  padding: 3rpx 10rpx;
+  border-radius: 7rpx;
+  flex-shrink: 0;
+  line-height: 1.2;
+}
+
+.tk-ob-so {
+  font-size: 24rpx;
+  font-weight: 900;
+  color: #b91c1c;
+  white-space: nowrap;
+}
+
+.tk-ob-so-empty {
+  font-size: 23rpx;
+  font-weight: 700;
+  color: #64748b;
+  white-space: nowrap;
+}
+
+.tk-ob-sales {
+  font-size: 21rpx;
+  font-weight: 800;
+  color: #991b1b;
+  background: #fee2e2;
+  padding: 3rpx 12rpx;
+  border-radius: 7rpx;
+  white-space: nowrap;
+  line-height: 1.25;
+}
+
+.tk-ob-cust {
+  font-size: 22rpx;
+  font-weight: 700;
+  color: #475569;
+  white-space: nowrap;
+}
+
+.tk-ob-wo-lbl {
+  font-size: 22rpx;
+  color: #64748b;
+  white-space: nowrap;
+}
+
+.tk-ob-wo {
+  color: #334155;
+  font-weight: 700;
+}
+
+.tk-ob-parent-name {
+  font-size: 22rpx;
+  font-weight: 700;
+  color: #1f2329;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tk-ob-due {
+  font-size: 22rpx;
+  color: #64748b;
+  white-space: nowrap;
+}
+
+.tk-ob-due-val {
+  color: #1f2329;
+  font-weight: 800;
+}
+
+.tk-mini-tag {
+  font-size: 19rpx;
+  font-weight: 700;
+  padding: 2rpx 10rpx;
+  border-radius: 6rpx;
+  background: #f1f5f9;
+  color: #475569;
+  white-space: nowrap;
+  flex-shrink: 0;
+  line-height: 1.25;
+}
+.tk-mini-tag.green {
+  background: #ecfdf5;
+  color: #059669;
+  border: 1rpx solid #a7f3d0;
+}
+.tk-mini-tag.amber {
+  background: #fffbeb;
+  color: #b45309;
+  border: 1rpx solid #fde68a;
+}
+.tk-mini-tag.red {
+  background: #fff1f0;
+  color: #d81e06;
+  border: 1rpx solid #fecaca;
+}
+.tk-mini-tag.blue {
+  background: #eff6ff;
+  color: #1d4ed8;
+  border: 1rpx solid #bfdbfe;
+}
+
+/* 4 列核心进度指标栏（严格基线对齐） */
+.tk-kpi-bar {
+  margin-top: 20rpx;
+  padding-top: 20rpx;
+  border-top: 1rpx solid #f1f5f9;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  align-items: center;
+}
+
+.tk-kpi-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  border-right: 1rpx solid #f1f5f9;
+  padding: 0 6rpx;
+}
+.tk-kpi-cell:last-child {
+  border-right: 0;
+}
+
+.tk-kpi-val {
+  height: 40rpx;
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  font-size: 32rpx;
+  font-weight: 900;
+  color: #1f2329;
+  line-height: 1;
+}
+.tk-kpi-val.red {
+  color: #d81e06;
+}
+.tk-kpi-val.warn {
+  font-size: 26rpx;
+  color: #d81e06;
+  text-decoration: underline;
+  text-underline-offset: 4rpx;
+  align-items: center;
+}
+.tk-kpi-val.ok {
+  font-size: 26rpx;
+  color: #059669;
+  align-items: center;
+}
+
+.tk-kpi-unit {
+  font-size: 22rpx;
+  font-weight: 700;
+  color: #64748b;
+  margin-left: 4rpx;
+}
+
+.tk-kpi-lbl {
+  font-size: 22rpx;
+  color: #94a3b8;
+  font-weight: 600;
+  margin-top: 8rpx;
+  line-height: 1.2;
+}
+
+/* ==================== 2. 作业工时与协同人员控制台 ==================== */
+.tk-timer-v2 {
+  position: relative;
+  z-index: 1;
+  background: #ffffff;
+  border-radius: 26rpx;
+  padding: 24rpx 24rpx 20rpx;
+  margin-bottom: 18rpx;
+  box-shadow: 0 8rpx 24rpx rgba(15, 23, 42, 0.05);
+  border: 1rpx solid rgba(15, 23, 42, 0.05);
+}
+
+.tk-timer-v2.on {
+  border-color: rgba(216, 30, 6, 0.25);
+  background: linear-gradient(180deg, #fffafa 0%, #ffffff 100%);
+}
+
+.tk-tv2-main {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16rpx;
+}
+
+.tk-tv2-left {
+  flex: 1;
+  min-width: 0;
+}
+
+.tk-tv2-head {
+  display: flex;
+  align-items: center;
+  gap: 10rpx;
+  flex-wrap: wrap;
+}
+
+.tk-pulse-dot {
+  width: 14rpx;
+  height: 14rpx;
+  border-radius: 50%;
+  background: #cbd5e1;
+}
+.tk-pulse-dot.on {
+  background: #10b981;
+  box-shadow: 0 0 0 6rpx rgba(16, 185, 129, 0.16);
+}
+
+.tk-tv2-label {
+  font-size: 24rpx;
+  font-weight: 700;
+  color: #64748b;
+}
+
+.tk-tv2-clock {
+  font-size: 56rpx;
+  font-weight: 900;
+  color: #1f2329;
+  letter-spacing: 2rpx;
+  line-height: 1.15;
+  margin-top: 6rpx;
+}
+.tk-timer-v2.on .tk-tv2-clock {
+  color: #d81e06;
+}
+
+.tk-tv2-btns {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+  flex-shrink: 0;
+}
+
+.tk-tv2-foot {
+  margin-top: 18rpx;
+  padding-top: 16rpx;
+  border-top: 1rpx dashed #e2e8f0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12rpx;
+  font-size: 23rpx;
+  color: #64748b;
+}
+
+.tk-tv2-foot-left {
+  flex: 1;
+  min-width: 0;
+  line-height: 1.45;
+  word-break: break-all;
+}
+
+.tk-tv2-foot-right {
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+  flex-shrink: 0;
+}
+
+.tk-tv2-owner {
+  color: #1f2329;
+  font-weight: 800;
+}
+
+/* ==================== 3. 工作区三栏分段 Tab 切换器 ==================== */
+.tk-seg-tabs {
+  display: flex;
+  background: #e2e8f0;
+  padding: 8rpx;
+  border-radius: 22rpx;
+  gap: 8rpx;
+  margin-bottom: 18rpx;
+}
+
+.tk-seg-item {
+  flex: 1;
+  height: 68rpx;
+  border-radius: 16rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8rpx;
+  font-size: 25rpx;
+  font-weight: 700;
+  color: #475569;
+}
+
+.tk-seg-item.active {
+  background: #ffffff;
+  color: #d81e06;
+  box-shadow: 0 4rpx 12rpx rgba(15, 23, 42, 0.08);
+}
+
+.tk-seg-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 34rpx;
+  padding: 0 12rpx;
+  border-radius: 999rpx;
+  font-size: 20rpx;
+  font-weight: 800;
+  line-height: 1;
+  background: rgba(15, 23, 42, 0.08);
+  color: #475569;
+  white-space: nowrap;
+}
+.tk-seg-item.active .tk-seg-badge {
+  background: #fff1f0;
+  color: #d81e06;
+}
+.tk-seg-badge.warn {
+  background: #d81e06 !important;
+  color: #ffffff !important;
+}
+
+/* ==================== 单件选择与卡片底栏流转提示 ==================== */
+.tk-unit-tools {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+}
+
+.tk-tool-pill {
+  font-size: 23rpx;
+  font-weight: 700;
+  padding: 6rpx 18rpx;
+  border-radius: 999rpx;
+  background: #f8fafc;
+  color: #475569;
+  border: 1rpx solid #e2e8f0;
+}
+.tk-tool-pill.red {
+  background: #fff5f5;
+  color: #d81e06;
+  border-color: #fecaca;
+}
+
+.tk-unit-row {
+  display: flex;
+  align-items: center;
+  gap: 18rpx;
+  padding: 20rpx;
+  border-radius: 18rpx;
+  border: 2rpx solid #e2e8f0;
+  background: #f8fafc;
+  margin-bottom: 14rpx;
+}
+.tk-unit-row:last-of-type {
+  margin-bottom: 0;
+}
+.tk-unit-row.selected {
+  background: #fff5f5;
+  border-color: #fca5a5;
+}
+.tk-unit-row.off {
+  opacity: 0.55;
+}
+
+.tk-unit-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4rpx;
+}
+
+.tk-unit-sub {
+  font-size: 22rpx;
+  color: #64748b;
+}
+
+.tk-card-foot-bar {
+  margin-top: 20rpx;
+  padding-top: 18rpx;
+  border-top: 1rpx dashed #e2e8f0;
+  display: flex;
+  flex-direction: column;
+  gap: 8rpx;
+  font-size: 23rpx;
+  color: #64748b;
+  line-height: 1.45;
+}
+
+.tk-cfb-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8rpx;
+}
+
+.tk-flow-highlight {
+  color: #d97706;
+  font-weight: 800;
+}
+
+.tk-cfb-warn {
+  color: #d81e06;
+  font-weight: 700;
+}
+
+/* ==================== 本道用料齐套速览卡 ==================== */
+.tk-mat-quick-card {
+  padding-bottom: 22rpx;
+}
+
+.tk-mq-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14rpx;
+  background: #f8fafc;
+  border: 1rpx solid #e2e8f0;
+  border-radius: 18rpx;
+  padding: 16rpx 20rpx;
+}
+
+.tk-mq-stats {
+  font-size: 24rpx;
+  color: #475569;
+  line-height: 1.4;
+}
+
+.tk-mq-btn {
+  flex-shrink: 0;
+  font-size: 22rpx;
+  font-weight: 800;
+  padding: 8rpx 20rpx;
+  border-radius: 999rpx;
+  background: #fff1f0;
+  color: #d81e06;
+  border: 1rpx solid #fecaca;
+}
+
+/* ==================== 本道用料结构化表格 ==================== */
+.tk-mat-table {
+  border: 1rpx solid #e2e8f0;
+  border-radius: 18rpx;
+  overflow: hidden;
+  background: #ffffff;
+}
+
+.tk-mt-item-wrap {
+  border-bottom: 1rpx solid #e2e8f0;
+}
+.tk-mt-item-wrap:last-child {
+  border-bottom: 0;
+}
+
+.tk-mt-tr {
+  display: flex;
+  align-items: center;
+  padding: 16rpx 16rpx;
+  border-bottom: 1rpx solid #f1f5f9;
+  font-size: 24rpx;
+  color: #1f2329;
+}
+.tk-mt-tr:last-child {
+  border-bottom: 0;
+}
+
+.tk-mt-th {
+  background: #f8fafc;
+  border-bottom: 1rpx solid #e2e8f0;
+  font-size: 22rpx;
+  font-weight: 800;
+  color: #475569;
+  padding: 14rpx 16rpx;
+}
+
+.tk-mt-td {
+  box-sizing: border-box;
+  word-break: break-all;
+  line-height: 1.4;
+}
+
+.tk-mt-td.col-name {
+  width: 36%;
+  padding-right: 10rpx;
+  display: flex;
+  flex-direction: column;
+  gap: 4rpx;
+}
+
+.tk-mt-name-row {
+  display: flex;
+  align-items: center;
+  gap: 8rpx;
+  flex-wrap: wrap;
+}
+
+.tk-mt-name {
+  font-weight: 800;
+  color: #1f2329;
+  font-size: 25rpx;
+}
+
+.tk-mt-code {
+  font-size: 20rpx;
+  color: #94a3b8;
+}
+
+.tk-mt-remark {
+  font-size: 20rpx;
+  color: #b45309;
+}
+
+.tk-mt-td.col-spec {
+  width: 28%;
+  padding-right: 10rpx;
+  font-size: 22rpx;
+  color: #64748b;
+}
+
+.tk-mt-stock {
+  font-size: 20rpx;
+  color: #94a3b8;
+  margin-top: 2rpx;
+}
+
+.tk-mt-td.col-req {
+  width: 18%;
+  text-align: right;
+  padding-right: 8rpx;
+  font-size: 23rpx;
+  font-weight: 700;
+  color: #334155;
+}
+
+.tk-mt-unit {
+  font-size: 20rpx;
+  color: #94a3b8;
+  margin-left: 2rpx;
+}
+
+.tk-mt-td.col-state {
+  width: 18%;
+  text-align: right;
+  flex-shrink: 0;
+}
+
+.tk-state-pill {
+  display: inline-block;
+  font-size: 20rpx;
+  font-weight: 800;
+  padding: 4rpx 12rpx;
+  border-radius: 10rpx;
+  white-space: nowrap;
+}
+.tk-state-pill.short {
+  background: #fff1f0;
+  color: #d81e06;
+  border: 1rpx solid #fecaca;
+}
+.tk-state-pill.ok {
+  background: #ecfdf5;
+  color: #059669;
+  border: 1rpx solid #a7f3d0;
+}
+
+.tk-mt-action-bar {
+  padding: 12rpx 16rpx;
+  background: #fff8f6;
+  border-top: 1rpx dashed #fee2e2;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12rpx;
+}
+
+.tk-mt-action-hint {
+  font-size: 21rpx;
+  color: #94a3b8;
+}
+
+.tk-mt-order-pill {
+  font-size: 22rpx;
+  font-weight: 800;
+  color: #d81e06;
+  background: #ffffff;
+  border: 1rpx solid #fca5a5;
+  padding: 6rpx 18rpx;
+  border-radius: 999rpx;
+  flex-shrink: 0;
+}
+
+/* ==================== 既有通用样式与弹窗样式（完整保留） ==================== */
 .wo-hero-badges {
   display: flex;
   align-items: center;
@@ -8,7 +726,6 @@
   justify-content: flex-end;
 }
 
-/* 极简清爽单行计时卡片 */
 .tk-timer-card {
   background: #ffffff;
   border-radius: 26rpx;
@@ -73,13 +790,17 @@
 }
 
 .tk-timer-btn {
-  margin: 0;
-  padding: 0 28rpx;
-  height: 60rpx;
-  line-height: 58rpx;
+  margin: 0 !important;
+  padding: 0 26rpx;
+  height: 64rpx;
+  line-height: 1;
   border-radius: 999rpx;
   font-size: 24rpx;
-  font-weight: 700;
+  font-weight: 800;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  white-space: nowrap;
 }
 
 .tk-timer-btn::after {
@@ -89,12 +810,19 @@
 .tk-timer-btn.primary {
   background: linear-gradient(135deg, #d81e06 0%, #ef1008 100%);
   color: #ffffff;
+  box-shadow: 0 6rpx 16rpx rgba(216, 30, 6, 0.22);
 }
 
 .tk-timer-btn.ghost {
   background: #fff5f5;
   color: #d81e06;
-  border: 2rpx solid #d81e06;
+  border: 2rpx solid #fecaca;
+}
+
+.tk-timer-btn.collab {
+  background: #f8fafc;
+  color: #334155;
+  border: 2rpx solid #cbd5e1;
 }
 
 /* 保留兼容深色计时卡类名（供 shipment-packing 复用或过渡） */
@@ -122,7 +850,7 @@
 .tk-unit.off { opacity: .55; }
 .tk-check { width: 40rpx; height: 40rpx; border-radius: 10rpx; border: 3rpx solid #cbd5e1; color: #fff; text-align: center; line-height: 34rpx; font-size: 26rpx; font-weight: 700; flex-shrink: 0; }
 .tk-check.on { background: #d81e06; border-color: #d81e06; }
-.tk-sn { font-size: 28rpx; font-weight: 700; color: #1f2329; flex: 1; min-width: 0; }
+.tk-sn { font-size: 28rpx; font-weight: 800; color: #1f2329; flex: 1; min-width: 0; }
 .tk-desc { background: #f8fafc; border-radius: 14rpx; padding: 16rpx 20rpx; line-height: 1.65; font-size: 25rpx; color: #334155; margin-bottom: 10rpx; white-space: pre-wrap; }
 
 .tk-parent-banner {

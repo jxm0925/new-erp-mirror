@@ -7,6 +7,7 @@
       <view class="pd-title-row">
         <view class="pd-title-bar {{theme}}"></view>
         <text class="pd-title">{{title}}</text>
+        <text wx:if="{{headerBadge}}" class="pd-head-badge {{theme}}">{{headerBadge}}</text>
       </view>
       <view class="pd-close" bindtap="cancel">×</view>
     </view>
@@ -24,8 +25,22 @@
     <view class="pd-body">
       <!-- Info Box -->
       <view wx:if="{{infoMain || infoSub}}" class="pd-info-box {{theme === 'warn' ? 'warn' : ''}}">
-        <view wx:if="{{infoMain}}" class="pd-info-main">{{infoMain}}</view>
+        <view wx:if="{{infoMain || infoRight}}" class="pd-info-top">
+          <text wx:if="{{infoMain}}" class="pd-info-main">{{infoMain}}</text>
+          <text wx:if="{{infoRight}}" class="pd-info-right">{{infoRight}}</text>
+        </view>
         <view wx:if="{{infoSub}}" class="pd-info-sub">{{infoSub}}</view>
+      </view>
+
+      <!-- Optional Category Filter Pills for Table -->
+      <view wx:if="{{tableFilters && tableFilters.length > 1}}" class="pd-filter-row">
+        <view
+          wx:for="{{tableFilters}}"
+          wx:key="key"
+          class="pd-filter-pill {{activeTableFilter === item.key ? 'active' : ''}}"
+          data-key="{{item.key}}"
+          bindtap="pickTableFilter"
+        >{{item.label}}</view>
       </view>
 
       <!-- Material / Item Table (物料名称 | 规格型号 | 数量) -->
@@ -33,16 +48,22 @@
         <view class="pd-table-tr pd-table-th">
           <view class="pd-table-td col-name">物料名称</view>
           <view class="pd-table-td col-spec">规格型号</view>
-          <view class="pd-table-td col-qty">数量</view>
+          <view class="pd-table-td col-qty">{{colQtyLabel || '数量'}}</view>
         </view>
         <scroll-view scroll-y class="pd-table-scroll">
-          <view wx:for="{{tableRows}}" wx:key="index" class="pd-table-tr">
+          <view wx:for="{{filteredTableRows}}" wx:key="index" class="pd-table-tr">
             <view class="pd-table-td col-name">
               <text class="pd-td-main">{{item.name}}</text>
-              <text wx:if="{{item.code}}" class="pd-td-code">{{item.code}}</text>
+              <view wx:if="{{item.tag || item.code}}" class="pd-td-meta">
+                <text wx:if="{{item.tag}}" class="pd-td-tag {{item.tagTheme || 'amber'}}">{{item.tag}}</text>
+                <text wx:if="{{item.code}}" class="pd-td-code">{{item.code}}</text>
+              </view>
             </view>
             <view class="pd-table-td col-spec">{{item.spec || '标准规格'}}</view>
-            <view class="pd-table-td col-qty">{{item.qty}}</view>
+            <view class="pd-table-td col-qty">
+              <text wx:if="{{item.isBadgeQty}}" class="pd-qty-pill">{{item.qty}}</text>
+              <text wx:else>{{item.qty}}</text>
+            </view>
           </view>
         </scroll-view>
       </view>

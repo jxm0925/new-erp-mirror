@@ -23,7 +23,8 @@ Page({
   openReceiptRequests() { wx.navigateTo({ url: '/pages/warehouse/list/index?direction=inbound&kind=mfg_receipt&keyword=' + encodeURIComponent(this.data.task.work_order.work_order_no) }); },
   data: {
     id: 0, lane: '', task: null, loading: true, busy: false, error: '', selected: {}, selectedCount: 0, selectedCompletionCount: 0, clockText: '00:00:00',
-    shareText: '', isImage: {}, panel: '', rejectCurrent: false, cutQty: 1, prepQty: 1, runPick: 0,
+    workTab: 'report',
+    shareText: '', panel: '', rejectCurrent: false, cutQty: 1, prepQty: 1, runPick: 0,
     reject: { mode: 'return', returnId: 0, tags: {}, reason: '', media: [] }, uploading: false,
     peopleKeyword: '', peopleRows: [], picked: [], shareMode: 'labor', ownerPercent: '', showMaterials: false, showSemiMaterials: false,
     completionLocatorOpen: false,
@@ -39,6 +40,10 @@ Page({
   planMediaChanged(event) { this.setData({ 'returnForm.planMedia': event.detail.value }); },
   onUnload() { this.completionJob = null; this.stopClock(); this.sequence = (this.sequence || 0) + 1; },
   onPullDownRefresh() { this.load().finally(() => wx.stopPullDownRefresh()); },
+  switchWorkTab(event) {
+    const tab = event && event.currentTarget && event.currentTarget.dataset && event.currentTarget.dataset.tab;
+    if (tab && tab !== this.data.workTab) this.setData({ workTab: tab });
+  },
   load(keepSelection) {
     const sequence = this.sequence = (this.sequence || 0) + 1;
     this.completionJob = null;
@@ -57,12 +62,14 @@ Page({
     const shareText = (task.participants || []).length > 1
       ? task.participants.map(p => p.employee_name + (task.share_mode === 'fixed' ? ` ${view.quantity(p.share_percent)}%` : ` ${minutesText(p.labor_minutes)}`)).join(' · ')
       : '';
-    const isImage = {};
-    (task.drawings || []).forEach(d => { isImage[d.id] = /^image\//.test(d.mime_type || '') || /\.(png|jpe?g|webp|gif)$/i.test(d.url || ''); });
     wx.setNavigationBarTitle({ title: task.title || task.operation_name || '工序作业' });
     const unitShort = task.unit_short || '台';
     const noun = task.unit_word === '台设备' || !task.unit_word ? '设备' : (task.work_order.item_name || '件');
     const wo = task.work_order || {};
+    const oi = task.order_info || {};
+    const salesOrderNo = oi.sales_order_no || wo.sales_order_no || '';
+    const salespersonName = oi.salesperson_name || wo.salesperson_name || '';
+    const customerName = oi.customer_name || wo.customer_name || '';
     const parentWo = wo.parent_work_order ? Object.assign({}, wo.parent_work_order, {
       specText: buildSpecText(wo.parent_work_order),
       plannedText: view.quantity(wo.parent_work_order.planned_qty),
@@ -97,6 +104,14 @@ Page({
     const semiReady = semiRows.filter(r => !(Number(r.gap_qty || 0) > 0.00001)).length;
     const semiSummary = { total: semiRows.length, ready: semiReady, short: semiRows.length - semiReady };
 
+    // 合并计算本道工序总用料项数与未齐套数（避免 semiRows 与 materials 同名物料重复统计）
+    const matItemIds = new Set(materials.map(m => Number(m.component_item_id || 0)).filter(Boolean));
+    const extraSemiRows = semiRows.filter(r => !matItemIds.has(Number(r.component_item_id || 0)));
+    const extraSemiShort = extraSemiRows.filter(r => Number(r.gap_qty || 0) > 0.00001).length;
+    const totalMaterialItems = materials.length + extraSemiRows.length;
+    const totalShortCount = materialSummary.short + extraSemiShort;
+    const totalReadyCount = Math.max(0, totalMaterialItems - totalShortCount);
+
     const matById = {};
     const matByItemId = {};
     materials.forEach(m => {
@@ -115,11 +130,18 @@ Page({
       });
       return Object.assign({}, d, { tableRows, lineCount: tableRows.length });
     });
+    const unsignedDeliveryCount = deliveries.filter(d => d.status === 'dispatched').length;
+
+    const refFilesCount = ((task.workshop_reference && task.workshop_reference.files) || []).length;
+    const refNotesCount = ((task.workshop_reference && task.workshop_reference.notes) || []).length;
+    const hasReference = refFilesCount > 0 || refNotesCount > 0;
+    const docsCount = refFilesCount + refNotesCount + (task.order_info ? 1 : 0);
 
     this.setData({
       lane: task.lane || 'normal',
       task: Object.assign({}, task, {
         unitShort, noun, isRework: task.lane === 'rework',
+        salesOrderNo, salespersonName, customerName,
         work_order: Object.assign({}, wo, {
           specText: buildSpecText(wo),
           parent_work_order: parentWo,
@@ -128,9 +150,15 @@ Page({
         materials,
         materialSummary,
         deliveries,
+        unsignedDeliveryCount,
         orderChangedText: ((task.order_info && task.order_info.changed) || []).map(c => c.label).join('、'),
         semiRows,
         semiSummary,
+        totalMaterialItems,
+        totalShortCount,
+        totalReadyCount,
+        hasReference,
+        docsCount,
         participants: (task.participants || []).map(p => Object.assign({}, p, { is_me: Number(p.employee_legacy_id) === me })),
         plannedText: view.quantity(task.progress.planned), doneText: view.quantity(task.progress.done),
         ownerName: owner ? owner.employee_name : '', collaboratorNames: others.map(p => p.employee_name).join('、'),
@@ -141,7 +169,7 @@ Page({
       }),
       selected, selectedCount: Object.keys(selected).length,
       selectedCompletionCount: (task.units || []).filter(u => selected[u.id] && u.needs_completion).length,
-      shareText, isImage, loading: false,
+      shareText, loading: false,
       cutQty: task.cutting ? Math.max(1, Math.min(this.data.cutQty || 1, task.cutting.reportable_units || 1)) : 1,
       prepQty: Math.max(1, Math.min(this.data.prepQty || 1, (task.units || []).filter(u => u.selectable).length || 1)),
       runPick: task.cutting_runs && (task.cutting_runs.runs || []).some(r => r.id === this.data.runPick) ? this.data.runPick : 0,
@@ -194,6 +222,162 @@ Page({
   },
   selectedIds() { return Object.keys(this.data.selected).map(Number); },
 
+  // 将原本冗长的「下料的料还没收齐：xxx 还差 3个、yyy 还差 3个...」或「库存不够：xxx 要 3，仓库可用 0个...」结构化为清晰表格
+  buildShortageModal(error, task, options = {}) {
+    const t = task || this.data.task || {};
+    const semiLookup = {};
+    (t.semiRows || []).forEach(r => {
+      if (r.component_item_name) {
+        semiLookup[r.component_item_name] = {
+          spec: r.specText || '标准规格',
+          code: r.component_item_code || '',
+          cat: 'semi',
+          tag: '半成品',
+          unit: r.unit_name || '',
+          shortText: `${r.gapText || view.quantity(r.gap_qty)}${r.unit_name || ''}`,
+        };
+      }
+    });
+    const itemLookup = Object.assign({}, semiLookup);
+    (t.materials || []).forEach(m => {
+      if (m.component_item_name) {
+        const isSemi = Boolean(semiLookup[m.component_item_name]);
+        itemLookup[m.component_item_name] = {
+          spec: m.specText || (semiLookup[m.component_item_name] && semiLookup[m.component_item_name].spec) || '标准规格',
+          code: m.component_item_code || (semiLookup[m.component_item_name] && semiLookup[m.component_item_name].code) || '',
+          cat: isSemi ? 'semi' : 'raw',
+          tag: isSemi ? '半成品' : (m.cutting ? '开料' : ''),
+          unit: m.unit_name || '',
+          shortText: `${m.shortText || view.quantity(Math.max(0, Number(m.required_qty || 0) - Number(m.issued_qty || 0)))}${m.unit_name || ''}`,
+        };
+      }
+    });
+
+    const tableRows = [];
+    const rawMsg = error ? view.errorText(error) : '';
+    const colonIdx = rawMsg.indexOf('：');
+    if (colonIdx >= 0) {
+      const afterColon = rawMsg.slice(colonIdx + 1);
+      const periodIdx = afterColon.indexOf('。');
+      const listPart = (periodIdx >= 0 ? afterColon.slice(0, periodIdx) : afterColon).trim();
+      const segments = listPart.split('、').map(s => s.trim()).filter(Boolean);
+      segments.forEach(seg => {
+        const mDiff = seg.match(/^(.+?)\s*还差\s*(.+)$/);
+        const mStock = seg.match(/^(.+?)\s*要\s*([^，,]+)[，,]\s*仓库可用\s*(.+)$/);
+        if (mDiff) {
+          const name = mDiff[1].trim();
+          const qtyStr = mDiff[2].trim();
+          const meta = itemLookup[name] || {};
+          tableRows.push({
+            name,
+            code: meta.code || '',
+            spec: meta.spec || '标准规格',
+            qty: `还差 ${qtyStr}`,
+            isBadgeQty: true,
+            cat: meta.cat || 'raw',
+            tag: meta.tag || '',
+          });
+        } else if (mStock) {
+          const name = mStock[1].trim();
+          const reqStr = mStock[2].trim();
+          const availStr = mStock[3].trim();
+          const meta = itemLookup[name] || {};
+          tableRows.push({
+            name,
+            code: meta.code || '',
+            spec: meta.spec || '标准规格',
+            qty: `要${reqStr} / 存${availStr}`,
+            isBadgeQty: true,
+            cat: meta.cat || 'raw',
+            tag: meta.tag || '',
+          });
+        }
+      });
+    }
+
+    // Fallback：从当前页面已加载的本道缺料项构建表格
+    if (!tableRows.length) {
+      const seenNames = new Set();
+      (t.semiRows || []).forEach(r => {
+        if (Number(r.gap_qty || 0) > 0.00001) {
+          seenNames.add(r.component_item_name);
+          tableRows.push({
+            name: r.component_item_name,
+            code: r.component_item_code || '',
+            spec: r.specText || '标准规格',
+            qty: `还差 ${r.gapText}${r.unit_name || ''}`,
+            isBadgeQty: true,
+            cat: 'semi',
+            tag: '半成品',
+          });
+        }
+      });
+      (t.materials || []).forEach(m => {
+        if (m.isShort && !seenNames.has(m.component_item_name)) {
+          const isSemi = Boolean(semiLookup[m.component_item_name]);
+          tableRows.push({
+            name: m.component_item_name,
+            code: m.component_item_code || '',
+            spec: m.specText || '标准规格',
+            qty: `还差 ${m.shortText}${m.unit_name || ''}`,
+            isBadgeQty: true,
+            cat: isSemi ? 'semi' : 'raw',
+            tag: isSemi ? '半成品' : (m.cutting ? '开料' : ''),
+          });
+        }
+      });
+    }
+
+    const semiCount = tableRows.filter(r => r.cat === 'semi').length;
+    const rawCount = tableRows.filter(r => r.cat !== 'semi').length;
+    const tableFilters = (semiCount > 0 && rawCount > 0) ? [
+      { key: 'all', label: `全部未齐 (${tableRows.length})` },
+      { key: 'semi', label: `自制半成品 (${semiCount})` },
+      { key: 'raw', label: `外购/原料 (${rawCount})` },
+    ] : [];
+
+    const soNo = t.salesOrderNo || (t.order_info && t.order_info.sales_order_no) || (t.work_order && t.work_order.sales_order_no) || '';
+    const woNo = (t.work_order && t.work_order.work_order_no) || '';
+    const infoRight = soNo ? `订单 ${soNo}` : (woNo ? `工单 ${woNo}` : '');
+
+    if (options.mode === 'stock_short') {
+      return {
+        theme: 'warn',
+        title: '仓库可用库存不足',
+        headerBadge: tableRows.length ? `缺口 ${tableRows.length} 项` : '',
+        infoMain: '以下物料当前仓库可用库存不足，暂不可领料',
+        infoRight,
+        infoSub: '自制半成品请先在「本道用料」中下达半成品子工单；外购件及原料请联系采购或仓管入库。',
+        colQtyLabel: '需领 / 可用',
+        tableFilters,
+        tableRows,
+        content: tableRows.length ? '' : rawMsg,
+        showCancel: false,
+        confirmText: '我知道了',
+      };
+    }
+
+    return {
+      theme: 'warn',
+      title: '工序物料待领用',
+      headerBadge: tableRows.length ? `还差 ${tableRows.length} 项` : '',
+      infoMain: `${t.operation_name || '当前工序'}尚有未收齐物料`,
+      infoRight,
+      infoSub: '请先领料；仓库没货的请先开半成品子工单或找采购。',
+      colQtyLabel: '还差数量',
+      tableFilters,
+      tableRows,
+      content: tableRows.length ? '' : rawMsg,
+      confirmText: '立即领料',
+      cancelText: '暂不领料',
+      success: res => { if (res.confirm) this.receiveMaterials(); },
+    };
+  },
+
+  openShortagePreview() {
+    view.modal(this, this.buildShortageModal(null, this.data.task, { mode: 'not_received' }));
+  },
+
   run(payload, okText) {
     if (this.data.busy) return Promise.resolve(false);
     this.completionJob = null;
@@ -205,15 +389,9 @@ Page({
       return true;
     }).catch(error => {
       if (error && error.errorCode === 'material_not_received') {
-        view.modal(this, {
-          theme: 'warn',
-          title: '工序物料待领用',
-          infoMain: '当前工序尚有已齐套物料未领用',
-          infoSub: view.errorText(error),
-          confirmText: '立即领料',
-          cancelText: '暂不领料',
-          success: res => { if (res.confirm) this.receiveMaterials(); },
-        });
+        view.modal(this, this.buildShortageModal(error, this.data.task, { mode: 'not_received' }));
+      } else if (error && error.errorCode === 'stock_short') {
+        view.modal(this, this.buildShortageModal(error, this.data.task, { mode: 'stock_short' }));
       } else if (error && error.errorCode === 'cutting_not_settled') {
         view.modal(this, {
           theme: 'warn',
@@ -230,7 +408,9 @@ Page({
           title: '配送物料待签收',
           infoMain: '请先签收仓库配送物料后再继续操作',
           infoSub: view.errorText(error),
-          showCancel: false,
+          confirmText: '前往签收',
+          cancelText: '稍后处理',
+          success: res => { if (res.confirm) this.setData({ workTab: 'materials' }); },
         });
       } else {
         view.modal(this, { theme: 'warn', title: '操作失败', content: view.errorText(error), showCancel: false });
@@ -245,7 +425,13 @@ Page({
     production.receiveMaterials(task.work_order.id, task.id).then(response => {
       wx.showToast({ title: response.message || '已领料', icon: 'none', duration: 2500 });
       this.load(true);
-    }).catch(error => view.modal(this, { theme: 'warn', title: '领料失败', content: view.errorText(error), showCancel: false }));
+    }).catch(error => {
+      if (error && error.errorCode === 'stock_short') {
+        view.modal(this, this.buildShortageModal(error, this.data.task, { mode: 'stock_short' }));
+      } else {
+        view.modal(this, { theme: 'warn', title: '领料失败', content: view.errorText(error), showCancel: false });
+      }
+    });
   },
   signDelivery(e) {
     const id = Number(e.currentTarget.dataset.id);
@@ -397,7 +583,11 @@ Page({
     });
   },
   callPhone(event) { const phone = event.currentTarget.dataset.phone; if (phone) wx.makePhoneCall({ phoneNumber: String(phone) }); },
-  scrollOrder() { wx.pageScrollTo({ selector: '.oi-anchor', duration: 200 }); },
+  scrollOrder() {
+    this.setData({ workTab: 'docs' }, () => {
+      wx.pageScrollTo({ selector: '.oi-anchor', duration: 200 });
+    });
+  },
   start() { this.run({ action: 'start' }, '开始计时'); },
   pause() { this.run({ action: 'pause' }, '已暂停'); },
   stopTiming(event) {
@@ -723,24 +913,6 @@ Page({
   closePanel() { if (!this.data.busy && !this.data.uploading) this.setData({ panel: '' }); },
   stop() {},
 
-  openDrawing(event) {
-    const drawing = (this.data.task.drawings || []).find(d => d.id === Number(event.currentTarget.dataset.id));
-    if (!drawing) return;
-    if (this.data.isImage[drawing.id]) {
-      const urls = this.data.task.drawings.filter(d => this.data.isImage[d.id]).map(d => d.url);
-      wx.previewImage({ urls, current: drawing.url });
-      return;
-    }
-    wx.showLoading({ title: '打开图纸…', mask: true });
-    wx.downloadFile({ url: drawing.url,
-      success: res => {
-        wx.hideLoading();
-        if (res.statusCode !== 200) { wx.showToast({ title: '图纸下载失败', icon: 'none' }); return; }
-        wx.openDocument({ filePath: res.tempFilePath, showMenu: true,
-          fail: () => wx.setClipboardData({ data: drawing.url, success: () => wx.showToast({ title: '当前设备暂不支持直接预览该格式，图纸链接已复制', icon: 'none' }) }) });
-      },
-      fail: () => { wx.hideLoading(); wx.showToast({ title: '图纸下载失败', icon: 'none' }); } });
-  },
   openCutting() {
     const task = this.data.task;
     if (!task || !task.cutting) return;

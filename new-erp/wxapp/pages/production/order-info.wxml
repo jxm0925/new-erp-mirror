@@ -13,8 +13,6 @@
     <view wx:if="{{info.required_delivery_date}}" class="mt-kv"><text class="k">要求交期</text><text class="v mono">{{info.required_delivery_date}}</text></view>
     <view wx:if="{{info.shipment_no}}" class="mt-kv"><text class="k">发货单</text><text class="v mono">{{info.shipment_no}}{{info.carrier_name ? ' · ' + info.carrier_name : ''}}</text></view>
     <view wx:if="{{info.receiver_text}}" class="mt-kv"><text class="k">收货人</text><text class="v">{{info.receiver_text}}</text></view>
-    <view wx:if="{{info.order_remark}}" class="mt-note">订单备注：{{info.order_remark}}</view>
-    <view wx:if="{{info.line_remark}}" class="mt-note">本行备注：{{info.line_remark}}</view>
     <view wx:if="{{info.customer_remark}}" class="mt-note">客户备注：{{info.customer_remark}}</view>
     <view wx:if="{{info.logistics_requirement}}" class="mt-note">物流要求：{{info.logistics_requirement}}</view>
     <view wx:if="{{info.shipment_remark}}" class="mt-note">发货备注：{{info.shipment_remark}}</view>

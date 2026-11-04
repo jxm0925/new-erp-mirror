@@ -1,0 +1,17 @@
+<view wx:if="{{notes.length || files.length}}" class="mt-card wr-card">
+  <view class="mt-card-title"><text>生产要求与图纸</text><text class="mt-muted">{{files.length ? files.length + ' 份资料' : ''}}</text></view>
+  <view wx:for="{{notes}}" wx:key="key" class="wr-note">
+    <view class="wr-note-title">{{item.label}}<text class="wr-source">{{item.source}}</text></view>
+    <text class="wr-note-text" selectable>{{item.text}}</text>
+  </view>
+  <view wx:for="{{files}}" wx:key="key" class="wr-file" data-key="{{item.key}}" bindtap="open" bindlongpress="copy">
+    <image wx:if="{{item.isImage}}" class="wr-image" src="{{item.url}}" mode="aspectFill" lazy-load />
+    <view class="wr-file-body">
+      <view class="wr-file-name">{{item.name}}<text wx:if="{{item.version}}" class="wr-version"> V{{item.version}}</text></view>
+      <view class="wr-source">{{item.source}}</view>
+      <view wx:if="{{item.timeText}}" class="wr-source">更新于 {{item.timeText}}</view>
+      <view class="wr-action">{{item.action}} ›</view>
+    </view>
+  </view>
+  <view wx:if="{{files.length}}" class="wr-hint">技术图纸显示当前有效版本；图片可放大，CAD 等文件可复制链接到电脑查看。</view>
+</view>

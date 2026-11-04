@@ -32,7 +32,7 @@ class StockMeasureService
         $symbol = strtoupper(str_replace(['²', '㎡', '^'], ['2', 'M2', ''], trim((string) ($unit?->symbol ?: $unit?->unit_symbol))));
         $kind = match (true) {
             $code === 'M' || $symbol === 'M' => 'm',
-            in_array($code, ['M2', 'SQM'], true) || $symbol === 'M2' => 'm2',
+            in_array($code, ['M2', 'SQM', 'SQUAREMETRE'], true) || in_array($symbol, ['M2', '平方米'], true) => 'm2',
             $code === 'ROOT' || $symbol === '根' => 'root',
             $code === 'SHEET' || $symbol === '张' => 'sheet',
             default => null,

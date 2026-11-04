@@ -77,7 +77,7 @@ Page({
         sourceText: (batch.input_lines || []).map(sourceName).join('、'),
       }));
       const unitQty = remaining > 0 ? Math.min(Math.max(1, this.data.unitQty), remaining) : 1;
-      this.setData({ loading: false, ready: true, requirements, remaining, items, batches, version: Number(ctx.business_version || 0),
+      this.setData({ loading: false, ready: true, requirements, remaining, items, batches, workshopReference: ctx.workshop_reference || null, version: Number(ctx.business_version || 0),
         canIssue: Boolean(ctx.can_issue) && remaining > 0, unitQty });
       this.decorateRequirements();
     }).catch(error => this.setData({ loading: false, error: view.errorText(error) }));

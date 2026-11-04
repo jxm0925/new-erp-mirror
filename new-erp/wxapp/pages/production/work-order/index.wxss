@@ -1,42 +1,420 @@
 @import "../shared.wxss";
 
-.wo-op {
-  padding: 12rpx 0 14rpx;
+.wo-v2-page {
+  position: relative;
+  overflow-x: hidden;
+  padding-top: 16rpx;
+}
+
+.wo-top-bg {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 136rpx;
+  background: linear-gradient(180deg, #d81e06 0%, #ef1008 100%);
+  border-radius: 0 0 38rpx 38rpx;
+  z-index: 0;
+  pointer-events: none;
+}
+
+/* ==================== 1. 工单与销售订单关联主卡 ==================== */
+.wo-main-card {
+  position: relative;
+  z-index: 1;
+  background: #ffffff;
+  border-radius: 28rpx;
+  padding: 26rpx 24rpx 22rpx;
+  margin-bottom: 18rpx;
+  box-shadow: 0 12rpx 32rpx rgba(15, 23, 42, 0.08);
+  border: 1rpx solid rgba(15, 23, 42, 0.05);
+}
+
+.wo-mc-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16rpx;
+}
+
+.wo-mc-title-wrap {
+  flex: 1;
+  min-width: 0;
+}
+
+.wo-mc-title {
+  font-size: 32rpx;
+  font-weight: 900;
+  color: #1f2329;
+  line-height: 1.35;
+  word-break: break-all;
+}
+
+.wo-mc-qty {
+  color: #d81e06;
+  margin-left: 10rpx;
+  font-weight: 900;
+}
+
+.wo-mc-spec {
+  font-size: 24rpx;
+  color: #64748b;
+  margin-top: 6rpx;
+  line-height: 1.4;
+}
+
+.wo-mc-status-pill {
+  flex-shrink: 0;
+  font-size: 22rpx;
+  font-weight: 800;
+  color: #059669;
+  background: #ecfdf5;
+  border: 1rpx solid #a7f3d0;
+  padding: 6rpx 18rpx;
+  border-radius: 999rpx;
+  white-space: nowrap;
+}
+.wo-mc-status-pill.sub {
+  color: #b45309;
+  background: #fffbeb;
+  border-color: #fde68a;
+}
+
+/* 核心关联信息区：销售订单号 + 销售员 + 客户 + 工单号 + 所属主工单 */
+.wo-order-banner {
+  margin-top: 20rpx;
+  background: #fff8f6;
+  border: 2rpx solid #fee2e2;
+  border-radius: 20rpx;
+  padding: 16rpx 18rpx;
+  display: flex;
+  flex-direction: column;
+  gap: 12rpx;
+}
+
+.wo-ob-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10rpx;
+  flex-wrap: nowrap;
+}
+
+.wo-ob-row.sub,
+.wo-ob-row.parent {
+  padding-top: 12rpx;
+  border-top: 1rpx dashed #fecaca;
+}
+
+.wo-ob-left {
+  display: flex;
+  align-items: center;
+  gap: 8rpx;
+  flex-wrap: nowrap;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.wo-ob-right {
+  display: flex;
+  align-items: center;
+  gap: 10rpx;
+  flex-wrap: nowrap;
+  flex-shrink: 0;
+}
+
+.wo-ob-badge {
+  background: #d81e06;
+  color: #ffffff;
+  font-size: 19rpx;
+  font-weight: 800;
+  padding: 3rpx 10rpx;
+  border-radius: 7rpx;
+  flex-shrink: 0;
+  line-height: 1.2;
+}
+
+.wo-ob-so {
+  font-size: 24rpx;
+  font-weight: 900;
+  color: #b91c1c;
+  white-space: nowrap;
+}
+
+.wo-ob-so-empty {
+  font-size: 23rpx;
+  font-weight: 700;
+  color: #64748b;
+  white-space: nowrap;
+}
+
+.wo-ob-sales {
+  font-size: 21rpx;
+  font-weight: 800;
+  color: #991b1b;
+  background: #fee2e2;
+  padding: 3rpx 12rpx;
+  border-radius: 7rpx;
+  white-space: nowrap;
+  line-height: 1.25;
+}
+
+.wo-ob-cust {
+  font-size: 22rpx;
+  font-weight: 700;
+  color: #475569;
+  white-space: nowrap;
+}
+
+.wo-ob-wo-lbl {
+  font-size: 22rpx;
+  color: #64748b;
+  white-space: nowrap;
+}
+
+.wo-ob-wo {
+  color: #334155;
+  font-weight: 700;
+}
+
+.wo-ob-parent-name {
+  font-size: 22rpx;
+  font-weight: 700;
+  color: #1f2329;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wo-ob-due {
+  font-size: 22rpx;
+  color: #64748b;
+  white-space: nowrap;
+}
+
+.wo-ob-due-val {
+  color: #1f2329;
+  font-weight: 800;
+}
+
+.wo-mini-tag {
+  font-size: 19rpx;
+  font-weight: 700;
+  padding: 2rpx 10rpx;
+  border-radius: 6rpx;
+  background: #f1f5f9;
+  color: #475569;
+  white-space: nowrap;
+  flex-shrink: 0;
+  line-height: 1.25;
+}
+.wo-mini-tag.amber {
+  background: #fffbeb;
+  color: #b45309;
+  border: 1rpx solid #fde68a;
+}
+.wo-mini-tag.red {
+  background: #fff1f0;
+  color: #d81e06;
+  border: 1rpx solid #fecaca;
+}
+
+/* 4 列核心进度指标栏 */
+.wo-kpi-bar {
+  margin-top: 20rpx;
+  padding-top: 20rpx;
+  border-top: 1rpx solid #f1f5f9;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  align-items: center;
+}
+
+.wo-kpi-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  border-right: 1rpx solid #f1f5f9;
+  padding: 0 6rpx;
+}
+.wo-kpi-cell:last-child {
+  border-right: 0;
+}
+
+.wo-kpi-val {
+  height: 40rpx;
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  font-size: 32rpx;
+  font-weight: 900;
+  color: #1f2329;
+  line-height: 1;
+}
+.wo-kpi-val.red {
+  color: #d81e06;
+}
+.wo-kpi-val.warn {
+  font-size: 26rpx;
+  color: #d81e06;
+  text-decoration: underline;
+  text-underline-offset: 4rpx;
+  align-items: center;
+}
+.wo-kpi-val.ok {
+  font-size: 26rpx;
+  color: #059669;
+  align-items: center;
+}
+
+.wo-kpi-unit {
+  font-size: 22rpx;
+  font-weight: 700;
+  color: #64748b;
+  margin-left: 4rpx;
+}
+
+.wo-kpi-lbl {
+  font-size: 22rpx;
+  color: #94a3b8;
+  font-weight: 600;
+  margin-top: 8rpx;
+  line-height: 1.2;
+}
+
+/* ==================== 2. 三栏分段工作区切换器 ==================== */
+.wo-seg-tabs {
+  display: flex;
+  background: #e2e8f0;
+  padding: 8rpx;
+  border-radius: 22rpx;
+  gap: 8rpx;
+  margin-bottom: 18rpx;
+}
+
+.wo-seg-item {
+  flex: 1;
+  height: 68rpx;
+  border-radius: 16rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8rpx;
+  font-size: 25rpx;
+  font-weight: 700;
+  color: #475569;
+}
+
+.wo-seg-item.active {
+  background: #ffffff;
+  color: #d81e06;
+  box-shadow: 0 4rpx 12rpx rgba(15, 23, 42, 0.08);
+}
+
+.wo-seg-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 34rpx;
+  padding: 0 12rpx;
+  border-radius: 999rpx;
+  font-size: 20rpx;
+  font-weight: 800;
+  line-height: 1;
+  background: rgba(15, 23, 42, 0.08);
+  color: #475569;
+  white-space: nowrap;
+}
+.wo-seg-item.active .wo-seg-badge {
+  background: #fff1f0;
+  color: #d81e06;
+}
+.wo-seg-badge.warn {
+  background: #d81e06 !important;
+  color: #ffffff !important;
+}
+
+/* ==================== 工序进度与直达入口卡片 ==================== */
+.wo-op-card {
+  padding: 20rpx;
+  border-radius: 20rpx;
+  border: 2rpx solid #e2e8f0;
+  background: #f8fafc;
+  margin-bottom: 14rpx;
+}
+.wo-op-card:last-of-type {
+  margin-bottom: 0;
+}
+
+.wo-op-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12rpx;
 }
 
 .wo-op-left {
   display: flex;
   align-items: center;
   gap: 10rpx;
+  flex-wrap: wrap;
+  flex: 1;
+  min-width: 0;
 }
 
-.wo-op-name {
-  font-size: 28rpx;
-  font-weight: 700;
-  color: #1f2329;
-}
-
-.wo-link-card {
-  border-left: 6rpx solid #d97706;
-}
-
-.wo-link-head {
-  display: flex;
-  align-items: center;
-  gap: 8rpx;
-}
-
-.wo-link-go {
-  font-size: 24rpx;
+.wo-op-seq {
+  width: 36rpx;
+  height: 36rpx;
+  border-radius: 50%;
+  background: #fff1f0;
   color: #d81e06;
-  font-weight: 700;
+  font-size: 21rpx;
+  font-weight: 800;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   flex-shrink: 0;
 }
 
-.wo-link-name {
+.wo-op-name {
   font-size: 29rpx;
   font-weight: 800;
   color: #1f2329;
+}
+
+.wo-op-btn {
+  font-size: 23rpx;
+  font-weight: 700;
+  padding: 8rpx 20rpx;
+  border-radius: 999rpx;
+  background: #ffffff;
+  color: #475569;
+  border: 1rpx solid #cbd5e1;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.wo-op-btn.primary {
+  background: linear-gradient(135deg, #d81e06 0%, #ef1008 100%);
+  color: #ffffff;
+  border-color: transparent;
+  box-shadow: 0 4rpx 12rpx rgba(216, 30, 6, 0.2);
+}
+
+.wo-op-meta {
+  margin-top: 10rpx;
+  font-size: 23rpx;
+  color: #64748b;
+  line-height: 1.45;
+}
+
+.wo-link-go {
+  font-size: 22rpx;
+  color: #d81e06;
+  font-weight: 700;
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .wo-sub-summary-bar {
@@ -71,19 +449,18 @@
 
 .wo-child-sub {
   margin-top: 8rpx;
-  padding-left: 24rpx;
-  font-size: 24rpx;
+  font-size: 23rpx;
   color: #64748b;
   line-height: 1.45;
   word-break: break-all;
 }
 
+/* ==================== 工序用料结构化表格 ==================== */
 .wo-kop-group {
-  padding-top: 16rpx;
+  padding-top: 18rpx;
   border-top: 1rpx solid #f1f5f9;
-  margin-top: 16rpx;
+  margin-top: 18rpx;
 }
-
 .wo-kop-group:first-of-type {
   border-top: 0;
   margin-top: 0;
@@ -91,11 +468,122 @@
 }
 
 .wo-kop-head {
-  margin-bottom: 6rpx;
+  margin-bottom: 12rpx;
 }
 
 .wo-kop-name {
   font-size: 27rpx;
   font-weight: 800;
   color: #1f2329;
+}
+
+.wo-mat-table {
+  border: 1rpx solid #e2e8f0;
+  border-radius: 18rpx;
+  overflow: hidden;
+  background: #ffffff;
+}
+
+.wo-mt-tr {
+  display: flex;
+  align-items: center;
+  padding: 15rpx 16rpx;
+  border-bottom: 1rpx solid #f1f5f9;
+  font-size: 24rpx;
+  color: #1f2329;
+}
+.wo-mt-tr:last-child {
+  border-bottom: 0;
+}
+
+.wo-mt-th {
+  background: #f8fafc;
+  border-bottom: 1rpx solid #e2e8f0;
+  font-size: 22rpx;
+  font-weight: 800;
+  color: #475569;
+  padding: 13rpx 16rpx;
+}
+
+.wo-mt-td {
+  box-sizing: border-box;
+  word-break: break-all;
+  line-height: 1.4;
+}
+
+.wo-mt-td.col-name {
+  width: 36%;
+  padding-right: 10rpx;
+  display: flex;
+  flex-direction: column;
+  gap: 4rpx;
+}
+
+.wo-mt-name {
+  font-weight: 800;
+  color: #1f2329;
+  font-size: 25rpx;
+}
+
+.wo-mt-code {
+  font-size: 20rpx;
+  color: #94a3b8;
+}
+
+.wo-mt-remark {
+  font-size: 20rpx;
+  color: #b45309;
+}
+
+.wo-mt-td.col-spec {
+  width: 28%;
+  padding-right: 10rpx;
+  font-size: 22rpx;
+  color: #64748b;
+}
+
+.wo-mt-stock {
+  font-size: 20rpx;
+  color: #94a3b8;
+  margin-top: 2rpx;
+}
+
+.wo-mt-td.col-req {
+  width: 18%;
+  text-align: right;
+  padding-right: 8rpx;
+  font-size: 23rpx;
+  font-weight: 700;
+  color: #334155;
+}
+
+.wo-mt-unit {
+  font-size: 20rpx;
+  color: #94a3b8;
+  margin-left: 2rpx;
+}
+
+.wo-mt-td.col-state {
+  width: 18%;
+  text-align: right;
+  flex-shrink: 0;
+}
+
+.wo-state-pill {
+  display: inline-block;
+  font-size: 20rpx;
+  font-weight: 800;
+  padding: 4rpx 12rpx;
+  border-radius: 10rpx;
+  white-space: nowrap;
+}
+.wo-state-pill.short {
+  background: #fff1f0;
+  color: #d81e06;
+  border: 1rpx solid #fecaca;
+}
+.wo-state-pill.ok {
+  background: #ecfdf5;
+  color: #059669;
+  border: 1rpx solid #a7f3d0;
 }

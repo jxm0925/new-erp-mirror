@@ -36,7 +36,21 @@ function openDocument(row) {
   const common = `id=${Number(row.id)}&parent=${Number(row.parent_id)}&kind=${row.kind}&stage=${row.stage}&completed=${row.status_group === 'completed' ? '1' : '0'}`;
   return wx.navigateTo({ url: `/pages/warehouse/document/index?${common}` });
 }
-function errorText(error) { return error && error.message ? error.message : '加载失败，请稍后重试'; }
+function errorText(error) {
+  if (error && error.errorCode === 'validation_error' && error.errors && typeof error.errors === 'object') {
+    const messages = [];
+    Object.keys(error.errors).forEach(key => {
+      const values = Array.isArray(error.errors[key]) ? error.errors[key] : [error.errors[key]];
+      values.forEach(value => {
+        if (typeof value !== 'string') return;
+        const text = value.trim();
+        if (text && !messages.includes(text)) messages.push(text);
+      });
+    });
+    if (messages.length) return messages.join('\n');
+  }
+  return error && error.message ? error.message : '加载失败，请稍后重试';
+}
 function resumingScan(host) {
   const returning = !!(host._warehouseScanReturning || host._warehouseScanActive);
   if (returning) host._warehouseScanReturning = false;

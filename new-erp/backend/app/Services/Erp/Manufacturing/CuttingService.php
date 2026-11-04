@@ -53,6 +53,7 @@ final class CuttingService
             ->paginate($filters['per_page'] ?? 10, ['*'], 'page', $filters['page'] ?? 1);
         $batches->getCollection()->transform(fn ($batch) => $this->batch($batch, $amounts, $actor));
         return ['work_order_id' => (int) $wo->id, 'business_version' => (int) $wo->business_version,
+            'workshop_reference' => app(WorkshopReferenceService::class)->forWorkOrder($wo),
             'operations' => $wo->operations->where('execution_context', 'production')->map(fn ($op) => ['id' => (int) $op->id, 'operation_name' => $op->operation_name])->values()->all(),
             'requirements' => $requirements, 'remaining_unit_qty_by_operation' => $remaining, 'batches' => $batches->toArray(),
             'can_issue' => in_array($wo->status, ['released', 'in_progress'], true) && count($requirements) > 0];

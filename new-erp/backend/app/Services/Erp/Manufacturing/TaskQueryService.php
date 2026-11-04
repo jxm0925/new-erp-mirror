@@ -188,6 +188,7 @@ final class TaskQueryService
             'rework_note' => $wo->rework_of_work_order_id ? $wo->remark : null,
             // 订单信息：销售员、客户、电话、地址、各种备注（销售改过的标出来）；试水返修的说明
             'order_info' => app(OrderBrief::class)->forWorkOrder($wo),
+            'workshop_reference' => app(WorkshopReferenceService::class)->forWorkOrder($wo, $op->routing_operation_id ? (int) $op->routing_operation_id : null),
             'shipment_repair' => collect(WorkOrderQueryService::shipmentRepairs($wo))->first(fn ($r) => $r['state'] === 'repairing' && (int) $r['current_operation_id'] === (int) $op->id),
             'work_order' => [
                 'id' => $wo->id, 'work_order_no' => $wo->work_order_no, 'source_type' => $wo->source_type,

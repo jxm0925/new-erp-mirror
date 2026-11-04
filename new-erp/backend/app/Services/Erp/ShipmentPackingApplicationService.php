@@ -584,6 +584,7 @@ class ShipmentPackingApplicationService
             'business_version' => (int) $op->business_version, 'participants' => $participants,
             'shipment_no' => $op->shipment?->shipment_no, 'shipment_version' => (int) ($op->shipment?->business_version ?? 0),
             'order_info' => $this->orderInfo($op),
+            'workshop_reference' => app(\App\Services\Erp\Manufacturing\WorkshopReferenceService::class)->forShipmentOperation($op),
             // 和生产任务页一样：我这道累计用了多久、是否在计时（开始时间给小程序走秒）
             'my' => ['is_participant' => (bool) $me, 'role' => $me['role'] ?? null, 'timing' => (bool) $myOpen,
                 'started_at' => $myOpen?->started_at?->toIso8601String(),

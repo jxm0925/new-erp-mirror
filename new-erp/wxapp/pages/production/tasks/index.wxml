@@ -1,78 +1,132 @@
-<view class="mt-page">
-  <!-- 顶部精简红底栏 + 圆角搜索 -->
-  <view class="wo-hero">
-    <view class="wo-hero-top">
-      <text class="wo-hero-title">工单任务{{userName ? ' · ' + userName : ''}}</text>
-    </view>
-    <view wx:if="{{tab !== 'review'}}" class="wo-hero-search">
-      <input class="wo-hero-input" value="{{keyword}}" bindinput="keywordInput" placeholder="搜工单号 / 产品 / 规格型号 / 序列号" confirm-type="search" bindconfirm="search" />
-      <text wx:if="{{keyword}}" class="wo-hero-clear" bindtap="clearKeyword">×</text>
-      <button class="wo-hero-search-btn" bindtap="search">查询</button>
-    </view>
-  </view>
-
-  <!-- 分段状态栏 -->
-  <view class="mt-tabs">
-    <view wx:for="{{tabs}}" wx:key="key" class="mt-tab {{tab === item.key ? 'on' : ''}}" data-tab="{{item.key}}" bindtap="pickTab">
-      <text>{{item.label}}</text>
-      <text wx:if="{{item.key !== 'done'}}" class="{{item.key === 'review' ? 'mt-red' : ''}}">({{(counts[item.key] || 0) + (packCounts[item.key] || 0)}})</text>
-    </view>
-  </view>
-
-  <view wx:if="{{error}}" class="mt-error">{{error}}</view>
-  <view wx:if="{{packError}}" class="mt-error">发货作业加载失败：{{packError}}</view>
-  <view wx:if="{{loading && !rows.length && !reviews.length}}" class="mt-empty">正在读取工单任务…</view>
-  <view wx:elif="{{tab === 'review' && !reviews.length}}" class="mt-empty">当前暂无待审核的报废与不良处置申请</view>
-  <view wx:elif="{{tab !== 'review' && !error && !packError && !rows.length && !packs.length}}" class="mt-empty">{{tab === 'mine' ? '当前暂无进行中任务，可前往「可接工序」接单' : (tab === 'available' ? '当前暂无可接工序任务' : '暂无已完工记录')}}</view>
-
-  <!-- 待审核列表 -->
-  <view wx:for="{{reviews}}" wx:key="key" class="mt-card">
-    <view class="mt-row">
-      <text class="mt-op {{item.kind === 'scrap' ? 'mt-rework' : ''}}">{{item.title}}</text>
-      <text class="mt-muted">{{item.who}}</text>
-    </view>
-    <view class="mt-product">{{item.product_name || item.item_name || ''}}</view>
-    <view class="mt-muted">{{item.line}}</view>
-    <view class="mt-note">{{item.reasonText}}</view>
-    <production-media wx:if="{{item.media.length}}" value="{{item.media}}" readonly="{{true}}" label="" bind:activity="mediaActivity" />
-    <view class="mt-row mt-gap">
-      <button class="mt-btn ghost mt-btn-mini" data-key="{{item.key}}" data-approve="no" bindtap="review" disabled="{{busy}}">驳回</button>
-      <button class="mt-btn mt-btn-mini" data-key="{{item.key}}" data-approve="yes" bindtap="review" disabled="{{busy}}">{{item.kind === 'scrap' ? '确认报废' : '审核通过'}}</button>
-    </view>
-  </view>
-
-  <!-- 发货作业（试水 / 打包 / 装车） -->
-  <view wx:for="{{packs}}" wx:key="id" class="mt-card" data-id="{{item.id}}" bindtap="openPack">
-    <view class="mt-row">
-      <text class="mt-op">{{item.title}} · {{item.product}}</text>
-      <view class="mt-tags">
-        <text wx:if="{{item.repair}}" class="mt-tag red">{{item.repair}}台返修</text>
-        <text wx:if="{{item.changed}}" class="mt-tag red">订单已变更</text>
-        <text wx:if="{{item.timing}}" class="mt-tag amber">计时中</text>
-        <text class="mt-tag blue">{{item.statusLabel}}</text>
+<view class="tasks-page">
+  <!-- 顶部精简红底人员状态栏 -->
+  <view class="tasks-context">
+    <view class="tc-circle tc-circle-1"></view>
+    <view class="tc-circle tc-circle-2"></view>
+    <view class="tc-left">
+      <view class="tc-avatar">{{userInitial}}</view>
+      <view class="tc-name-row">
+        <text class="tc-name">{{userName || '生产作业员'}}</text>
+        <text class="tc-badge">车间作业</text>
       </view>
     </view>
-    <view wx:if="{{item.specText}}" class="wo-line-spec">规格型号：{{item.specText}}</view>
-    <view class="wo-task-row mt-gap">
-      <view class="wo-task-info">
-        <view class="mt-muted">{{item.line}}</view>
-        <view class="mt-muted">{{item.ownerName ? '接单人：' + item.ownerName + ' · ' : ''}}我的工时 {{item.myText}}</view>
-      </view>
-      <button class="wo-action-btn {{tab === 'available' ? 'outline' : ''}}" data-id="{{item.id}}" catchtap="openPack">{{tab === 'available' ? '去接单' : (item.timing ? '继续作业' : '查看作业')}}</button>
+    <view class="tc-summary">
+      待做 {{(counts.mine || 0) + (packCounts.mine || 0)}} · 可接 {{(counts.available || 0) + (packCounts.available || 0)}}
     </view>
   </view>
 
-  <view wx:if="{{packLastPage > 1}}" class="mt-pager">
-    <button class="mt-btn ghost mt-btn-mini" disabled="{{packPage <= 1 || loading}}" data-delta="-1" bindtap="turnPackPage">上一页</button>
-    <text>发货作业 {{packPage}} / {{packLastPage}}</text>
-    <button class="mt-btn ghost mt-btn-mini" disabled="{{packPage >= packLastPage || loading}}" data-delta="1" bindtap="turnPackPage">下一页</button>
-  </view>
+  <view class="tasks-body">
+    <!-- 白底一体化筛选卡（胶囊分段 Tab + 搜索框合一） -->
+    <view class="tasks-filter-card">
+      <view class="tasks-tabs">
+        <view
+          wx:for="{{tabs}}"
+          wx:key="key"
+          class="tasks-tab {{tab === item.key ? 'on' : ''}}"
+          data-tab="{{item.key}}"
+          bindtap="pickTab"
+        >
+          <text>{{item.label}}</text>
+          <text wx:if="{{item.key !== 'done'}}" class="tasks-tab-count {{item.key === 'review' ? 'is-review' : ''}}">({{(counts[item.key] || 0) + (packCounts[item.key] || 0)}})</text>
+        </view>
+      </view>
 
-  <!-- 主工单列表（默认关闭/折叠，显示子工单数量及生产内容，点击展开） -->
-  <view wx:for="{{groups}}" wx:for-item="group" wx:key="key" class="wo-group-card">
-    <view class="wo-main-summary" data-key="{{group.key}}" bindtap="toggleGroup">
-      <!-- 第 1 行：单号 + 状态徽标 + 工单详情入口 -->
-      <view class="mt-row">
+      <view wx:if="{{tab !== 'review'}}" class="tasks-search">
+        <van-icon name="search" color="#64748b" size="32rpx" />
+        <input
+          class="tasks-search-input"
+          value="{{keyword}}"
+          bindinput="keywordInput"
+          placeholder="搜工单号 / 产品 / 规格型号 / 序列号"
+          confirm-type="search"
+          bindconfirm="search"
+        />
+        <view wx:if="{{keyword}}" class="tasks-search-clear" bindtap="clearKeyword">×</view>
+        <button class="tasks-search-btn" bindtap="search">查询</button>
+      </view>
+    </view>
+
+    <!-- 异常与空状态 -->
+    <view wx:if="{{error}}" class="mt-error">{{error}}</view>
+    <view wx:if="{{packError}}" class="mt-error">发货作业加载失败：{{packError}}</view>
+
+    <view wx:if="{{loading && !rows.length && !reviews.length && !packs.length}}" class="tasks-empty">
+      <van-loading color="#d81e06" size="44rpx" />
+      <text class="tasks-empty-sub">正在读取工单任务…</text>
+    </view>
+    <view wx:elif="{{tab === 'review' && !reviews.length}}" class="tasks-empty">
+      <van-icon name="passed" size="76rpx" color="#cbd5e1" />
+      <text class="tasks-empty-title">暂无待审核申请</text>
+      <text class="tasks-empty-sub">当前没有待处理的报废或不良处置申请</text>
+    </view>
+    <view wx:elif="{{tab !== 'review' && !error && !packError && !rows.length && !packs.length}}" class="tasks-empty">
+      <van-icon name="notes-o" size="76rpx" color="#cbd5e1" />
+      <text class="tasks-empty-title">{{tab === 'mine' ? '暂无进行中任务' : (tab === 'available' ? '暂无可接工序' : '暂无已完工记录')}}</text>
+      <text class="tasks-empty-sub">{{tab === 'mine' ? '可切换至「可接工序」接单作业' : (tab === 'available' ? '当前没有待接单的工序任务' : '可调整搜索关键词查询历史完工单')}}</text>
+    </view>
+
+    <!-- 待审核列表 -->
+    <view wx:for="{{reviews}}" wx:key="key" class="wo-group-card review-card">
+      <view class="wo-card-head">
+        <view class="wo-head-left">
+          <text class="mt-tag {{item.kind === 'scrap' ? 'red' : 'amber'}}">{{item.kind === 'scrap' ? '报废审批' : '不良处置'}}</text>
+          <text class="review-title">{{item.title}}</text>
+        </view>
+        <text class="mt-muted">{{item.who}}</text>
+      </view>
+      <view class="wo-card-main">
+        <view class="wo-main-product">{{item.product_name || item.item_name || ''}}</view>
+        <view class="wo-meta-row">
+          <text class="mono">{{item.line}}</text>
+        </view>
+        <view class="mt-note">{{item.reasonText}}</view>
+        <production-media wx:if="{{item.media.length}}" value="{{item.media}}" readonly="{{true}}" label="" bind:activity="mediaActivity" />
+        <view class="review-actions">
+          <button class="mt-btn ghost mt-btn-mini" data-key="{{item.key}}" data-approve="no" bindtap="review" disabled="{{busy}}">驳回</button>
+          <button class="mt-btn mt-btn-mini" data-key="{{item.key}}" data-approve="yes" bindtap="review" disabled="{{busy}}">{{item.kind === 'scrap' ? '确认报废' : '审核通过'}}</button>
+        </view>
+      </view>
+    </view>
+
+    <!-- 发货作业（试水 / 打包 / 装车） -->
+    <view wx:for="{{packs}}" wx:key="id" class="wo-group-card pack-card" data-id="{{item.id}}" bindtap="openPack">
+      <view class="wo-card-head">
+        <view class="wo-head-left">
+          <text class="mt-tag blue">发货作业</text>
+          <text class="pack-op-title">{{item.title}}</text>
+          <text wx:if="{{item.repair}}" class="mt-tag red">{{item.repair}}台返修</text>
+          <text wx:if="{{item.changed}}" class="mt-tag red">订单已变更</text>
+          <text wx:if="{{item.timing}}" class="mt-tag amber">计时中</text>
+        </view>
+        <text class="mt-tag {{item.timing ? 'amber' : 'gray'}}">{{item.statusLabel}}</text>
+      </view>
+      <view class="wo-card-main">
+        <view class="wo-main-product">{{item.product}}</view>
+        <view wx:if="{{item.specText}}" class="wo-meta-row">
+          <text class="wo-spec-chip">规格型号：{{item.specText}}</text>
+        </view>
+      </view>
+      <view class="wo-task-list">
+        <view class="wo-task-item">
+          <view class="wo-task-info">
+            <view class="wo-task-sub">{{item.line}}</view>
+            <view class="wo-task-sub">{{item.ownerName ? '接单人：' + item.ownerName + ' · ' : ''}}我的工时 {{item.myText}}</view>
+          </view>
+          <button class="wo-action-btn {{tab === 'available' ? 'outline' : ''}}" data-id="{{item.id}}" catchtap="openPack">{{tab === 'available' ? '去接单' : (item.timing ? '继续作业' : '查看作业')}}</button>
+        </view>
+      </view>
+    </view>
+
+    <view wx:if="{{packLastPage > 1}}" class="mt-pager">
+      <button class="mt-btn ghost mt-btn-mini" disabled="{{packPage <= 1 || loading}}" data-delta="-1" bindtap="turnPackPage">上一页</button>
+      <text>发货作业 {{packPage}} / {{packLastPage}}</text>
+      <button class="mt-btn ghost mt-btn-mini" disabled="{{packPage >= packLastPage || loading}}" data-delta="1" bindtap="turnPackPage">下一页</button>
+    </view>
+
+    <!-- 主工单列表：本单工序直接展示，仅下挂子工单可折叠 -->
+    <view wx:for="{{groups}}" wx:for-item="group" wx:key="key" class="wo-group-card">
+      <!-- 卡片顶栏：工单号 + 状态徽标 + 工单详情入口 -->
+      <view class="wo-card-head" data-id="{{group.main.id}}" bindtap="openWorkOrder">
         <view class="wo-head-left">
           <text class="wo-no mono">{{group.main.work_order_no}}</text>
           <text wx:if="{{group.main.is_rework_order}}" class="mt-tag red">返工工单</text>
@@ -84,56 +138,57 @@
           <text wx:if="{{group.main.drawings_updated}}" class="mt-tag red">图纸已更新</text>
           <text wx:elif="{{group.main.is_custom}}" class="mt-tag purple">定制{{group.main.has_drawing ? ' · 含图纸' : ''}}</text>
         </view>
-        <text class="wo-detail-link" data-id="{{group.main.id}}" catchtap="openWorkOrder">工单详情 ›</text>
-      </view>
-
-      <!-- 第 2 行：产品名称 × 数量 -->
-      <view class="wo-main-title">
-        <text class="wo-main-product">{{group.main.product_name}}</text>
-        <text class="wo-main-qty">× {{group.main.plannedText}} {{group.main.unit_name || '台'}}</text>
-      </view>
-
-      <!-- 第 3 行：具体规格型号 + 交期 -->
-      <view class="wo-line-spec">
-        <text>规格型号：{{group.main.specText || '标准规格'}}</text>
-        <text wx:if="{{group.main.dueText}}"> · 交期 {{group.main.dueText}}</text>
-        <text wx:if="{{group.main.customer_name}}"> · {{group.main.customer_name}}</text>
-      </view>
-      <view wx:if="{{group.main.paused && group.main.pause_reason}}" class="mt-note">暂停原因：{{group.main.pause_reason}}</view>
-
-      <!-- 第 4 行（默认折叠底栏）：显示本单工序数 + 子工单数量与生产内容 + 展开按钮 -->
-      <view class="wo-expand-bar {{group.subCount > 0 ? 'has-sub' : ''}}">
-        <view class="wo-expand-text">
-          <text wx:if="{{group.mainTasks.length}}">本单 {{group.mainTasks.length}} 道工序{{group.mainOpNames ? '（' + group.mainOpNames + '）' : ''}}</text>
-          <text wx:else>本单工序</text>
-          <text wx:if="{{group.subCount > 0}}"> · 子工单 {{group.subCount}} 个（生产：{{group.subSummaryNames}}）</text>
-          <text wx:else> · 无子工单</text>
+        <view class="wo-detail-pill" data-id="{{group.main.id}}" catchtap="openWorkOrder">
+          <text>工单详情</text>
+          <van-icon name="arrow" size="22rpx" color="#64748b" />
         </view>
-        <text class="wo-expand-btn">{{group.expanded ? '收起 ▴' : '点击展开 ▾'}}</text>
       </view>
-    </view>
 
-    <!-- 点击展开后：本单工序 + 下挂子工单 -->
-    <view wx:if="{{group.expanded}}" class="wo-expanded-body">
-      <!-- 1. 本单工序 -->
-      <block wx:if="{{group.mainTasks.length}}">
-        <view class="wo-sec-head">本单工序 ({{group.mainTasks.length}})</view>
-        <view wx:for="{{group.mainTasks}}" wx:key="key" class="wo-task-box" data-id="{{item.id}}" data-lane="{{item.lane}}" bindtap="open">
+      <!-- 产品名称 + 数量 + 规格交期信息 -->
+      <view class="wo-card-main" data-id="{{group.main.id}}" bindtap="openWorkOrder">
+        <view class="wo-main-title">
+          <text class="wo-main-product">{{group.main.product_name}}</text>
+          <text class="wo-main-qty">× {{group.main.plannedText}} {{group.main.unit_name || '台'}}</text>
+        </view>
+
+        <view class="wo-meta-row">
+          <text class="wo-spec-chip">规格型号：{{group.main.specText || '标准规格'}}</text>
+          <text wx:if="{{group.main.dueText}}" class="wo-meta-chip">交期 {{group.main.dueText}}</text>
+          <text wx:if="{{group.main.customer_name}}" class="wo-meta-chip">{{group.main.customer_name}}</text>
+        </view>
+
+        <view wx:if="{{group.main.paused && group.main.pause_reason}}" class="mt-note">暂停原因：{{group.main.pause_reason}}</view>
+      </view>
+
+      <!-- 1. 本单工序（直接展示，无需二次展开） -->
+      <view wx:if="{{group.mainTasks.length}}" class="wo-task-list">
+        <view
+          wx:for="{{group.mainTasks}}"
+          wx:key="key"
+          class="wo-task-item"
+          data-id="{{item.id}}"
+          data-lane="{{item.lane}}"
+          bindtap="open"
+        >
           <view class="wo-task-info">
             <view class="wo-task-title-line">
               <text class="wo-task-op {{item.lane === 'rework' ? 'mt-rework' : ''}}">{{item.title}}</text>
-              <text wx:if="{{item.timing}}" class="mt-tag amber">计时中</text>
-              <text wx:elif="{{item.work_status_label}}" class="mt-tag gray">{{item.work_status_label}}</text>
+              <text wx:if="{{item.opStatusLabel}}" class="mt-tag {{item.opStatusTheme}}">{{item.opStatusLabel}}</text>
               <text wx:if="{{item.drawings_updated}}" class="mt-tag red">图纸已更新</text>
               <text wx:if="{{item.lane !== 'rework' && item.rework_qty}}" class="mt-tag red">返工 {{item.rework_qty}}{{item.unitShort}}</text>
             </view>
             <view class="wo-task-sub">
-              已完成 {{item.doneText}} / {{item.plannedText}} {{item.unitShort}} · 本道待做 {{item.here_qty || 0}} {{item.unitShort}}<text wx:if="{{item.upstream_qty}}"> · 前道在制 {{item.upstream_qty}} {{item.unitShort}}</text><text wx:if="{{item.assigned_by_name}}"> · 由 {{item.assigned_by_name}} 派工</text><text wx:if="{{tab === 'available' && item.owner_name}}"> · 已由 {{item.owner_name}} 接单</text>
+              <text>已完成 {{item.doneText}} / {{item.plannedText}} {{item.unitShort}}</text>
+              <text> · 本道待做 </text>
+              <text class="{{item.here_qty > 0 ? 'wo-num-strong' : ''}}">{{item.here_qty || 0}} {{item.unitShort}}</text>
+              <text wx:if="{{item.upstream_qty}}"> · 前道在制 {{item.upstream_qty}} {{item.unitShort}}</text>
+              <text wx:if="{{item.assigned_by_name}}"> · 由 {{item.assigned_by_name}} 派工</text>
+              <text wx:if="{{tab === 'available' && item.owner_name}}"> · 已由 {{item.owner_name}} 接单</text>
             </view>
             <view wx:if="{{item.lane === 'rework' && item.rework_reason}}" class="mt-note">{{item.rework_reason}}</view>
           </view>
           <button
-            class="wo-action-btn {{tab === 'available' || tab === 'done' ? 'outline' : ''}}"
+            class="wo-action-btn {{tab === 'available' || tab === 'done' || item.buttonText === '查看' ? 'outline' : ''}}"
             data-id="{{item.id}}"
             data-key="{{item.key}}"
             data-lane="{{item.lane}}"
@@ -141,60 +196,87 @@
             disabled="{{busy || (item.paused && tab === 'available')}}"
           >{{item.buttonText}}</button>
         </view>
-      </block>
+      </view>
 
-      <!-- 2. 下挂子工单 -->
-      <block wx:if="{{group.subGroups.length}}">
-        <view class="wo-sec-head">下挂子工单 ({{group.subGroups.length}} 个)</view>
-        <view wx:for="{{group.subGroups}}" wx:for-item="sub" wx:for-index="subIdx" wx:key="id" class="wo-sub-card">
-          <view class="wo-sub-head" data-id="{{sub.id}}" catchtap="openWorkOrder">
-            <view class="mt-row">
-              <text class="wo-sub-title">└ {{sub.is_rework_order ? '返工子工单' : '子工单 ' + (subIdx + 1)}}：生产【{{sub.product_name}}】 × {{sub.plannedText}} {{sub.unit_name}}</text>
-              <text class="wo-sub-link">详情 ›</text>
-            </view>
-            <view class="wo-sub-meta mono">单号：{{sub.work_order_no}}{{sub.status_label ? ' · ' + sub.status_label : ''}}</view>
-            <view class="wo-sub-spec">规格型号：{{sub.specText || '标准规格'}}</view>
-            <view wx:if="{{sub.paused && sub.pause_reason}}" class="mt-note">暂停原因：{{sub.pause_reason}}</view>
+      <!-- 2. 下挂子工单（仅存在子工单时显示折叠栏） -->
+      <view wx:if="{{group.subCount > 0}}" class="wo-sub-section">
+        <view class="wo-sub-toggle" data-key="{{group.key}}" bindtap="toggleGroup">
+          <view class="wo-sub-toggle-left">
+            <text class="wo-sub-badge">下挂子工单 {{group.subCount}}</text>
+            <text class="wo-sub-summary">生产：{{group.subSummaryNames}}</text>
           </view>
-
-          <!-- 子工单下的工序任务 -->
-          <view wx:for="{{sub.tasks}}" wx:key="key" class="wo-sub-task" data-id="{{item.id}}" data-lane="{{item.lane}}" bindtap="open">
-            <view class="wo-task-info">
-              <view class="wo-task-title-line">
-                <text class="wo-task-op {{item.lane === 'rework' ? 'mt-rework' : ''}}">{{item.title}}</text>
-                <text wx:if="{{item.timing}}" class="mt-tag amber">计时中</text>
-                <text wx:elif="{{item.work_status_label}}" class="mt-tag gray">{{item.work_status_label}}</text>
-                <text wx:if="{{item.lane !== 'rework' && item.rework_qty}}" class="mt-tag red">返工 {{item.rework_qty}}{{item.unitShort}}</text>
-              </view>
-              <view class="wo-task-sub">
-                已完成 {{item.doneText}} / {{item.plannedText}} {{item.unitShort}} · 本道待做 {{item.here_qty || 0}} {{item.unitShort}}<text wx:if="{{item.upstream_qty}}"> · 前道在制 {{item.upstream_qty}} {{item.unitShort}}</text><text wx:if="{{item.assigned_by_name}}"> · 由 {{item.assigned_by_name}} 派工</text>
-              </view>
-              <view wx:if="{{item.lane === 'rework' && item.rework_reason}}" class="mt-note">{{item.rework_reason}}</view>
-            </view>
-            <button
-              class="wo-action-btn {{tab === 'available' || tab === 'done' ? 'outline' : ''}}"
-              data-id="{{item.id}}"
-              data-key="{{item.key}}"
-              data-lane="{{item.lane}}"
-              catchtap="primary"
-              disabled="{{busy || (item.paused && tab === 'available')}}"
-            >{{item.buttonText}}</button>
-          </view>
-
-          <view wx:if="{{!sub.tasks.length}}" class="wo-sub-empty" data-id="{{sub.id}}" catchtap="openWorkOrder">
-            <text>已入库 {{sub.storedText || 0}} / {{sub.plannedText}} {{sub.unit_name}}</text>
-            <text class="wo-sub-link">查看子工单 ›</text>
+          <view class="wo-sub-toggle-right">
+            <text>{{group.expanded ? '收起' : '展开'}}</text>
+            <van-icon name="{{group.expanded ? 'arrow-up' : 'arrow-down'}}" size="24rpx" color="#d97706" />
           </view>
         </view>
-      </block>
+
+        <view wx:if="{{group.expanded}}" class="wo-sub-list">
+          <view wx:for="{{group.subGroups}}" wx:for-item="sub" wx:for-index="subIdx" wx:key="id" class="wo-sub-card">
+            <view class="wo-sub-head" data-id="{{sub.id}}" catchtap="openWorkOrder">
+              <view class="mt-row">
+                <text class="wo-sub-title">{{sub.is_rework_order ? '返工子工单' : '子工单 ' + (subIdx + 1)}}：{{sub.product_name}} × {{sub.plannedText}} {{sub.unit_name}}</text>
+                <text class="wo-sub-link">详情 ›</text>
+              </view>
+              <view class="wo-sub-meta">
+                <text class="mono">{{sub.work_order_no}}</text>
+                <text wx:if="{{sub.status_label}}"> · {{sub.status_label}}</text>
+                <text wx:if="{{sub.specText}}"> · 规格：{{sub.specText}}</text>
+              </view>
+              <view wx:if="{{sub.paused && sub.pause_reason}}" class="mt-note">暂停原因：{{sub.pause_reason}}</view>
+            </view>
+
+            <!-- 子工单下的工序任务 -->
+            <view
+              wx:for="{{sub.tasks}}"
+              wx:key="key"
+              class="wo-sub-task"
+              data-id="{{item.id}}"
+              data-lane="{{item.lane}}"
+              bindtap="open"
+            >
+              <view class="wo-task-info">
+                <view class="wo-task-title-line">
+                  <text class="wo-task-op {{item.lane === 'rework' ? 'mt-rework' : ''}}">{{item.title}}</text>
+                  <text wx:if="{{item.opStatusLabel}}" class="mt-tag {{item.opStatusTheme}}">{{item.opStatusLabel}}</text>
+                  <text wx:if="{{item.lane !== 'rework' && item.rework_qty}}" class="mt-tag red">返工 {{item.rework_qty}}{{item.unitShort}}</text>
+                </view>
+                <view class="wo-task-sub">
+                  <text>已完成 {{item.doneText}} / {{item.plannedText}} {{item.unitShort}}</text>
+                  <text> · 本道待做 </text>
+                  <text class="{{item.here_qty > 0 ? 'wo-num-strong' : ''}}">{{item.here_qty || 0}} {{item.unitShort}}</text>
+                  <text wx:if="{{item.upstream_qty}}"> · 前道在制 {{item.upstream_qty}} {{item.unitShort}}</text>
+                  <text wx:if="{{item.assigned_by_name}}"> · 由 {{item.assigned_by_name}} 派工</text>
+                </view>
+                <view wx:if="{{item.lane === 'rework' && item.rework_reason}}" class="mt-note">{{item.rework_reason}}</view>
+              </view>
+              <button
+                class="wo-action-btn {{tab === 'available' || tab === 'done' || item.buttonText === '查看' ? 'outline' : ''}}"
+                data-id="{{item.id}}"
+                data-key="{{item.key}}"
+                data-lane="{{item.lane}}"
+                catchtap="primary"
+                disabled="{{busy || (item.paused && tab === 'available')}}"
+              >{{item.buttonText}}</button>
+            </view>
+
+            <view wx:if="{{!sub.tasks.length}}" class="wo-sub-empty" data-id="{{sub.id}}" catchtap="openWorkOrder">
+              <text>已入库 {{sub.storedText || 0}} / {{sub.plannedText}} {{sub.unit_name}}</text>
+              <text class="wo-sub-link">查看子工单 ›</text>
+            </view>
+          </view>
+        </view>
+      </view>
     </view>
+
+    <!-- 分页与底部提示 -->
+    <view wx:if="{{lastPage > 1}}" class="mt-pager">
+      <button class="mt-btn ghost mt-btn-mini" disabled="{{page <= 1 || loading}}" data-delta="-1" bindtap="turnPage">上一页</button>
+      <text class="tasks-page-pill">{{page}} / {{lastPage}}</text>
+      <button class="mt-btn ghost mt-btn-mini" disabled="{{page >= lastPage || loading}}" data-delta="1" bindtap="turnPage">下一页</button>
+    </view>
+    <view wx:if="{{tab === 'available' && canExecute}}" class="mt-foot">「可接工序」展示前道已交接且尚未指派的工序任务；返工任务独立统计工时，不计入计件提成</view>
   </view>
 
-  <view wx:if="{{lastPage > 1}}" class="mt-pager">
-    <button class="mt-btn ghost mt-btn-mini" disabled="{{page <= 1 || loading}}" data-delta="-1" bindtap="turnPage">上一页</button>
-    <text>{{page}} / {{lastPage}}</text>
-    <button class="mt-btn ghost mt-btn-mini" disabled="{{page >= lastPage || loading}}" data-delta="1" bindtap="turnPage">下一页</button>
-  </view>
-  <view wx:if="{{tab === 'available' && canExecute}}" class="mt-foot">「可接工序」展示前道已交接且尚未指派的工序任务；返工任务独立统计工时，不计入计件提成</view>
   <production-dialog id="prodDialog" />
 </view>

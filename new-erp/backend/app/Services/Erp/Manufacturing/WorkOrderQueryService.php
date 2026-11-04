@@ -134,6 +134,7 @@ final class WorkOrderQueryService
         $row['tech'] = $this->techSummary($wo);
         // 订单信息（销售员、客户、电话、地址、各种备注），取订单现在的内容，销售改过的标出来
         $row['order_info'] = app(OrderBrief::class)->forWorkOrder($wo);
+        $row['workshop_reference'] = app(WorkshopReferenceService::class)->forWorkOrder($wo);
         $row['shipment_repairs'] = self::shipmentRepairs($wo);
         $row['logs'] = MfgWorkOrderLog::query()->where('work_order_id', $wo->id)->orderByDesc('id')->limit(30)->get()
             ->map(fn ($log) => ['id' => $log->id, 'action' => $log->action, 'content' => $log->content, 'operator_name' => $log->operator_name,

@@ -4,7 +4,7 @@ export function cuttingUnitKind(unit) {
   const code = String(unit.unit_code || '').trim().toUpperCase()
   const symbol = String(unit.symbol || unit.unit_symbol || '').trim().toUpperCase().replace(/²/g, '2').replace(/㎡/g, 'M2').replace(/\^/g, '')
   if (code === 'M' || symbol === 'M') return 'm'
-  if (['M2', 'SQM'].includes(code) || symbol === 'M2') return 'm2'
+  if (['M2', 'SQM', 'SQUAREMETRE'].includes(code) || ['M2', '平方米'].includes(symbol)) return 'm2'
   if (code === 'ROOT' || symbol === '根') return 'root'
   if (code === 'SHEET' || symbol === '张') return 'sheet'
   return null

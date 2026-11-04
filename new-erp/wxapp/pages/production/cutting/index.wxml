@@ -12,6 +12,7 @@
   <view wx:if="{{loading && !ready}}" class="mt-empty">正在读取开料资料…</view>
 
   <block wx:if="{{ready}}">
+    <workshop-reference reference="{{workshopReference}}" />
     <!-- 下料要求与规格型号 -->
     <view class="mt-card">
       <view class="mt-card-title"><text>下料零件与规格型号</text><text class="mt-muted">{{remaining > 0 ? '剩余 ' + remaining + ' 套待开料' : '已全部开料'}}</text></view>

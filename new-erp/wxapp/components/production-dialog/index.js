@@ -4,12 +4,18 @@ Component({
     mode: 'confirm', // 'confirm' | 'completion' | 'stepper' | 'input'
     theme: 'default', // 'default' | 'warn' | 'danger'
     title: '',
+    headerBadge: '',
     subtitle: '',
     infoMain: '',
+    infoRight: '',
     infoSub: '',
     content: '',
     kvRows: [],
     tableRows: [],
+    filteredTableRows: [],
+    tableFilters: [],
+    activeTableFilter: 'all',
+    colQtyLabel: '数量',
     showCancel: true,
     cancelText: '取消',
     confirmText: '确认',
@@ -52,17 +58,30 @@ Component({
       }
       const mode = options.mode || (options.editable ? 'input' : 'confirm');
       const handoffAvailable = options.handoffAvailable !== false;
+      const tableRows = options.tableRows || [];
+      const tableFilters = options.tableFilters || [];
+      const activeTableFilter = tableFilters.length ? tableFilters[0].key : 'all';
+      const filteredTableRows = activeTableFilter === 'all'
+        ? tableRows
+        : tableRows.filter(r => r.cat === activeTableFilter);
+
       this.setData({
         open: true, mediaEnabled: Boolean(options.mediaEnabled), media: options.media || [], mediaBusy: false,
         mode,
         theme,
         title: options.title || '提示',
+        headerBadge: options.headerBadge || '',
         subtitle: options.subtitle || '',
         infoMain: options.infoMain || '',
+        infoRight: options.infoRight || '',
         infoSub: options.infoSub || '',
         content: mode === 'input' && options.editable && !options.infoMain ? '' : (options.content || ''),
         kvRows: options.kvRows || [],
-        tableRows: options.tableRows || [],
+        tableRows,
+        filteredTableRows,
+        tableFilters,
+        activeTableFilter,
+        colQtyLabel: options.colQtyLabel || '数量',
         showCancel,
         cancelText: options.cancelText || '取消',
         confirmText: options.confirmText || (showCancel ? '确认' : '我知道了'),
@@ -87,6 +106,14 @@ Component({
         placeholderText: options.placeholderText || '请输入内容',
         inputRequired: Boolean(options.inputRequired),
         inputRequiredToast: options.inputRequiredToast || '请填写内容',
+      });
+    },
+    pickTableFilter(e) {
+      const key = e.currentTarget.dataset.key || 'all';
+      const rows = this.data.tableRows || [];
+      this.setData({
+        activeTableFilter: key,
+        filteredTableRows: key === 'all' ? rows : rows.filter(r => r.cat === key),
       });
     },
     pickChoice(e) {

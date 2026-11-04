@@ -3,5 +3,5 @@
   "navigationBarBackgroundColor": "#d81e06",
   "navigationBarTextStyle": "white",
   "enablePullDownRefresh": true,
-  "usingComponents": {}
+  "usingComponents": { "workshop-reference": "/components/workshop-reference/index" }
 }

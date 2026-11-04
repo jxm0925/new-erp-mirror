@@ -49,6 +49,24 @@ function decorate(row, tab, canExecute) {
   const canClaim = Boolean(canExecute && row.allowed && row.allowed.claim);
   const isSub = Boolean(row.is_sub_work_order || row.parent_work_order_id || row.parent_work_order);
   const specText = buildSpecText(row);
+  let opStatusLabel = row.work_status_label || '';
+  let opStatusTheme = 'gray';
+  if (row.timing) {
+    opStatusLabel = '计时中';
+    opStatusTheme = 'amber';
+  } else if (row.paused) {
+    opStatusLabel = '已暂停';
+    opStatusTheme = 'gray';
+  } else if (tab === 'done' || row.status === 'done') {
+    opStatusLabel = '已完工';
+    opStatusTheme = 'green';
+  } else if (tab === 'mine' || row.owner_name) {
+    opStatusLabel = (row.work_status === 'in_progress' || done > 0) ? '作业中' : '待作业';
+    opStatusTheme = 'blue';
+  } else if (tab === 'available') {
+    opStatusLabel = row.work_status_label || '可接';
+    opStatusTheme = canClaim ? 'red' : 'gray';
+  }
   return Object.assign({}, row, {
     key: row.key || `${row.id}-${row.lane || 'normal'}`,
     lane: row.lane || 'normal',
@@ -56,6 +74,8 @@ function decorate(row, tab, canExecute) {
     unitShort: row.unit_short || '台',
     isSub,
     specText,
+    opStatusLabel,
+    opStatusTheme,
     plannedText: view.quantity(row.planned_qty),
     doneText: view.quantity(row.done_qty),
     percent: planned > 0 ? Math.min(100, Math.round(done / planned * 100)) : 0,
@@ -139,7 +159,7 @@ function buildGroups(rows, expandedMap) {
       };
       map[groupKey] = {
         key: groupKey,
-        expanded: Boolean(expandedMap && expandedMap[groupKey]),
+        expanded: false,
         main: mainInfo,
         mainTasks: [],
         subMap: {},
@@ -184,7 +204,7 @@ function buildGroups(rows, expandedMap) {
     }
   });
 
-  // 合并 semi_summary 中的子工单信息，保证主工单折叠时始终能看到全部子工单数量及生产内容
+  // 合并 semi_summary 中的子工单信息，保证下挂子工单区域可查看全部子工单及生产内容
   list.forEach(group => {
     const semiList = group.main.semi_summary || [];
     semiList.forEach(semi => {
@@ -222,10 +242,14 @@ function buildGroups(rows, expandedMap) {
       .filter(Boolean)
       .filter((v, i, a) => a.indexOf(v) === i)
       .join('、');
+    const subTaskCount = group.subGroups.reduce((sum, s) => sum + (s.tasks ? s.tasks.length : 0), 0);
+    const hasExplicitExpand = Boolean(expandedMap && Object.prototype.hasOwnProperty.call(expandedMap, group.key));
 
     group.mainOpNames = mainOpNames;
     group.subCount = group.subGroups.length;
+    group.subTaskCount = subTaskCount;
     group.subSummaryNames = subNames;
+    group.expanded = hasExplicitExpand ? Boolean(expandedMap[group.key]) : subTaskCount > 0;
   });
 
   return list;
@@ -284,14 +308,18 @@ Page({
     error: '',
     keyword: '',
     userName: '',
+    userInitial: '工',
     canExecute: false,
   },
   onLoad(options) {
     const user = wx.getStorageSync('erp_user') || {};
+    const userName = user.nickname || user.display_name || user.username || '';
+    const userInitial = userName ? String(userName).trim().slice(0, 1) : '工';
     this.setData({
       tab: options && TABS.concat([REVIEW_TAB]).some(t => t.key === options.tab) ? options.tab : 'mine',
       keyword: options && options.keyword ? decodeURIComponent(options.keyword) : '',
-      userName: user.nickname || user.display_name || user.username || '',
+      userName,
+      userInitial,
     });
   },
   onShow() { if (this.mediaReturning) { this.mediaReturning = false; return; } this.load(); },
@@ -326,11 +354,13 @@ Page({
   toggleGroup(event) {
     const key = event.currentTarget.dataset.key;
     if (!key) return;
+    const target = (this.data.groups || []).find(g => g.key === key);
+    const nextExpanded = target ? !target.expanded : !this.data.expandedMap[key];
     const expandedMap = Object.assign({}, this.data.expandedMap, {
-      [key]: !this.data.expandedMap[key],
+      [key]: nextExpanded,
     });
     const groups = (this.data.groups || []).map(g => (
-      g.key === key ? Object.assign({}, g, { expanded: Boolean(expandedMap[key]) }) : g
+      g.key === key ? Object.assign({}, g, { expanded: nextExpanded }) : g
     ));
     this.setData({ expandedMap, groups });
   },

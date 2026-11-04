@@ -100,6 +100,7 @@
   <button wx:if="{{operation.allowed_actions.claim}}" class="mt-btn" style="margin-bottom: 18rpx;" disabled="{{busy}}" data-action="claim" bindtap="runAction">立即接单</button>
 
   <!-- 订单与客户信息（放在我的作业工时下面） -->
+  <workshop-reference reference="{{operation.workshop_reference}}" bind:activity="mediaActivity" />
   <template is="orderInfo" data="{{info: operation.order_info}}" />
 
   <view wx:if="{{operation.serialResults.length}}" class="mt-card">
