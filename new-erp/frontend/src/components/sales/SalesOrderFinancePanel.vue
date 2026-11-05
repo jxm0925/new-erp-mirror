@@ -47,7 +47,7 @@ import { getSalesOrderFinance, listSalesPurchaseLinks, reverseSalesPurchaseLink 
 export default {
   props: { orderId: { type: [Number, String], required: true } },
   data: () => ({ loading: false, busy: false, error: '', overview: {}, links: [], linkPage: 1, linkTotal: 0, loadRequest: 0 }),
-  computed: { canManage() { return this.$can('purchase.order.edit') } },
+  computed: { canManage() { return this.$can('finance.view') && this.$can('purchase.order.edit') } },
   watch: { busy(value) { this.$emit('busy-change', value) }, orderId: { immediate: true, handler() { this.linkPage = 1; this.overview = {}; this.load() } } },
   beforeDestroy() { this.loadRequest++ },
   methods: {

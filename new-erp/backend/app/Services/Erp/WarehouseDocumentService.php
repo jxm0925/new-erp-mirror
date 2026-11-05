@@ -149,7 +149,7 @@ final class WarehouseDocumentService
         } else {
             if ($kind === 'material_preparation') {
                 $operation = MfgWorkOrderOperation::query()->with('workOrder:id,item_name,product_name,source_type,sales_order_id')->findOrFail($id);
-                $preview = app(MaterialDeliveryService::class)->preview((int) $operation->work_order_id, $id, isset($filters['units']) ? (int) $filters['units'] : null);
+                $preview = app(MaterialDeliveryService::class)->preview((int) $operation->work_order_id, $id, isset($filters['units']) ? (int) $filters['units'] : null, [], $filters['unit_ids'] ?? null);
                 $header = ['id' => $id, 'work_order_id' => (int) $operation->work_order_id, 'operation_id' => $id,
                     'work_order_no' => $preview['work_order_no'], 'operation_name' => $preview['operation_name'],
                     'item_name' => $operation->workOrder?->item_name, 'product_name' => $operation->workOrder?->product_name,

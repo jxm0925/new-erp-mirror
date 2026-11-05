@@ -29,6 +29,7 @@ export const listSalesOrderVersions = (id, params) => api.get(`/v1/erp/sales/ord
 export const listSalesOrderChanges = (id, params) => api.get(`/v1/erp/sales/orders/${id}/changes`, { params })
 export const searchSalesOrderSkus = params => api.get('/v1/erp/sales/orders/skus/search', { params })
 export const previewSalesOrderEditImpact = (id, data) => api.post(`/v1/erp/sales/orders/${id}/edit-impact/preview`, data)
+export const listSalesOrderChangeProductionUnits = (id, params) => api.get(`/v1/erp/sales-orders/${id}/change-production-units`, { params })
 export const submitSalesOrderEditImpact = (id, data) => api.post(`/v1/erp/sales/orders/${id}/edit-impact/submit`, data)
 // 销售按客户约定修改开工定金；草稿和已确认订单均立即生效并留痕。
 export const updateSalesOrderAgreedDeposit = (id, data) => api.put(`/v1/erp/sales/orders/${id}/agreed-deposit`, data)
@@ -58,6 +59,7 @@ export const closeSalesReturn = id => api.post(`/v1/erp/sales/returns/${id}/clos
 
 // 开票申请：销售在订单里申请给客户开发票
 export const getSalesOrderInvoiceRequests = id => api.get(`/v1/erp/sales/orders/${id}/invoice-requests`)
+export const listSalesInvoiceAccounts = (id, params) => api.get(`/v1/erp/sales/orders/${id}/invoice-accounts`, { params })
 export const createSalesOrderInvoiceRequest = (id, data) => api.post(`/v1/erp/sales/orders/${id}/invoice-requests`, data)
 export const withdrawSalesInvoiceRequest = id => api.post(`/v1/erp/sales/invoice-requests/${id}/withdraw`)
 export const downloadSalesInvoiceFile = (id, attachmentId) => api.get(`/v1/erp/sales/invoice-requests/${id}/attachments/${attachmentId}`, { responseType: 'blob' })

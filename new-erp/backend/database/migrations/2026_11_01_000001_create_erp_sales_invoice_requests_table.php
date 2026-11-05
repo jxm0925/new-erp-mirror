@@ -29,6 +29,9 @@ CREATE TABLE `erp_sales_invoice_requests` (
   `invoice_address_phone` varchar(300) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `invoice_bank_account` varchar(300) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `invoice_email` varchar(160) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `finance_account_id` bigint(20) unsigned DEFAULT NULL,
+  `finance_account_no_snapshot` varchar(80) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `finance_account_name_snapshot` varchar(160) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `amount` decimal(18,4) NOT NULL,
   `tax_rate` decimal(6,2) NOT NULL DEFAULT '13.00',
   `currency` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'CNY',
@@ -49,7 +52,9 @@ CREATE TABLE `erp_sales_invoice_requests` (
   UNIQUE KEY `erp_sales_invoice_requests_request_no_unique` (`request_no`),
   KEY `erp_sales_invoice_requests_order_index` (`sales_order_id`,`status`),
   KEY `erp_sales_invoice_requests_customer_index` (`customer_id`),
-  KEY `erp_sales_invoice_requests_status_index` (`status`,`created_at`)
+  KEY `erp_sales_invoice_requests_status_index` (`status`,`created_at`),
+  KEY `erp_sales_invoice_requests_finance_account_index` (`finance_account_id`),
+  CONSTRAINT `erp_sales_invoice_requests_finance_account_foreign` FOREIGN KEY (`finance_account_id`) REFERENCES `erp_finance_accounts` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
 SQL;
 

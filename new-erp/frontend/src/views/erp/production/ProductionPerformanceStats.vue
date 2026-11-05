@@ -1018,6 +1018,7 @@
               </el-table-column>
             </el-table>
           </div>
+          <sales-order-change-labor :order-id="detail.order.id" :initial-result="detail.change_labor" :loader="loadOrderChangeLabor" />
         </template>
       </div>
 
@@ -1030,6 +1031,7 @@
 
 <script>
 import { listPerformanceOrders, getPerformanceOrder, getPerformanceBatch, getPerformanceMonth, getPerformanceProduction, listPerformanceWorkOrders } from '../../../api/erp/production'
+import SalesOrderChangeLabor from '@/components/sales/SalesOrderChangeLabor.vue'
 
 const currentMonth = () => {
   const d = new Date()
@@ -1046,6 +1048,7 @@ const TAB_LABELS = {
 
 export default {
   name: 'ProductionPerformanceStats',
+  components: { SalesOrderChangeLabor },
   data() {
     const month = currentMonth()
     return {
@@ -1350,6 +1353,7 @@ export default {
         this.loading = false
       }
     },
+    async loadOrderChangeLabor(params) { const response = await getPerformanceOrder(this.detail.order.id, params); return response.data.data.change_labor },
     async openOrder(row) {
       this.drawer = true
       this.detail = null

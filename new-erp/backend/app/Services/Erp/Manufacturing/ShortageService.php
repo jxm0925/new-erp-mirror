@@ -91,14 +91,27 @@ final class ShortageService
     public function compute(?array $onlyItemIds = null): array
     {
         $query = DB::table('erp_mfg_work_order_materials as m')->join('erp_mfg_work_orders as w', 'w.id', '=', 'm.work_order_id')
-            ->whereIn('w.status', self::WORK_ORDER_STATUSES)->where('m.participates_in_kitting', true)->whereColumn('m.required_qty', '>', 'm.issued_qty')
-            ->select(['m.work_order_id', 'm.component_item_id', 'm.component_item_code', 'm.component_item_name', 'm.unit_name', 'm.required_qty', 'm.issued_qty',
+            ->whereIn('w.status', self::WORK_ORDER_STATUSES)->where('m.participates_in_kitting', true)
+            ->select(['m.id', 'm.work_order_id', 'm.component_item_id', 'm.component_item_code', 'm.component_item_name', 'm.unit_name', 'm.required_qty', 'm.issued_qty',
                 'w.work_order_no', 'w.status', 'w.source_type', 'w.item_name', 'w.is_urgent', 'w.priority', 'w.planned_start_date', 'w.warehouse_id', 'w.sales_order_id', 'w.sales_order_line_id']);
         if ($onlyItemIds !== null) $query->whereIn('m.component_item_id', $onlyItemIds ?: [0]);
         $lines = $query->get();
         if ($lines->isEmpty()) return [];
         $items = Item::query()->whereIn('id', $lines->pluck('component_item_id')->unique()->all())->get()->keyBy('id');
         $lines = $lines->filter(fn ($l) => ($item = $items->get($l->component_item_id)) && self::purchasable($item));
+        if ($lines->isEmpty()) return [];
+        $numbered = DB::table('erp_mfg_work_order_units')->whereIn('work_order_id', $lines->pluck('work_order_id')->unique())
+            ->distinct()->pluck('work_order_id')->all();
+        foreach (MfgWorkOrder::with('materials')->whereIn('id', $numbered)->get() as $wo) {
+            $unitIds = CancellationProductionService::productionUnitIds((int) $wo->id);
+            if (count($unitIds) === (int) $wo->planned_qty) continue;
+            foreach ($lines->where('work_order_id', $wo->id) as $line) {
+                $material = $wo->materials->firstWhere('id', $line->id);
+                $line->required_qty = (float) $material->required_qty * count($unitIds) / max(1, (float) $wo->planned_qty);
+                $line->issued_qty = app(MaterialIssueService::class)->quantityForUnits($material, $wo, $unitIds);
+            }
+        }
+        $lines = $lines->filter(fn ($line) => (float) $line->required_qty - (float) $line->issued_qty > 0.00001);
         if ($lines->isEmpty()) return [];
         $ids = $lines->pluck('component_item_id')->map(fn ($id) => (int) $id)->unique()->values()->all();
         [$available] = $this->plans->availableForKitting($ids);
@@ -223,7 +236,7 @@ final class ShortageService
             }
             // 仓库路径在物料锁后才读配料与在途，避免等待并发申请时提前建立旧快照而重复采购。
             $operationLines = $deliveryScope === null ? null : collect(app(MaterialDeliveryService::class)->shortagePurchasePreview(
-                (int) $wo->id, (int) $deliveryScope['operation_id'], $deliveryScope['units'], $deliveryScope['selections'], true)['lines'])->keyBy('item_id');
+                (int) $wo->id, (int) $deliveryScope['operation_id'], $deliveryScope['units'], $deliveryScope['selections'], true, $deliveryScope['unit_ids'] ?? null)['lines'])->keyBy('item_id');
             $rows = $this->compute($ids);
             $requestItems = []; $allocations = []; $urgent = false; $woNos = [];
             foreach ($lines as $line) {

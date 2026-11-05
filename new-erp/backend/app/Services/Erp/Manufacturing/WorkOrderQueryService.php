@@ -122,8 +122,15 @@ final class WorkOrderQueryService
         $row['is_sub_work_order'] = $row['parent_work_order'] !== null || $wo->source_type === 'work_order' || (bool) $wo->rework_of_work_order_id;
         $opNames = $wo->operations->pluck('operation_name', 'id');
         $pendingScrap = MfgUnitReport::query()->where('work_order_id', $wo->id)->where('review_status', 'pending')->pluck('unit_id')->flip();
+        $dispositions = \App\Models\Erp\CancellationProductionDisposition::where('work_order_id', $wo->id)->whereNotNull('work_order_unit_id')->get()->keyBy('work_order_unit_id');
+        $row['blocked_unit_ids'] = CancellationProductionService::blockedUnitIds((int) $wo->id);
+        $row['production_unit_ids'] = CancellationProductionService::productionUnitIds((int) $wo->id);
+        $row['sales_demand_unit_ids'] = CancellationProductionService::salesDemandUnitIds((int) $wo->id);
         $row['units'] = $wo->units->map(fn ($u) => [
             'id' => $u->id, 'unit_no' => $u->unit_no, 'serial_no' => $u->serial_no, 'status' => $u->status,
+            'disposition_id' => $dispositions->get($u->id)?->id,
+            'disposition_status' => $dispositions->get($u->id)?->status ?: 'normal',
+            'sales_demand' => in_array((int) $u->id, $row['sales_demand_unit_ids'], true),
             'status_label' => isset($pendingScrap[$u->id]) ? '等报废确认' : (self::UNIT_LABELS[$u->status] ?? $u->status), 'rework_count' => $u->rework_count,
             'current_operation_id' => $u->current_operation_id, 'current_operation_name' => $u->current_operation_id ? ($opNames[$u->current_operation_id] ?? null) : null,
             'stored_at' => $u->stored_at?->toDateTimeString(), 'completed_at' => $u->completed_at?->toDateTimeString(),
@@ -202,8 +209,9 @@ final class WorkOrderQueryService
     /** 每道工序：现在停在这道的设备、已过的设备、接单人、谁在计时。 */
     private function operationProgress(MfgWorkOrder $wo, array $operations): array
     {
-        $here = $wo->units->whereIn('status', ['waiting', 'in_progress', 'rework'])->groupBy('current_operation_id')->map->count();
-        $rework = $wo->units->where('status', 'rework')->groupBy('current_operation_id')->map->count();
+        $eligible = $wo->units->whereNotIn('id', CancellationProductionService::blockedUnitIds((int) $wo->id));
+        $here = $eligible->whereIn('status', ['waiting', 'in_progress', 'rework'])->groupBy('current_operation_id')->map->count();
+        $rework = $eligible->where('status', 'rework')->groupBy('current_operation_id')->map->count();
         $owners = MfgTaskParticipant::query()->where('work_order_id', $wo->id)->where('role', 'owner')->where('is_active', true)->get()->groupBy('work_order_operation_id');
         $timing = MfgLaborSession::query()->where('work_order_id', $wo->id)->where('status', 'active')->get()->groupBy('work_order_operation_id');
         // 正常 / 返工工时分开：返工单独计时、不算提成；返工工单整张都是返工工时。
@@ -389,9 +397,10 @@ final class WorkOrderQueryService
             : ($wo->block_reason ?: ($funding && ! ($funding['production_funds_satisfied'] ?? true) ? '定金未到，不能开工' : null));
         $production = $wo->operations->where('execution_context', 'production')->values();
         $specInfo = self::itemSpecInfo($wo->relationLoaded('item') ? $wo->item : null, $wo);
+        $disposition = CancellationProductionService::pending((int) $wo->id);
         return [
             'id' => $wo->id, 'work_order_no' => $wo->work_order_no, 'source_type' => $wo->source_type,
-            'cancellation_disposition' => CancellationProductionService::pending((int) $wo->id)?->toArray(),
+            'cancellation_disposition' => $disposition ? \Illuminate\Support\Arr::except($disposition->toArray(), ['history']) : null,
             'source_label' => $wo->rework_of_work_order_id ? '返工工单' : match ($wo->source_type) { 'stock' => '备货', 'work_order' => '半成品补做', default => '销售订单' },
             'rework_of_work_order_id' => $wo->rework_of_work_order_id,
             'rework_of_work_order_no' => $wo->rework_of_work_order_id ? MfgWorkOrder::query()->whereKey($wo->rework_of_work_order_id)->value('work_order_no') : null,
@@ -492,8 +501,13 @@ final class WorkOrderQueryService
         $held = $wo->id ? MaterialReturnService::heldDefectiveQty((int) $wo->id) : [];
         $shortByItem = collect($kitting)->flatMap(fn ($op) => $op['materials'])->groupBy('component_item_id')->map(fn ($rows) => $rows->sum('shortage_qty'));
         $openWo = in_array($wo->status, ['planned', 'released', 'in_progress', 'paused'], true);
+        $user = request()->attributes->get('erp_user') ?? app(\App\Services\Erp\AuthContextService::class)->currentUser(request());
+        $claimedOperations = MfgTaskParticipant::query()->where('work_order_id', $wo->id)->where('employee_legacy_id', (int) ($user->legacy_id ?? $user->id ?? 0))
+            ->whereIn('work_order_operation_id', $wo->operations->where('execution_context', 'production')->pluck('id'))
+            ->where('lane', 'normal')->where('role', 'owner')->where('is_active', true)->pluck('work_order_operation_id')->flip();
         foreach ($kitting as &$op) {
             $pending = false;
+            $operationId = str_starts_with((string) $op['operation_key'], 'o') ? (int) substr($op['operation_key'], 1) : 0;
             $prepared = str_starts_with((string) $op['operation_key'], 'o') ? MaterialDeliveryService::preparedQty((int) substr($op['operation_key'], 1)) : [];
             foreach ($op['materials'] as &$m) {
                 $item = $items->get($m['component_item_id']);
@@ -504,6 +518,7 @@ final class WorkOrderQueryService
                 $m['held_qty'] = (float) ($held[$m['component_item_id']] ?? 0);
                 $m['purchasable'] = $item && ShortageService::purchasable($item);
                 $m['make_qty'] = $m['can_make'] ? max(0, ceil(round((float) ($shortByItem[$m['component_item_id']] ?? 0) - $m['in_production_qty'] - $m['held_qty'], 4))) : 0;
+                $m['can_order'] = $m['can_make'] && $m['make_qty'] > 0 && $claimedOperations->has($operationId);
                 if ($m['participates_in_kitting'] && ($m['issue_mode'] ?? 'receive') === 'receive' && (float) $m['issued_qty'] + (float) ($prepared[$m['id'] ?? 0] ?? 0) + 0.00001 < (float) $m['required_qty']) $pending = true;
             }
             unset($m);

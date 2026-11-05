@@ -5,6 +5,7 @@ namespace App\Services\Erp;
 use App\Domain\Finance\FinanceConstants;
 use App\Domain\Finance\Money;
 use App\Models\Erp\FinanceAttachment;
+use App\Models\Erp\FinanceAccount;
 use App\Models\Erp\FinanceInvoice;
 use App\Models\Erp\FinanceInvoiceAllocation;
 use App\Models\Erp\FinanceOperationLog;
@@ -62,6 +63,7 @@ class SalesInvoiceRequestService
             'can_request' => $this->requestBlocker($order) === null,
             'request_blocker' => $this->requestBlocker($order),
             'billing_defaults' => $this->billingDefaults($customer, $order),
+            'receipt_accounts' => $this->receiptAccounts($order),
             'requests' => $requests->map(fn (SalesInvoiceRequest $row) => $this->payload($row))->values(),
         ];
     }
@@ -71,6 +73,8 @@ class SalesInvoiceRequestService
         return DB::transaction(function () use ($order, $data, $user): SalesInvoiceRequest {
             $order = SalesOrder::query()->lockForUpdate()->findOrFail($order->id);
             if ($blocker = $this->requestBlocker($order)) throw ValidationException::withMessages(['sales_order_id' => $blocker]);
+            $account = FinanceAccount::query()->whereKey($data['finance_account_id'] ?? null)->where('status', 'enabled')->lockForUpdate()->first();
+            if (!$account) throw ValidationException::withMessages(['finance_account_id' => '请选择启用的资金账户。']);
             $amount = Money::normalize((string) $data['amount']);
             $summary = $this->summary($order);
             if (Money::compare($amount, '0') <= 0) throw ValidationException::withMessages(['amount' => '开票金额必须大于 0。']);
@@ -78,8 +82,9 @@ class SalesInvoiceRequestService
                 throw ValidationException::withMessages(['amount' => '开票金额超过可申请金额 '.$this->moneyText($summary['available_amount']).'（应收减去已开票和开票中的金额）。']);
             }
             $type = (string) $data['invoice_type'];
+            if (trim((string) ($data['invoice_tax_no'] ?? '')) === '') throw ValidationException::withMessages(['invoice_tax_no' => '请填写纳税人识别号。']);
             if ($type === 'vat_special') {
-                foreach (['invoice_tax_no' => '纳税人识别号', 'invoice_address_phone' => '地址电话', 'invoice_bank_account' => '开户行及账号'] as $field => $label) {
+                foreach (['invoice_address_phone' => '地址电话', 'invoice_bank_account' => '开户行及账号'] as $field => $label) {
                     if (trim((string) ($data[$field] ?? '')) === '') throw ValidationException::withMessages([$field => '开专票必须填写'.$label.'。']);
                 }
             }
@@ -90,6 +95,9 @@ class SalesInvoiceRequestService
                 'sales_order_id' => $order->id, 'sales_order_no' => $order->sales_order_no,
                 'customer_id' => $order->customer_id, 'customer_name' => $order->customer_name_snapshot ?: $order->customer_name,
                 ...$billing,
+                'finance_account_id' => $account->id,
+                'finance_account_no_snapshot' => $account->account_no,
+                'finance_account_name_snapshot' => $account->account_name,
                 'amount' => $amount, 'tax_rate' => $data['tax_rate'] ?? 13, 'currency' => $summary['currency'],
                 'remark' => $data['remark'] ?? null, 'status' => self::PENDING,
                 'requested_by' => $user->legacy_id ?? null, 'requested_by_name' => $this->userName($user),
@@ -132,6 +140,7 @@ class SalesInvoiceRequestService
         $request = DB::transaction(function () use ($id, $data, $operatorId, $user): SalesInvoiceRequest {
             $request = SalesInvoiceRequest::query()->lockForUpdate()->findOrFail($id);
             if ($request->status !== self::PENDING) throw ValidationException::withMessages(['status' => '只有待开票的申请可以登记开票。']);
+            if (trim((string) $request->invoice_tax_no) === '') throw ValidationException::withMessages(['invoice_tax_no' => '该申请缺少纳税人识别号，请驳回后补齐并重新申请。']);
             $order = SalesOrder::query()->lockForUpdate()->findOrFail($request->sales_order_id);
             if ($order->order_status === 'cancelled') throw ValidationException::withMessages(['status' => '订单已取消，请驳回该申请。']);
             $amount = Money::normalize((string) $request->amount);
@@ -246,10 +255,34 @@ class SalesInvoiceRequestService
     {
         $defaults = [];
         foreach (self::BILLING_FIELDS as $field) $defaults[$field] = $customer?->{$field};
-        $defaults['invoice_type'] = $defaults['invoice_type'] ?: 'vat_normal';
+        $defaults['invoice_type'] = null;
         $defaults['invoice_title'] = $defaults['invoice_title'] ?: ($customer?->customer_name ?: ($order->customer_name_snapshot ?: $order->customer_name));
         $defaults['has_saved'] = (bool) ($customer?->invoice_title);
         return $defaults;
+    }
+
+    public function accounts(array $filters): array
+    {
+        return FinanceAccount::query()->where('status', 'enabled')
+            ->when(!empty($filters['ids']), fn ($q) => $q->whereIn('id', $filters['ids']))
+            ->when(trim((string) ($filters['keyword'] ?? '')) !== '', function ($q) use ($filters) {
+                $like = '%'.trim($filters['keyword']).'%';
+                $q->where(fn ($w) => $w->where('account_no', 'like', $like)->orWhere('account_name', 'like', $like));
+            })->orderBy('sort')->orderBy('id')
+            ->paginate($filters['per_page'] ?? 10, ['id', 'account_no', 'account_name', 'currency'])->toArray();
+    }
+
+    private function receiptAccounts(SalesOrder $order): array
+    {
+        // 只认已确认且仍有效核销到本订单的收款，草稿、作废及撤销核销不参与默认选择。
+        return FinanceAccount::query()->where('status', 'enabled')
+            ->whereIn('id', DB::table('erp_finance_allocations as a')
+                ->join('erp_finance_cash_documents as c', 'c.id', '=', 'a.cash_document_id')
+                ->where('a.source_business_type', FinanceConstants::SOURCE_SALES_ORDER)->where('a.source_document_id', $order->id)
+                ->where('a.status', FinanceConstants::ALLOCATION_ACTIVE)->where('a.allocated_amount', '>', 0)
+                ->where('c.direction', FinanceConstants::DIRECTION_RECEIPT)->where('c.status', FinanceConstants::STATUS_CONFIRMED)
+                ->select('c.finance_account_id'))
+            ->orderBy('sort')->orderBy('id')->get(['id', 'account_no', 'account_name', 'currency'])->toArray();
     }
 
     /** 已确认销项发票（含红冲负数）在该订单上的净开票额。 */

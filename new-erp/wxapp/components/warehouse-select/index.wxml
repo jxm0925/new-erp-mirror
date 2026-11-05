@@ -8,10 +8,11 @@
       <view wx:if="{{loading}}" class="warehouse-empty"><van-loading color="#d81e06" /></view>
       <view wx:elif="{{!visibleRows.length}}" class="warehouse-empty">没有符合条件的可选明细</view>
       <view wx:for="{{visibleRows}}" wx:key="id" class="selection-row {{item.chosen ? 'selection-chosen' : ''}}" data-id="{{item.id}}" bindtap="choose">
-        <view class="phase-line-title"><text>{{item.title}}</text><text>{{item.chosen ? '✓ 已选' : '选择'}}</text></view>
+        <view class="phase-line-title"><text>{{item.title}}</text><text>{{item.chosen ? '✓ 已选' : (item.selectable === false ? '当前不可选' : '选择')}}</text></view>
         <view wx:if="{{item.subtitle}}" class="phase-audit">{{item.subtitle}}</view>
         <view wx:if="{{item.detail}}" class="phase-audit">{{item.detail}}</view>
         <view wx:if="{{item.measure}}" class="phase-audit">{{item.measure}}</view>
+        <view wx:if="{{item.disabled_reason}}" class="phase-audit">{{item.disabled_reason}}</view>
       </view>
       <view class="warehouse-pager"><text>共 {{total}} 条</text><button data-delta="-1" bindtap="turn" disabled="{{page <= 1 || loading}}">上一页</button><text>{{page}} / {{lastPage}}</text><button data-delta="1" bindtap="turn" disabled="{{page >= lastPage || loading}}">下一页</button></view>
       <view wx:if="{{chosen.length}}" class="selection-summary"><text>已选 {{chosen.length}} 项</text><view wx:for="{{chosen}}" wx:key="id" class="phase-audit"><text>{{item.title}} {{item.physical_no || item.serial_no}}</text><button class="warehouse-secondary" data-id="{{item.id}}" bindtap="remove" disabled="{{locked || loading}}">移除</button></view></view>

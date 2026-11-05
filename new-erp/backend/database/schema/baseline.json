@@ -232,7 +232,17 @@
     "erp_cancellation_production_dispositions": "2026_11_05_000002_create_erp_cancellation_production_dispositions_table",
     "erp_purchase_request_sales_links": "2026_11_06_000001_create_erp_purchase_request_sales_links_table",
     "erp_bom_operation_standards": "2026_11_07_000001_create_erp_bom_operation_standards_table",
-    "erp_bom_position_performance": "2026_11_08_000001_create_erp_bom_position_performance_table"
+    "erp_bom_position_performance": "2026_11_08_000001_create_erp_bom_position_performance_table",
+    "erp_mfg_disposition_labor_sessions": "2026_11_05_000003_create_erp_mfg_disposition_labor_sessions_table",
+    "erp_aftersales_cases": "2026_11_09_000001_create_erp_aftersales_cases_table",
+    "erp_aftersales_case_items": "2026_11_09_000002_create_erp_aftersales_case_items_table",
+    "erp_aftersales_actions": "2026_11_09_000003_create_erp_aftersales_actions_table",
+    "erp_aftersales_action_items": "2026_11_09_000004_create_erp_aftersales_action_items_table",
+    "erp_aftersales_claims": "2026_11_09_000005_create_erp_aftersales_claims_table",
+    "erp_aftersales_logs": "2026_11_09_000006_create_erp_aftersales_logs_table",
+    "erp_aftersales_attachments": "2026_11_09_000007_create_erp_aftersales_attachments_table",
+    "erp_aftersales_reships": "2026_11_09_000008_create_erp_aftersales_reships_table",
+    "erp_aftersales_reship_items": "2026_11_09_000009_create_erp_aftersales_reship_items_table"
   },
   "legacy_migrations": {
     "2026_07_09_000002_remove_legacy_scan_questions_table": "89a9fd386c9acd658007b681a9b8e13c5c1e346f97577c63ab78d34e1fe1cb04",

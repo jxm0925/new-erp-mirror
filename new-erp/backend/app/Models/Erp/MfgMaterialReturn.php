@@ -6,7 +6,7 @@ namespace App\Models\Erp;
 class MfgMaterialReturn extends MasterModel
 {
     protected $table = 'erp_mfg_material_returns';
-    protected $casts = ['cost_amount' => 'decimal:4', 'business_version' => 'integer', 'requested_at' => 'datetime', 'reviewed_at' => 'datetime', 'disposition_plan' => 'array'];
+    protected $casts = ['disposition_id' => 'integer', 'cost_amount' => 'decimal:4', 'business_version' => 'integer', 'requested_at' => 'datetime', 'reviewed_at' => 'datetime', 'disposition_plan' => 'array'];
 
     public function lines() { return $this->hasMany(MfgMaterialReturnLine::class, 'return_id')->orderBy('id'); }
     public function workOrder() { return $this->belongsTo(MfgWorkOrder::class, 'work_order_id'); }

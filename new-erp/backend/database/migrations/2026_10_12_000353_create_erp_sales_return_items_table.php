@@ -27,6 +27,7 @@ CREATE TABLE `erp_sales_return_items` (
   `pending_base_qty` decimal(18,8) NOT NULL DEFAULT '0.00000000',
   `scrap_base_qty` decimal(18,8) NOT NULL DEFAULT '0.00000000',
   `rejected_base_qty` decimal(18,8) NOT NULL DEFAULT '0.00000000',
+  `defective_base_qty` decimal(18,8) NOT NULL DEFAULT '0.00000000',
   `fulfillment_snapshot` json NOT NULL,
   `remark` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci,
   `created_at` timestamp NULL DEFAULT NULL,

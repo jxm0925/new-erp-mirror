@@ -138,10 +138,10 @@ final class TaskService
         }, 5);
     }
 
-    public function start(int $opId, object $actor, string $lane = 'normal'): void
+    public function start(int $opId, object $actor, string $lane = 'normal', ?array $unitIds = null): void
     {
         $this->closeOverdueSessions();
-        DB::transaction(function () use ($opId, $actor, $lane) {
+        DB::transaction(function () use ($opId, $actor, $lane, $unitIds) {
             [$wo, $op] = $this->lockTask($opId);
             $this->assertRunnable($wo, $op);
             if ($op->status === 'done') $this->fail('operation_done', '这道工序已经做完。');
@@ -149,6 +149,8 @@ final class TaskService
             // 人员维护同样先锁账号再锁资格行，不能反向持锁后互相等待。
             DB::table('erp_legacy_admin_users')->where('legacy_id', $me)->lockForUpdate()->first();
             $units = $this->selectableUnits($op, $lane);
+            if ($unitIds !== null) $units = $this->pickUnits($op, $unitIds, $lane);
+            CancellationProductionService::assertProductionAllowed((int) $wo->id, $units->pluck('id')->map(fn ($id) => (int) $id)->all());
             if ($units->isEmpty()) $this->fail('no_unit', $lane === 'rework' ? '这道工序现在没有要返工的'.$this->unitNoun($wo).'。'
                 : '这道工序现在没有要做的'.$this->unitNoun($wo).'，等前道交过来再开始。');
             $owner = $this->owner($op, $lane);
@@ -163,6 +165,7 @@ final class TaskService
                 && ! MfgLaborSession::query()->where('work_order_operation_id', $op->id)->where('lane', $lane)->where('employee_legacy_id', $owner->employee_legacy_id)->exists())
                 $this->fail('owner_first', '接单人还没开始，协同人不能先计时。');
             $this->assertFunds($wo);
+            DispositionLaborService::assertNotTiming($me);
             if (MfgLaborSession::query()->where('employee_legacy_id', $me)->where('status', 'active')->lockForUpdate()->first())
                 $this->fail('already_timing', '你还有别的工序在计时，请先暂停那一道。');
             if (ShipmentPackingLaborSession::query()->where('employee_legacy_id', $me)->where('status', 'ACTIVE')->lockForUpdate()->first(['id']))
@@ -175,6 +178,7 @@ final class TaskService
             MfgWorkOrderUnit::query()->whereIn('id', $units->pluck('id'))->where('status', 'waiting')->update(['status' => 'in_progress', 'started_at' => now()]);
             MfgLaborSession::create([
                 'work_order_id' => $wo->id, 'work_order_operation_id' => $op->id, 'employee_legacy_id' => $me, 'employee_name' => $this->actorName($actor),
+                'unit_ids' => $units->pluck('id')->map(fn ($id) => (int) $id)->all(),
                 'is_rework' => $lane === 'rework', 'lane' => $lane, 'status' => 'active', 'started_at' => now(),
             ]);
             self::syncWorkStatus([(int) $wo->id]);
@@ -208,14 +212,16 @@ final class TaskService
     public function closeOverdueSessions(): int
     {
         $limit = now()->subHours(self::AUTO_STOP_HOURS);
-        if (! MfgLaborSession::query()->where('status', 'active')->where('started_at', '<=', $limit)->exists()) return 0;
+        $overdue = fn ($q) => $q->where('started_at', '<=', $limit)->orWhereIn('continuation_of_id', MfgLaborSession::where('started_at', '<=', $limit)->select('id'));
+        if (! MfgLaborSession::query()->where('status', 'active')->where($overdue)->exists()) return 0;
         $closed = 0;
-        $ids = MfgLaborSession::query()->where('status', 'active')->where('started_at', '<=', $limit)->orderBy('id')->limit(200)->pluck('id');
+        $ids = MfgLaborSession::query()->where('status', 'active')->where($overdue)->orderBy('id')->limit(200)->pluck('id');
         foreach ($ids as $id) {
             DB::transaction(function () use ($id, $limit, &$closed) {
-                $session = MfgLaborSession::query()->where('status', 'active')->where('started_at', '<=', $limit)->lockForUpdate()->find($id);
+                $session = MfgLaborSession::query()->where('status', 'active')->lockForUpdate()->find($id);
                 if (! $session) return;
-                self::closeSession($session, 'paused', $session->started_at->copy()->addHours(self::AUTO_STOP_HOURS));
+                if (self::sessionDeadline($session)->gt(now())) return;
+                self::closeSession($session, 'paused', self::sessionDeadline($session));
                 $wo = MfgWorkOrder::query()->find($session->work_order_id);
                 $opName = MfgWorkOrderOperation::query()->whereKey($session->work_order_operation_id)->value('operation_name') ?: '工序';
                 if ($wo) $this->workOrders->log($wo, 'timing_auto_stopped', null, null, $session->employee_name.' 在'.$opName.'计时超过 '.self::AUTO_STOP_HOURS
@@ -254,6 +260,11 @@ final class TaskService
             $sessions = MfgLaborSession::query()->where('work_order_operation_id', $op->id)->where('lane', $lane)->lockForUpdate()->get();
             if ($sessions->isEmpty()) $this->fail('no_labor', '这道工序'.($lane === 'rework' ? '返工' : '').'还没有计时记录，请先点“开始”。');
             $units = $this->pickUnits($op, $unitIds, $lane);
+            foreach ($units as $unit) {
+                if (!$sessions->contains(fn ($session) => $session->unit_ids !== null ? in_array((int) $unit->id, $session->unit_ids, true)
+                    : ($unit->started_at && $unit->started_at->lte($session->ended_at ?? now()))))
+                    $this->fail('unit_not_started', $unit->serial_no.' 在本道还没有开始计时记录，请先选择该编号开始作业。');
+            }
             if ($lane === 'normal') {
                 $this->materials->assertReceivedForStart($wo, $op, $units);
                 // 下料按套数报：本次首次完成的套数加上已完成的，不能超过开料已登记的套数。
@@ -295,14 +306,17 @@ final class TaskService
             $remark = trim((string) $remark) ?: null;
             // 只为这次第一次过本道的设备收料；返工回来的设备料已经收过。
             $firstTime = $units->filter(fn ($u) => ! MfgUnitReport::query()->where('unit_id', $u->id)->where('work_order_operation_id', $op->id)->where('result', 'passed')->exists())->count();
-            $upTo = (float) $op->completed_qty + $firstTime;
+            $activeIds = CancellationProductionService::productionUnitIds((int) $wo->id);
+            $upTo = (float) MfgUnitReport::where('work_order_operation_id', $op->id)->where('result', 'passed')->whereIn('unit_id', $activeIds)->distinct()->count('unit_id') + $firstTime;
+            $firstUnitIds = $units->filter(fn ($u) => !MfgUnitReport::where('unit_id', $u->id)->where('work_order_operation_id', $op->id)->where('result', 'passed')->exists())
+                ->pluck('id')->map(fn ($id) => (int) $id)->all();
             // 集中开料记录：按件数领走这批的实际开料工时（这批总工时 × 领走件数 ÷ 这批总件数）；
             // 按数量管理的板材／管材同时带走这批切完时已扣的料和成本，记为本道已收，剩下不够的再按定额从仓库收。
-            app(CuttingRunService::class)->allocate($wo, $op, $firstTime, $upTo, $actor, $cuttingRunId);
-            $this->materials->receiveUpTo($wo, $op, $upTo, $remark ? '已备料：'.$remark : '已备料', $actor);
+            app(CuttingRunService::class)->allocate($wo, $op, $firstTime, $upTo, $actor, $cuttingRunId, $firstUnitIds);
+            $this->materials->receiveUpTo($wo, $op, $upTo, $remark ? '已备料：'.$remark : '已备料', $actor, $firstUnitIds);
             $this->materials->assertReceivedForStart($wo, $op, $units, $upTo);
             // 逐张板材：集中开料切好的件，按定额从开料池扣量计成本。
-            if ($sheet) app(SharedCuttingService::class)->allocate($wo, $op, $upTo, $firstTime, $actor);
+            if ($sheet) app(SharedCuttingService::class)->allocate($wo, $op, $upTo, $firstTime, $actor, $firstUnitIds);
             $this->materials->assertCutForPass($wo, $op, $firstTime);
             $this->markStarted($wo, $op, $actor);
             if ($op->status !== 'in_progress') $op->update(['status' => 'in_progress']);
@@ -344,6 +358,7 @@ final class TaskService
             $extra = ['reason_tags' => $tags ?: null, 'reason' => $reason ?: null, 'photos' => $photos ?: null,
                 'media' => $media ?: null, 'submission_key' => $submissionKey, 'created_at' => $reportedAt,
                 'participants_snapshot' => $this->participantsSnapshot($op, $sessions, $reportedAt, $lane, false)];
+            OrderChangeLaborService::freezeAt([(int) $wo->id], $reportedAt, $units->pluck('id')->map(fn ($id) => (int) $id)->all());
             if (($data['mode'] ?? 'return') === 'scrap') {
                 if (\App\Models\Erp\ShipmentRework::query()->whereIn('unit_id', $units->pluck('id'))->where('status', 'in_progress')->exists())
                     $this->fail('stored_serial_scrap', '发货返修设备已经入库，须使用正式库存报废处理，不能只从制造产量删除。');
@@ -406,6 +421,9 @@ final class TaskService
      */
     public function scrapForCancellation(MfgWorkOrder $wo, array $unitIds, string $reason, array $evidence, object $actor): int
     {
+        $auth = app(AuthContextService::class);
+        $needsReview = ProductionReviewers::needsReview($wo, $this->actorId($actor))
+            && !$auth->isSuperAdmin($actor) && !in_array('production.scrap.approve', $auth->permissionCodes($actor), true);
         $media = app(ProductionMediaService::class)->normalize($evidence, $actor, 'reject');
         abort_unless(collect($media)->contains('type', 'image'), 422, '报废须上传现场照片。');
         $units = MfgWorkOrderUnit::where('work_order_id', $wo->id)->whereIn('id', $unitIds)->lockForUpdate()->get();
@@ -417,7 +435,11 @@ final class TaskService
                 ->when($unit->current_operation_id, fn ($q) => $q->whereKey($unit->current_operation_id))->orderBy('sequence')->firstOrFail();
             $report = $this->report($wo, $op, $unit, 'scrap', $actor, ['reason' => $reason, 'media' => $media,
                 'submission_key' => (string) Str::uuid(), 'review_status' => 'pending', 'is_rework' => false]);
-            $this->approveScrap($wo, $report, '订单取消，生产主管确认报废：'.$reason, $actor);
+            if ($needsReview) {
+                $before = $unit->status;
+                $unit->update(['status' => 'rework']);
+                $this->workOrders->log($wo, 'unit_scrap_requested', $before, 'rework', '订单需求变更，接单人申请报废：'.$reason, $actor, [], $unit->id);
+            } else $this->approveScrap($wo, $report, '订单需求失效，报废确认：'.$reason, $actor);
         }
         return $units->count();
     }
@@ -503,9 +525,16 @@ final class TaskService
     public static function closeSession(MfgLaborSession $session, string $status, ?CarbonInterface $endedAt = null): void
     {
         $ended = $endedAt ?? now();
+        if ($ended->gt($deadline = self::sessionDeadline($session))) $ended = $deadline;
         // 返工单独计时：在「返工」任务里计的就是返工工时（不算提成）。
         $session->update(['status' => $status, 'ended_at' => $ended, 'is_rework' => ($session->lane ?: 'normal') === 'rework',
             'labor_minutes' => round(max(0, $session->started_at->diffInSeconds($ended, false)) / 60, 2)]);
+    }
+
+    public static function sessionDeadline(MfgLaborSession $session): CarbonInterface
+    {
+        $start = $session->continuation_of_id ? MfgLaborSession::findOrFail($session->continuation_of_id)->started_at : $session->started_at;
+        return $start->copy()->addHours(self::AUTO_STOP_HOURS);
     }
 
     /** 某人能不能做这道工序：工序上没设“能做的人”时，有报工权限的人都能做。 */
@@ -521,7 +550,7 @@ final class TaskService
     public function selectableUnits(MfgWorkOrderOperation $op, ?string $lane = null): Collection
     {
         $query = MfgWorkOrderUnit::query()->where('work_order_id', $op->work_order_id)->where('current_operation_id', $op->id)
-            ->whereIn('status', self::laneStatuses($lane))->orderBy('unit_no');
+            ->whereIn('status', self::laneStatuses($lane))->whereNotIn('id', CancellationProductionService::blockedUnitIds((int) $op->work_order_id))->orderBy('unit_no');
         if (DB::transactionLevel() > 0) {
             // 待报废和台状态都要读当前值，不能混用等待工单锁前建立的旧视图。
             $pending = MfgUnitReport::query()->where('work_order_id', $op->work_order_id)->where('review_status', 'pending')->lockForUpdate()->pluck('unit_id');
@@ -553,6 +582,7 @@ final class TaskService
      */
     private function advance(MfgWorkOrder $wo, MfgWorkOrderOperation $op, Collection $units, array $snapshot, CarbonInterface $reportedAt, array $extra, object $actor, array $completion = []): array
     {
+        OrderChangeLaborService::freezeAt([(int) $wo->id], $reportedAt, $units->pluck('id')->map(fn ($id) => (int) $id)->all());
         $prepared = ($extra['pass_mode'] ?? null) === 'prepared';
         // 返工工单（总装退回的不良半成品）：每道都是返工，最后一道合格就回到原来的库存（解冻），不再生产入库。
         $reworkOrder = (bool) $wo->rework_of_work_order_id;
@@ -700,13 +730,14 @@ final class TaskService
             $this->fail('share_confirmation_required', '固定份额必须每个人都填写且合计为 100%，请由接单人在协同设置中重新确认。');
         // 同批报工和完成计时共用这一时刻，快照包含尚未结束的真实工时段。
         $minutes = $sessions->groupBy('employee_legacy_id')->map(fn ($rows) => $rows->sum(fn ($s) => $s->status === 'active'
-            ? round(max(0, $s->started_at->diffInSeconds($reportedAt, false)) / 60, 2) : (float) $s->labor_minutes));
+            ? round(max(0, $s->started_at->diffInSeconds($reportedAt->lessThan(self::sessionDeadline($s)) ? $reportedAt : self::sessionDeadline($s), false)) / 60, 2) : (float) $s->labor_minutes));
         return $participants->map(function ($p) use ($sessions, $reportedAt, $minutes) {
             $started = $p->joined_at ? $sessions->filter(fn ($s) => (int) $s->employee_legacy_id === (int) $p->employee_legacy_id
                 && $s->started_at->gte($p->joined_at) && $s->started_at->lte($reportedAt))->sortBy('started_at')->first()?->started_at : null;
             return ['employee_legacy_id' => (int) $p->employee_legacy_id, 'employee_name' => $p->employee_name, 'role' => $p->role,
                 'joined_at' => $p->joined_at?->toDateTimeString(), 'started_at' => $started?->toDateTimeString(),
                 'share_percent' => $p->share_percent === null ? null : (float) $p->share_percent,
+                'labor_scope' => 'operation_cumulative',
                 'labor_minutes' => round((float) ($minutes[$p->employee_legacy_id] ?? 0), 2)];
         })->values()->all();
     }

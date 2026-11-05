@@ -46,7 +46,13 @@ class InventoryReservationService
                     ->where('fact.source_type', 'mfg_receipt')->whereColumn('fact.source_id', 'receipt.id')->whereColumn('fact.item_id', 'wo.item_id')
                     ->whereColumn('fact.unit_id', 'fulfillment.base_unit_id')->whereColumn('fact.batch_no', 'wo.work_order_no')->whereColumn('fact.change_qty', 'receipt.qty')
                     ->when($currentRead, fn ($query) => $query->lockForUpdate());
-            })->when($currentRead, fn ($q) => $q->lockForUpdate())->get(['wo.sales_fulfillment_id', 'wo.sales_order_line_id', 'wo.item_id', 'receipt.qty'])->groupBy('sales_fulfillment_id');
+            })->when($currentRead, fn ($q) => $q->lockForUpdate())->get(['wo.id as work_order_id', 'wo.sales_fulfillment_id', 'wo.sales_order_line_id', 'wo.item_id', 'receipt.qty', 'receipt.serial_nos']);
+        foreach ($receipts as $receipt) {
+            $serials = json_decode($receipt->serial_nos ?: '[]', true) ?: [];
+            $receipt->qty = DB::table('erp_mfg_work_order_units')->where('work_order_id', $receipt->work_order_id)->whereIn('serial_no', $serials)
+                ->whereIn('id', \App\Services\Erp\Manufacturing\CancellationProductionService::salesDemandUnitIds((int) $receipt->work_order_id))->count();
+        }
+        $receipts = $receipts->groupBy('sales_fulfillment_id');
         $reservations = InventoryReservation::query()->where('source_type', InventoryReservation::SOURCE_SALES_ORDER)
             ->where('source_order_id', $order->id)->when($currentRead, fn ($q) => $q->lockForUpdate())->get();
         $statuses = []; $replenished = []; $unsupportedLines = [];
@@ -180,12 +186,13 @@ class InventoryReservationService
         });
     }
 
-    public function releaseForSalesOrder(SalesOrder $order, string $reason, ?array $lineIds = null): int
+    public function releaseForSalesOrder(SalesOrder $order, string $reason, ?array $lineIds = null, ?array $reservationIds = null): int
     {
-        return DB::transaction(function () use ($order, $reason, $lineIds) {
+        return DB::transaction(function () use ($order, $reason, $lineIds, $reservationIds) {
             $reservations = InventoryReservation::where('source_type', InventoryReservation::SOURCE_SALES_ORDER)
                 ->where('source_order_id', $order->id)
                 ->when($lineIds !== null, fn ($query) => $query->whereIn('source_order_line_id', $lineIds))
+                ->when($reservationIds !== null, fn ($query) => $query->whereIn('id', $reservationIds))
                 ->whereIn('reservation_status', ['active', 'partially_released'])
                 ->lockForUpdate()
                 ->get();
@@ -193,10 +200,14 @@ class InventoryReservationService
                 $this->releaseBalance($reservation);
                 $reservation->update(['reservation_status' => 'released', 'released_at' => now(), 'release_reason' => $reason]);
             }
-            SalesOrderFulfillment::where('sales_order_id', $order->id)
+            $fulfillments = SalesOrderFulfillment::where('sales_order_id', $order->id)
                 ->when($lineIds !== null, fn ($query) => $query->whereIn('sales_order_line_id', $lineIds))
-                ->where('reservation_status', 'reserved')
-                ->update(['reservation_status' => 'released']);
+                ->when($reservationIds !== null, fn ($query) => $query->whereIn('id', $reservations->pluck('sales_order_fulfillment_id')))
+                ->where('reservation_status', 'reserved')->get();
+            foreach ($fulfillments as $fulfillment) {
+                if (!InventoryReservation::where('sales_order_fulfillment_id', $fulfillment->id)->whereIn('reservation_status', ['active', 'partially_released', 'converted_to_shipment'])->exists())
+                    $fulfillment->update(['reservation_status' => 'released']);
+            }
             return $reservations->count();
         });
     }
@@ -208,6 +219,9 @@ class InventoryReservationService
         if ($receipt->status !== 'confirmed' || ! $receipt->inventory_transaction_id)
             throw new \RuntimeException('生产入库尚未仓库确认过账，不能建立销售预留。');
         return DB::transaction(function () use ($receipt, $workOrder): array {
+            $normalSerials = \App\Models\Erp\MfgWorkOrderUnit::where('work_order_id', $workOrder->id)->whereIn('serial_no', $receipt->serial_nos ?? [])
+                ->whereIn('id', \App\Services\Erp\Manufacturing\CancellationProductionService::salesDemandUnitIds((int) $workOrder->id))->pluck('serial_no')->all();
+            if (!$normalSerials) return [];
             $fulfillment = SalesOrderFulfillment::query()->whereKey($workOrder->sales_fulfillment_id)
                 ->where('sales_order_id', $workOrder->sales_order_id)->where('sales_order_line_id', $workOrder->sales_order_line_id)
                 ->where('item_id', $workOrder->item_id)->where('fulfillment_type', 'production')->where('demand_status', 'confirmed')
@@ -225,7 +239,7 @@ class InventoryReservationService
             $reserved = InventoryReservation::query()->where('sales_order_fulfillment_id', $fulfillment->id)
                 ->whereIn('reservation_status', ['active', 'converted_to_shipment', 'consumed'])->lockForUpdate()->get()->sum('reserved_qty');
             $required = (float) ($fulfillment->item_base_qty ?: $fulfillment->fulfillment_qty);
-            $qty = round(min((float) $receipt->qty, max(0, $required - (float) $reserved)), 8);
+            $qty = round(min(count($normalSerials), max(0, $required - (float) $reserved)), 8);
             if ($qty <= 0) return [];
             if ($this->availability->availableForOutbound($balance) + 0.00000001 < $qty) throw new \RuntimeException('生产入库的可用数量不足，不能回补原销售预留。');
             $reservation = InventoryReservation::create([
@@ -236,7 +250,7 @@ class InventoryReservationService
                 'batch_no' => $balance->batch_no, 'reserved_qty' => $qty, 'reservation_status' => 'active', 'reserved_at' => now(),
                 'idempotency_key' => $key, 'reservation_snapshot' => ['fulfillment_id' => $fulfillment->id, 'balance_table' => 'erp_inventory_balances',
                     'mfg_receipt_id' => (int) $receipt->id, 'mfg_work_order_id' => (int) $workOrder->id,
-                    'serial_nos' => $receipt->serial_nos ?? [], 'receipt_qty' => (string) $receipt->qty],
+                    'serial_nos' => array_slice($normalSerials, 0, (int) $qty), 'receipt_qty' => (string) $receipt->qty],
             ]);
             $locked = (float) $balance->quantity_locked + $qty;
             $balance->update(['quantity_locked' => $locked, 'quantity_available' => $this->availableAfterLock($balance, $locked)]);

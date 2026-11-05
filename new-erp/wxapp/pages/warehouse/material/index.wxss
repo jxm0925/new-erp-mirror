@@ -161,3 +161,13 @@
   color: #334155;
   line-height: 1.6;
 }
+.material-unit-actions {
+  display:flex;
+  flex-wrap:wrap;
+  gap:12rpx;
+  margin:12rpx 0;
+}
+.material-unit-actions > button {
+  flex:1;
+  min-width:0;
+}

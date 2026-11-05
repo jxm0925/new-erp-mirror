@@ -1,0 +1,41 @@
+<view wx:if="{{total || error}}" class="dispositions">
+  <view class="heading"><text>订单变更 / 取消待处理 · {{total}}个</text><text class="link" bindtap="load">刷新</text></view>
+  <view wx:if="{{error}}" class="note error">{{error}}</view>
+  <view wx:for="{{rows}}" wx:key="id" class="row">
+    <view class="heading"><text>{{item.item_name}}</text><text class="status">{{item.statusText}}</text></view>
+    <view class="note">{{item.work_order_no}} · {{item.sales_order_no}}</view>
+    <view class="note">本次处理：{{item.unitText}}</view>
+    <view class="note">实际接单人：{{item.deciders}}</view>
+    <button wx:if="{{item.can_decide || item.can_record_labor}}" class="button outline" data-id="{{item.id}}" bindtap="open">办理处置 / 处理计时</button>
+  </view>
+  <view wx:if="{{lastPage > 1}}" class="actions"><button class="button outline" disabled="{{page <= 1}}" data-step="-1" bindtap="page">上一页</button><text>{{page}} / {{lastPage}}</text><button class="button outline" disabled="{{page >= lastPage}}" data-step="1" bindtap="page">下一页</button></view>
+</view>
+<view wx:if="{{selected}}" class="mask" catchtouchmove="stop">
+  <view class="dialog">
+    <view class="heading"><text>订单变更处置</text><text class="link" bindtap="close">关闭</text></view>
+    <scroll-view scroll-y class="body">
+      <view>{{selected.work_order_no}} · {{selected.item_name}} · {{selected.unitText}}</view>
+      <view class="note">本次只处理这个编号，其余设备继续原来的安排。</view>
+      <view class="note">暂停等待不计工时。退料和拆回物料经仓库接收入库后办结。</view>
+      <view class="actions"><button wx:for="{{selected.actions}}" wx:key="value" class="button outline {{action === item.value ? 'chosen' : ''}}" data-action="{{item.value}}" bindtap="chooseAction" disabled="{{busy || uploading}}">{{item.label}}</button></view>
+      <textarea wx:if="{{action}}" class="reason" value="{{reason}}" maxlength="500" placeholder="请填写处理原因" bindinput="reasonInput" />
+      <picker wx:if="{{action === 'postpone'}}" mode="date" value="{{due}}" bindchange="dueInput"><view class="note">下次处理日期：{{due || '请选择'}}</view></picker>
+      <block wx:if="{{action === 'scrap'}}">
+        <view class="note">本次报废设备：{{selected.unitText}}</view>
+        <production-media value="{{media}}" label="现场照片（必填）" bind:change="mediaChanged" bind:busy="mediaBusy" bind:activity="mediaActivity" />
+      </block>
+      <button wx:if="{{action}}" class="button" disabled="{{busy || uploading}}" bindtap="submit">确认处置决定</button>
+      <view wx:if="{{selected.can_request_material_return && selected.operations.length}}" class="section">
+        <picker range="{{selected.operations}}" range-key="name" value="{{operationIndex}}" bindchange="operationInput"><view class="note">退料工序：{{selected.operations[operationIndex].name}} ▾</view></picker>
+        <button class="button outline" disabled="{{busy || uploading}}" bindtap="returnMaterials">申请退料入库</button>
+      </view>
+      <view class="section">
+        <view class="heading">处理计时 · {{labor.totalText || '0.00'}} 分钟</view>
+        <view wx:if="{{laborError}}" class="note error">{{laborError}}<text class="link" bindtap="loadLabor"> 重新读取</text></view>
+        <view wx:if="{{labor.active_session}}" class="note">实际计时中 · {{labor.startedText}} 开始</view>
+        <picker wx:if="{{labor.can_start}}" range="{{activities}}" range-key="label" value="{{activityIndex}}" bindchange="activityInput"><view class="note">本次工作：{{activities[activityIndex].label}} ▾</view></picker>
+        <view class="actions"><button wx:if="{{labor.can_start}}" class="button" data-action="start" bindtap="laborAction" disabled="{{busy}}">开始计时</button><button wx:if="{{labor.can_pause}}" class="button outline" data-action="pause" bindtap="laborAction" disabled="{{busy}}">暂停计时</button><button wx:if="{{labor.can_finish}}" class="button" data-action="finish" bindtap="laborAction" disabled="{{busy}}">完成本次处理</button></view>
+      </view>
+    </scroll-view>
+  </view>
+</view>

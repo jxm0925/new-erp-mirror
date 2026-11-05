@@ -22,9 +22,16 @@ Do not change layout without approval.
       :reason.sync="impactReason"
       :submitting="impactSubmitting"
       :submit-error="impactSubmitError"
+      :selection-groups="impactPreview.productionSelectionGroups || []"
+      :selection-errors="impactPreview.productionSelectionErrors || []"
+      :quantity-adjustments="impactPreview.quantityAdjustments || []"
+      :can-submit="impactPreview.canSubmit !== false"
+      :previewing="impactRechecking"
       @back="impactDialogVisible = false"
       @submit="submitImpactPreview"
+      @choose-production-units="chooseProductionUnits"
     />
+    <system-record-picker :visible.sync="productionUnitPicker.visible" :request="loadChangeProductionUnits" :params="productionUnitPicker.params" :columns="productionUnitColumns" :config="productionUnitPicker.config" :multiple="true" :required-count="productionUnitPicker.requiredCount" :max-count="productionUnitPicker.maxCount" :selectable="productionUnitSelectable" :required-selection="productionUnitRequired" :value="productionUnitPicker.value" :label="productionUnitLabel" @confirm="applyProductionUnitSelection" />
 
     <header class="form-toolbar">
       <div class="toolbar-title">
@@ -44,7 +51,7 @@ Do not change layout without approval.
     </header>
 
     <div class="form-body">
-      <!-- 订单阶段提示：工单发布前可直接修改，发布后需提交审核 -->
+      <!-- 按受影响主子工单实际工时及财务影响判断审核 -->
       <div v-if="editStageTip" :class="['stage-tip', `stage-tip--${editStageTip.type}`]">
         <i :class="editStageTip.icon" />
         <span>{{ editStageTip.text }}</span>
@@ -239,7 +246,7 @@ Do not change layout without approval.
                       <div class="field">
                         <label class="required">销售数量</label>
                         <div class="input-addon">
-                          <el-input-number v-model="row.order_qty" size="small" :min="0.0001" :precision="4" :controls="false" @change="recalc" />
+                          <el-input-number v-model="row.order_qty" size="small" :min="Math.max(0.0001, Number(row.edit_protected_qty || 0))" :precision="4" :controls="false" @change="recalc" />
                           <span class="addon">{{ salesUnitName(row) }}</span>
                         </div>
                       </div>
@@ -579,7 +586,7 @@ import WarehouseManagerPicker from '@/components/master/WarehouseManagerPicker.v
 import SalesCarrierPicker from '@/components/sales/SalesCarrierPicker.vue'
 import SystemRecordPicker from '@/components/system/SystemRecordPicker.vue'
 import { listUsers } from '@/api/erp/rbac'
-import { getSalesOrder, saveSalesOrder, confirmSalesOrder, getSalesOrderOptions, uploadSalesOrderAttachment, deleteSalesOrderAttachment, downloadSalesOrderAttachment, previewSalesOrderEditImpact, submitSalesOrderEditImpact, updateSalesOrderAgreedDeposit } from '@/api/erp/sales'
+import { getSalesOrder, saveSalesOrder, confirmSalesOrder, getSalesOrderOptions, uploadSalesOrderAttachment, deleteSalesOrderAttachment, downloadSalesOrderAttachment, previewSalesOrderEditImpact, submitSalesOrderEditImpact, listSalesOrderChangeProductionUnits, updateSalesOrderAgreedDeposit } from '@/api/erp/sales'
 import { reserveForCreatePage, clearCreatePageReservation } from '@/utils/documentNumberReservation'
 
 const withoutInternalFreight = source => {
@@ -646,6 +653,9 @@ export default {
     previewFile: null,
     impactDialogVisible: false,
     impactReason: '',
+    impactRechecking: false,
+    productionUnitPicker: { visible: false, group: null, params: {}, config: {}, requiredCount: null, maxCount: null, value: [] },
+    productionUnitColumns: [{ prop: 'serial_no', label: '设备 / 子件编号', width: 160 }, { prop: 'unit_no', label: '序号', width: 70 }, { prop: 'status_label', label: '当前进度', width: 120 }, { prop: 'disabled_reason', label: '不可选择原因', width: 160 }],
     impactSubmitting: false,
     impactSubmitError: '',
     impactPayload: null,
@@ -721,10 +731,13 @@ export default {
     editStageTip() {
       if (!this.isConfirmedEdit) return null
       const actions = (this.editOrderMeta && this.editOrderMeta.allowed_actions) || {}
-      if (actions.production_released) {
-        return { type: 'warning', icon: 'el-icon-lock', text: '生产已开工或已安排发货：保存时会列出修改影响，需要审核的内容经相关负责人审核通过后生效。' }
+      if ((this.editOrderMeta.lines || []).some(line => Number(line.shipped_qty || 0) > 0)) {
+        return { type: 'warning', icon: 'el-icon-lock', text: '本次只调整剩余未发部分，行数量为含已发部分的合计；已发商品、配置、单价和退货记录保留。修改商品、配置或单价时，未发余额会另成一行；金额按财务规则审核，有实际工时的编号由接单人处置。' }
       }
-      return { type: 'success', icon: 'el-icon-s-flag', text: '核实期：生产尚未开工且未安排发货，金额及结算条件修改需财务审核。新增商品或增加数量只补充相应备货，未变更商品的工单和库存安排保留；其他修改以变更预览为准。' }
+      if (actions.production_released) {
+        return { type: 'warning', icon: 'el-icon-lock', text: '受影响的主、子工单均未开工时免生产审核；已有实际工时须审核，正式生效后由接单人处理原工单。金额及结算条件按财务规则审核。' }
+      }
+      return { type: 'success', icon: 'el-icon-s-flag', text: '核实期：尚未生产确认，金额及结算条件修改需财务审核；影响生产的修改按受影响主、子工单实际工时判断是否审核。' }
     },
     currentIndex() {
       const index = this.form.lines.indexOf(this.selectedLine)
@@ -1031,6 +1044,10 @@ export default {
     removeLine(index) {
       if (this.form.lines.length === 1) return this.$message.warning('至少保留一行订单明细')
       const removed = this.form.lines[index]
+      if (this.isConfirmedEdit && Number(removed.edit_protected_qty || 0) > 0) {
+        if (Number(removed.order_qty) <= Number(removed.edit_protected_qty) + 0.00000001) return this.$message.warning('该行已发或已取消部分须保留，新增需求请另加一行')
+        this.$message.info('本次仅移除该行剩余未发需求，已发部分及关联记录保留')
+      }
       if (removed.id) this.deletedLineIds.push(removed.id)
       this.form.lines.splice(index, 1)
       if (this.selectedLine === removed) this.selectedLine = this.form.lines[0]
@@ -1620,6 +1637,10 @@ export default {
         effectiveVersion: `V${impact.base_version || 0}`,
         effectSummary: impact.candidate_effect_summary || '',
         requiresApproval: Boolean(impact.requires_approval),
+        canSubmit: impact.can_submit !== false,
+        productionSelectionGroups: impact.production_selection_groups || [],
+        productionSelectionErrors: impact.production_selection_errors || [],
+        quantityAdjustments: impact.quantity_adjustments || [],
         approvals: {
           business: (impact.required_approval_types || []).includes('business'),
           finance: (impact.required_approval_types || []).includes('finance'),
@@ -1638,11 +1659,49 @@ export default {
             : '直接保存'
         }))
       }
+      if (this.impactPayload && impact.production_selection_groups) this.impactPayload = { ...this.impactPayload, production_unit_selections: this.productionSelectionPayload(impact.production_selection_groups) }
+    },
+    productionUnitLabel(unit) { return unit.serial_no || `第${unit.unit_no || unit.id}个` },
+    productionUnitSelectable(unit) { return unit.selectable !== false },
+    productionUnitRequired(unit) { return Boolean(unit.required || (this.productionUnitPicker.group?.required_unit_ids || []).includes(unit.id)) },
+    productionSelectionKey(group) { return `${group.line_id}-${group.work_order_id}-${group.parent_unit_id || 0}` },
+    productionSelectionPayload(groups) { return groups.map(group => ({ line_id: group.line_id, work_order_id: group.work_order_id, parent_unit_id: group.parent_unit_id || null, unit_ids: group.selected_unit_ids || [], expected_work_order_version: group.expected_work_order_version, selection_revision: group.selection_revision })) },
+    loadChangeProductionUnits(params) { return listSalesOrderChangeProductionUnits(this.pageRoute.params.id, params) },
+    chooseProductionUnits(group) {
+      const lineCount = group.line_min_numbered_count !== undefined && group.line_max_numbered_count !== undefined ? `${group.line_min_numbered_count} 至 ${group.line_max_numbered_count}` : group.line_required_count
+      const name = group.item_name + (group.parent_unit_serial_no ? ` · 所属主机 ${group.parent_unit_serial_no}` : '')
+      this.productionUnitPicker = {
+        visible: true, group,
+        params: { line_id: group.line_id, work_order_id: group.work_order_id, parent_unit_id: group.parent_unit_id || undefined, expected_work_order_version: group.expected_work_order_version, selection_revision: group.selection_revision },
+        config: { title: group.allow_count_change ? `${name} · 本工单最多选 ${group.max_count} 个，本商品编号合计选 ${lineCount} 个` : `${name} · 本次应选 ${group.required_count} 个`, placeholder: '搜索设备编号 / 子件编号' },
+        requiredCount: group.allow_count_change ? null : Number(group.required_count), maxCount: group.allow_count_change ? Number(group.max_count) : null, value: group.selected_units || []
+      }
+    },
+    async applyProductionUnitSelection(rows) {
+      const selectedGroup = this.productionUnitPicker.group
+      if (!selectedGroup || !this.impactPayload || this.impactRechecking) return
+      const key = this.productionSelectionKey(selectedGroup)
+      const pickedIds = rows.map(row => row.id)
+      const removedParents = (selectedGroup.selected_unit_ids || []).filter(id => !pickedIds.includes(id))
+      let groups = (this.impactPreview.productionSelectionGroups || []).map(group => this.productionSelectionKey(group) === key ? { ...group, selected_unit_ids: pickedIds, selected_units: rows } : group)
+      // 主设备换了编号时，旧主设备下的子件选择必须一起撤下，交回后端生成新主设备所需的选择组。
+      while (removedParents.length) {
+        const parentId = removedParents.pop()
+        groups = groups.filter(group => { if (group.parent_unit_id !== parentId) return true; removedParents.push(...(group.selected_unit_ids || [])); return false })
+      }
+      this.impactPreview.productionSelectionGroups = groups
+      this.impactPreview.canSubmit = false
+      this.impactPayload = { ...this.impactPayload, production_unit_selections: this.productionSelectionPayload(groups) }
+      this.impactRechecking = true; this.impactSubmitError = ''
+      try { const { data } = await previewSalesOrderEditImpact(this.pageRoute.params.id, this.impactPayload); this.applyImpactPreview(data.data) }
+      catch (error) { this.impactSubmitError = error.userMessage || '所选编号的修改影响读取失败，请重新选择后重试' }
+      finally { this.impactRechecking = false }
     },
     async submitImpactPreview() {
-      if (this.impactSubmitting) return
+      if (this.impactSubmitting || this.impactRechecking) return
       this.impactSubmitError = ''
       if (!this.impactPayload) { this.impactDialogVisible = false; return }
+      if (this.impactPreview.canSubmit === false) return this.$message.error('请按本次应选数量选择具体设备或子件编号')
       if (this.impactPreview.requiresApproval && !String(this.impactReason || '').trim()) return this.$message.error('请填写本次修改的变更原因')
       this.impactSubmitting = true
       try {
@@ -1655,6 +1714,7 @@ export default {
       } finally { this.impactSubmitting = false }
     },
     async save(andConfirm) {
+      if (this.impactRechecking || this.impactSubmitting) return
       if (!this.form.customer_id) return this.$message.error('请通过客户选择框选择客户')
       if (!this.form.sales_user_legacy_id) return this.$message.error('请选择销售人员')
       if (!this.form.platform) return this.$message.error('请选择成交平台')
@@ -1713,10 +1773,10 @@ export default {
       delete payload.creator
       if (this.isConfirmedEdit) {
         payload.expected_version = this.editOrderMeta.business_version
-        // 约定定金不走订单变更审核：销售修改后立即生效并留痕，再继续处理其他订单修改。
+        // 生产确认后的定金修改和其他字段一起审核，不在预览前先写正式订单。
         const cents = value => (value === null || value === undefined || value === '' ? null : Math.round(Number(value) * 100))
         const depositChanged = this.depositSupported && cents(this.agreedDepositPayload) !== cents(this.loadedAgreedDeposit)
-        if (depositChanged) {
+        if (depositChanged && !(this.editOrderMeta.allowed_actions || {}).production_released) {
           if (!(this.editOrderMeta.allowed_actions || {}).edit_agreed_deposit) return this.$message.error('没有修改约定定金的权限')
           await updateSalesOrderAgreedDeposit(this.pageRoute.params.id, { agreed_deposit_amount: payload.agreed_deposit_amount })
           this.loadedAgreedDeposit = payload.agreed_deposit_amount
@@ -1729,6 +1789,7 @@ export default {
             payload[field] = snapshot
           }
         }
+        if (!depositChanged || !(this.editOrderMeta.allowed_actions || {}).production_released) delete payload.agreed_deposit_amount
         const { data } = await previewSalesOrderEditImpact(this.pageRoute.params.id, payload)
         const impact = data.data
         if (!impact || Number(impact.change_count || 0) === 0) {

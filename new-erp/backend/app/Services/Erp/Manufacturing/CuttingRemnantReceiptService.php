@@ -24,6 +24,7 @@ final class CuttingRemnantReceiptService
         return ['expected_version' => 'required|integer|min:1', 'confirmed' => 'required|accepted',
             'idempotency_key' => 'nullable|string|min:16|max:80', 'remark' => 'nullable|string|max:500',
             'unit_qty' => 'nullable|integer|min:1|max:1000', 'assignments' => 'sometimes|array|max:10000',
+            'completed_unit_ids' => 'sometimes|array|min:1|max:1000', 'completed_unit_ids.*' => 'required|integer|min:1|distinct',
             'assignments.*.source_key' => 'required|string|max:120', 'assignments.*.part_key' => 'required|string|max:80',
             'assignments.*.qty' => 'required|string|regex:/^\d{1,10}(?:\.\d{1,8})?$/D',
             'remnants' => 'required|array|min:1|max:1000', 'remnants.*.source_key' => 'required|string|max:120|distinct',

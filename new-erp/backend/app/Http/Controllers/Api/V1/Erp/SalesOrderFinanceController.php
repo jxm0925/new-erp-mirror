@@ -47,13 +47,14 @@ class SalesOrderFinanceController extends Controller
     }
     private function order(Request $request, int $id, bool $write = false): SalesOrder
     {
-        return $this->query->visibleOrders($this->authorize($request, $write), ! $write)->findOrFail($id);
+        return $this->query->visibleOrders($this->authorize($request, $write, $write), ! $write)->findOrFail($id);
     }
-    private function authorize(Request $request, bool $write = false): object
+    private function authorize(Request $request, bool $write = false, bool $requireFinance = true): object
     {
         $auth = app(AuthContextService::class); $user = $auth->currentUser($request);
         abort_unless($user, 401, '请先登录。');
-        $permissions = ['sales_order.view', 'finance.view'];
+        $permissions = ['sales_order.view'];
+        if ($requireFinance) $permissions[] = 'finance.view';
         if ($write) $permissions[] = 'purchase.order.edit';
         abort_unless($auth->isSuperAdmin($user) || !array_diff($permissions, $auth->permissionCodes($user)), 403, '缺少订单查看、财务查看或采购关联维护权限。');
         return $user;

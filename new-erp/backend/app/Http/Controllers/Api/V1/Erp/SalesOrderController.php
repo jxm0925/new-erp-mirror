@@ -92,7 +92,7 @@ class SalesOrderController extends Controller
 
     /**
      * 销售按与客户的实际约定修改开工定金。定金只影响开工资金门槛，不改合同金额、
-     * 收款或发货条件，因此草稿和已确认订单都由销售直接修改、立即生效并留痕，不走订单变更审核。
+     * 收款或发货条件。生产确认前可直接维护，确认后在订单编辑页提交审核。
      */
     /** 销售负责人单独调整订单优先级，没做完的工单（含半成品、补做工单）跟着改。 */
     public function adjustPriority(Request $request, int $id)
@@ -122,6 +122,7 @@ class SalesOrderController extends Controller
             $order = SalesOrder::query()->lockForUpdate()->findOrFail($id);
             $this->abortUnlessOrderVisible($request, $order);
             abort_unless(in_array($order->order_status, ['draft', 'confirmed'], true), 422, '只有草稿或已确认的订单可以修改约定定金');
+            abort_if($order->order_status === 'confirmed' && app(SalesOrderEditImpactService::class)->productionReleased($order), 422, '生产确认后修改约定定金须在订单编辑页提交审核。');
             $snapshot = (array) $order->funding_policy_snapshot;
             abort_unless(SalesOrderFundingGateService::supportsAgreedDeposit($snapshot['policy_type'] ?? null), 422, '当前付款条件不是定金开工，不能填写约定定金');
 
@@ -184,7 +185,20 @@ class SalesOrderController extends Controller
         $payload = $this->attachCurrentOperator($this->validateOrder($request, true), $request)
             + $request->validate(['expected_version' => 'required|integer|min:1']);
         $this->assertTradePlatform($payload, $order, true);
+        if (array_key_exists('agreed_deposit_amount', $request->all())) $payload['agreed_deposit_amount'] = $this->validatedAgreedDeposit($request);
         return response()->json(['data' => $service->preview($order, $payload)]);
+    }
+
+    public function changeProductionUnits(Request $request, int $id, \App\Services\Erp\Manufacturing\OrderChangeUnitSelectionService $selections)
+    {
+        $order = SalesOrder::with('lines')->findOrFail($id);
+        $this->abortUnlessOrderVisible($request, $order);
+        $this->authorizeConfirmedEdit($request, $order, app(SalesOrderEditImpactService::class));
+        $filters = $request->validate(['line_id' => 'required|integer|min:1', 'work_order_id' => 'required|integer|min:1',
+            'parent_unit_id' => 'nullable|integer|min:1', 'keyword' => 'nullable|string|max:120', 'page' => 'nullable|integer|min:1',
+            'per_page' => 'nullable|integer|min:1|max:100']);
+        abort_unless($order->lines->contains('id', (int) $filters['line_id']), 404);
+        return response()->json($selections->paginate($order, $filters));
     }
 
     /** Submit the exact payload that was previewed. The service recalculates it under a DB lock. */
@@ -196,12 +210,13 @@ class SalesOrderController extends Controller
         $payload = $this->attachCurrentOperator($this->validateOrder($request, true), $request)
             + $request->validate(['expected_version' => 'required|integer|min:1']);
         $this->assertTradePlatform($payload, $order, true);
+        if (array_key_exists('agreed_deposit_amount', $request->all())) $payload['agreed_deposit_amount'] = $this->validatedAgreedDeposit($request);
         $payload['change_reason'] = $request->validate(['change_reason' => 'nullable|string|max:500'])['change_reason'] ?? null;
         $result = $service->submit($id, $payload, $this->operatorName($request), app(AuthContextService::class)->currentUser($request));
         return response()->json(['message' => $result['mode'] === 'candidate' ? '订单修改已提交审核，正式订单暂未变更。' : '订单修改已立即生效并完整留痕。', 'data' => $result]);
     }
 
-    /** 未开工且未安排待发时允许订单编辑权限；进入执行后需要订单变更权限。 */
+    /** 首次生产确认后需要订单变更权限，并通过候选版本审核生效。 */
     private function authorizeConfirmedEdit(Request $request, SalesOrder $order, SalesOrderEditImpactService $service): void
     {
         $this->abortUnlessAnyPermission($request, $service->productionReleased($order)
@@ -223,6 +238,8 @@ class SalesOrderController extends Controller
     {
         $candidate = SalesOrderChangeCandidate::findOrFail($candidateId);
         abort_if($candidate->sales_order_id !== $id, 404);
+        abort_if(\App\Models\Erp\ApprovalTask::where('business_object_code', 'SALES_ORDER_CHANGE')->where('business_id', $candidateId)->exists(),
+            409, '该订单修改已进入正式审批，请在审批任务中处理，必须完成当前节点要求的全部人员审核后才会生效。');
         $this->abortUnlessOrderVisible($request, SalesOrder::findOrFail($id));
         $payload = $request->validate([
             'approval_type' => ['required', Rule::in(['business', 'finance', 'fulfillment'])],
@@ -343,7 +360,7 @@ class SalesOrderController extends Controller
         $confirmed = $this->performFormalConfirm($request, $id);
         $result['order'] = $confirmed;
         $result['confirmed'] = true;
-        $result['message'] = '订单已确认。请核实订单后执行“生产确认”，生产尚未开工且未安排发货时可以直接修改。';
+        $result['message'] = '订单已确认。请核实订单后执行“生产确认”；生产确认后修改订单必须提交审核。';
 
         return response()->json([
             'message' => $result['message'],
@@ -636,7 +653,7 @@ class SalesOrderController extends Controller
     {
         [$order, $links] = $this->progressOrder($request, $id);
         $filters = $request->validate(['keyword' => 'nullable|string|max:120', 'page' => 'nullable|integer|min:1',
-            'per_page' => 'nullable|integer|min:1|max:100', 'work_order_id' => 'nullable|integer|min:1']);
+            'per_page' => 'nullable|integer|min:1|max:100', 'work_order_id' => 'nullable|integer|min:1', 'history' => 'nullable|boolean']);
         return response()->json($progress->units($order, $lineId, $filters, $links));
     }
 
@@ -649,8 +666,8 @@ class SalesOrderController extends Controller
     public function progressWorkOrder(Request $request, int $id, int $woId, SalesOrderProgressQueryService $progress)
     {
         [$order, $links] = $this->progressOrder($request, $id);
-        $data = $request->validate(['unit_id' => ['nullable', 'string', 'regex:/^(?:unit:)?[1-9][0-9]*$/']]);
-        return response()->json(['data' => $progress->workOrderView($order, $woId, $data['unit_id'] ?? null, $links)]);
+        $data = $request->validate(['unit_id' => ['nullable', 'string', 'regex:/^(?:unit:)?[1-9][0-9]*$/'], 'history' => 'nullable|boolean']);
+        return response()->json(['data' => $progress->workOrderView($order, $woId, $data['unit_id'] ?? null, $links, !empty($data['history']))]);
     }
 
     private function progressOrder(Request $request, int $id): array
@@ -692,9 +709,11 @@ class SalesOrderController extends Controller
             ?: $order->pay_type;
         $order->setAttribute('payment_method_name', $paymentMethodName);
         app(\App\Services\Erp\SalesTradePlatformService::class)->decorate([$order]);
-        $order->lines->each(function ($line): void {
+        $protectedLineQuantities = SalesOrderFulfillmentPolicy::protectedLineQuantities($order);
+        $order->lines->each(function ($line) use ($protectedLineQuantities): void {
             $line->setAttribute('system_item', $this->orderLineItemProjection($line));
             $line->setAttribute('is_purchase_fulfilled', SalesOrderFulfillmentPolicy::isPurchaseLine($line));
+            $line->setAttribute('edit_protected_qty', ($protectedLineQuantities[$line->id] ?? 0) + (float) $line->cancelled_qty);
         });
         $this->decorateFulfillmentComposition($order);
         $this->decorateCancellation($request, $order);
@@ -726,6 +745,10 @@ class SalesOrderController extends Controller
         $order->setAttribute('funding_status', app(SalesOrderFundingGateService::class)
             ->statusForPermissions($order, $permissions, $superAdmin));
         $order->setAttribute('fulfillment_quantities', app(SalesOrderInventoryLockService::class)->projection($order, true));
+        if ($superAdmin || in_array('aftersales.view', $permissions, true)) {
+            $order->setAttribute('aftersales_open_count', (int) \App\Models\Erp\AftersalesCase::query()
+                ->where('sales_order_id', $order->id)->whereIn('status', ['pending', 'processing', 'ready_to_close'])->count());
+        }
         // 实际快递公司和运单号在每次发运时填写，一张订单可分多次、多个快递；订单上的“客户指定物流”只是预填值。
         $shipmentNos = $order->shipments->pluck('shipment_no', 'id');
         $order->setAttribute('dispatch_records', ShipmentDispatch::query()->whereIn('shipment_id', $shipmentNos->keys())
@@ -1258,6 +1281,14 @@ class SalesOrderController extends Controller
             'draft_token' => 'nullable|string|max:120',
             'deleted_line_ids' => 'nullable|array',
             'deleted_line_ids.*' => 'integer|min:1',
+            'production_unit_selections' => 'nullable|array|max:1000',
+            'production_unit_selections.*.line_id' => 'required|integer|min:1',
+            'production_unit_selections.*.work_order_id' => 'required|integer|min:1',
+            'production_unit_selections.*.parent_unit_id' => 'nullable|integer|min:1',
+            'production_unit_selections.*.unit_ids' => 'present|array|max:1000',
+            'production_unit_selections.*.unit_ids.*' => 'integer|min:1|distinct',
+            'production_unit_selections.*.expected_work_order_version' => 'required|integer|min:1',
+            'production_unit_selections.*.selection_revision' => 'required|string|size:64',
             'lines' => 'required|array|min:1',
             'lines.*.id' => 'nullable|integer|min:1',
             'lines.*.line_uuid' => 'nullable|string|max:80',
@@ -1541,13 +1572,14 @@ class SalesOrderController extends Controller
             'cancel' => $order->order_status !== 'cancelled'
                 && in_array($order->shipment_status, ['not_shipped', 'not_required'], true)
                 && in_array('sales_order.cancel', $codes, true),
-            // 未开工且未安排发货时可用编辑权限；进入执行后需要变更权限并核对修改影响。
+            // 生产确认前可用编辑权限；确认后需要变更权限并提交审核。
             'edit' => ($draft && in_array('sales_order.edit_draft', $codes, true))
-                || (($changeEligibility['allowed'] ?? ($order->order_status === 'confirmed' && in_array($order->shipment_status, ['not_shipped', 'not_required'], true)))
+                || (($changeEligibility['allowed'] ?? ($order->order_status === 'confirmed' && $order->confirm_status === 'confirmed' && !$order->short_closed_at))
                     && ($released ? $canChange : ($canChange || in_array('sales_order.edit_draft', $codes, true)))),
             'production_released' => $released,
-            // 约定定金由销售按客户约定直接维护；确认后也可改，立即生效并留痕。
+            // 生产确认前可独立维护定金；确认后统一在订单编辑页提交审核。
             'edit_agreed_deposit' => in_array($order->order_status, ['draft', 'confirmed'], true)
+                && !$released
                 && SalesOrderFundingGateService::supportsAgreedDeposit(data_get($order->funding_policy_snapshot, 'policy_type'))
                 && (in_array('sales_order.edit_draft', $codes, true) || $canChange),
             'change' => false,

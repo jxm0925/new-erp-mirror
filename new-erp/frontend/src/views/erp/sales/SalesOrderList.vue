@@ -1,7 +1,7 @@
 <!--
 Design reference: D:\codex-introduce\new_erp\docs\product-design\phase6-order\phase6-sales-order-list.png
 Design status: 按“基础档案”页面风格重做（页头卡片 / 提示条 / 带数量页签 / 居中弹窗），待用户确认。
-说明：订单流程为 草稿 → 确认订单 → 核实期（工单未发布，可直接修改）→ 生产确认 → 工单发布后修改需审核。
+说明：订单修改按实际工时及财务影响判断审核。
 -->
 <template>
   <div class="sales-order-page">
@@ -25,7 +25,7 @@ Design status: 按“基础档案”页面风格重做（页头卡片 / 提示�
     <!-- 页面提示条：说明订单流程 -->
     <div class="erp-page-tip">
       <i class="el-icon-info" />
-      <span>订单流程：草稿 → <b>确认订单</b> → 核实期 → <b>生产确认</b>。订单确认后，金额及结算条件修改需财务审核；其他修改在未开工且未安排发货时可直接保存，进入执行后按影响审核。</span>
+      <span>订单流程：草稿 → <b>确认订单</b> → 核实期 → <b>生产确认</b>。受影响主、子工单均未开工时免生产审核；已有实际工时须审核。金额及结算条件按财务规则审核。</span>
     </div>
 
     <section class="table-container-card">
@@ -286,7 +286,7 @@ export default {
       if (row.order_status === 'closed') return { label: '已完成', type: 'success', hint: '已收齐款并全部发出' }
       if (row.order_status !== 'confirmed') return { label: statusText(row.order_status), type: 'info', hint: '' }
       if (row.short_closed_at) return { label: '已短交', type: 'warning', hint: '剩余未发已关闭，待收款/退款后完成' }
-      if (actions.production_released) return { label: '已进入执行', type: 'warning', hint: '修改先核对影响' }
+      if (actions.production_released) return { label: '已生产确认', type: 'warning', hint: '受影响主、子工单已有实际工时须审核，金额与结算条件按财务规则审核' }
       if (['pending', 'blocked'].includes(row.production_confirm_status)) return { label: '核实期', type: 'success', hint: '待生产确认，金额修改需财务审核' }
       if (row.production_confirm_status === 'not_required') return { label: '已确认', type: 'success', hint: '无需生产确认' }
       return { label: '待开工', type: 'success', hint: '开工及安排发货前，金额修改需财务审核' }
@@ -294,13 +294,13 @@ export default {
     nextStep(row) {
       const actions = row.allowed_actions || {}
       if (row.order_status === 'draft') return '请核对订单信息，无误后点击“确认订单”。草稿可随意修改。'
-      if (row.order_status === 'cancelled') return [row.cancellation?.production_pending ? `${row.cancellation.production_pending}张工单待生产主管处置` : '生产处置已办结', row.cancellation?.finance_status === 'pending' ? '资金待财务处理' : '资金已结清'].join('；') + '。'
+      if (row.order_status === 'cancelled') return [row.cancellation?.production_pending ? `${row.cancellation.production_pending}个编号待实际接单人处置` : '生产处置已办结', row.cancellation?.finance_status === 'pending' ? '资金待财务处理' : '资金已结清'].join('；') + '。'
       if (row.order_status !== 'confirmed') return '该订单已结束，无需处理。'
       if (row.short_closed_at) return '订单已短交关闭，剩余未发不再发货；应收已按实发金额调整，收齐款或办完退款后自动完成。'
-      if (actions.production_released) return '生产已开工或已安排发货；修改时先核对影响，需要审核的内容经相关负责人审核通过后生效。'
+      if (actions.production_released) return '受影响主、子工单均未开工时免生产审核；已有实际工时的修改须审核，正式生效后由接单人处理原工单。金额及结算条件按财务规则审核。'
       if (['pending', 'blocked'].includes(row.production_confirm_status)) return '订单已确认，尚未生成工单。请核实订单（金额及结算条件修改需财务审核），无误后执行“生产确认”。'
       if (row.production_confirm_status === 'not_required') return '该订单无需生产确认。'
-      return '已生成工单，尚未开工或安排发货。金额及结算条件修改需财务审核；涉及生产和交付的修改会撤销未开工工单，并需重新生产确认。'
+      return '修改按受影响主、子工单实际工时及财务影响判断审核；影响生产和交付的修改生效后，按受影响商品重新确认备货。'
     },
     async confirmOrder(row) {
       // 一步确认：服务端先检查、通过后立即确认；未通过不改状态。确认订单不会生成工单。

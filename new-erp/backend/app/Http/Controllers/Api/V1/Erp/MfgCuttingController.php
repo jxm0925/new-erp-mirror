@@ -17,8 +17,11 @@ class MfgCuttingController extends Controller
     public function context(Request $request, int $id, CuttingService $cutting)
     {
         [$user, $amounts] = $this->user($request, false, null, $id);
-        $data = $request->validate(['page' => 'nullable|integer|min:1', 'per_page' => 'nullable|integer|min:1|max:50', 'operation_id' => 'nullable|integer|min:1']);
-        return response()->json(['data' => $cutting->context($id, $data, $amounts, $user)]);
+        $data = $request->validate(['page' => 'nullable|integer|min:1', 'per_page' => 'nullable|integer|min:1|max:50',
+            'operation_id' => 'required_if:scope,units|nullable|integer|min:1', 'scope' => 'nullable|in:units',
+            'batch_id' => 'nullable|integer|min:1', 'keyword' => 'nullable|string|max:120']);
+        $result = $cutting->context($id, $data, $amounts, $user);
+        return response()->json(($data['scope'] ?? null) === 'units' ? $result : ['data' => $result]);
     }
 
     public function sources(Request $request, int $id, CuttingService $cutting)
@@ -39,7 +42,7 @@ class MfgCuttingController extends Controller
 
     public function recommend(Request $request, int $id, CuttingService $cutting)
     {
-        $data = $request->validate(['operation_id' => 'required|integer|min:1', 'unit_qty' => 'required|integer|min:1|max:1000']);
+        $data = $request->validate($this->unitRules() + ['operation_id' => 'required|integer|min:1', 'unit_qty' => 'required|integer|min:1|max:1000']);
         [, $amounts] = $this->user($request, false, (int) $data['operation_id'], $id);
         return response()->json(['data' => $cutting->recommend($id, $data, $amounts)]);
     }
@@ -66,7 +69,7 @@ class MfgCuttingController extends Controller
 
     private function planRules(): array
     {
-        return $this->assignmentRules() + ['operation_id' => 'required|integer|min:1', 'unit_qty' => 'required|integer|min:1|max:1000',
+        return $this->unitRules() + $this->assignmentRules() + ['operation_id' => 'required|integer|min:1', 'unit_qty' => 'required|integer|min:1|max:1000',
             'sources' => 'required|array|min:1|max:1000', 'sources.*.source_key' => 'required|string|max:120',
             'sources.*.item_id' => 'required|integer|min:1', 'sources.*.inventory_balance_id' => 'required|integer|min:1',
             'sources.*.physical_material_id' => 'nullable|integer|min:1', 'sources.*.source_version' => 'required|string|size:64',
@@ -77,6 +80,11 @@ class MfgCuttingController extends Controller
     {
         return ['assignments' => 'sometimes|array|max:10000', 'assignments.*.source_key' => 'required|string|max:120',
             'assignments.*.part_key' => 'required|string|max:80', 'assignments.*.qty' => 'required|string|regex:/^\d{1,10}(?:\.\d{1,8})?$/D'];
+    }
+
+    private function unitRules(): array
+    {
+        return ['unit_ids' => 'required|array|min:1|max:1000', 'unit_ids.*' => 'required|integer|min:1|distinct'];
     }
 
     private function user(Request $request, bool $write, ?int $operationId = null, ?int $workOrderId = null): array

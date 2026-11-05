@@ -106,8 +106,8 @@ class MfgWorkOrderController extends Controller
     public function semiOrder(Request $request, int $id, WorkOrderService $service, WorkOrderQueryService $query)
     {
         [$user, $amounts] = $this->user($request, 'production.work_order.create');
-        $data = $request->validate(['component_item_id' => 'required|integer|min:1', 'qty' => 'nullable|numeric|min:0.0001|max:100000']);
-        $child = $service->createForParent($id, (int) $data['component_item_id'], isset($data['qty']) ? (float) $data['qty'] : null, $user);
+        $data = $request->validate(['component_item_id' => 'required|integer|min:1', 'qty' => 'nullable|numeric|min:0.0001|max:100000', 'operation_id' => 'nullable|integer|min:1']);
+        $child = $service->createForParent($id, (int) $data['component_item_id'], isset($data['qty']) ? (float) $data['qty'] : null, $user, isset($data['operation_id']) ? (int) $data['operation_id'] : null);
         $text = $child->status === 'released' ? '已下达给下料组' : '资料不全，停在计划：'.$child->block_reason;
         return response()->json(['message' => "半成品工单 {$child->work_order_no} 已开，{$text}。", 'data' => $query->detail($id, $amounts), 'child_id' => $child->id]);
     }
@@ -117,19 +117,25 @@ class MfgWorkOrderController extends Controller
     {
         [$user, $amounts] = $this->user($request, ['production.task.execute', 'production.work_order.edit']);
         $data = $request->validate(['units' => 'nullable|integer|min:1|max:100000', 'remark' => 'nullable|string|max:500',
+            'unit_ids' => 'nullable|array|min:1|max:1000', 'unit_ids.*' => 'integer|min:1|distinct',
             'serial_selections' => 'nullable|array|max:50', 'serial_selections.*.material_id' => 'required|integer|min:1',
             'serial_selections.*.serial_ids' => 'required|array|min:1|max:1000', 'serial_selections.*.serial_ids.*' => 'integer|min:1']);
         $selections = [];
         foreach ($data['serial_selections'] ?? [] as $row) $selections[(int) $row['material_id']] = $row['serial_ids'];
         // 人工指定编号前期只开放给有“指定/调整部件编号”权限的账号（默认仅系统管理员）。
         if ($selections) $this->user($request, 'production.serial.assign');
-        $issue = $issues->receive($id, $operationId, isset($data['units']) ? (int) $data['units'] : null, $data['remark'] ?? null, $user, $selections);
+        $issue = $issues->receive($id, $operationId, isset($data['units']) ? (int) $data['units'] : null, $data['remark'] ?? null, $user, $selections, $data['unit_ids'] ?? null);
         return response()->json(['message' => "已收料（{$issue->issue_no}），库存已扣减，可以开工了。", 'data' => $query->detail($id, $amounts)]);
     }
 
     /** 人工指定编号收料的候选编号。 */
     public function serialOptions(Request $request, int $id, int $operationId, MaterialIssueService $issues)
     {
+        if ($request->input('scope') === 'units') {
+            $this->user($request, ['production.task.execute', 'production.work_order.edit', 'production.material_delivery.manage']);
+            return response()->json($issues->receivableUnits($id, $operationId, $request->validate([
+                'keyword' => 'nullable|string|max:120', 'page' => 'nullable|integer|min:1', 'per_page' => 'nullable|integer|min:1|max:100'])));
+        }
         $this->user($request, 'production.serial.assign');
         return response()->json(['data' => $issues->serialOptions($id, $operationId)]);
     }

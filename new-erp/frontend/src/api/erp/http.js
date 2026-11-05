@@ -1,6 +1,5 @@
 import axios from 'axios'
 
-// 与 training 项目一致：前端直连后端固定 API 入口，不使用 Vue dev-server 代理。
 // VUE_APP_BASE_API 是唯一配置来源，避免迁移目录后仍误连旧 Nginx 站点。
 //
 // 所有 ERP 接口客户端都必须由这里创建：此前各模块各自 axios.create，只有主数据客户端

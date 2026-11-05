@@ -24,14 +24,14 @@ Page({
   data: {
     id: 0, lane: '', task: null, loading: true, busy: false, error: '', selected: {}, selectedCount: 0, selectedCompletionCount: 0, clockText: '00:00:00',
     workTab: 'report',
-    shareText: '', panel: '', rejectCurrent: false, cutQty: 1, prepQty: 1, runPick: 0,
+    shareText: '', panel: '', rejectCurrent: false, runPick: 0, selectedHasStock: false,
     reject: { mode: 'return', returnId: 0, tags: {}, reason: '', media: [] }, uploading: false,
     peopleKeyword: '', peopleRows: [], picked: [], shareMode: 'labor', ownerPercent: '', showMaterials: false, showSemiMaterials: false,
     completionLocatorOpen: false,
     returnForm: { types: [], type: 'surplus', rows: [], picked: {}, qty: {}, reason: '', hint: '',
       planActions: [], planNeedsReview: false, planReviewers: '', planAction: '', planMaterial: 0, planStart: 0, planMedia: [], hasMade: false },
   },
-  onLoad(options) { this.setData({ id: Number(options.id || 0), lane: options.lane === 'rework' ? 'rework' : (options.lane === 'normal' ? 'normal' : '') }); this.load(); },
+  onLoad(options) { this.initialReturnType = options.return_type === 'cancellation' ? 'cancellation' : ''; this.initialReturnDispositionId = Number(options.disposition_id || 0); this.setData({ id: Number(options.id || 0), lane: options.lane === 'rework' ? 'rework' : (options.lane === 'normal' ? 'normal' : '') }); this.load(); },
   onShow() { this.hidden = false; if (view.resumingScan(this) || this.mediaReturning) { this.mediaReturning = false; this.startClock(); return; } if (this.data.task) this.load(true); },
   onHide() { this.hidden = true; this.stopClock(); if (this.mediaActive || this._warehouseScanActive || this._warehouseScanReturning) this.mediaReturning = true; else this.closeCompletionLocator(); },
   mediaActivity(event) { this.mediaActive = event.detail.active; },
@@ -53,9 +53,16 @@ Page({
     }).catch(error => { if (sequence === this.sequence) this.setData({ loading: false, error: view.errorText(error) }); });
   },
   apply(task, keepSelection) {
+    const wo = task.work_order || {};
+    const blockedIds = new Set(task.blocked_unit_ids || wo.blocked_unit_ids || []);
+    const productionIds = task.production_unit_ids || wo.production_unit_ids;
+    const units = (task.units || []).map(unit => {
+      const canProduce = !blockedIds.has(unit.id) && (!productionIds || productionIds.includes(unit.id)) && (!unit.disposition_status || ['normal', 'stock'].includes(unit.disposition_status));
+      return Object.assign({}, unit, { selectable: Boolean(unit.selectable && canProduce), status_label: canProduce ? unit.status_label : '订单变更待处理' });
+    });
     const selected = {};
-    const old = keepSelection ? this.data.selected : {};
-    (task.units || []).forEach(u => { if (u.selectable && old[u.id]) selected[u.id] = true; });
+    const old = keepSelection ? this.data.selected : Object.fromEntries(((task.my && task.my.timing && task.my.unit_ids) || []).map(id => [id, true]));
+    units.forEach(u => { if (u.selectable && old[u.id]) selected[u.id] = true; });
     const me = Number((wx.getStorageSync('erp_user') || {}).legacy_id || 0);
     const owner = (task.participants || []).find(p => p.role === 'owner');
     const others = (task.participants || []).filter(p => p.role !== 'owner');
@@ -65,7 +72,6 @@ Page({
     wx.setNavigationBarTitle({ title: task.title || task.operation_name || '工序作业' });
     const unitShort = task.unit_short || '台';
     const noun = task.unit_word === '台设备' || !task.unit_word ? '设备' : (task.work_order.item_name || '件');
-    const wo = task.work_order || {};
     const oi = task.order_info || {};
     const salesOrderNo = oi.sales_order_no || wo.sales_order_no || '';
     const salespersonName = oi.salesperson_name || wo.salesperson_name || '';
@@ -140,6 +146,7 @@ Page({
     this.setData({
       lane: task.lane || 'normal',
       task: Object.assign({}, task, {
+        units,
         unitShort, noun, isRework: task.lane === 'rework',
         salesOrderNo, salespersonName, customerName,
         work_order: Object.assign({}, wo, {
@@ -163,18 +170,19 @@ Page({
         plannedText: view.quantity(task.progress.planned), doneText: view.quantity(task.progress.done),
         ownerName: owner ? owner.employee_name : '', collaboratorNames: others.map(p => p.employee_name).join('、'),
         dueText: String(task.work_order.planned_finish_date || '').slice(5, 10),
-        selectableCount: (task.units || []).filter(u => u.selectable).length,
+        selectableCount: units.filter(u => u.selectable).length,
+        myUnitText: ((task.my && task.my.unit_ids) || []).map(id => { const unit = units.find(u => u.id === id); return unit ? (unit.serial_no || `第${unit.unit_no}个`) : `编号${id}`; }).join('、'),
         // 下料工序自己没计过时：底部按「已备料」交下道；开始计时后按正常报合格。
         prepMode: Boolean(task.prep && task.allowed && task.allowed.prepare && !task.my.timing && !(Number(task.my.closed_minutes || 0) > 0)),
       }),
       selected, selectedCount: Object.keys(selected).length,
-      selectedCompletionCount: (task.units || []).filter(u => selected[u.id] && u.needs_completion).length,
+      selectedCompletionCount: units.filter(u => selected[u.id] && u.needs_completion).length,
+      selectedHasStock: units.some(u => selected[u.id] && u.production_destination === 'stock'),
       shareText, loading: false,
-      cutQty: task.cutting ? Math.max(1, Math.min(this.data.cutQty || 1, task.cutting.reportable_units || 1)) : 1,
-      prepQty: Math.max(1, Math.min(this.data.prepQty || 1, (task.units || []).filter(u => u.selectable).length || 1)),
       runPick: task.cutting_runs && (task.cutting_runs.runs || []).some(r => r.id === this.data.runPick) ? this.data.runPick : 0,
     });
     this.startClock();
+    if (this.initialReturnType) { const type = this.initialReturnType; this.initialReturnType = ''; this.openMaterialReturn(type, this.initialReturnDispositionId); }
   },
   startClock() {
     this.stopClock();
@@ -182,7 +190,11 @@ Page({
     if (!task) return;
     const base = Number(task.my.closed_minutes || 0) * 60;
     const started = task.my.timing && task.my.started_at ? new Date(task.my.started_at).getTime() : 0;
-    const tick = () => this.setData({ clockText: clock(base + (started ? (Date.now() - started) / 1000 : 0)) });
+    const deadline = task.my.timing_deadline_at ? new Date(task.my.timing_deadline_at).getTime() : 0;
+    const tick = () => {
+      const until = deadline ? Math.min(Date.now(), deadline) : Date.now();
+      this.setData({ clockText: clock(base + (started ? Math.max(0, until - started) / 1000 : 0)) });
+    };
     tick();
     if (started) this.timer = setInterval(tick, 1000);
   },
@@ -209,7 +221,7 @@ Page({
         const code = String(result.result || '').trim();
         const unit = (this.data.task.units || []).find(u => u.serial_no && (code === u.serial_no || code.endsWith(u.serial_no) || code.indexOf(u.serial_no) >= 0));
         if (!unit) { wx.showToast({ title: `该序列号不在本工序${this.data.task.isRework ? '返工' : ''}范围内`, icon: 'none' }); return; }
-        if (!unit.selectable) { wx.showToast({ title: '该序列号正在等待报废审核', icon: 'none' }); return; }
+        if (!unit.selectable) { wx.showToast({ title: unit.status_label || '该编号当前不能作业', icon: 'none' }); return; }
         const selected = Object.assign({}, this.data.selected, { [unit.id]: true });
         this.setSelection(selected);
         wx.showToast({ title: `已选中 ${unit.serial_no}`, icon: 'none' });
@@ -218,9 +230,10 @@ Page({
   },
   setSelection(selected) {
     this.setData({ selected, selectedCount: Object.keys(selected).length,
+      selectedHasStock: (this.data.task.units || []).some(u => selected[u.id] && u.production_destination === 'stock'),
       selectedCompletionCount: (this.data.task.units || []).filter(u => selected[u.id] && u.needs_completion).length });
   },
-  selectedIds() { return Object.keys(this.data.selected).map(Number); },
+  selectedIds() { return (this.data.task.units || []).filter(unit => unit.selectable && this.data.selected[unit.id]).map(unit => unit.id); },
 
   // 将原本冗长的「下料的料还没收齐：xxx 还差 3个、yyy 还差 3个...」或「库存不够：xxx 要 3，仓库可用 0个...」结构化为清晰表格
   buildShortageModal(error, task, options = {}) {
@@ -383,7 +396,10 @@ Page({
     this.completionJob = null;
     this.setData({ busy: true, completionLocatorOpen: false });
     return production.action(this.data.id, Object.assign({ lane: this.data.lane || 'normal' }, payload)).then(response => {
-      wx.showToast({ title: payload.completion_action === 'store' ? '已提交入库，等待仓库确认' : response.message || okText || '已完成', icon: 'none', duration: 2500 });
+      if (payload.completion_action === 'store') {
+        const numbers = response.receipt_nos || (response.data && response.data.receipt_nos) || [];
+        view.modal(this, { title: '入库申请已提交', content: numbers.length ? `已生成入库申请：${numbers.join('、')}，等待仓库分别核对。` : response.message || '已提交入库，等待仓库确认', showCancel: false, confirmText: '知道了' });
+      } else wx.showToast({ title: response.message || okText || '已完成', icon: 'none', duration: 2500 });
       this.setData({ panel: '' });
       if (response.data) this.apply(response.data); else this.load();
       return true;
@@ -421,8 +437,11 @@ Page({
   },
   receiveMaterials() {
     const task = this.data.task;
-    if (!task || !task.work_order) return;
-    production.receiveMaterials(task.work_order.id, task.id).then(response => {
+    if (!task || !task.work_order || this.data.busy) return;
+    const ids = this.selectedIds();
+    if (!ids.length) { this.setData({ workTab: 'report' }); return wx.showToast({ title: '请先勾选本次领料的编号', icon: 'none' }); }
+    this.setData({ busy: true });
+    production.receiveMaterials(task.work_order.id, task.id, { unit_ids: ids }).then(response => {
       wx.showToast({ title: response.message || '已领料', icon: 'none', duration: 2500 });
       this.load(true);
     }).catch(error => {
@@ -431,7 +450,7 @@ Page({
       } else {
         view.modal(this, { theme: 'warn', title: '领料失败', content: view.errorText(error), showCancel: false });
       }
-    });
+    }).finally(() => this.setData({ busy: false }));
   },
   signDelivery(e) {
     const id = Number(e.currentTarget.dataset.id);
@@ -474,13 +493,18 @@ Page({
       this.load(true);
     }).catch(error => { view.modal(this, { theme: 'warn', title: '操作失败', content: view.errorText(error), showCancel: false }); this.load(true); });
   },
-  openMaterialReturn() {
+  openCancellationReturn(event) { this.openMaterialReturn('cancellation', Number(event.detail.dispositionId || 0)); },
+  openMaterialReturn(preferredType, dispositionId) {
     const task = this.data.task;
     if (!task || !task.work_order || this.data.busy) return;
-    production.returnOptions(task.work_order.id, task.id).then(response => {
+    if (preferredType === 'cancellation' && !dispositionId) return view.modal(this, { title: '请先确定退料编号', content: '请从具体设备或子件的处置记录进入退料。', showCancel: false });
+    production.returnOptions(task.work_order.id, task.id, dispositionId ? { disposition_id: dispositionId } : undefined).then(response => {
       const d = response.data || response;
       this.returnOptions = d.materials || [];
-      this.setData({ panel: 'return', returnForm: { types: d.types || [], type: 'surplus', rows: [], picked: {}, qty: {}, reason: '', hint: '',
+      const types = dispositionId ? (d.types || []).filter(t => t.value === 'cancellation') : d.types || [];
+      if (dispositionId && !types.length) throw new Error('这个编号当前不能办理处置退料，请返回核对处理进度');
+      const type = typeof preferredType === 'string' && types.some(t => t.value === preferredType) ? preferredType : (types.some(t => t.value === 'surplus') ? 'surplus' : (types[0] || {}).value || 'surplus');
+      this.setData({ panel: 'return', returnForm: { types, type, dispositionId: dispositionId || 0, unitText: d.unit_serial_no || (d.unit_no ? `第${d.unit_no}个` : ''), rows: [], picked: {}, qty: {}, reason: '', hint: '',
         planActions: d.plan_actions || [], planNeedsReview: Boolean(d.plan_needs_review), planReviewers: d.plan_reviewers || '',
         planAction: '', planMaterial: 0, planStart: 0, planMedia: [], hasMade: false } });
       this.refreshReturnRows();
@@ -488,9 +512,9 @@ Page({
   },
   refreshReturnRows() {
     const type = this.data.returnForm.type;
-    const hints = { surplus: '余料或领错退回：核准后冲减本工序已领数量。', defective: '来料或半成品不良退回：核准后冲减已领数量，需重新领料。', scrapped: '报废设备拆回可用物料：核准后入库，不冲减原工序已领数量。' };
+    const hints = { surplus: '余料或领错退回：核准后冲减本工序已领数量。', defective: '来料或半成品不良退回：核准后冲减已领数量，需重新领料。', scrapped: '报废设备拆回可用物料：核准后入库，不冲减原工序已领数量。', cancellation: '订单变更或取消后拆回可用物料，仓库实际接收入库后形成库存。' };
     const rows = (this.returnOptions || []).map(m => {
-      const serials = m.by_number ? (m.serials || []).filter(s => (s.kind === 'scrapped') === (type === 'scrapped')) : [];
+      const serials = m.by_number ? (m.serials || []).filter(s => type === 'cancellation' || (s.kind === 'scrapped') === (type === 'scrapped')) : [];
       const limitQty = m.by_qty ? Number((m.limits || {})[type] || 0) : 0;
       return Object.assign({}, m, { specText: buildSpecText(m), serials, limitQty, limit: view.quantity(limitQty), showSerials: serials.length > 0, showQty: limitQty > 0 });
     }).filter(m => m.showSerials || m.showQty);
@@ -521,6 +545,7 @@ Page({
   submitMaterialReturn() {
     const f = this.data.returnForm;
     const task = this.data.task;
+    if (f.type === 'cancellation' && !f.dispositionId) return wx.showToast({ title: '请从具体编号处置进入退料', icon: 'none' });
     const lines = f.rows.map(row => ({
       material_id: row.material_id,
       serial_ids: row.serials.filter(s => f.picked[s.id]).map(s => s.id),
@@ -543,7 +568,7 @@ Page({
     }
     if (this.data.busy) return;
     this.setData({ busy: true });
-    production.createReturn(task.work_order.id, task.id, Object.assign({ return_type: f.type, reason: f.reason.trim(), lines }, plan ? { disposition_plan: plan } : {})).then(response => {
+    production.createReturn(task.work_order.id, task.id, Object.assign({ return_type: f.type, reason: f.reason.trim(), lines }, f.dispositionId ? { disposition_id: f.dispositionId } : {}, plan ? { disposition_plan: plan } : {})).then(response => {
       wx.showToast({ title: response.message || '退料申请已提交', icon: 'none', duration: 2500 });
       this.setData({ panel: '' });
       this.load(true);
@@ -557,7 +582,13 @@ Page({
     this.setData({ lane: other.lane, selected: {}, selectedCount: 0, selectedCompletionCount: 0, panel: '' });
     this.load();
   },
+  canOrderSemi() {
+    const task = this.data.task;
+    return Boolean(task && task.lane === 'normal' && task.my && task.my.is_participant && task.my.role === 'owner' && task.allowed && task.allowed.semi_order);
+  },
   semiOrder(event) {
+    if (!this.canOrderSemi()) { wx.showToast({ title: '请先接下本道工序，再开半成品工单', icon: 'none' }); return; }
+    const taskId = this.data.task.id;
     const id = Number(event.currentTarget.dataset.id);
     const row = (this.data.task.semiRows || []).find(r => r.component_item_id === id);
     if (!row || !row.can_order || this.data.busy) return;
@@ -578,6 +609,11 @@ Page({
       confirmText: '确认下达子工单',
       success: res => {
         if (!res.confirm) return;
+        const current = this.data.task;
+        const material = current && (current.semiRows || []).find(r => r.component_item_id === id);
+        if (!this.canOrderSemi() || current.id !== taskId || !material || !material.can_order) {
+          wx.showToast({ title: '当前任务已变化，请刷新后再开单', icon: 'none' }); return;
+        }
         this.run({ action: 'semi_order', component_item_id: id, qty: res.qty }, '半成品子工单已下达');
       },
     });
@@ -588,7 +624,7 @@ Page({
       wx.pageScrollTo({ selector: '.oi-anchor', duration: 200 });
     });
   },
-  start() { this.run({ action: 'start' }, '开始计时'); },
+  start() { const ids = this.selectedIds(); if (!ids.length) return wx.showToast({ title: '请先勾选本次加工的编号', icon: 'none' }); this.run({ action: 'start', unit_ids: ids }, '开始计时'); },
   pause() { this.run({ action: 'pause' }, '已暂停'); },
   stopTiming(event) {
     const { id, name } = event.currentTarget.dataset;
@@ -645,20 +681,11 @@ Page({
     });
   },
 
-  changeCutQty(event) { this.setCutQty(this.data.cutQty + Number(event.currentTarget.dataset.delta || 0)); },
-  cutQtyInput(event) { this.setCutQty(parseInt(event.detail.value, 10) || 1); },
-  setCutQty(value) {
-    const max = (this.data.task.cutting || {}).reportable_units || 1;
-    this.setData({ cutQty: Math.max(1, Math.min(max, value)) });
-  },
-  changePrepQty(event) { this.setPrepQty(this.data.prepQty + Number(event.currentTarget.dataset.delta || 0)); },
-  prepQtyInput(event) { this.setPrepQty(parseInt(event.detail.value, 10) || 1); },
-  setPrepQty(value) { this.setData({ prepQty: Math.max(1, Math.min(this.data.task.selectableCount || 1, value)) }); },
   prepareCut() {
     const task = this.data.task;
-    const qty = this.data.prepQty;
-    const ids = (task.units || []).filter(u => u.selectable).slice(0, qty).map(u => u.id);
-    if (!ids.length || ids.length < qty) { wx.showToast({ title: '当前工序可备料套数不足', icon: 'none' }); return; }
+    const ids = this.selectedIds();
+    const qty = ids.length;
+    if (!qty) { wx.showToast({ title: '请先勾选本次备料的编号', icon: 'none' }); return; }
     const next = task.progress.next_operation_name;
     const runPick = this.data.runPick;
     view.modal(this, {
@@ -678,9 +705,10 @@ Page({
   pickRun(event) { const id = Number(event.currentTarget.dataset.id); this.setData({ runPick: this.data.runPick === id ? 0 : id }); },
   passCut() {
     const task = this.data.task;
-    const qty = this.data.cutQty;
-    const ids = (task.units || []).filter(u => u.selectable).slice(0, qty).map(u => u.id);
-    if (!ids.length || ids.length < qty) { wx.showToast({ title: '当前工序可报工套数不足', icon: 'none' }); return; }
+    const ids = this.selectedIds();
+    const qty = ids.length;
+    if (!qty) { wx.showToast({ title: '请先勾选本次完工的编号', icon: 'none' }); return; }
+    if (qty > Number(task.cutting.reportable_units || 0)) { wx.showToast({ title: '所选套数超过当前可报工数量', icon: 'none' }); return; }
     if (task.completion) return this.chooseCompletion({ action: 'pass', unit_ids: ids });
     const next = task.progress.next_operation_name;
     view.modal(this, {
@@ -711,8 +739,15 @@ Page({
     // 随单半成品最多交到主工单还缺的数量，多出的只能入库
     const remaining = completion.remaining_qty === null || completion.remaining_qty === undefined ? null : Number(completion.remaining_qty);
     const over = remaining !== null && count > remaining + 0.00001;
-    const canHandoff = Boolean(completion.handoff_available) && !over;
-    const overText = over ? `${target} 还需 ${view.quantity(remaining)} ${task.unitShort}，本次选了 ${count} ${task.unitShort}，超出的不能交接。请返回只选 ${view.quantity(remaining)} ${task.unitShort}交接，或全部入库。` : '';
+    const completionUnits = (task.units || []).filter(u => u.needs_completion && payload.unit_ids.includes(u.id));
+    const stockSelected = completionUnits.some(u => u.production_destination === 'stock');
+    if (completion.output_mode === 'flow_only' && stockSelected && completionUnits.some(u => u.production_destination !== 'stock')) {
+      this.completionJob = null;
+      return view.modal(this, { title: '请分开选择编号', content: '原订单的编号须交给下一道，继续备货的编号须入库。这次请分开勾选并提交，避免把其他设备一起改变去向。', showCancel: false, confirmText: '返回重新选择' });
+    }
+    const unitHandoffAllowed = !completionUnits.some(u => u.handoff_allowed === false);
+    const canHandoff = Boolean(completion.handoff_available) && !over && unitHandoffAllowed && !stockSelected;
+    const overText = stockSelected ? '本次含继续备货的编号，只能申请入库。其他编号需要直接交接时，请返回分开选择。' : !unitHandoffAllowed ? '所选编号当前不能直接交接，请申请入库。' : over ? `${target} 还需 ${view.quantity(remaining)} ${task.unitShort}，本次选了 ${count} ${task.unitShort}，超出的不能交接。请返回只选 ${view.quantity(remaining)} ${task.unitShort}交接，或全部入库。` : '';
     // 路线设为「直接交接」：有接收方就直接交，不用选；交不了（没有接收方、超出缺口）才入库
     if (completion.output_mode === 'flow_only') {
       view.modal(this, {
@@ -917,7 +952,12 @@ Page({
     const task = this.data.task;
     if (!task || !task.cutting) return;
     if (!task.allowed.cutting) { wx.showToast({ title: '请先接单后再执行开料', icon: 'none' }); return; }
-    wx.navigateTo({ url: `/pages/production/cutting/index?wo=${Number(task.work_order.id)}&op=${Number(task.id)}&name=${encodeURIComponent(task.operation_name || '')}` });
+    const ids = this.selectedIds();
+    if (!ids.length) { this.setData({ workTab: 'report' }); return wx.showToast({ title: '请先勾选本次开料的编号', icon: 'none' }); }
+    wx.navigateTo({ url: `/pages/production/cutting/index?wo=${Number(task.work_order.id)}&op=${Number(task.id)}&name=${encodeURIComponent(task.operation_name || '')}`,
+      events: { productionUnitsChanged: data => { const selected = {}; (this.data.task.units || []).forEach(unit => { if (unit.selectable && (data.unit_ids || []).includes(unit.id)) selected[unit.id] = true; }); this.setSelection(selected); } },
+      success: result => result.eventChannel.emit('productionUnits', { units: (task.units || []).filter(unit => ids.includes(unit.id)) }),
+    });
   },
   toggleMaterials() { this.setData({ showMaterials: !this.data.showMaterials }); },
   toggleSemiMaterials() { this.setData({ showSemiMaterials: !this.data.showSemiMaterials }); },

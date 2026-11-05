@@ -5,8 +5,9 @@ Progress design: 用户确认的订单产品树、单台整链路与工单聚合
 <template>
   <section class="sales-detail-page">
     <sales-order-cancellation-dialog :visible.sync="cancelDialogVisible" :order-id="order.id" @changed="load" />
-    <el-alert v-if="order.order_status === 'cancelled' && order.cancellation" :title="'订单已取消 · ' + (order.cancellation.finance_status === 'settled' ? '资金已结清' : '资金待处理') + (order.cancellation.production_pending ? ' · ' + order.cancellation.production_pending + '张工单待生产处理' : '')" type="warning" :closable="false" show-icon />
-    <cancellation-dispositions v-if="order.order_status === 'cancelled' && order.cancellation && order.cancellation.production_pending && $can('production.work_order.view')" :sales-order-id="order.id" @changed="load" />
+    <el-alert v-if="order.order_status === 'cancelled' && order.cancellation" :title="'订单已取消 · ' + (order.cancellation.finance_status === 'settled' ? '资金已结清' : '资金待处理') + (order.cancellation.production_pending ? ' · ' + order.cancellation.production_pending + '个编号待生产处理' : '')" type="warning" :closable="false" show-icon />
+    <cancellation-dispositions v-if="order.id && $can('production.work_order.view')" :sales-order-id="order.id" @changed="load" />
+    <aftersales-case-form v-if="$can('aftersales.view') || $can('aftersales.create')" ref="caseForm" :order="order" @saved="onAftersalesSaved" />
     <!-- 顶部主控导航与操作栏 -->
     <div class="detail-header-card">
       <div class="header-main">
@@ -16,6 +17,7 @@ Progress design: 用户确认的订单产品树、单台整链路与工单聚合
           <div class="header-tags">
             <el-tag size="small" :type="orderStatusTag(order.order_status)" effect="light">{{ orderStatusText(order.order_status) }}</el-tag>
             <el-tag v-if="order.order_status !== 'cancelled'" size="small" :type="statusTag(order.shipment_status)" effect="plain">{{ shipmentStatusText(order.shipment_status) }}</el-tag>
+            <el-tag v-if="order.aftersales_open_count > 0" size="small" type="warning" effect="plain">售后中 {{ order.aftersales_open_count }}</el-tag>
             <el-tag v-if="order.priority && order.priority !== 3" size="small" :type="priorityTagType(order.priority)" effect="plain">{{ order.priority_label }}</el-tag>
           </div>
         </div>
@@ -23,7 +25,8 @@ Progress design: 用户确认的订单产品树、单台整链路与工单聚合
       <div class="header-actions">
         <el-button size="small" icon="el-icon-back" @click="$router.push('/sales/orders')">返回列表</el-button>
         <el-button v-if="$can('sales_order.shipment.view')" size="small" icon="el-icon-truck" @click="$router.push({ path: '/sales/shipments', query: { sales_order_id: order.id } })">发货单</el-button>
-        <el-button v-if="order.allowed_actions && order.allowed_actions.edit" size="small" icon="el-icon-edit" @click="$router.push(`/sales/orders/${order.id}/edit`)">{{ order.allowed_actions.production_released ? '申请修改（需审核）' : '编辑订单' }}</el-button>
+        <el-button v-if="canCreateAftersales" size="small" type="success" plain icon="el-icon-service" @click="$refs.caseForm.open()">售后</el-button>
+        <el-button v-if="order.allowed_actions && order.allowed_actions.edit" size="small" icon="el-icon-edit" @click="$router.push(`/sales/orders/${order.id}/edit`)">修改订单</el-button>
         <el-button v-if="order.allowed_actions && order.allowed_actions.lock_inventory" size="small" type="success" plain icon="el-icon-lock" @click="openInventoryLock">锁库存</el-button>
         <el-button v-if="order.allowed_actions && order.allowed_actions.submit_confirmation" size="small" type="success" icon="el-icon-check" @click="doConfirm">确认订单</el-button>
         <el-button v-if="order.allowed_actions && order.allowed_actions.production_confirmation" size="small" type="success" icon="el-icon-s-operation" @click="$router.push(`/sales/orders/${order.id}/production-confirmation`)">生产确认</el-button>
@@ -619,9 +622,57 @@ Progress design: 用户确认的订单产品树、单台整链路与工单聚合
             </el-table>
             </template>
           </order-progress>
+          <sales-order-change-labor v-if="activeTab === 'production' && order.id && $can('production.work_order.view')" ref="changeLabor" :order-id="order.id" />
         </el-tab-pane>
-        <el-tab-pane v-if="$can('sales_order.view') && $can('finance.view')" label="采购关联" name="finance">
+        <el-tab-pane v-if="$can('sales_order.view')" label="采购关联" name="finance">
           <div class="tab-pane-content"><sales-order-finance-panel v-if="activeTab === 'finance' && order.id" :order-id="order.id" /></div>
+        </el-tab-pane>
+
+        <!-- 售后：本订单售后单 + 可售后商品 -->
+        <el-tab-pane v-if="$can('aftersales.view')" name="aftersales">
+          <span slot="label"><i class="el-icon-service" /> 售后<template v-if="order.aftersales_open_count > 0"><em class="tab-badge-num">{{ order.aftersales_open_count }}</em></template></span>
+          <div class="tab-pane-content">
+            <template v-if="!hasShippedQty && !aftersales.rows.length">
+              <div class="as-empty">订单尚未发货，暂无可售后商品。未发货的修改走订单变更。</div>
+            </template>
+            <template v-else>
+              <div class="section-title-row" style="margin-bottom:10px">
+                <div><h4>本订单售后</h4></div>
+                <el-button v-if="canCreateAftersales" size="small" type="success" plain icon="el-icon-plus" @click="$refs.caseForm.open()">新建售后单</el-button>
+              </div>
+              <div v-if="!aftersales.loading && !aftersales.rows.length" class="as-empty">暂无售后记录</div>
+              <el-table v-else v-loading="aftersales.loading" :data="aftersales.rows" border size="mini">
+                <el-table-column prop="case_no" label="售后单号" width="150"><template slot-scope="{ row }"><span class="font-mono">{{ row.case_no }}</span></template></el-table-column>
+                <el-table-column label="问题" min-width="140"><template slot-scope="{ row }">{{ asIssueLabel(row.issue_type) }}</template></el-table-column>
+                <el-table-column label="问题描述" min-width="200"><template slot-scope="{ row }"><div style="white-space:pre-wrap;word-break:break-word">{{ row.description || '—' }}</div></template></el-table-column>
+                <el-table-column prop="items_summary" label="涉及商品" min-width="160" show-overflow-tooltip />
+                <el-table-column label="处理" width="100"><template slot-scope="{ row }">
+                  <el-tag v-for="t in row.action_types" :key="t" size="mini" style="margin-right:4px;color:#7c3aed;border-color:#ddd6fe;background:#f5f3ff">{{ asActionLabel(t) }}</el-tag>
+                  <span v-if="!(row.action_types || []).length" class="muted">未定</span>
+                </template></el-table-column>
+                <el-table-column label="状态" width="86"><template slot-scope="{ row }"><el-tag size="mini" :type="asStatusTag(row.status)">{{ asStatusLabel(row.status) }}</el-tag></template></el-table-column>
+                <el-table-column prop="owner_name" label="负责人" width="80" />
+                <el-table-column label="创建时间" width="140"><template slot-scope="{ row }">{{ date(row.created_at) }}</template></el-table-column>
+                <el-table-column label="操作" width="70"><template slot-scope="{ row }"><el-button type="text" size="mini" @click="$router.push(`/sales/aftersales/${row.id}/detail`)">查看</el-button></template></el-table-column>
+              </el-table>
+
+              <div class="section-title-row" style="margin:18px 0 8px"><div><h4>可售后商品</h4><p>只列已发货的数量；已在进行中售后里的设备会标出来。</p></div></div>
+              <el-table v-loading="eligible.loading" :data="eligible.rows" border size="mini" empty-text="暂无可售后商品">
+                <el-table-column prop="line_no" label="行号" width="56" />
+                <el-table-column label="商品 / SKU" min-width="170"><template slot-scope="{ row }">{{ row.product_name || row.item_name }}<span v-if="row.sku_name" class="muted"> / {{ row.sku_name }}</span></template></el-table-column>
+                <el-table-column prop="shipped_qty" label="已发货" width="76" align="right" />
+                <el-table-column prop="reshipped_qty" label="已补发" width="76" align="right" />
+                <el-table-column prop="returned_qty" label="退货占用" width="86" align="right" />
+                <el-table-column prop="in_aftersales_qty" label="售后中" width="76" align="right" />
+                <el-table-column prop="completed_aftersales_qty" label="已完成售后" width="94" align="right" />
+                <el-table-column prop="available_qty" label="可售后" width="76" align="right" />
+                <el-table-column label="序列号" min-width="190"><template slot-scope="{ row }">
+                  <template v-if="row.serial_tracked"><div v-for="s in row.serials" :key="s.inventory_serial_id" class="font-mono" style="line-height:20px">{{ s.serial_no }} <el-tag v-if="s.in_case" size="mini" type="warning">售后中</el-tag><el-tag v-else-if="s.completed_case" size="mini" type="info">已完成售后</el-tag></div></template>
+                  <span v-else class="muted">不管理序列号</span>
+                </template></el-table-column>
+              </el-table>
+            </template>
+          </div>
         </el-tab-pane>
 
         <!-- Tab 3: 操作日志与版本记录 -->
@@ -773,17 +824,20 @@ import cachedPageRoute from '@/utils/cachedPageRoute'
 import { confirmSalesOrder, formalConfirmSalesOrder, previewShortCloseSalesOrder, shortCloseSalesOrder, deleteSalesOrderAttachment, deleteSalesOrderDraft, downloadSalesOrderAttachment, getSalesOrder, listSalesOrderChanges, lockSalesOrderInventory, adjustSalesOrderPriority } from '@/api/erp/sales'
 import SalesOrderCancellationDialog from '@/components/sales/SalesOrderCancellationDialog.vue'
 import CancellationDispositions from '@/components/production/CancellationDispositions.vue'
+import SalesOrderChangeLabor from '@/components/sales/SalesOrderChangeLabor.vue'
 import SalesOrderAttachmentPreviewDialog from '@/components/sales/SalesOrderAttachmentPreviewDialog.vue'
 import SalesOrderFinancePanel from '@/components/sales/SalesOrderFinancePanel.vue'
 import SalesOrderInvoicePanel from '@/components/sales/SalesOrderInvoicePanel.vue'
 import OrderProgress from './components/OrderProgress.vue'
+import AftersalesCaseForm from '../aftersales/AftersalesCaseForm.vue'
+import { listOrderAftersales, getAftersalesEligible } from '@/api/erp/aftersales'
 import { promptAgreedDeposit } from '@/utils/salesAgreedDeposit'
 import { statusTag, statusText, shipmentStatusText, orderStatusText, orderStatusTag } from '@/utils/erpStatus'
 import { listSalesOrderWorkOrders } from '@/api/erp/production'
 
 export default {
   mixins: [cachedPageRoute],
-  components: { SalesOrderCancellationDialog, CancellationDispositions, SalesOrderAttachmentPreviewDialog, SalesOrderFinancePanel, SalesOrderInvoicePanel, OrderProgress },
+  components: { SalesOrderCancellationDialog, CancellationDispositions, SalesOrderChangeLabor, SalesOrderAttachmentPreviewDialog, SalesOrderFinancePanel, SalesOrderInvoicePanel, OrderProgress, AftersalesCaseForm },
   data: () => ({
     cancelDialogVisible: false,
     invoicePendingCount: 0,
@@ -814,10 +868,14 @@ export default {
     expandedLineRowKeys: [],
     inventoryLockPending: null,
     inventoryLockStorageKey: '',
+    aftersales: { rows: [], loading: false, loaded: false },
+    eligible: { rows: [], loading: false },
     loadSequence: 0
   }),
   computed: {
     canViewInvoice() { return this.$can('sales_order.view') },
+    hasShippedQty() { return (this.order.lines || []).some(line => Number(line.shipped_qty || 0) > 0) },
+    canCreateAftersales() { return this.$can('aftersales.create') && this.hasShippedQty && this.order.order_status !== 'cancelled' },
     canRequestInvoice() { return this.canViewInvoice && this.$can('sales_order.invoice_request') && ['confirmed', 'closed'].includes(this.order.order_status) && !!this.order.customer_id },
     canShortClose() {
       if (this.order.order_status !== 'confirmed' || this.order.short_closed_at || !this.$can('sales_order.short_close')) return false
@@ -913,14 +971,14 @@ export default {
         (this.order.attachments || []).map(this.mapAttachment)
       )
     },
-    // 订单阶段提示：草稿可随意改；确认后工单发布前为核实期（可直接改）；工单发布后修改须审核。
+    // 生产审核以受影响主子工单实际工时为界，财务仍按金额和结算影响判断。
     stageTip() {
       const actions = this.order.allowed_actions || {}
       if (this.order.order_status === 'draft') return { type: 'info', icon: 'el-icon-edit-outline', text: '草稿阶段：订单可随意修改。核对无误后点击“确认订单”，确认不会生成工单。' }
       if (this.order.order_status !== 'confirmed') return null
-      if (actions.production_released) return { type: 'warning', icon: 'el-icon-lock', text: '生产已开工或已安排发货：可申请修改，需要审核的内容经相关负责人审核通过后生效。已实际发运或提货的订单请走售后流程。' }
+      if (actions.production_released) return { type: 'warning', icon: 'el-icon-lock', text: '可申请修改剩余未发部分，已发商品、配置、单价及退货事实保留。受影响主、子工单尚未开工免生产审核，已有工时须审核；金额及结算条件按财务规则审核。' }
       if (['pending', 'blocked'].includes(this.order.production_confirm_status)) return { type: 'success', icon: 'el-icon-s-flag', text: '核实期：订单已确认，尚未生成工单，金额及结算条件修改需财务审核，其他修改可直接保存。核实无误后，请点击“生产确认”生成待发布工单。' }
-      if (this.order.production_confirm_status === 'confirmed') return { type: 'success', icon: 'el-icon-s-flag', text: '生产确认完成：已记录需生产数量，金额及结算条件修改需财务审核；影响生产的修改生效后需重新生产确认。' }
+      if (this.order.production_confirm_status === 'confirmed') return { type: 'warning', icon: 'el-icon-lock', text: '生产确认完成：受影响主、子工单均未开工时免生产审核；已有实际工时的修改须审核，正式生效后由接单人处理原工单。金额及结算条件按财务规则审核。' }
       return null
     },
     orderTime() { return this.order.order_time || this.order.channel_ordered_at || this.order.order_date || this.order.created_at },
@@ -937,8 +995,29 @@ export default {
     await this.load()
   },
   activated() { if (this.order.id) this.load() },
-  watch: { 'pageRoute.params.id'(next, previous) { if (next !== previous) this.load() } },
+  watch: {
+    'pageRoute.params.id'(next, previous) { if (next !== previous) this.load() },
+    activeTab(tab) { if (tab === 'aftersales') this.loadAftersalesTab() }
+  },
   methods: {
+    async loadAftersalesTab() {
+      if (!this.order.id || !this.$can('aftersales.view')) return
+      this.aftersales.loading = true
+      try {
+        const { data } = await listOrderAftersales(this.order.id)
+        this.aftersales.rows = data.data || []; this.aftersales.loaded = true
+      } finally { this.aftersales.loading = false }
+      this.eligible.loading = true
+      try {
+        const { data } = await getAftersalesEligible(this.order.id)
+        this.eligible.rows = data.data || []
+      } finally { this.eligible.loading = false }
+    },
+    onAftersalesSaved() { this.load(); if (this.activeTab === 'aftersales') this.loadAftersalesTab() },
+    asIssueLabel: v => ({ quality: '质量故障', transport_damage: '运输破损', wrong_shipment: '错发漏发', installation: '安装问题', consultation: '使用咨询', other: '其他' })[v] || v || '—',
+    asActionLabel: v => ({ refund: '退货退款', exchange: '换货', reship: '补发', compensation: '赔付记录', record: '仅记录' })[v] || v,
+    asStatusLabel: v => ({ pending: '待受理', processing: '处理中', ready_to_close: '待关闭', closed: '已关闭', cancelled: '已取消' })[v] || v,
+    asStatusTag: v => ({ pending: 'info', processing: 'warning', ready_to_close: '', closed: 'info', cancelled: 'info' })[v] || 'info',
     onInvoiceLoaded(info) {
       const requests = (info && info.requests) || []
       this.invoiceRequestCount = requests.length
@@ -1026,6 +1105,7 @@ export default {
       const { data } = await getSalesOrder(id)
       if (sequence !== this.loadSequence) return
       this.order = data
+      if (this.$refs.changeLabor) this.$refs.changeLabor.load()
       if (this.contractFiles.length) this.attachmentsOpen = true
       this.expandedLineRowKeys = (data.lines || [])
         .filter(line => this.lineFiles(line).length > 0 && line.id != null)

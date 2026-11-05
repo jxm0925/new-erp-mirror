@@ -41,7 +41,7 @@
       <text class="mt-muted">我的工时 {{operation.myMinutesText}} · 本道合计 {{operation.totalMinutesText}}</text>
     </view>
     <view wx:if="{{operation.order_info && operation.order_info.changed.length}}" class="mt-note">销售订单已变更：{{operation.changedText}}</view>
-    <button class="mt-btn {{operation.allowed_actions.claim ? '' : 'ghost'}}" data-id="{{operation.id}}" catchtap="openOperation" disabled="{{busy}}">{{operation.allowed_actions.claim ? '立即接单' : (operation.my.timing ? '继续作业' : '查看作业')}}</button>
+    <button class="mt-btn {{operation.allowed_actions.claim ? '' : 'ghost'}}" data-id="{{operation.id}}" catchtap="openOperation" disabled="{{busy}}">{{operation.allowed_actions.claim ? '去接单' : (operation.my.timing ? '继续作业' : '查看作业')}}</button>
   </view>
 
   <view wx:if="{{lastPage > 1}}" class="mt-pager">

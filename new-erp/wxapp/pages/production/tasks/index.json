@@ -7,6 +7,7 @@
     "van-icon": "@vant/weapp/icon/index",
     "van-loading": "@vant/weapp/loading/index",
     "production-dialog": "/components/production-dialog/index",
-    "production-media": "/components/production-media/index"
+    "production-media": "/components/production-media/index",
+    "production-dispositions": "/components/production-dispositions/index"
   }
 }

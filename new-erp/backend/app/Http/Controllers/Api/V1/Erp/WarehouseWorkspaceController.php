@@ -34,6 +34,7 @@ final class WarehouseWorkspaceController extends Controller
     {
         $filters = $request->validate(['stage' => 'nullable|in:post,receive,prepare,deliver,count,confirm', 'receipt_id' => 'nullable|integer|min:1',
             'units' => 'nullable|integer|min:1|max:100000', 'keyword' => 'nullable|string|max:120',
+            'unit_ids' => 'nullable|array|min:1|max:1000', 'unit_ids.*' => 'integer|min:1|distinct',
             'location_id' => 'nullable|integer|min:1', 'line_status' => 'nullable|in:uncounted,diff',
             'page' => 'nullable|integer|min:1', 'packages_page' => 'nullable|integer|min:1', 'per_page' => 'nullable|integer|min:1|max:100']);
         return response()->json(['data' => $this->project($service->show($kind, $id, $filters, ...$this->context($request)), $request)]);

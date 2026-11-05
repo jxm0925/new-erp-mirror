@@ -34,8 +34,9 @@ class SalesInvoiceRequestController extends Controller
         $order = $this->visibleOrder($user, $id);
         $data = $request->validate([
             'invoice_type' => ['required', Rule::in(SalesInvoiceRequestService::INVOICE_TYPES)],
+            'finance_account_id' => 'required|integer|min:1',
             'invoice_title' => 'required|string|max:200',
-            'invoice_tax_no' => 'nullable|string|max:60',
+            'invoice_tax_no' => 'required|string|max:60',
             'invoice_address_phone' => 'nullable|string|max:300',
             'invoice_bank_account' => 'nullable|string|max:300',
             'invoice_email' => 'nullable|email|max:160',
@@ -43,9 +44,20 @@ class SalesInvoiceRequestController extends Controller
             'tax_rate' => 'nullable|numeric|min:0|max:100',
             'remark' => 'nullable|string|max:500',
             'save_to_customer' => 'boolean',
-        ], [], ['invoice_title' => '发票抬头', 'invoice_tax_no' => '纳税人识别号', 'invoice_email' => '收票邮箱', 'amount' => '开票金额', 'tax_rate' => '税率']);
+        ], [], ['invoice_type' => '发票类型', 'finance_account_id' => '资金账户', 'invoice_title' => '发票抬头', 'invoice_tax_no' => '纳税人识别号', 'invoice_email' => '收票邮箱', 'amount' => '开票金额', 'tax_rate' => '税率']);
         $row = $this->service->create($order, $data, $user);
         return response()->json(['message' => '开票申请已提交，等待财务开票', 'data' => $this->service->payload($row)], 201);
+    }
+
+    public function accounts(Request $request, int $id)
+    {
+        $user = $this->authorizeAll($request, ['sales_order.view', 'sales_order.invoice_request']);
+        $this->visibleOrder($user, $id);
+        $filters = $request->validate([
+            'keyword' => 'nullable|string|max:160', 'ids' => 'nullable|array|max:50', 'ids.*' => 'integer|min:1',
+            'page' => 'nullable|integer|min:1', 'per_page' => 'nullable|integer|min:1|max:50',
+        ]);
+        return response()->json($this->service->accounts($filters));
     }
 
     public function withdraw(Request $request, int $id)

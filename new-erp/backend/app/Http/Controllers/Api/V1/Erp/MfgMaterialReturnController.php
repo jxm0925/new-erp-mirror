@@ -39,13 +39,15 @@ class MfgMaterialReturnController extends Controller
     public function options(Request $request, int $id, int $operationId, MaterialReturnService $returns)
     {
         [$user, , $confirm] = $this->user($request, self::READ);
-        return response()->json(['data' => $returns->options($id, $operationId, (int) ($user->legacy_id ?? $user->id ?? 0)) + ['can_approve' => $confirm]]);
+        $data = $request->validate(['disposition_id' => 'nullable|integer|min:1']);
+        return response()->json(['data' => $returns->options($id, $operationId, (int) ($user->legacy_id ?? $user->id ?? 0), isset($data['disposition_id']) ? (int) $data['disposition_id'] : null) + ['can_approve' => $confirm]]);
     }
 
     public function store(Request $request, int $id, int $operationId, WorkOrderQueryService $query)
     {
         [$user, $amounts] = $this->user($request, self::READ);
-        $data = $request->validate(['client_command_id' => 'required|string|max:120', 'return_type' => 'required|in:surplus,defective,scrapped', 'reason' => 'required|string|max:500',
+        $data = $request->validate(['client_command_id' => 'required|string|max:120', 'return_type' => 'required|in:surplus,defective,scrapped,cancellation', 'reason' => 'required|string|max:500',
+            'disposition_id' => 'required_if:return_type,cancellation|nullable|integer|min:1',
             'lines' => 'required|array|min:1|max:50', 'lines.*.material_id' => 'required|integer|min:1', 'lines.*.qty' => 'nullable|numeric|min:0|max:1000000',
             'lines.*.serial_ids' => 'nullable|array|max:1000', 'lines.*.serial_ids.*' => 'integer|min:1|distinct',
             'direct' => 'nullable|boolean', 'location_id' => 'nullable|integer|min:1', 'serial_nos' => 'sometimes|array|max:1000',

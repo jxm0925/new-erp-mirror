@@ -453,20 +453,5 @@ Page({
     if (!id) return;
     wx.navigateTo({ url: `/pages/production/work-order/index?id=${id}` });
   },
-  primary(event) {
-    const key = event.currentTarget.dataset.key;
-    const row = this.data.rows.find(item => item.key === key);
-    if (this.data.tab !== 'available' || !this.data.canExecute || !row || !row.canClaim) return this.open(event);
-    if (this.data.busy) return;
-    const id = row.id;
-    this.setData({ busy: true });
-    production.action(id, { action: 'claim', lane: row.lane }).then(response => {
-      wx.showToast({ title: response.message || '接单成功', icon: 'success' });
-      wx.navigateTo({ url: `/pages/production/task/index?id=${id}&lane=${row.lane}` });
-    }).catch(error => {
-      view.modal(this, { theme: 'warn', title: '接单失败', content: view.errorText(error), showCancel: false });
-      this.load();
-    }).finally(() => this.setData({ busy: false }));
-  },
   back() { view.back(); },
 });

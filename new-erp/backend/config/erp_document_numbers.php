@@ -4,7 +4,7 @@ return [
     'business_types' => [
         'sales_return_receipt' => '销售退货到货单',
         'sales_order' => '销售订单', 'sales_quotation' => '销售报价', 'shipment' => '发货单',
-        'sales_return' => '销售退货单', 'aftersales_case' => '售后单', 'sales_order_change' => '订单变更单',
+        'sales_return' => '销售退货单', 'aftersales_case' => '售后单', 'aftersales_reship' => '售后补发单', 'sales_order_change' => '订单变更单',
         'purchase_request' => '采购需求', 'purchase_plan' => '采购计划', 'purchase_order' => '采购订单',
         'purchase_inquiry' => '采购询价', 'supplier_quotation' => '供应商报价记录', 'purchase_receipt' => '采购到货单',
         'purchase_stock_in' => '采购入库单', 'purchase_return' => '采购退货单',

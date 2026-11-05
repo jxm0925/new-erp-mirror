@@ -46,7 +46,7 @@ Page({
   data: {
     woId: 0, opId: 0, opName: '', loading: true, busy: false, error: '', ready: false,
     requirements: [], remaining: 0, canIssue: false, version: 0, batches: [],
-    unitQty: 1, sources: [], groups: [], planChecked: false, planConfirmed: false,
+    unitQty: 0, selectedUnits: [], completedUnits: [], unitPickerOpen: false, unitPickerMode: 'issue', unitPickerContext: {}, unitPickerScope: '', batchUnitText: '', sources: [], groups: [], planChecked: false, planConfirmed: false,
     panel: '', items: [], itemIndex: 0, keyword: '', rows: [], shownSources: [], showPicked: false, pageSelected: false,
     page: 1, lastPage: 1, total: 0, sourceLoading: false, autoLoading: false, sourceError: '', picked: {}, pickedCount: 0,
     batch: null, actualUnits: 1, actual: [], remnants: [], remark: '', confirmed: false, locatorOpen: false, locatorIndex: -1, locatorValue: {},
@@ -54,11 +54,13 @@ Page({
   onLoad(options) {
     const opName = decodeURIComponent(options.name || '');
     this.setData({ woId: Number(options.wo || 0), opId: Number(options.op || 0), opName });
+    this.productionChannel = this.getOpenerEventChannel();
+    if (this.productionChannel && this.productionChannel.on) this.productionChannel.on('productionUnits', data => this.setSelectedUnits(data.units || [], false));
     wx.setNavigationBarTitle({ title: opName ? `随单开料 · ${opName}` : '随单开料' });
     this.load();
   },
   onPullDownRefresh() { this.load().finally(() => wx.stopPullDownRefresh()); },
-  onUnload() { this.sourceSequence = (this.sourceSequence || 0) + 1; this.recommendSequence = (this.recommendSequence || 0) + 1; },
+  onUnload() { this.sourceSequence = (this.sourceSequence || 0) + 1; this.recommendSequence = (this.recommendSequence || 0) + 1; if (this.productionChannel && this.productionChannel.off) this.productionChannel.off('productionUnits'); },
 
   load() {
     this.setData({ loading: true, error: '' });
@@ -76,7 +78,7 @@ Page({
         editable: batch.status === 'issued' || Boolean(batch.can_resubmit),
         sourceText: (batch.input_lines || []).map(sourceName).join('、'),
       }));
-      const unitQty = remaining > 0 ? Math.min(Math.max(1, this.data.unitQty), remaining) : 1;
+      const unitQty = this.data.selectedUnits.length;
       this.setData({ loading: false, ready: true, requirements, remaining, items, batches, workshopReference: ctx.workshop_reference || null, version: Number(ctx.business_version || 0),
         canIssue: Boolean(ctx.can_issue) && remaining > 0, unitQty });
       this.decorateRequirements();
@@ -90,22 +92,31 @@ Page({
     })) });
   },
 
-  changeUnits(event) {
-    const delta = Number(event.currentTarget.dataset.delta || 0);
-    this.setUnits(this.data.unitQty + delta);
-  },
-  unitsInput(event) { this.setUnits(parseInt(event.detail.value, 10) || 1); },
-  setUnits(value) {
-    const next = Math.max(1, Math.min(this.data.remaining || 1, value));
-    if (next === this.data.unitQty) { this.setData({ unitQty: next }); return; }
+  setSelectedUnits(rows, notify = true) {
+    this.recommendSequence = (this.recommendSequence || 0) + 1;
     this.recommended = null;
     this.autoAssignments = null;
-    this.setData({ unitQty: next, groups: [], planChecked: false, planConfirmed: false });
+    this.setData({ selectedUnits: rows, unitQty: rows.length, sources: [], groups: [], planChecked: false, planConfirmed: false });
     this.decorateRequirements();
+    if (notify && this.productionChannel && this.productionChannel.emit) this.productionChannel.emit('productionUnitsChanged', { unit_ids: rows.map(unit => unit.id) });
+  },
+  openUnitPicker(event) {
+    if (this.data.busy) return;
+    const mode = event.currentTarget.dataset.mode || 'issue';
+    if (mode === 'completed' && (!this.data.batch || this.data.batch.status !== 'issued')) return;
+    this.setData({ unitPickerOpen: true, unitPickerMode: mode, unitPickerContext: { work_order_id: this.data.woId, operation_id: mode === 'completed' ? this.data.batch.work_order_operation_id : this.data.opId, batch_id: mode === 'completed' ? this.data.batch.id : 0 }, unitPickerScope: `${this.data.woId}:${this.data.opId}:${mode}:${mode === 'completed' ? this.data.batch.id : 0}` });
+  },
+  closeUnitPicker() { this.setData({ unitPickerOpen: false }); },
+  applyUnitPicker(event) {
+    const rows = event.detail.rows || [];
+    this.setData({ unitPickerOpen: false });
+    if (this.data.unitPickerMode === 'completed') this.setData({ completedUnits: rows, actualUnits: rows.length, confirmed: false });
+    else this.setSelectedUnits(rows);
   },
 
   openSources() {
     if (this.data.busy) return;
+    if (!this.data.selectedUnits.length) return wx.showToast({ title: '请先选择本次开料的编号', icon: 'none' });
     const picked = {};
     this.data.sources.forEach(row => {
       const key = row.original_source_key || row.source_key;
@@ -133,7 +144,7 @@ Page({
     const sequence = this.recommendSequence = (this.recommendSequence || 0) + 1;
     const unitQty = this.data.unitQty;
     this.setData({ autoLoading: true });
-    production.cuttingRecommend(this.data.woId, { operation_id: this.data.opId, unit_qty: unitQty }).then(response => {
+    production.cuttingRecommend(this.data.woId, { operation_id: this.data.opId, unit_qty: unitQty, unit_ids: this.data.selectedUnits.map(unit => unit.id) }).then(response => {
       if (sequence !== this.recommendSequence || this.data.panel !== 'sources' || unitQty !== this.data.unitQty) return;
       const plan = response.data || response;
       const picked = {};
@@ -249,7 +260,7 @@ Page({
 
   planPayload(assignments) {
     const payload = {
-      operation_id: this.data.opId, unit_qty: this.data.unitQty,
+      operation_id: this.data.opId, unit_qty: this.data.unitQty, unit_ids: this.data.selectedUnits.map(unit => unit.id),
       sources: this.data.sources.map(row => ({ source_key: row.source_key, item_id: row.item_id, inventory_balance_id: row.inventory_balance_id,
         physical_material_id: row.physical_material_id || null, source_version: row.source_version, qty: String(row.qty) })),
     };
@@ -314,7 +325,7 @@ Page({
         production.cuttingIssue(this.data.woId, payload).then(response => {
           this.commands.issue = null;
           wx.showToast({ title: '原料已领出，完成后请登记产出', icon: 'none', duration: 2500 });
-          this.setData({ sources: [], groups: [], planChecked: false, planConfirmed: false });
+          this.setData({ selectedUnits: [], unitQty: 0, sources: [], groups: [], planChecked: false, planConfirmed: false });
           const batch = response.data;
           return this.load().then(() => { if (batch && batch.id) this.openBatchById(batch.id); });
         }).catch(error => view.modal(this, { theme: 'warn', title: '领料失败', content: view.errorText(error), showCancel: false }))
@@ -342,9 +353,12 @@ Page({
       const output = actual.filter(line => line.source_key === row.source_key).reduce((sum, line) => sum + Number(line.qty || 0) * Number(line.per_piece_measure || 0), 0);
       row.outputText = `${num(output)} ${sourceUnit(this.batchSource[row.source_key] || {})}`;
     });
-    this.setData({ panel: 'batch', batch, actualUnits: Number(batch.completed_unit_qty || batch.unit_qty), actual, remnants, remark: batch.remark || '', confirmed: false });
+    const completedIds = (batch.completed_unit_ids || []).length ? batch.completed_unit_ids : batch.unit_ids || [];
+    const completedUnits = (batch.units || []).filter(unit => completedIds.includes(unit.id));
+    this.setData({ panel: 'batch', batch, completedUnits, batchUnitText: (batch.units || []).map(unit => unit.serial_no || `第${unit.unit_no}个`).join('、'), actualUnits: (batch.unit_ids || []).length ? completedUnits.length : Number(batch.completed_unit_qty || batch.unit_qty), actual, remnants, remark: batch.remark || '', confirmed: false });
   },
   changeActualUnits(event) {
+    if ((this.data.batch.unit_ids || []).length) return;
     const max = Number(this.data.batch.unit_qty || 1);
     const value = event.type === 'blur' ? (parseInt(event.detail.value, 10) || 1) : this.data.actualUnits + Number(event.currentTarget.dataset.delta || 0);
     this.setData({ actualUnits: Math.max(1, Math.min(max, value)), confirmed: false });
@@ -382,6 +396,7 @@ Page({
     const batch = this.data.batch;
     if (this.data.busy || !batch || !batch.editable) return;
     if (!this.data.confirmed) { wx.showToast({ title: '请先勾选确认已核对产出与余料', icon: 'none' }); return; }
+    if ((batch.unit_ids || []).length && !this.data.completedUnits.length) return wx.showToast({ title: '请选择本次实际做完的编号', icon: 'none' });
     const bad = this.data.remnants.find(row => !/^\d+(?:\.\d+)?$/.test(String(row.measure_qty)) || (Number(row.measure_qty) > 0 && (!row.warehouse_id || !row.location_id)));
     if (bad) { wx.showToast({ title: `${bad.sourceName}：请填写余料数量并选择回库库位`, icon: 'none' }); return; }
     const payload = {
@@ -389,9 +404,11 @@ Page({
       assignments: this.data.actual.map(row => ({ source_key: row.source_key, part_key: row.part_key, qty: String(row.qty === '' ? 0 : row.qty) })),
       remnants: this.data.remnants.map(row => ({ source_key: row.source_key, measure_qty: String(row.measure_qty), warehouse_id: row.warehouse_id, location_id: row.location_id })),
     };
+    if ((batch.unit_ids || []).length) payload.completed_unit_ids = this.data.completedUnits.map(unit => unit.id);
     payload.idempotency_key = this.commandKey(`settle${batch.id}`, payload);
     this.setData({ busy: true });
     production.cuttingSettle(batch.id, payload).then(() => {
+      if ((batch.unit_ids || []).length && this.productionChannel && this.productionChannel.emit) this.productionChannel.emit('productionUnitsChanged', { unit_ids: this.data.completedUnits.map(unit => unit.id) });
       this.commands[`settle${batch.id}`] = null;
       wx.showToast({ title: '实际产出与余料已登记结算', icon: 'none', duration: 2500 });
       this.setData({ panel: '' });

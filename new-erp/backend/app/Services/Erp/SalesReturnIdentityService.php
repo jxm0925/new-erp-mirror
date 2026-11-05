@@ -20,6 +20,7 @@ class SalesReturnIdentityService
 {
     private const STATES = [
         'restock' => 'sales_return_restock_pending',
+        'defective' => 'sales_return_restock_pending',
         'pending' => 'sales_return_pending',
         'scrap' => 'sales_return_scrapped',
         'rejected' => 'sales_return_rejected',
@@ -77,9 +78,28 @@ class SalesReturnIdentityService
             ->orderBy('identity.id')->paginate(isset($filters['ids']) ? max(1, count($filters['ids'])) : min(100, max(1, (int) ($filters['per_page'] ?? 10))), ['*'], 'page', max(1, (int) ($filters['page'] ?? 1)));
     }
 
+    /** null 表示普通退货；售后退货必须使用处理明细中保存的实际设备名单。 */
+    public function aftersalesSerialIds(SalesReturnItem $line): ?array
+    {
+        $line->loadMissing('salesReturn');
+        $return = $line->salesReturn;
+        if (! $return?->aftersales_action_id) return null;
+        return DB::table('erp_aftersales_action_items as action_item')
+            ->join('erp_aftersales_actions as action', 'action.id', '=', 'action_item.action_id')
+            ->join('erp_aftersales_case_items as case_item', function ($join): void {
+                $join->on('case_item.id', '=', 'action_item.case_item_id')->on('case_item.case_id', '=', 'action.case_id');
+            })
+            ->where('action.id', $return->aftersales_action_id)->where('action.case_id', $return->aftersales_case_id)
+            ->where('action_item.return_qty', '>', 0)->where('case_item.sales_order_line_id', $line->sales_order_line_id)
+            ->whereNotNull('case_item.inventory_serial_id')->orderBy('case_item.id')
+            ->when(DB::transactionLevel() > 0, fn ($query) => $query->lockForUpdate())
+            ->pluck('case_item.inventory_serial_id')->map(fn ($id) => (int) $id)->unique()->values()->all();
+    }
+
     private function candidateQuery(SalesReturnItem $line): Builder
     {
         $current = DB::transactionLevel() > 0;
+        $aftersalesSerials = $this->aftersalesSerialIds($line);
         return DB::table('erp_inventory_serials as serial')
             ->join('erp_inventory_serial_events as event', function ($join): void {
                 $join->on('event.inventory_serial_id', '=', 'serial.id')->where('event.event_type', 'sales_shipment_outbound');
@@ -95,6 +115,7 @@ class SalesReturnIdentityService
             ->join('erp_inventory_transactions as transaction', 'transaction.id', '=', 'outbound.transaction_id')
             ->where('serial.item_id', $line->item_id)->where('shipment_line.item_id', $line->item_id)->where('outbound.item_id', $line->item_id)
             ->where('shipment_line.sales_order_line_id', $line->sales_order_line_id)
+            ->when($aftersalesSerials !== null, fn ($query) => $query->whereIn('serial.id', $aftersalesSerials))
             ->where('serial.serial_status', 'shipped')->where('event.document_type', 'sales_shipment')
             ->where('transaction.transaction_type', 'sales_shipment_outbound')->where('transaction.posting_status', 'posted')->where('outbound.change_qty', '<', 0)
             ->whereColumn('outbound.source_id', 'shipment.id')
@@ -143,7 +164,7 @@ class SalesReturnIdentityService
             'shipment_line.id as shipment_line_id', 'shipment_line.shipment_id', 'outbound.id as outbound_id',
             'outbound.change_qty', 'outbound.unit_cost', 'outbound.cost_amount',
         ])->orderBy('serial.id')->get();
-        if ($facts->count() !== count($selected) || $facts->pluck('id')->unique()->count() !== count($selected)) $this->fail('所选序列号不属于当前订单原发货，或已退回、已被其他业务处理，请重新核对。');
+        if ($facts->count() !== count($selected) || $facts->pluck('id')->unique()->count() !== count($selected)) $this->fail('所选序列号不属于当前退货允许接收的原发货设备，或已退回、已被其他业务处理，请重新核对。');
         $batches = $facts->pluck('batch_no')->unique()->values();
         if ($batches->count() !== 1 || (string) $receiptLine->batch_no !== (string) $batches->first()) $this->fail('同一退货行本次只能接收同一个原发货批次，批次必须与所选序列号一致；不同批次请分次收货。');
         $allocations = $this->bindOriginalCosts($returnLine, $facts);
@@ -267,7 +288,8 @@ class SalesReturnIdentityService
         foreach (self::STATES as $disposition => $state) {
             if (bccomp((string) $identities->where('disposition', $disposition)->count(), (string) $line->{$disposition.'_base_qty'}, 8) !== 0) $this->fail('退货到货的序列处理数量与原确认事实不一致。');
         }
-        $restocks = $identities->where('disposition', 'restock');
+        // 残次品入库与转入库共用同一个序列身份池：行上的 defective_base_qty 决定走 defective 身份。
+        $restocks = $identities->whereIn('disposition', (float) $line->defective_base_qty > 0 ? ['defective'] : ['restock']);
         $serials = InventorySerial::whereIn('id', $restocks->pluck('inventory_serial_id'))->orderBy('id')->lockForUpdate()->get()->keyBy('id');
         $allocations = SalesReturnCostAllocation::whereIn('id', $restocks->pluck('cost_allocation_id'))->orderBy('id')->lockForUpdate()->get()->keyBy('id');
         $segments = [];
@@ -307,6 +329,27 @@ class SalesReturnIdentityService
             'batch_no' => $line->batch_no, 'serial_status' => 'available', 'outbound_at' => null, 'reserved_at' => null, 'posted_at' => now()]);
         $identity->update(['inventory_transaction_item_id' => $transactionItem->id, 'posted_at' => now()]);
         $this->event($serial, $line, $identity, 'sales_return_inbound', self::STATES['restock'], 'available', $operatorId);
+    }
+
+    /** 转残次品入库：与转入库同一条“原发运成本”事实链，序列号结束于维修中状态而非可售。 */
+    public function completeDefective(int $identityId, InventoryTransactionItem $transactionItem, ?int $operatorId): void
+    {
+        $identity = SalesReturnSerialIdentity::with([
+            'receiptItem' => fn ($query) => $query->lockForUpdate(),
+            'receiptItem.receipt' => fn ($query) => $query->lockForUpdate(),
+        ])->lockForUpdate()->findOrFail($identityId);
+        $line = $identity->receiptItem;
+        $serial = InventorySerial::lockForUpdate()->findOrFail($identity->inventory_serial_id);
+        if ($identity->inventory_transaction_item_id || $identity->disposition !== 'defective' || $serial->serial_status !== self::STATES['defective']
+            || $transactionItem->source_type !== 'sales_return_receipt' || (int) $transactionItem->source_item_id !== (int) $line->id
+            || (int) $transactionItem->item_id !== (int) $line->item_id || $transactionItem->batch_no !== $identity->source_batch_no
+            || bccomp((string) $transactionItem->change_qty, '1', 8) !== 0 || bccomp((string) $transactionItem->cost_amount, (string) $identity->cost_amount_snapshot, 4) !== 0) $this->fail('退货序列号与正式入库事实不一致。');
+        $balance = InventoryBalance::where('item_id', $line->item_id)->where('warehouse_id', $line->warehouse_id)
+            ->where('location_id', $line->location_id)->where('batch_no', $line->batch_no)->lockForUpdate()->firstOrFail();
+        $serial->update(['inventory_balance_id' => $balance->id, 'warehouse_id' => $line->warehouse_id, 'location_id' => $line->location_id,
+            'batch_no' => $line->batch_no, 'serial_status' => 'repair', 'outbound_at' => null, 'reserved_at' => null, 'posted_at' => now()]);
+        $identity->update(['inventory_transaction_item_id' => $transactionItem->id, 'posted_at' => now()]);
+        $this->event($serial, $line, $identity, 'sales_return_inbound', self::STATES['defective'], 'repair', $operatorId);
     }
 
     private function serialCost(object $fact): string

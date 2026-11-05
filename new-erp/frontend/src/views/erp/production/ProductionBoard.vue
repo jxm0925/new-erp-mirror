@@ -637,7 +637,7 @@ export default {
           location_id: r.location_id,
           remark: r.remark || undefined
         })
-        this.$message.success(data.message || '入库申请已提交，等待仓库确认')
+        this.showReceiptResult(data)
         r.visible = false
         this.load(true)
       } catch (e) {
@@ -651,13 +651,20 @@ export default {
       if (this.saving) return
       this.saving = true
       try {
-        await submitWarehouseCommand('mfg_receipt.request', job.id)
-        this.$message.success('入库申请已提交，等待仓库确认')
+        const result = await submitWarehouseCommand('mfg_receipt.request', job.id)
+        this.showReceiptResult(result)
         await this.load(true)
       } catch (e) {
         this.$message.error(errorText(e, '申请结果核对失败'))
         this.pendingReceipts = pendingWarehouseCommands('mfg_receipt.request')
       } finally { this.saving = false }
+    },
+    showReceiptResult(result) {
+      const receipts = result.related_receipts?.length ? result.related_receipts : result.receipts || []
+      const numbers = Array.from(new Set([...(result.receipt_nos || []), ...receipts.map(row => row.receipt_no), result.receipt_no].filter(Boolean)))
+      const message = numbers.length ? `入库申请已提交：${numbers.join('、')}，等待仓库分别核对。` : result.message || '入库申请已提交，等待仓库确认'
+      if (numbers.length > 1) this.$alert(message, '已生成多张入库申请', { type: 'success', confirmButtonText: '知道了' }).catch(() => {})
+      else this.$message.success(message)
     }
   }
 }

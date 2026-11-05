@@ -21,6 +21,7 @@ use App\Models\Erp\MfgWorkOrderMaterial;
 use App\Models\Erp\MfgWorkOrderOperation;
 use App\Models\Erp\MfgWorkOrderUnit;
 use App\Models\Erp\Warehouse;
+use App\Models\Erp\CancellationProductionDisposition as Disposition;
 use App\Services\Erp\DocumentNumberService;
 use App\Services\Erp\AuthContextService;
 use App\Services\Erp\ProductionMediaService;
@@ -42,7 +43,7 @@ final class MaterialReturnService
     use ProductionActor;
 
     private const EPS = 0.00001;
-    public const TYPES = ['surplus' => '余料/错料退回', 'defective' => '不良退回', 'scrapped' => '报废设备拆回'];
+    public const TYPES = ['surplus' => '余料/错料退回', 'defective' => '不良退回', 'scrapped' => '报废设备拆回', 'cancellation' => '停产拆解退料'];
     public const STATUS_LABELS = ['pending' => '待仓库确认', 'approved' => '已入库', 'rejected' => '已驳回', 'cancelled' => '已撤回'];
     public const DISPOSITIONS = ['release' => '判定可用', 'scrap' => '报废', 'supplier_return' => '退供应商'];
     /** 自制半成品的处置决定按负责人规则审核或免审，仓库接收入库后才执行。 */
@@ -58,9 +59,12 @@ final class MaterialReturnService
     ) {}
 
     /** 退料弹窗：本道每种料的可退数量（按三种退料类型）和可退编号；自制半成品附不良处置可选的返工起点。 */
-    public function options(int $workOrderId, int $operationId, ?int $actorId = null): array
+    public function options(int $workOrderId, int $operationId, ?int $actorId = null, ?int $dispositionId = null): array
     {
         [$wo, $op] = $this->context($workOrderId, $operationId, false);
+        $disposition = $dispositionId ? Disposition::whereKey($dispositionId)->where('work_order_id', $workOrderId)->firstOrFail() : null;
+        if ($disposition) abort_unless(!$disposition->resolved_at && $disposition->status === 'terminating', 422, '本台处置状态已变化，请先选择终止处置再退料。');
+        $targetUnit = $disposition ? MfgWorkOrderUnit::findOrFail($disposition->work_order_unit_id) : null;
         $rows = [];
         foreach ($this->issues->receivable($op, false, true) as $m) {
             if ((float) $m->issued_qty <= self::EPS && ! $this->sources($wo, $m)->count()) continue;
@@ -75,16 +79,20 @@ final class MaterialReturnService
                 'made' => $item && $this->isMade($item), 'rework_operations' => $item && $this->isMade($item) ? $this->reworkStarts($wo, $m)['operations'] : []];
             if ($mode !== 'none') {
                 $row['serials'] = array_map(fn ($s) => array_intersect_key($s, array_flip(['id', 'serial_no', 'batch_no', 'unit_serial_no', 'unit_status', 'kind'])),
-                    array_values($this->serialCandidates($wo, $op, $m)));
+                    array_values($this->serialCandidates($wo, $op, $m, null, false, false, $disposition)));
             }
             if ($mode !== 'required') {
-                foreach (array_keys(self::TYPES) as $type) $row['limits'][$type] = $this->quantityLimit($wo, $op, $m, $type);
+                foreach (array_keys(self::TYPES) as $type) $row['limits'][$type] = $type === 'cancellation' && !$disposition
+                    ? 0 : $this->quantityLimit($wo, $op, $m, $type, null, true, $disposition);
             }
             if (! $row['serials'] && ! array_filter($row['limits'], fn ($v) => $v > self::EPS)) continue;
             $rows[] = $row;
         }
         return ['work_order_id' => (int) $wo->id, 'operation_id' => (int) $op->id, 'operation_name' => $op->operation_name,
-            'types' => collect(self::TYPES)->map(fn ($label, $value) => ['value' => $value, 'label' => $label])->values()->all(), 'materials' => $rows,
+            'disposition_id' => $disposition?->id, 'unit_serial_no' => $targetUnit?->serial_no, 'unit_no' => $targetUnit?->unit_no,
+            'target_unit' => $targetUnit ? ['id' => $targetUnit->id, 'serial_no' => $targetUnit->serial_no, 'unit_no' => $targetUnit->unit_no] : null,
+            'types' => collect(self::TYPES)->reject(fn ($label, $value) => $value === 'cancellation' && !$disposition)
+                ->map(fn ($label, $value) => ['value' => $value, 'label' => $label])->values()->all(), 'materials' => $rows,
             'plan_actions' => collect(self::PLAN_ACTIONS)->map(fn ($label, $value) => ['value' => $value, 'label' => $label])->values()->all(),
             'plan_needs_review' => ProductionReviewers::needsReview($wo, $actorId), 'plan_reviewers' => ProductionReviewers::names($wo)];
     }
@@ -97,15 +105,24 @@ final class MaterialReturnService
             $type = (string) $data['return_type'];
             if (! isset(self::TYPES[$type])) $this->fail('return_type_invalid', '请选择退料类型。');
             [$wo, $op] = $this->context($workOrderId, $operationId, true);
-            $rows = $this->buildLines($wo, $op, $type, $data['lines'], null);
+            $disposition = null;
+            if ($type === 'cancellation') {
+                $disposition = Disposition::whereKey((int) ($data['disposition_id'] ?? 0))->where('work_order_id', $wo->id)->lockForUpdate()->first();
+                abort_unless($disposition && !$disposition->resolved_at && $disposition->status === 'terminating', 422, '请先由接单人选择本台取消、拆解退料或报废，再申请停产退料。');
+                abort_unless(CancellationProductionService::canDecide($disposition, $actor), 403, '请由这张工单的实际接单人申请停产退料。');
+            }
+            $rows = $this->buildLines($wo, $op, $type, $data['lines'], null, null, $disposition);
             $plan = ! empty($data['disposition_plan']) ? $this->buildPlan($wo, $type, $rows, $data['disposition_plan'], $actor) : null;
             $return = MfgMaterialReturn::create([
                 'return_no' => $this->numbers->next('material_return', 'MRT'), 'work_order_id' => $wo->id, 'work_order_operation_id' => $op->id,
                 'return_type' => $type, 'status' => 'pending', 'business_version' => 1,
+                'disposition_id' => $disposition?->id,
                 'reason' => mb_substr(trim((string) $data['reason']), 0, 500), 'disposition_plan' => $plan,
                 'requested_by_legacy_id' => $this->actorId($actor), 'requested_by_name' => $this->actorName($actor), 'requested_at' => now(),
             ]);
             foreach ($rows as $row) MfgMaterialReturnLine::create($row + ['return_id' => $return->id, 'work_order_id' => $wo->id]);
+            if ($type === 'cancellation' && isset($disposition)) DispositionLaborService::pauseForDisposition(
+                (int) $disposition->id, $return->requested_at, $this->actorId($actor));
             $planText = $plan ? '，处置：'.self::PLAN_ACTIONS[$plan['action']].($plan['action'] === 'rework' ? '（从'.$plan['start_operation_name'].'开始）' : '')
                 .($plan['needs_review'] ? '，等 '.$plan['reviewers'].' 审核方案' : '，方案免审通过，待仓库接收') : '';
             $this->workOrders->log($wo, 'material_return_requested', $wo->status, $wo->status,
@@ -185,6 +202,7 @@ final class MaterialReturnService
             $return->update(['status' => 'rejected', 'reviewed_by_legacy_id' => $this->actorId($actor), 'reviewed_by_name' => $this->actorName($actor),
                 'reviewed_at' => now(), 'review_remark' => mb_substr($remark, 0, 500), 'business_version' => (int) $return->business_version + 1]);
             $wo = MfgWorkOrder::query()->lockForUpdate()->findOrFail($return->work_order_id);
+            app(DispositionMaterialService::class)->allocateReturnSerials($wo);
             $this->workOrders->log($wo, 'material_return_rejected', $wo->status, $wo->status, "退料单 {$return->return_no} 被驳回：{$return->review_remark}", $actor, ['return_id' => $return->id]);
             $this->workOrders->refreshCompletion($wo, $actor);
             return $return->fresh(['lines']);
@@ -202,6 +220,7 @@ final class MaterialReturnService
             $return->update(['status' => 'cancelled', 'reviewed_by_legacy_id' => $this->actorId($actor), 'reviewed_by_name' => $this->actorName($actor), 'reviewed_at' => now(),
                 'business_version' => (int) $return->business_version + 1]);
             $wo = MfgWorkOrder::query()->lockForUpdate()->findOrFail($return->work_order_id);
+            app(DispositionMaterialService::class)->allocateReturnSerials($wo);
             $this->workOrders->log($wo, 'material_return_cancelled', $wo->status, $wo->status, "撤回退料申请 {$return->return_no}", $actor, ['return_id' => $return->id]);
             $this->workOrders->refreshCompletion($wo, $actor);
             return $return->fresh(['lines']);
@@ -503,8 +522,9 @@ final class MaterialReturnService
     private function doApprove(MfgMaterialReturn $return, MfgWorkOrder $wo, MfgWorkOrderOperation $op, ?int $locationId, ?string $remark, object $actor, ?int $onlyIssueId = null): void
     {
         $lines = MfgMaterialReturnLine::query()->where('return_id', $return->id)->orderBy('id')->lockForUpdate()->get();
+        $disposition = $return->disposition_id ? Disposition::whereKey($return->disposition_id)->lockForUpdate()->firstOrFail() : null;
         // 审核时按当前状态重算：其他已审核/待审核的退料、新的收料和报工都可能改变可退数量。
-        $fresh = collect($this->buildLines($wo, $op, $return->return_type, $this->payloadOf($lines), (int) $return->id, $onlyIssueId))
+        $fresh = collect($this->buildLines($wo, $op, $return->return_type, $this->payloadOf($lines), (int) $return->id, $onlyIssueId, $disposition))
             ->whereNotNull('inventory_serial_id')->keyBy('inventory_serial_id');
         // 申请后编号可能被互换到别的设备，按审核时实际装的设备拆下。
         foreach ($lines->whereNotNull('inventory_serial_id') as $line) {
@@ -532,14 +552,19 @@ final class MaterialReturnService
         $after = $return->return_type === 'scrapped' ? '' : '，已冲减已领数量'.($return->return_type === 'defective' ? '，不良料已冻结待库管处置，请重新收料' : '');
         $this->workOrders->log($wo, 'material_returned', $wo->status, $wo->status,
             "退料单 {$return->return_no} 已入库（{$where}）：".$this->summary($lines->map(fn ($l) => $l->toArray())->all()).$after, $actor, ['return_id' => $return->id]);
+        app(DispositionMaterialService::class)->allocateReturnSerials($wo);
+        app(DispositionMaterialService::class)->refreshWorkOrder($wo);
+        app(CancellationProductionService::class)->finishUnusedAfterReturn($wo, $actor);
     }
 
     /**
      * 校验并生成退料明细。$exceptReturnId 为审核时排除本单自身占用。
      * 按数量的从最近的收料流水往前分配；按编号的每个编号一行。
      */
-    private function buildLines(MfgWorkOrder $wo, MfgWorkOrderOperation $op, string $type, array $lines, ?int $exceptReturnId, ?int $onlyIssueId = null): array
+    private function buildLines(MfgWorkOrder $wo, MfgWorkOrderOperation $op, string $type, array $lines, ?int $exceptReturnId, ?int $onlyIssueId = null, ?Disposition $disposition = null): array
     {
+        if ($type === 'cancellation') abort_unless($disposition && !$disposition->resolved_at && $disposition->status === 'terminating'
+            && (int) $disposition->work_order_id === (int) $wo->id, 422, '本台停产处置状态已变化，请刷新后办理退料。');
         $materials = $this->issues->receivable($op, true, true)->keyBy('id');
         $grouped = [];
         foreach ($lines as $line) {
@@ -556,18 +581,29 @@ final class MaterialReturnService
             $mode = $item->serialTrackingMode();
             $ids = array_values(array_unique($want['serial_ids']));
             $numbered = 0;
+            $numberedBySource = [];
             if ($mode !== 'none' && $ids) {
-                $candidates = $this->serialCandidates($wo, $op, $m, $exceptReturnId, true, (bool) $onlyIssueId);
+                $candidates = $this->serialCandidates($wo, $op, $m, $exceptReturnId, true, (bool) $onlyIssueId, $disposition);
                 foreach ($ids as $serialId) {
                     $c = $candidates[$serialId] ?? null;
                     if ($c && $onlyIssueId && (int) $c['source']->source_id !== $onlyIssueId) $c = null;
                     if (! $c) $this->fail('return_serial_invalid', $m->component_item_name.' 的编号 #'.$serialId.' 不能退：不是本道领出的、已退过、已在其他退料申请里，或所在的设备已入库。');
-                    if (($type === 'scrapped') !== ($c['kind'] === 'scrapped'))
+                    if ($type !== 'cancellation' && (($type === 'scrapped') !== ($c['kind'] === 'scrapped')))
                         $this->fail('return_serial_type', '编号 '.$c['serial_no'].($c['kind'] === 'scrapped' ? ' 装在报废设备上，请选“报废设备拆回”。' : ' 不在报废设备上，不能选“报废设备拆回”。'));
+                    $sourceId = (int) $c['source']->id;
+                    $numberedBySource[$sourceId] = ($numberedBySource[$sourceId] ?? 0) + 1;
+                    $targetUnit = $disposition ? MfgWorkOrderUnit::findOrFail($disposition->work_order_unit_id) : null;
                     $rows[] = $this->lineRow($m, $c['source'], 1.0) + ['inventory_serial_id' => $serialId, 'serial_no' => $c['serial_no'],
-                        'unit_id' => $c['unit_id'], 'unit_serial_no' => $c['unit_serial_no'], 'component_id' => $c['component_id']];
+                        'unit_id' => $targetUnit?->id ?? $c['unit_id'], 'unit_serial_no' => $targetUnit?->serial_no ?? $c['unit_serial_no'], 'component_id' => $c['component_id']];
                     $numbered++;
                 }
+            }
+            if ($disposition && $numbered) {
+                abort_if($numbered > app(DispositionMaterialService::class)->quantityLimit($disposition, (int) $m->id, $exceptReturnId) + self::EPS,
+                    422, '所选编号超过本台冻结的材料总数量份额。');
+                app(DispositionMaterialService::class)->allocateReturnSerials($wo, $disposition, $rows, $exceptReturnId);
+                foreach ($numberedBySource as $sourceId => $count) abort_if($count > app(DispositionMaterialService::class)->sourceLimit($disposition, $sourceId, $exceptReturnId) + self::EPS,
+                    422, '所选编号超过本台实际锁定的原领料份额。');
             }
             // 必须按编号的料只走编号；收回配送时历史上无编号领出的，仍按原领料单数量冲回。
             if ($mode === 'required' && ! $onlyIssueId) {
@@ -580,7 +616,7 @@ final class MaterialReturnService
             // 收回配送：整单按原领料单冲回，不受已开工设备数限制（签收前不能开工）。
             // 可退总量按本道整体口径算，本次已选的编号也占这个总量，编号 + 无编号合计不能超。
             // 业务上限（不封顶到无编号余量）含本次编号，扣掉编号后再受无编号实物余量约束。
-            $total = $onlyIssueId ? $qty + $numbered : $this->quantityLimit($wo, $op, $m, $type, $exceptReturnId, false);
+            $total = $onlyIssueId ? $qty + $numbered : $this->quantityLimit($wo, $op, $m, $type, $exceptReturnId, false, $disposition);
             $unnumbered = $onlyIssueId ? $qty : round($this->sources($wo, $m, $exceptReturnId)->sum('remaining'), 4);
             $limit = max(0, round(min($total - $numbered, $unnumbered), 4));
             $total = round($limit + $numbered, 4);
@@ -590,8 +626,15 @@ final class MaterialReturnService
             foreach ($this->sources($wo, $m, $exceptReturnId, true, $onlyIssueId) as $source) {
                 if ($left <= self::EPS) break;
                 $take = min($left, $source['remaining']);
+                if ($disposition) $take = min($take, max(0, app(DispositionMaterialService::class)->sourceLimit($disposition, (int) $source['item']->id, $exceptReturnId)
+                    - ($numberedBySource[(int) $source['item']->id] ?? 0)));
                 if ($take <= self::EPS) continue;
-                $rows[] = $this->lineRow($m, $source['item'], round($take, 4));
+                $row = $this->lineRow($m, $source['item'], round($take, 4));
+                if ($disposition) {
+                    $targetUnit = MfgWorkOrderUnit::findOrFail($disposition->work_order_unit_id);
+                    $row += ['unit_id' => $targetUnit->id, 'unit_serial_no' => $targetUnit->serial_no];
+                }
+                $rows[] = $row;
                 $left = round($left - $take, 4);
             }
             if ($left > self::EPS) $this->fail('return_qty_exceeded', $m->component_item_name.' 原收料未退数量不足，最多可退 '.$this->num($qty - $left).($m->unit_name ?: '').'。');
@@ -617,13 +660,15 @@ final class MaterialReturnService
     /**
      * 按数量的可退上限。占用 = 其他待审核申请；已审核的退料已体现在已领数量里（报废设备拆回除外，单独累计）。
      */
-    private function quantityLimit(MfgWorkOrder $wo, MfgWorkOrderOperation $op, MfgWorkOrderMaterial $m, string $type, ?int $exceptReturnId = null, bool $capUnnumbered = true): float
+    private function quantityLimit(MfgWorkOrder $wo, MfgWorkOrderOperation $op, MfgWorkOrderMaterial $m, string $type, ?int $exceptReturnId = null, bool $capUnnumbered = true, ?Disposition $disposition = null): float
     {
         $pending = fn (array $types, array $statuses) => (float) MfgMaterialReturnLine::query()->where('work_order_id', $wo->id)->where('material_id', $m->id)
             ->whereHas('materialReturn', fn ($q) => $q->whereIn('return_type', $types)->whereIn('status', $statuses)
                 ->when($exceptReturnId, fn ($w, $v) => $w->where('id', '!=', $v)))->sum('qty');
         $unreturned = round($this->sources($wo, $m, $exceptReturnId)->sum('remaining'), 4);
-        if ($type === 'scrapped') {
+        if ($type === 'cancellation') {
+            $limit = $disposition ? app(DispositionMaterialService::class)->quantityLimit($disposition, (int) $m->id, $exceptReturnId) : 0;
+        } elseif ($type === 'scrapped') {
             $planned = (float) $wo->planned_qty;
             $scrapped = MfgUnitReport::query()->where('work_order_operation_id', $op->id)->whereIn('result', ['passed', 'scrap'])
                 ->whereIn('unit_id', MfgWorkOrderUnit::query()->where('work_order_id', $wo->id)->where('status', 'scrapped')->select('id'))->distinct()->count('unit_id');
@@ -631,7 +676,8 @@ final class MaterialReturnService
         } else {
             $used = $type === 'surplus' ? $this->issues->reachedUnits($op)
                 : (float) MfgWorkOrderUnit::query()->where('work_order_id', $wo->id)->where('status', 'stored')->count();
-            $limit = (float) $m->issued_qty - $this->issues->neededFor($m, $wo, $used) - $pending(['surplus', 'defective'], ['pending']);
+            $limit = (float) $m->issued_qty - DispositionMaterialService::unavailableQuantity((int) $wo->id, (int) $m->id)
+                - $this->issues->neededFor($m, $wo, $used) - $pending(['surplus', 'defective'], ['pending']);
         }
         return max(0, round($capUnnumbered ? min($limit, $unreturned) : $limit, 4));
     }
@@ -682,7 +728,7 @@ final class MaterialReturnService
      * 可退编号：本道收料领出、最近一次领用就是本工单、现在仍为生产已领、不在其他待审核申请里；
      * 装在未入库的设备上（active）、报废设备上（scrapped）或没登记到设备（unbound）；整单配送收回也接纳已取消台。键为库存序列号 ID。
      */
-    private function serialCandidates(MfgWorkOrder $wo, MfgWorkOrderOperation $op, MfgWorkOrderMaterial $m, ?int $exceptReturnId = null, bool $lock = false, bool $allowCancelledUnits = false): array
+    private function serialCandidates(MfgWorkOrder $wo, MfgWorkOrderOperation $op, MfgWorkOrderMaterial $m, ?int $exceptReturnId = null, bool $lock = false, bool $allowCancelledUnits = false, ?Disposition $disposition = null): array
     {
         $issues = MfgMaterialIssue::query()->where('work_order_id', $wo->id)->where('work_order_operation_id', $op->id)->orderBy('id')->get();
         $picked = [];
@@ -717,6 +763,12 @@ final class MaterialReturnService
             $source = $sourceItems->first(fn ($i) => (int) $i->source_id === (int) $picked[$s->id] && (int) $i->warehouse_id === (int) $event->warehouse_id
                 && (int) $i->location_id === (int) $event->location_id && (string) $i->batch_no === (string) $event->batch_no);
             if (! $source) continue;
+            if ($disposition) {
+                if ($unit && (int) $unit->id !== (int) $disposition->work_order_unit_id) continue;
+                $frozen = collect(data_get($disposition->material_allocation_snapshot, 'sources', []))->first(fn ($row) => $row['kind'] === 'issue' && $row['id'] === (int) $source->id);
+                if (!$frozen || !in_array((int) $s->id, array_map('intval', [...($frozen['serial_ids'] ?? []), ...($frozen['unbound_serial_ids'] ?? [])]), true)) continue;
+            } elseif (!$allowCancelledUnits && (($unit && in_array((int) $unit->id, CancellationProductionService::blockedUnitIds((int) $wo->id), true))
+                || in_array((int) $s->id, DispositionMaterialService::reservedSerialIds((int) $wo->id), true))) continue;
             $out[(int) $s->id] = ['id' => (int) $s->id, 'serial_no' => $s->serial_no, 'batch_no' => $s->batch_no, 'source' => $source,
                 'unit_id' => $unit?->id, 'unit_serial_no' => $unit?->serial_no, 'unit_status' => $unit?->status, 'component_id' => $component?->id,
                 'kind' => ! $unit ? 'unbound' : ($unit->status === 'scrapped' ? 'scrapped' : 'active')];

@@ -1,12 +1,13 @@
 const warehouse = require('../../services/warehouse');
+const production = require('../../services/production');
 const ui = require('../../utils/warehouse-page');
 
 function describe(row) {
   const d = row.dimensions || {};
   const size = ['length_mm', 'width_mm', 'thickness_mm'].filter(key => d[key] !== null && d[key] !== undefined && d[key] !== '').map(key => ui.quantity(d[key])).join(' × ');
   return Object.assign({}, row, {
-    title: row.title || row.item_name || row.serial_no || row.physical_no || '',
-    subtitle: row.subtitle || [row.item_code, row.spec, row.model, row.material_grade, row.category_name].filter(Boolean).join(' · '),
+    title: row.title || row.item_name || row.serial_no || row.physical_no || (row.unit_no ? `第${row.unit_no}个` : ''),
+    subtitle: row.subtitle || [row.item_code, row.spec, row.model, row.material_grade, row.category_name].filter(Boolean).join(' · ') || row.status_label || '',
     detail: row.detail || [row.physical_no || row.serial_no, row.warehouse_name, row.location_code, row.batch_no].filter(Boolean).join(' · '),
     measure: [size ? size + ' mm' : '', d.area_m2 != null ? ui.quantity(d.area_m2) + ' m²' : ''].filter(Boolean).join(' · '),
   });
@@ -46,7 +47,11 @@ Component({
         } else {
           const query = { page: this.data.page, per_page: 10, keyword: this.data.keyword.trim(), warehouse_id: context.warehouse_id || undefined,
             location_id: context.location_id || undefined, category_id: (this.data.categories[this.data.categoryIndex] || {}).id || undefined };
-          const response = this.properties.mode === 'serial'
+          const response = this.properties.mode === 'cutting_unit'
+            ? await production.cutting(context.work_order_id, Object.assign(query, { operation_id: context.operation_id, batch_id: context.batch_id || undefined, scope: 'units' }))
+            : this.properties.mode === 'production_unit'
+            ? await production.receivableUnits(context.work_order_id, context.operation_id, query)
+            : this.properties.mode === 'serial'
             ? await warehouse.balanceSerials(context.balance_id, Object.assign(query, { for_transfer: 1 }))
             : await warehouse.get('inventory/material-physicals/transfer-candidates', query);
           if (sequence !== this.sequence || !this.current()) return;
@@ -65,6 +70,7 @@ Component({
     choose(event) {
       if (!this.current() || this.data.loading) return;
       const row = this.data.visibleRows.find(row => String(row.id) === String(event.currentTarget.dataset.id)); if (!row) return;
+      if (row.selectable === false && !this.selection[String(row.id)]) return this.setData({ error: row.disabled_reason || '这个编号当前不能选择' });
       if (this.selection[String(row.id)]) delete this.selection[String(row.id)];
       else {
         if (!this.properties.multiple) this.selection = {};

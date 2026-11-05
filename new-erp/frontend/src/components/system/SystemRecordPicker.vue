@@ -10,7 +10,7 @@
     </div>
     <el-alert v-if="error" :title="error" type="error" show-icon :closable="false" />
     <el-table v-loading="loading" :data="pageRows" border max-height="380" @row-click="toggle">
-      <el-table-column label="选择" width="58" align="center"><template slot-scope="{ row }"><el-radio v-if="singleRecord" class="operation-choice" :value="selectedRows[0] && selectedRows[0][valueKey]" :label="row[valueKey]" :aria-label="'选择：' + displayName(row)" @click.native.stop @change="toggle(row)">&nbsp;</el-radio><el-checkbox v-else :value="!!selected[row[valueKey]]" @click.native.stop @change="toggle(row)" /></template></el-table-column>
+      <el-table-column label="选择" width="58" align="center"><template slot-scope="{ row }"><el-radio v-if="singleRecord" class="operation-choice" :disabled="!canSelect(row) || isRequired(row)" :value="selectedRows[0] && selectedRows[0][valueKey]" :label="row[valueKey]" :aria-label="'选择：' + displayName(row)" @click.native.stop @change="toggle(row)">&nbsp;</el-radio><el-checkbox v-else :disabled="!canSelect(row) || isRequired(row)" :value="!!selected[row[valueKey]]" @click.native.stop @change="toggle(row)" /></template></el-table-column>
       <template v-if="columns.length"><el-table-column v-for="column in columns" :key="column.prop" :prop="column.prop" :label="column.label" :min-width="column.width || 140"><template slot-scope="{ row }">{{ columnValue(row, column) }}</template></el-table-column></template>
       <template v-else><el-table-column :prop="recordConfig.code" :label="recordConfig.codeLabel" min-width="140" />
       <el-table-column :label="recordConfig.nameLabel" min-width="150"><template slot-scope="{ row }">{{ displayName(row) }}</template></el-table-column></template>
@@ -21,8 +21,8 @@
     </el-table>
     <div class="picker-pagination"><span v-if="localRows.length">查询结果 {{ total }} 条 · 当前单位 {{ matchingLocalRows.length }} 项</span><span v-else>共 {{ total }} 条</span><el-pagination background small layout="prev, pager, next" :page-size="pageSize" :current-page="page" :total="total" @current-change="changePage" /></div>
     </div></div>
-    <div class="selected-records"><span>已选择 {{ selectedRows.length }} 项</span><el-tag v-for="row in selectedRows" :key="row[valueKey]" closable @close="remove(row[valueKey])">{{ displayName(row) }}</el-tag></div>
-    <span slot="footer"><el-button @click="$emit('update:visible', false)">取消</el-button><el-button type="success" :disabled="loading || !!error || (singleRecord && selectedRows.length !== 1)" @click="confirm">确认选择</el-button></span>
+    <div class="selected-records"><span>已选择 {{ selectedRows.length }} 项<template v-if="requiredCount !== null"> / 本次应选 {{ requiredCount }} 项</template><template v-else-if="maxCount !== null"> / 最多 {{ maxCount }} 项</template></span><el-tag v-for="row in selectedRows" :key="row[valueKey]" :closable="!isRequired(row)" @close="remove(row[valueKey])">{{ displayName(row) }}</el-tag></div>
+    <span slot="footer"><el-button @click="$emit('update:visible', false)">取消</el-button><el-button type="success" :disabled="!canConfirm" @click="confirm">确认选择</el-button></span>
   </el-dialog>
 </template>
 
@@ -37,6 +37,10 @@ export default {
   props: {
     visible: Boolean,
     request: Function,
+    selectable: Function,
+    requiredSelection: Function,
+    requiredCount: { type: Number, default: null },
+    maxCount: { type: Number, default: null },
     params: { type: Object, default: () => ({}) },
     config: { type: Object, default: () => ({}) },
     columns: { type: Array, default: () => [] },
@@ -59,6 +63,7 @@ export default {
     matchingLocalRows() { const keyword = this.keyword.trim().toLowerCase(); return this.localRows.filter(row => !keyword || [this.displayName(row), ...this.columns.map(column => this.columnValue(row, column))].join(' ').toLowerCase().includes(keyword)) },
     pageRows() { return [...this.matchingLocalRows, ...this.rows.filter(row => !this.matchingLocalRows.some(local => String(local[this.valueKey]) === String(row[this.valueKey])))] },
     selectedRows() { return Object.values(this.selected) },
+    canConfirm() { return !this.loading && !this.error && (!this.singleRecord || this.selectedRows.length === 1) && (this.requiredCount === null || this.selectedRows.length === this.requiredCount) && (this.maxCount === null || this.selectedRows.length <= this.maxCount) },
     masterRecord() { return ['warehouses', 'locations'].includes(this.type) },
     singleRecord() { return this.request ? !this.multiple : this.type === 'operations' || this.masterRecord },
     recordConfig() {
@@ -94,6 +99,7 @@ export default {
         if (serial !== this.requestSerial || !this.visible) return
         const result = Array.isArray(data.data) ? data : data.data || data
         this.rows = result.data || []; this.total = Number(result.total || (result.meta && result.meta.total) || 0)
+        this.rows.filter(this.isRequired).forEach(row => this.$set(this.selected, row[this.valueKey], { ...row }))
       } catch (error) {
         if (serial !== this.requestSerial || !this.visible) return
         this.rows = []; this.total = 0; this.error = error.userMessage || error.message || '选择列表加载失败'
@@ -104,19 +110,22 @@ export default {
     selectCategory(row) { this.categoryId = row ? row.id : null; this.query() },
     changePage(page) { this.page = page; this.load() },
     toggle(row) {
+      if (!this.canSelect(row) || this.isRequired(row)) return
       const id = row[this.valueKey]
       if (this.singleRecord) this.selected = { [id]: { ...row } }
       else if (this.selected[id]) this.$delete(this.selected, id)
       else if (!this.multiple) this.selected = { [id]: { ...row } }
       else this.$set(this.selected, id, { ...row })
     },
-    remove(id) { this.$delete(this.selected, id) },
+    remove(id) { if (!this.isRequired(this.selected[id])) this.$delete(this.selected, id) },
+    canSelect(row) { return !this.selectable || this.selectable(row) },
+    isRequired(row) { return Boolean(row && this.requiredSelection && this.requiredSelection(row)) },
     displayName(row) { return this.label ? this.label(row) : this.type === 'operations' ? row.operation_name : this.type === 'warehouses' ? row.warehouse_name : this.type === 'locations' ? row.location_name : row.name || row.nickname || row.username || '-' },
     columnValue(row, column) { return column.format ? column.format(row) : column.prop.split('.').reduce((value, key) => value && value[key], row) ?? '—' },
     departmentNames(row) { return parseSystemArray(row.department_names).join('、') || '-' },
     scopeText(value) { return ({ all: '全部数据', department: '本部门数据', self: '本人数据' })[value] || '-' },
     locationPurposeText(value) { return ({ general: '普通存储', finished: '成品', shipping_staging: '待发', repair: '返修' })[value] || '普通存储' },
-    confirm() { if (!this.visible || this.loading || this.error || (this.singleRecord && this.selectedRows.length !== 1)) return; this.$emit('confirm', this.selectedRows.map(row => ({ ...row }))); this.$emit('update:visible', false) }
+    confirm() { if (!this.visible || !this.canConfirm) return; this.$emit('confirm', this.selectedRows.map(row => ({ ...row }))); this.$emit('update:visible', false) }
   }
 }
 </script>

@@ -35,10 +35,14 @@ final class UnitComponentService
     public function bind(MfgWorkOrder $wo, MfgMaterialIssue $issue, array $plan, array $selections, object $actor): void
     {
         $planned = (float) $wo->planned_qty;
-        $units = MfgWorkOrderUnit::query()->where('work_order_id', $wo->id)->whereNotIn('status', ['scrapped', 'cancelled'])->orderBy('unit_no')->lockForUpdate()->get();
+        $reservedSerials = CancellationProductionService::reservedSerialIds((int) $wo->id);
+        $units = MfgWorkOrderUnit::query()->where('work_order_id', $wo->id)->whereIn('id', CancellationProductionService::productionUnitIds((int) $wo->id))
+            ->whereNotIn('status', ['stored', 'pending_receipt'])->orderBy('unit_no')->lockForUpdate()->get();
         if ($units->isEmpty() || $planned <= 0) return;
         foreach ($plan as $p) {
             $m = $p['material'];
+            $issuedLine = collect((array) $issue->issue_lines)->first(fn ($line) => (int) ($line['material_id'] ?? 0) === (int) $m->id);
+            $rowUnits = array_key_exists('unit_ids', $issuedLine ?? []) ? $units->whereIn('id', (array) $issuedLine['unit_ids']) : $units;
             $manual = isset($selections[$m->id]);
             $ids = $manual ? $selections[$m->id] : collect($p['picks'])->flatMap(fn ($pick) => $pick['serial_ids'] ?? [])->map(fn ($id) => (int) $id)->all();
             if (! $ids) continue;
@@ -50,7 +54,8 @@ final class UnitComponentService
             foreach ($ids as $id) {
                 $serial = $serials->get($id);
                 if (! $serial) continue;
-                $unit = $units->first(fn ($u) => ($rowCounts[$u->id][$m->id] ?? 0) < $perRow && ($itemCounts[$u->id] ?? 0) < $itemCap);
+                if (in_array((int) $id, $reservedSerials, true)) { $unbound[] = $serial->serial_no; continue; }
+                $unit = $rowUnits->first(fn ($u) => ($rowCounts[$u->id][$m->id] ?? 0) < $perRow && ($itemCounts[$u->id] ?? 0) < $itemCap);
                 if (! $unit) { $unbound[] = $serial->serial_no; continue; }
                 $this->install($wo, $unit, (int) $m->component_item_id, (string) $m->component_item_name, $spec, $serial, $actor,
                     '收料单 '.$issue->issue_no.($manual ? '，人工指定' : '，系统分配'), ['type' => 'mfg_material_issue', 'id' => $issue->id, 'no' => $issue->issue_no]);
@@ -100,8 +105,11 @@ final class UnitComponentService
             if (! in_array($wo->status, ['released', 'in_progress', 'paused'], true)) $this->fail('status_invalid', '工单不在生产中，不能登记部件编号。');
             $row = collect($this->unbound($wo))->firstWhere('serial_id', $serialId);
             if (! $row) $this->fail('component_invalid', '这个编号不是本工单待登记的编号（可能已登记或已退料），请刷新。');
+            if (in_array($serialId, CancellationProductionService::reservedSerialIds((int) $wo->id), true))
+                $this->fail('component_reserved_for_disposition', '这个部件编号已属于某台设备的停产处置，请先完成该台的退料或去向决定。');
             $unit = MfgWorkOrderUnit::query()->where('work_order_id', $wo->id)->lockForUpdate()->find($unitId);
             if (! $unit || ! in_array($unit->status, self::ADJUSTABLE, true)) $this->fail('unit_locked', '请选择本工单还在生产中的一台设备（已入库或报废的设备不能登记）。');
+            CancellationProductionService::assertProductionAllowed((int) $wo->id, [(int) $unit->id]);
             [, $itemCap, , $itemCounts] = $this->capacity($wo, (int) $row['component_item_id']);
             if (($itemCounts[$unit->id] ?? 0) >= $itemCap) $this->fail('unit_full', "{$unit->serial_no} 的 {$row['component_item_name']} 已按单台用量装满，请先互换或退料拆下。");
             $serial = InventorySerial::query()->lockForUpdate()->findOrFail($serialId);
@@ -154,6 +162,7 @@ final class UnitComponentService
             if ((int) $a->component_item_id !== (int) $b->component_item_id) $this->fail('component_mismatch', '只能互换同一种部件的编号。');
             if ((int) $a->unit_id === (int) $b->unit_id) $this->fail('component_same_unit', '两条记录在同一台设备上，不需要互换。');
             $units = MfgWorkOrderUnit::query()->whereIn('id', [$a->unit_id, $b->unit_id])->lockForUpdate()->get()->keyBy('id');
+            CancellationProductionService::assertProductionAllowed((int) $wo->id, $units->keys()->map(fn ($id) => (int) $id)->all());
             if ($units->contains(fn ($u) => ! in_array($u->status, self::ADJUSTABLE, true)))
                 $this->fail('unit_locked', '已入库或报废的设备不能再调整部件编号。');
             [$unitA, $unitB] = [$units->get($a->unit_id), $units->get($b->unit_id)];

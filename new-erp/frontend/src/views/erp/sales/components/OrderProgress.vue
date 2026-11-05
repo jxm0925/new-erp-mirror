@@ -987,6 +987,7 @@ export default {
             page,
             per_page: 10,
             keyword: this.unitsKeyword,
+            history: node.history_only ? 1 : undefined,
             work_order_id:
               node.type === 'work_order'
                 ? node.work_order_id || node.id
@@ -1036,7 +1037,7 @@ export default {
             ? await getSalesOrderWorkOrderProgress(
                 this.orderId,
                 node.work_order_id || node.id,
-                key ? { unit_id: key } : {}
+                { unit_id: key || undefined, history: node.history_only ? 1 : undefined }
               )
             : await getSalesOrderLineProgress(
                 this.orderId,

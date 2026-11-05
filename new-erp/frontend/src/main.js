@@ -33,6 +33,8 @@ import PurchaseExchangeDetail from './views/erp/purchase/PurchaseExchangeDetail.
 import ReturnList from './views/erp/returns/ReturnList.vue'
 import ReturnForm from './views/erp/returns/ReturnForm.vue'
 import ReturnDetail from './views/erp/returns/ReturnDetail.vue'
+import AftersalesList from './views/erp/aftersales/AftersalesList.vue'
+import AftersalesDetail from './views/erp/aftersales/AftersalesDetail.vue'
 import PurchaseDocumentForm from './views/erp/purchase/PurchaseDocumentForm.vue'
 import PurchaseReceiptForm from './views/erp/purchase/PurchaseReceiptForm.vue'
 import PurchasePlanDetail from './views/erp/purchase/PurchasePlanDetail.vue'
@@ -262,6 +264,8 @@ const router = new VueRouter({
     { path: '/sales/returns', component: ReturnList, props: { kind: 'sales' }, meta: { permission: 'sales_return.view' } },
     { path: '/sales/returns/create', component: ReturnForm, props: { kind: 'sales' }, meta: { permission: 'sales_return.create' } },
     { path: '/sales/returns/:id/detail', component: ReturnDetail, props: { kind: 'sales' }, meta: { permission: 'sales_return.view' } },
+    { path: '/sales/aftersales', component: AftersalesList, meta: { permission: 'aftersales.view' } },
+    { path: '/sales/aftersales/:id/detail', component: AftersalesDetail, meta: { permission: 'aftersales.view' } },
     { path: '/system', redirect: '/system/admins' },
     { path: '/system/document-number-rules', component: DocumentNumberRuleList, meta: { permission: 'document_number_rule.view' } },
     { path: '/system/admins', component: SystemAdminManagement, meta: { permission: 'system.admin.view' } },

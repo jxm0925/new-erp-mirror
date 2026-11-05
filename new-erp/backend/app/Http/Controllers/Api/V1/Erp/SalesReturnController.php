@@ -158,6 +158,15 @@ class SalesReturnController extends Controller
         $this->applyOrderVisibility($query, $request, true);
         $return = $query->firstOrFail();
         $data = $return->toArray();
+        // 售后关联：处置弹窗按售后处理里的计划处置预填，页头显示来源售后单号。
+        if ($return->aftersales_case_id) {
+            $data['aftersales'] = [
+                'case_id' => (int) $return->aftersales_case_id,
+                'case_no' => \App\Models\Erp\AftersalesCase::query()->whereKey($return->aftersales_case_id)->value('case_no'),
+                'action_id' => (int) $return->aftersales_action_id,
+                'planned_disposition' => \App\Models\Erp\AftersalesAction::query()->whereKey($return->aftersales_action_id)->value('planned_disposition'),
+            ];
+        }
         // 前端据此决定收货/处置时是否必须逐件选择序列号。
         $identities = app(SalesReturnIdentityService::class);
         foreach ($return->items as $index => $item) $data['items'][$index]['serial_required'] = $identities->requiresIdentities($item);
@@ -287,7 +296,7 @@ class SalesReturnController extends Controller
         $this->authorizePermission($request, 'sales_return.view');
         $this->assertReturnVisible($request, $id, true);
         SalesReturnReceipt::query()->where('sales_return_id', $id)->findOrFail($receiptId);
-        $filters = $request->validate(['line_id' => 'nullable|integer|min:1', 'disposition' => 'nullable|in:restock,pending,scrap,rejected',
+        $filters = $request->validate(['line_id' => 'nullable|integer|min:1', 'disposition' => 'nullable|in:restock,defective,pending,scrap,rejected',
             'ids' => 'sometimes|required|array|min:1|max:1000', 'ids.*' => 'required|integer|min:1|distinct',
             'keyword' => 'nullable|string|max:120', 'page' => 'nullable|integer|min:1',
             'per_page' => 'nullable|integer|min:1|max:'.($request->has('ids') ? 1000 : 100)]);
@@ -300,7 +309,7 @@ class SalesReturnController extends Controller
         $this->assertReturnVisible($request, $id);
         $payload = $request->validate([
             'receipt_item_id' => 'required|integer|exists:erp_sales_return_receipt_items,id',
-            'disposition' => 'required|in:restock,scrap,rejected',
+            'disposition' => 'required|in:restock,defective,scrap,rejected',
             'base_qty' => 'required|numeric|min:0.00000001',
             'warehouse_id' => 'nullable|exists:erp_warehouses,id',
             'location_id' => 'nullable|exists:erp_locations,id',

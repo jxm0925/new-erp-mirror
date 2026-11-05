@@ -135,6 +135,7 @@
             <span v-if="row.invoice_address_phone"><b>地址电话：</b>{{ row.invoice_address_phone }}</span>
             <span v-if="row.invoice_bank_account"><b>开户行：</b>{{ row.invoice_bank_account }}</span>
             <span v-if="row.invoice_email"><b>邮箱：</b>{{ row.invoice_email }}</span>
+            <span><b>资金账户：</b>{{ row.finance_account_name_snapshot || '-' }}<template v-if="row.finance_account_no_snapshot">（{{ row.finance_account_no_snapshot }}）</template></span>
           </div>
         </template>
       </el-table-column>
@@ -238,6 +239,10 @@
           <div class="issue-info-item">
             <span>发票抬头</span>
             <b>{{ issue.row.invoice_title }}</b>
+          </div>
+          <div class="issue-info-item">
+            <span>资金账户</span>
+            <b>{{ issue.row.finance_account_name_snapshot || '-' }}<template v-if="issue.row.finance_account_no_snapshot">（{{ issue.row.finance_account_no_snapshot }}）</template></b>
           </div>
           <div v-if="issue.row.invoice_tax_no" class="issue-info-item">
             <span>纳税人识别号</span>
@@ -399,6 +404,7 @@ export default {
         `发票类型：${row.invoice_type_label}`,
         `抬头：${row.invoice_title}`,
         row.invoice_tax_no && `税号：${row.invoice_tax_no}`,
+        row.finance_account_name_snapshot && `资金账户：${row.finance_account_name_snapshot}${row.finance_account_no_snapshot ? '（' + row.finance_account_no_snapshot + '）' : ''}`,
         row.invoice_address_phone && `地址电话：${row.invoice_address_phone}`,
         row.invoice_bank_account && `开户行及账号：${row.invoice_bank_account}`,
         `金额（含税）：${this.money(row.amount)}`,

@@ -27,7 +27,8 @@ class SalesOrderLineService
         array $deletedLineIds = [],
         ?string $draftToken = null,
         string $operator = 'system',
-        array $preservedLineIds = []
+        array $preservedLineIds = [],
+        array $protectedLineSplits = []
     ): void {
         $this->deleteExplicitLines($order, $deletedLineIds, $operator);
 
@@ -36,10 +37,16 @@ class SalesOrderLineService
             $existing = !empty($line['id'])
                 ? $order->lines()->lockForUpdate()->findOrFail($line['id'])
                 : null;
+            $splitSource = null;
+            if (!$existing) foreach ($protectedLineSplits as $sourceId => $split) {
+                if (($line['line_uuid'] ?? null) === $split['line_uuid']) $splitSource = $order->lines->firstWhere('id', (int) $sourceId);
+            }
             // 新增其他商品或只改价/增量时，原商品的物料、单位和生产快照必须继续有效。
             $data = $existing && in_array((int) $existing->id, $preservedLineIds, true)
                 ? app(SalesOrderChangeApplicationService::class)->normalizeLine($existing, $line) + ['line_no' => $index + 1, 'sort_order' => (int) ($line['sort_order'] ?? $index)]
-                : $this->payload($order, $line, $index, $existing);
+                : ($splitSource && (int) $splitSource->sku_id === (int) $line['sku_id'] && (int) $splitSource->product_id === (int) $line['product_id']
+                    ? $this->splitPayload($order, $line, $index, $splitSource)
+                    : $this->payload($order, $line, $index, $existing));
 
             if ($existing) {
                 $data = app(SalesCostVisibilityService::class)->preserveStoredCosts($data, $existing->attributesToArray());
@@ -49,13 +56,55 @@ class SalesOrderLineService
                 $saved = SalesOrderLine::create($data);
             }
 
+            // 已发旧行保留原附件；新条件的未发行承接附件引用和本次新传的技术资料。
+            if ($existing && isset($protectedLineSplits[$existing->id])) continue;
+            $draftLineUuid = $saved->line_uuid;
+            if (!$existing) foreach ($protectedLineSplits as $sourceId => $split) {
+                if ($saved->line_uuid !== $split['line_uuid']) continue;
+                foreach (SalesOrderAttachment::where('sales_order_id', $order->id)->where('sales_order_line_id', $sourceId)->where('status', 'active')->get() as $attachment) {
+                    $copy = $attachment->replicate();
+                    $copy->fill(['sales_order_line_id' => $saved->id, 'line_uuid' => $saved->line_uuid]); $copy->save();
+                }
+                $draftLineUuid = $split['draft_line_uuid'];
+            }
             $this->attachments->bindLineDraft(
                 $order->id,
                 $saved->id,
                 $draftToken,
-                $saved->line_uuid
+                $draftLineUuid
             );
         }
+    }
+
+    /** 同一SKU的未发余额沿原物料及单位冻结；改价、改配置不能顺带重解释当前主档。 */
+    private function splitPayload(SalesOrder $order, array $line, int $index, SalesOrderLine $source): array
+    {
+        $configuration = $this->lengthCutRequirements->normalizeConfiguration($this->configurationSnapshot($line, $source->configuration_snapshot));
+        foreach (['is_customized' => 'allow_customized', 'is_special_customized' => 'allow_special_customized'] as $flag => $permission) {
+            abort_if($configuration[$flag] && !$source->{$flag} && !data_get($source->sku_snapshot, $permission), 422, '原销售SKU不允许所选定制方式');
+        }
+        $data = $source->only([
+            'product_id', 'sku_id', 'item_id', 'item_base_unit_id', 'item_base_unit_name_snapshot', 'item_base_unit_code_snapshot',
+            'fulfillment_factor_snapshot', 'item_match_status', 'item_match_rule', 'item_match_block_reason', 'item_match_snapshot',
+            'product_name', 'sku_name', 'item_name', 'legacy_goods_type', 'line_type', 'unit_id', 'unit_name_snapshot', 'unit_code_snapshot',
+            'unit_conversion_ratio_snapshot', 'product_snapshot', 'sku_snapshot', 'item_snapshot', 'inspection_snapshot', 'image',
+        ]);
+        $commercial = app(SalesOrderChangeApplicationService::class)->normalizeLine($source, $line);
+        $commercial['commercial_snapshot']['fulfillment_method'] = $line['fulfillment_method'] ?? $source->fulfillment_method;
+        $baseQty = SalesOrderFulfillmentPolicy::isPhysical((string) $source->line_type)
+            ? round((float) $commercial['order_qty'] * (float) $source->fulfillment_factor_snapshot, 8) : 0;
+        $itemSnapshot = array_replace((array) $source->item_snapshot, ['item_base_required_qty' => $baseQty]);
+        return array_replace($data, $commercial, [
+            'sales_order_id' => $order->id, 'line_uuid' => $line['line_uuid'], 'line_no' => $index + 1, 'sort_order' => $index,
+            'item_base_required_qty' => $baseQty, 'item_snapshot' => $itemSnapshot,
+            'fulfillment_method' => $line['fulfillment_method'] ?? $source->fulfillment_method,
+            'need_pump' => $configuration['need_pump'], 'electric' => $configuration['electric'],
+            'is_customized' => $configuration['is_customized'], 'is_special_customized' => $configuration['is_special_customized'],
+            'customization_description' => $configuration['special_custom_description'], 'configuration_snapshot' => $configuration,
+            'drawing_snapshot' => $line['drawing_snapshot'] ?? $source->drawing_snapshot,
+            'technical_attachment_snapshot' => $line['technical_attachment_snapshot'] ?? $source->technical_attachment_snapshot,
+            'remark' => $line['remark'] ?? $source->remark,
+        ]);
     }
 
     private function deleteExplicitLines(SalesOrder $order, array $ids, string $operator): void
@@ -67,7 +116,8 @@ class SalesOrderLineService
             ->lockForUpdate()
             ->get();
         if ($order->order_status === 'confirmed') {
-            if ($lines->count() !== count(array_unique($ids)) || SalesOrderFulfillmentPolicy::hasShipmentFacts($order)) {
+            $protected = SalesOrderFulfillmentPolicy::protectedLineQuantities($order);
+            if ($lines->count() !== count(array_unique($ids)) || $lines->contains(fn ($line) => ($protected[$line->id] ?? 0) > 0.00000001)) {
                 throw ValidationException::withMessages(['deleted_line_ids' => '订单行已变化或已有实际发货，请刷新后重新处理。']);
             }
             // 正式行保留原金额、配置和外键，旧发货、工单及附件仍可追溯；当前订单不再计入该行。

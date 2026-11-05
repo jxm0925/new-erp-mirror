@@ -122,7 +122,8 @@ final class TaskQueryService
         $ops = $wo->operations->where('execution_context', 'production')->values();
         $pos = $ops->pluck('id')->flip();
         $myPos = $pos[$op->id] ?? 0;
-        $laneCount = fn (string $l) => MfgWorkOrderUnit::query()->where('current_operation_id', $op->id)->whereIn('status', TaskService::laneStatuses($l))->count();
+        $blocked = CancellationProductionService::blockedUnitIds((int) $wo->id);
+        $laneCount = fn (string $l) => MfgWorkOrderUnit::query()->where('current_operation_id', $op->id)->whereNotIn('id', $blocked)->whereIn('status', TaskService::laneStatuses($l))->count();
         // 没指定看哪条线：返工工单只有返工；本道只剩返工的件（或我只在返工里）就看返工。
         if ($lane === null) {
             $inNormal = MfgTaskParticipant::query()->where('work_order_operation_id', $op->id)->where('lane', 'normal')->where('employee_legacy_id', $me)->where('is_active', true)->exists();
@@ -132,15 +133,19 @@ final class TaskQueryService
         }
         $lane = TaskService::lane($lane);
         $selectable = $this->tasks->selectableUnits($op, $lane)->pluck('id')->all();
-        $units = MfgWorkOrderUnit::query()->where('work_order_id', $wo->id)->where('current_operation_id', $op->id)->whereIn('status', TaskService::laneStatuses($lane))->orderBy('unit_no')->get();
+        $units = MfgWorkOrderUnit::query()->where('work_order_id', $wo->id)->whereNotIn('id', $blocked)->where('current_operation_id', $op->id)->whereIn('status', TaskService::laneStatuses($lane))->orderBy('unit_no')->get();
+        $unitDispositions = \App\Models\Erp\CancellationProductionDisposition::where('work_order_id', $wo->id)->whereNotNull('work_order_unit_id')->get()->keyBy('work_order_unit_id');
         $lastFail = MfgUnitReport::query()->whereIn('unit_id', $units->pluck('id') ?: [0])->whereIn('result', ['failed', 'scrap'])->orderByDesc('id')->get()->unique('unit_id')->keyBy('unit_id');
         $shipmentRepairReasons = DB::table('erp_shipment_reworks')->whereIn('unit_id', $units->pluck('id'))->where('status', 'in_progress')->pluck('reason', 'unit_id');
         $opNames = $wo->operations->pluck('operation_name', 'id');
         $participants = $this->participants($op, $lane);
         $opTiming = collect($participants)->contains(fn ($p) => $p['timing']);
+        $timingSessions = MfgLaborSession::where('work_order_operation_id', $op->id)->where('lane', $lane)->where('status', 'active')->get();
         $canAssign = $super || in_array('production.task.assign', $permissions, true);
         $mine = collect($participants)->firstWhere('employee_legacy_id', $me);
         $owner = collect($participants)->firstWhere('role', 'owner');
+        $canOrderSemi = $canExecute && $lane === 'normal' && $mine && $mine['role'] === 'owner' && $op->execution_context === 'production'
+            && in_array($wo->status, ['planned', 'released', 'in_progress', 'paused'], true);
         $myActive = MfgLaborSession::query()->where('work_order_operation_id', $op->id)->where('lane', $lane)->where('employee_legacy_id', $me)->where('status', 'active')->first();
         $laneStarted = MfgLaborSession::query()->where('work_order_operation_id', $op->id)->where('lane', $lane)->exists();
         $runnable = $this->tasks->isRunnable($wo) && $op->status !== 'done';
@@ -149,7 +154,7 @@ final class TaskQueryService
         $drawings = MfgDrawing::query()->where('work_order_id', $wo->id)->where('status', 'active')->orderBy('id')->get();
         $myLast = MfgLaborSession::query()->where('work_order_operation_id', $op->id)->where('employee_legacy_id', $me)->min('started_at');
         $upstream = $myPos > 0 ? MfgWorkOrderUnit::query()->where('work_order_id', $wo->id)->whereIn('status', TaskService::SELECTABLE)
-            ->whereIn('current_operation_id', $ops->slice(0, $myPos)->pluck('id'))->count() : 0;
+            ->whereNotIn('id', $blocked)->whereIn('current_operation_id', $ops->slice(0, $myPos)->pluck('id'))->count() : 0;
         $here = count($selectable);
         $cuttingOps = MaterialIssueService::cuttingOperationIds((int) $wo->id);
         // 开料、已备料只在正常生产里；返工用原来的料。
@@ -179,6 +184,8 @@ final class TaskQueryService
         $bomLines = collect(data_get($wo->bom_snapshot, 'items', []))->keyBy('id');
         return [
             'id' => $op->id, 'operation_name' => $op->operation_name, 'title' => TaskService::laneTitle($op->operation_name, $lane), 'lane' => $lane,
+            'blocked_unit_ids' => $blocked, 'production_unit_ids' => CancellationProductionService::productionUnitIds((int) $wo->id),
+            'sales_demand_unit_ids' => CancellationProductionService::salesDemandUnitIds((int) $wo->id),
             'stage_name' => $op->stage_name, 'status' => $op->status,
             'work_status' => $op->work_status, 'work_status_label' => TaskService::WORK_STATUS_LABELS[$op->work_status] ?? $op->work_status,
             'unit_word' => $unitWord, 'unit_short' => $unitWord === '台设备' ? '台' : $unitWord,
@@ -192,6 +199,8 @@ final class TaskQueryService
             'shipment_repair' => collect(WorkOrderQueryService::shipmentRepairs($wo))->first(fn ($r) => $r['state'] === 'repairing' && (int) $r['current_operation_id'] === (int) $op->id),
             'work_order' => [
                 'id' => $wo->id, 'work_order_no' => $wo->work_order_no, 'source_type' => $wo->source_type,
+                'blocked_unit_ids' => $blocked, 'production_unit_ids' => CancellationProductionService::productionUnitIds((int) $wo->id),
+                'sales_demand_unit_ids' => CancellationProductionService::salesDemandUnitIds((int) $wo->id),
                 'source_label' => $wo->rework_of_work_order_id ? '返工工单' : match ($wo->source_type) { 'stock' => '备货', 'work_order' => '半成品子工单', default => '销售订单' },
                 'is_sub_work_order' => $parentBrief !== null || $wo->source_type === 'work_order' || (bool) $wo->rework_of_work_order_id,
                 'status' => $wo->status, 'status_label' => WorkOrderQueryService::STATUS_LABELS[$wo->status] ?? $wo->status,
@@ -209,8 +218,13 @@ final class TaskQueryService
             'units' => $units->map(fn ($u) => [
                 'id' => $u->id, 'unit_no' => $u->unit_no, 'serial_no' => $u->serial_no, 'status' => $u->status,
                 // 刚从前道交过来、本道还没人开始计时的显示“待做”，有人在计时才算“正在做”。
-                'status_label' => ! in_array($u->id, $selectable, true) ? '等报废审核' : ($u->status === 'rework' ? '返工' : ($opTiming ? '正在做' : '待做')),
+                'status_label' => ! in_array($u->id, $selectable, true) ? '等报废审核' : ($u->status === 'rework' ? '返工'
+                    : ($timingSessions->contains(fn ($session) => $session->unit_ids === null || in_array((int) $u->id, $session->unit_ids, true)) ? '正在做' : '待做')),
                 'selectable' => in_array($u->id, $selectable, true), 'rework_count' => (int) $u->rework_count,
+                'disposition_id' => $unitDispositions->get($u->id)?->id,
+                'disposition_status' => $unitDispositions->get($u->id)?->status,
+                'production_destination' => $unitDispositions->get($u->id)?->status === 'stock' ? 'stock' : 'demand',
+                'handoff_allowed' => $unitDispositions->get($u->id)?->status !== 'stock',
                 'needs_completion' => $completion !== null && ! $shipmentRepairReasons->has($u->id),
                 'fail_reason' => ($f = $lastFail->get($u->id)) && $u->status === 'rework'
                     ? trim(implode('：', array_filter([($opNames[$f->work_order_operation_id] ?? '').'不合格', implode('/', $f->reason_tags ?: []) ?: $f->reason]))) : ($shipmentRepairReasons[$u->id] ?? null),
@@ -220,6 +234,7 @@ final class TaskQueryService
             'completion' => $completion,
             'participants' => $participants,
             'my' => ['is_participant' => (bool) $mine, 'role' => $mine['role'] ?? null, 'timing' => (bool) $myActive,
+                'unit_ids' => $myActive?->unit_ids ?? [], 'timing_deadline_at' => $myActive ? TaskService::sessionDeadline($myActive)->toIso8601String() : null,
                 // 别的工序（或本道另一条线）在计时：开始前要先暂停那边
                 'timing_elsewhere' => ! $myActive && MfgLaborSession::query()->where('employee_legacy_id', $me)->where('status', 'active')->exists(),
                 'started_at' => $myActive?->started_at?->toIso8601String(), 'closed_minutes' => round((float) MfgLaborSession::query()->where('work_order_operation_id', $op->id)
@@ -275,8 +290,8 @@ final class TaskQueryService
             'reason_tags' => TaskService::REASON_TAGS,
             // 报废：有审核人时等审核；没有审核人或自己就是审核人，提交即生效（要拍照）
             'scrap_review' => ['needs_review' => ProductionReviewers::needsReview($wo, $me), 'reviewers' => ProductionReviewers::names($wo)],
-            // BOM 子件（自制半成品）：需要、可用、已开、冻结、缺口；缺口大于 0 时所有员工都能补开半成品工单，最多补到缺口
-            'semi_components' => $lane === 'normal' ? array_map(fn ($r) => $r + ['can_order' => $canExecute && $r['max_order_qty'] > 0],
+            // BOM 子件（自制半成品）：只有本道正常生产的接单人能补开，最多补到缺口。
+            'semi_components' => $lane === 'normal' ? array_map(fn ($r) => array_merge($r, ['can_order' => $canOrderSemi && $r['max_order_qty'] > 0]),
                 $this->workOrders->semiRows($wo, (int) $op->id)) : [],
             'allowed' => [
                 'claim' => $canExecute && $runnable && ! $owner && $canDo && $here > 0,
@@ -285,7 +300,7 @@ final class TaskQueryService
                 'cutting' => $hasCutting && $canExecute && $mine && in_array($wo->status, ['released', 'in_progress'], true),
                 'report' => $canExecute && $runnable && $mine && $here > 0,
                 'prepare' => $isPrep && $canExecute && $runnable && $here > 0 && ($mine || (! $owner && $canDo)),
-                'semi_order' => $canExecute && $lane === 'normal',
+                'semi_order' => $canOrderSemi,
                 'collaborators' => $canExecute && $runnable && $mine && $mine['role'] === 'owner',
                 'assign' => $runnable && $canAssign,
                 // 主管替忘了停的人停止计时
@@ -336,7 +351,8 @@ final class TaskQueryService
         $wos = $woQuery->with(['operations', 'item:id,item_type,spec,model,material_grade'])->orderBy('priority')->orderBy('id')->limit(300)->get()->keyBy('id');
         $itemScopes = Item::query()->whereIn('id', $wos->pluck('item_id'))->pluck('management_scope', 'id');
         $woIds = $wos->keys()->all() ?: [0];
-        $units = MfgWorkOrderUnit::query()->whereIn('work_order_id', $woIds)->whereIn('status', array_merge(TaskService::SELECTABLE, ['completed']))->orderBy('unit_no')->get();
+        $units = MfgWorkOrderUnit::query()->whereIn('work_order_id', $woIds)->whereNotIn('id', DB::table('erp_cancellation_production_dispositions')->whereNull('resolved_at')->whereNotNull('work_order_unit_id')->select('work_order_unit_id'))
+            ->whereIn('status', array_merge(TaskService::SELECTABLE, ['completed']))->orderBy('unit_no')->get();
         $pendingScrap = MfgUnitReport::query()->where('review_status', 'pending')->whereIn('work_order_id', $woIds)->pluck('unit_id')->flip();
         $opIds = $units->pluck('current_operation_id')->filter()->unique()->values();
         $owners = MfgTaskParticipant::query()->whereIn('work_order_operation_id', $opIds ?: [0])->where('is_active', true)->where('role', 'owner')->get()->keyBy('work_order_operation_id');
@@ -475,6 +491,7 @@ final class TaskQueryService
         $statuses = TaskService::laneStatuses($lane);
         // 本道有这条线能做的件（不含等报废审核的）
         $hereUnits = fn ($q) => $q->selectRaw('1')->from('erp_mfg_work_order_units as u')->whereColumn('u.current_operation_id', 'op.id')->whereIn('u.status', $statuses)
+            ->whereNotIn('u.id', DB::table('erp_cancellation_production_dispositions')->whereNull('resolved_at')->whereNotNull('work_order_unit_id')->select('work_order_unit_id'))
             ->whereNotExists(fn ($r) => $r->selectRaw('1')->from('erp_mfg_unit_reports as pr')->whereColumn('pr.unit_id', 'u.id')->where('pr.review_status', 'pending'));
         if ($tab === 'done') {
             $query->whereExists(fn ($q) => $participant($q, false))
@@ -567,7 +584,7 @@ final class TaskQueryService
         $before = MfgWorkOrderOperation::query()->where('work_order_id', $wo->id)->where('execution_context', 'production')
             ->where(fn ($q) => $q->where('sequence', '<', $op->sequence)->orWhere(fn ($w) => $w->where('sequence', $op->sequence)->where('id', '<', $op->id)))->pluck('id');
         $upstream = $before->isEmpty() ? 0 : MfgWorkOrderUnit::query()->where('work_order_id', $wo->id)->whereIn('status', TaskService::SELECTABLE)
-            ->whereIn('current_operation_id', $before)->count();
+            ->whereNotIn('id', CancellationProductionService::blockedUnitIds((int) $wo->id))->whereIn('current_operation_id', $before)->count();
         return [
             'id' => $op->id, 'key' => $op->id.'-'.$lane, 'lane' => $lane, 'operation_name' => $op->operation_name, 'title' => TaskService::laneTitle($op->operation_name, $lane),
             'stage_name' => $op->stage_name, 'status' => $op->status,

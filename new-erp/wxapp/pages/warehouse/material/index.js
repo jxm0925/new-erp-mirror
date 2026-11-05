@@ -11,6 +11,7 @@ Page({
     checks: {}, checkedLocations: {}, checkedSerials: {}, dispositionDrafts: {}, pendingActions: [], planReviewRequired: false, canConfirmInbound: false, recallConfirmInbound: false,
     manualOpen: false, manualRows: [], manualSelected: [], manualScope: '', manualTitle: '',
     selections: [], pickerOpen: false, pickerLine: {}, pickerOtherPicks: [], pickerScan: null, pickerError: '',
+    productionUnits: [], unitSelectionExplicit: false, unitPickerOpen: false, unitPickerContext: {}, unitPickerScope: '',
     expandedLines: {}, shortages: [], canPurchase: false, purchaseCompleted: false, purchaseUncertain: false, purchaseMessage: '',
     dispositionOptions: [{ value: 'release', label: '判定可用' }, { value: 'scrap', label: '报废' }, { value: 'supplier_return', label: '退供应商' }] },
   onLoad(options) {
@@ -20,18 +21,37 @@ Page({
   },
   onShow() { if (!page.resumingScan(this) && !this.data.saving) this.load(); }, onUnload() { this.sequence = (this.sequence || 0) + 1; },
   onPullDownRefresh() { if (this.data.saving) return wx.stopPullDownRefresh(); this.load().finally(() => wx.stopPullDownRefresh()); },
+  productionScope() { return Object.assign({ units: this.data.units || undefined }, this.data.unitSelectionExplicit ? { unit_ids: this.data.productionUnits.map(unit => unit.id) } : {}); },
+  openProductionUnits() {
+    if (this.data.saving || this.data.loading || this.data.pendingActions.length) return;
+    this.setData({ unitPickerOpen: true, unitPickerContext: { work_order_id: this.data.header.work_order_id, operation_id: this.data.id }, unitPickerScope: `preparation:${this.data.header.work_order_id}:${this.data.id}` });
+  },
+  closeProductionUnits() { this.setData({ unitPickerOpen: false }); },
+  applyProductionUnits(event) {
+    const rows = event.detail.rows || [];
+    this.setData({ unitPickerOpen: false, productionUnits: rows, unitSelectionExplicit: true, units: String(rows.length), page: 1, checks: {}, checkedLocations: {}, checkedSerials: {}, selections: [], formError: '' });
+    if (!rows.length) return this.setData({ preview: null, lines: [], total: 0, formError: '请选择至少一个编号，或明确选择配齐剩余全部' });
+    this.load();
+  },
+  useAllProductionUnits() {
+    if (this.data.saving || this.data.loading || this.data.pendingActions.length) return;
+    this.setData({ productionUnits: [], unitSelectionExplicit: false, units: '', page: 1, checks: {}, checkedLocations: {}, checkedSerials: {}, selections: [], formError: '' }); this.load();
+  },
   load() {
     if (!this.data.kind || !this.data.id) { this.setData({ loading: false, error: '单据参数不完整' }); return Promise.resolve(); }
+    if (this.data.kind === 'material_preparation' && this.data.unitSelectionExplicit && !this.data.productionUnits.length) { this.setData({ loading: false, preview: null, lines: [], total: 0, formError: '请先选择本次配料编号，或选择配齐剩余全部' }); return Promise.resolve(); }
     const sequence = this.sequence = (this.sequence || 0) + 1; const token = wx.getStorageSync('erp_token');
     const permissions = JSON.stringify(wx.getStorageSync('erp_permissions') || []);
     const sameAccount = () => token === wx.getStorageSync('erp_token') && permissions === JSON.stringify(wx.getStorageSync('erp_permissions') || []);
     this.setData({ loading: true, error: '', manualOpen: false, pickerOpen: false });
-    return warehouse.document(this.data.kind, this.data.id, { page: this.data.page, per_page: 10, units: this.data.units || undefined }).then(async response => {
+    const query = { page: this.data.page, per_page: 10, units: this.data.units || undefined };
+    if (this.data.kind === 'material_preparation' && this.data.unitSelectionExplicit) this.data.productionUnits.forEach((unit,index) => { query[`unit_ids[${index}]`] = unit.id; });
+    return warehouse.document(this.data.kind, this.data.id, query).then(async response => {
       if (sequence !== this.sequence) return;
       if (!sameAccount()) return this.setData({ loading: false, error: '账号或权限已变化，请重新加载' });
       const body = response.data || response;
       if (this.data.kind === 'material_preparation' && this.data.selections.length) {
-        const selected = await warehouse.deliverySelectionPreview(body.header.work_order_id, this.data.id, { units: this.data.units || undefined, selections: this.data.selections });
+        const selected = await warehouse.deliverySelectionPreview(body.header.work_order_id, this.data.id, Object.assign(this.productionScope(), { selections: this.data.selections }));
         if (sequence !== this.sequence) return;
         if (!sameAccount()) return this.setData({ loading: false, error: '账号或权限已变化，请重新加载' });
         const preview = selected.data || selected;
@@ -100,7 +120,7 @@ Page({
   async purchaseLines() {
     const sequence = this.sequence;
     const response = await warehouse.deliveryPurchasePreview(this.data.header.work_order_id, this.data.id,
-      { units: this.data.units || undefined, selections: this.data.selections });
+      Object.assign(this.productionScope(), { selections: this.data.selections }));
     if (sequence !== this.sequence) throw new Error('配料预览已变化，请重新核对采购缺口');
     const body = response.data || response;
     return body.lines || [];
@@ -137,7 +157,7 @@ Page({
       if (!lines.length) return this.setData({ dialog: null, purchaseMessage: '本工序当前已无可生成的采购缺口，请重新核对供给安排。' });
       posting = true;
       const response = await warehouse.createDeliveryPurchaseRequest(this.data.header.work_order_id, this.data.id,
-        { units: this.data.units || undefined, selections: this.data.selections, lines });
+        Object.assign(this.productionScope(), { selections: this.data.selections, lines }));
       if (sequence !== this.sequence || !sameAccount()) return;
       const result = response.data || response;
       this.setData({ dialog: null, purchaseCompleted: true, purchaseMessage: '已生成采购需求 ' + result.request_no + '（草稿），请采购确认。' });
@@ -165,7 +185,7 @@ Page({
     const sameAccount = () => token === wx.getStorageSync('erp_token') && permissions === JSON.stringify(wx.getStorageSync('erp_permissions') || []);
     this.setData({ saving: true, pickerError: '' });
     try {
-      const response = await warehouse.deliverySelectionPreview(this.data.header.work_order_id, this.data.id, { units: this.data.units || undefined, selections });
+      const response = await warehouse.deliverySelectionPreview(this.data.header.work_order_id, this.data.id, Object.assign(this.productionScope(), { selections }));
       if (sequence !== this.sequence || !this.data.pickerOpen) return;
       if (!sameAccount()) return this.setData({ pickerError: '账号或权限已变化，请关闭选料并重新加载' });
       const preview = response.data || response; const result = page.rows(this.previewPage(preview));
@@ -192,12 +212,6 @@ Page({
     this.setData({ selections: [], checkedLocations: {}, checkedSerials: {}, formError: '' }); this.load();
   },
   input(event) { this.setData({ [event.currentTarget.dataset.field]: event.detail.value }); },
-  changeUnits(event) {
-    if (this.data.saving || this.data.pendingActions.length) return;
-    const value = event.detail.value; if (value !== '' && (!Number.isInteger(Number(value)) || Number(value) < 1 || Number(value) > 100000)) return this.setData({ units: value, formError: '配料台数必须为 1 至 100000 的整数' });
-    if (value === this.data.units) return;
-    this.setData({ units: value, page: 1, checks: {}, checkedLocations: {}, checkedSerials: {}, selections: [], formError: '配料台数已变化，请按新的用量重新选择批次和数量' }); this.load();
-  },
   turn(event) { const target = this.data.page + Number(event.currentTarget.dataset.delta); if (target > 0 && target <= this.data.lastPage && !this.data.loading && !this.data.saving) { this.setData({ page: target }); this.load(); } },
   verifyPick(event) {
     const result = event.detail.result; const line = this.data.lines.find(row => String(row.id) === String(event.currentTarget.dataset.line));
@@ -287,6 +301,7 @@ Page({
     if (this.data.saving || this.data.loading || this.data.pendingActions.length) return;
     let payload = {};
     if (action === 'material_delivery.prepare') {
+      if (this.data.unitSelectionExplicit && !this.data.productionUnits.length) return this.setData({ formError: '请先选择本次配料的具体编号' });
       if (this.data.units !== '' && (!Number.isInteger(Number(this.data.units)) || Number(this.data.units) < 1 || Number(this.data.units) > 100000)) return this.setData({ formError: '配料台数必须为 1 至 100000 的整数' });
       if (!this.data.preview || !(this.data.preview.lines || []).length) return this.setData({ formError: '当前没有可配物料' });
       if ((this.data.preview.short || []).length) return this.setData({ formError: this.data.preview.short.join('；') });
@@ -296,6 +311,8 @@ Page({
       payload = { work_order_id: this.data.header.work_order_id, remark: this.data.remark, dispatch,
         expected_source_revision: this.data.header.source_revision, selections: this.data.selections };
       if (this.data.units !== '') payload.units = Number(this.data.units);
+      if (this.data.unitSelectionExplicit) payload.unit_ids = this.data.productionUnits.map(unit => unit.id);
+      else if (this.data.preview.unit_ids) payload.unit_ids = this.data.preview.unit_ids;
     } else if (action === 'material_delivery.dispatch') {
       if ((this.data.header.source_problems || []).length) return this.setData({ formError: '拣货来源已失效，请先重新拣货' });
       payload = { expected_source_revision: this.data.header.source_revision };
@@ -357,7 +374,7 @@ Page({
       this.setData({ dialog: null, remark: '', checks: {}, checkedLocations: {}, checkedSerials: {}, dispositionDrafts: {} });
       wx.showToast({ title: action === 'material_delivery.recall' ? (result.return_status === 'approved' ? '已收回并接收入库' : '已收回，等待仓库确认') : '操作成功', icon: 'none' });
       if (action === 'material_delivery.prepare') {
-        this.setData({ kind: 'material_delivery', id: Number(result.id), page: 1, units: '', selections: [] }); wx.setNavigationBarTitle({ title: '配料单详情' });
+        this.setData({ kind: 'material_delivery', id: Number(result.id), page: 1, units: '', selections: [], productionUnits: [], unitSelectionExplicit: false }); wx.setNavigationBarTitle({ title: '配料单详情' });
       }
       await this.load();
     } catch (error) { this.setData({ formError: page.errorText(error), dialog: null }); await this.load(); }

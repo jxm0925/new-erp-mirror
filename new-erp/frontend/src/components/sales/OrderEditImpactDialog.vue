@@ -3,7 +3,7 @@
     :visible="visible"
     :close-on-click-modal="false"
     :close-on-press-escape="false"
-    :show-close="true"
+    :show-close="!submitting && !previewing"
     class="order-edit-impact-dialog"
     append-to-body
     @update:visible="$emit('update:visible', $event)"
@@ -13,7 +13,7 @@
     <template slot="title">本次修改影响</template>
 
     <div class="impact-dialog-shell">
-      <div ref="impactScroll" :class="['impact-dialog-scroll', { 'is-long-list': changes.length > 5 }]">
+      <div ref="impactScroll" :class="['impact-dialog-scroll', { 'is-long-list': changes.length > 5 || selectionGroups.length }]">
         <section class="impact-summary" aria-label="修改摘要">
           <div class="summary-item summary-total"><i class="el-icon-info" /><span>检测到</span><strong>{{ displaySummary.total }}</strong><span>项修改</span></div>
           <div class="summary-item"><span>无需审核</span><strong>{{ displaySummary.none }}</strong><span>项</span></div>
@@ -45,6 +45,26 @@
           </table>
         </section>
 
+        <section v-if="selectionGroups.length" class="production-unit-section">
+          <h3>选择本次处理的设备 / 子件</h3>
+          <p>本次已选商品编号 {{ selectedProductCount }} 个，关联子件编号 {{ selectedComponentCount }} 个。</p>
+          <div v-for="group in selectionGroups" :key="`${group.line_id}-${group.work_order_id}-${group.parent_unit_id || 0}`" class="production-unit-group">
+            <div class="production-unit-head"><strong>{{ group.item_name }} · {{ group.work_order_no }}</strong><el-button type="text" size="mini" :disabled="submitting || previewing" @click="$emit('choose-production-units', group)">{{ group.selection_required && (group.selected_unit_ids || []).length ? '确认所选编号' : '选择 / 调整编号' }}</el-button></div>
+            <p v-if="group.selection_required && (group.selected_unit_ids || []).length">这些编号尚待确认，请点“确认所选编号”核对。</p>
+            <p v-if="group.parent_unit_serial_no">所属主设备：{{ group.parent_unit_serial_no }}</p>
+            <p v-if="(group.required_unit_ids || []).length">已经装在这台主机上的子件已固定选中，不能换成另一个。</p>
+            <p v-if="group.allow_count_change">这张工单可选 0 至 {{ group.max_count }} 个，已选 {{ (group.selected_unit_ids || []).length }} 个；本商品编号合计{{ lineRequiredText(group) }}，当前已选 {{ lineSelectedCount(group) }} 个</p>
+            <p v-else>本次应选 {{ group.required_count }} 个，已选 {{ (group.selected_unit_ids || []).length }} 个</p>
+            <div class="production-unit-tags"><el-tag v-for="unit in group.selected_units || []" :key="unit.id" size="mini">{{ unit.serial_no || ('第' + unit.unit_no + '个') }}</el-tag><span v-if="!(group.selected_unit_ids || []).length">请先选择具体编号</span></div>
+          </div>
+        </section>
+        <section v-if="quantityAdjustments.length" class="production-unit-section">
+          <h3>另外减少的计划 / 库存需求</h3>
+          <p v-if="!selectedProductCount">本次未选择具体商品编号，先减少下列尚未下达的计划或库存备货需求。</p>
+          <p v-for="(item,index) in quantityAdjustments" :key="`${item.line_id}-${item.work_order_id || 0}-${item.fulfillment_id}-${index}`">{{ item.item_name }} · {{ item.origin === 'planned' ? '尚未下达的计划' : '库存备货需求' }}：减少 {{ item.qty }} {{ item.unit_name || '' }}</p>
+        </section>
+        <el-alert v-if="selectionErrors.length" :title="selectionErrors.join('；')" type="warning" :closable="false" show-icon />
+
         <section class="approval-section">
           <h3>本次审核要求</h3>
           <div class="approval-cards">
@@ -71,8 +91,8 @@
       <el-alert v-if="submitError" :title="submitError" type="error" :closable="false" show-icon class="impact-submit-error" />
 
       <footer class="impact-dialog-footer">
-        <el-button size="small" @click="$emit('back')">返回修改</el-button>
-        <el-button size="small" type="success" :loading="submitting" @click="$emit('submit')">{{ requiresApproval ? '提交审核' : '确认保存' }}</el-button>
+        <el-button size="small" :disabled="submitting || previewing" @click="$emit('back')">返回修改</el-button>
+        <el-button size="small" type="success" :loading="submitting || previewing" :disabled="!canSubmit || previewing" @click="$emit('submit')">{{ requiresApproval ? '提交审核' : '确认保存' }}</el-button>
       </footer>
     </div>
   </el-dialog>
@@ -99,11 +119,18 @@ export default {
     reason: { type: String, default: '' },
     submitting: { type: Boolean, default: false },
     submitError: { type: String, default: '' },
+    selectionGroups: { type: Array, default: () => [] },
+    selectionErrors: { type: Array, default: () => [] },
+    quantityAdjustments: { type: Array, default: () => [] },
+    canSubmit: { type: Boolean, default: true },
+    previewing: { type: Boolean, default: false },
     summary: { type: Object, default: null }
   },
   data() { return { localReason: this.reason } },
   computed: {
     requiresApproval() { return Object.values(this.approvals || {}).some(Boolean) },
+    selectedProductCount() { return this.selectionGroups.filter(group => !group.parent_unit_id).reduce((sum, group) => sum + (group.selected_unit_ids || []).length, 0) },
+    selectedComponentCount() { return this.selectionGroups.filter(group => group.parent_unit_id).reduce((sum, group) => sum + (group.selected_unit_ids || []).length, 0) },
     levelText() { return ({ low: '低', medium: '中', high: '高' })[this.level] || '低' },
     displaySummary() {
       if (this.$props.summary) return this.$props.summary
@@ -129,6 +156,8 @@ export default {
     requirementLabels(row) {
       return String(row.requirement || '直接保存').split(/\s*\+\s*/).filter(Boolean)
     },
+    lineSelectedCount(group) { return this.selectionGroups.filter(item => item.line_id === group.line_id && !item.parent_unit_id).reduce((sum, item) => sum + (item.selected_unit_ids || []).length, 0) },
+    lineRequiredText(group) { return group.line_min_numbered_count !== undefined && group.line_max_numbered_count !== undefined ? `可选 ${group.line_min_numbered_count} 至 ${group.line_max_numbered_count} 个` : `应选 ${group.line_required_count} 个` },
     requirementTagType(requirement) {
       if (String(requirement).includes('财务')) return 'warning'
       if (String(requirement).includes('库存与交付')) return 'primary'
@@ -140,6 +169,36 @@ export default {
 </script>
 
 <style>
+.production-unit-section {
+  margin-top:16px;
+}
+.production-unit-section h3 {
+  margin:0 0 9px;
+  font-size:13px;
+  color:#172033;
+}
+.production-unit-group {
+  padding:10px;
+  border:1px solid #e2e8f0;
+  border-radius:4px;
+  margin-top:8px;
+  font-size:12px;
+}
+.production-unit-head {
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  gap:12px;
+}
+.production-unit-group p {
+  margin:6px 0;
+  color:#64748b;
+}
+.production-unit-tags {
+  display:flex;
+  flex-wrap:wrap;
+  gap:6px;
+}
 .order-edit-impact-dialog .el-dialog{width:820px;max-width:calc(100vw - 32px);margin-top:calc((100vh - 731px)/2)!important;border-radius:7px;overflow:hidden}
 .order-edit-impact-dialog .el-dialog__header{height:59px;padding:0 18px;display:flex;align-items:center;border-bottom:1px solid #eef1f5}
 .order-edit-impact-dialog .el-dialog__title{font-size:18px;font-weight:700;color:#172033;line-height:1}

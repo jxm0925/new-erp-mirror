@@ -122,6 +122,10 @@ class RbacBootstrapService
         'inventory.material_delivery' => ['warehouse_manager'],
         'production.material_delivery.manage' => ['warehouse_manager'],
         'purchase.production_shortage.convert' => ['production_manager'],
+        // 售后单：业务员登记与受理，履约/仓库推进处理；关闭默认不授，走角色管理或超管。
+        'aftersales.view' => ['sales_user', 'fulfillment_manager', 'warehouse_manager'],
+        'aftersales.create' => ['sales_user'],
+        'aftersales.handle' => ['fulfillment_manager', 'warehouse_manager'],
     ];
 
     /** 新权限还要授给已有某个权限的角色（如自建的采购员角色有“新增需求”就能看生产缺料并转采购）。 */
@@ -427,6 +431,7 @@ class RbacBootstrapService
             ['sales.order', '销售订单', 'menu', 'sales', '/sales/orders', 'SalesOrderList', 'el-icon-s-order', 502],
             ['sales.shipment', '销售发货单', 'menu', 'sales', '/sales/shipments', 'SalesShipmentBoard', 'el-icon-truck', 503],
             ['sales.return', '销售退货', 'menu', 'sales', '/sales/returns', 'ReturnList', 'el-icon-refresh-left', 503],
+            ['sales.aftersales', '售后单', 'menu', 'sales', '/sales/aftersales', 'AftersalesList', 'el-icon-service', 504],
 
             // 销售管理 按钮
             ['sales.customer.view', '查看客户', 'button', 'sales.customer', null, null, 'el-icon-mouse', 1],
@@ -504,6 +509,11 @@ class RbacBootstrapService
             ['sales_return.post', '销售退货入库过账', 'button', 'sales.return', null, null, 'el-icon-mouse', 5],
             ['sales_return.cancel', '取消销售退货', 'button', 'sales.return', null, null, 'el-icon-mouse', 6],
             ['sales_return.delete', '删除销售退货草稿', 'button', 'sales.return', null, null, 'el-icon-delete', 7],
+
+            ['aftersales.view', '查看售后单', 'button', 'sales.aftersales', null, null, 'el-icon-mouse', 1],
+            ['aftersales.create', '新建售后单', 'button', 'sales.aftersales', null, null, 'el-icon-mouse', 2],
+            ['aftersales.handle', '处理售后单', 'button', 'sales.aftersales', null, null, 'el-icon-mouse', 3],
+            ['aftersales.close', '关闭售后单', 'button', 'sales.aftersales', null, null, 'el-icon-mouse', 4],
 
             // 6. 财务管理 二级菜单
             ['finance.receipt', '收款管理', 'menu', 'finance', '/finance/receipts', 'FinanceCashList', 'el-icon-money', 601],

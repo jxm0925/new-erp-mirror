@@ -46,7 +46,7 @@ class MfgTaskController extends Controller
         [$user, $codes] = $this->user($request, [in_array($action, ['assign', 'stop'], true) ? 'production.task.assign' : 'production.task.execute']);
         $message = match ($action) {
             'claim' => $this->run(fn () => $tasks->claim($id, $user, $lane), $lane === 'rework' ? '已接下返工。' : '接单成功。'),
-            'start' => $this->run(fn () => $tasks->start($id, $user, $lane), $lane === 'rework' ? '返工开始计时（返工工时单独记，不算提成）。' : '开始计时。'),
+            'start' => $this->run(fn () => $tasks->start($id, $user, $lane, $request->validate(['unit_ids' => 'sometimes|array|min:1|max:1000', 'unit_ids.*' => 'integer|min:1|distinct'])['unit_ids'] ?? null), $lane === 'rework' ? '返工开始计时（返工工时单独记，不算提成）。' : '开始计时。'),
             'pause' => $this->run(fn () => $tasks->pause($id, $user), '已暂停计时。'),
             'stop' => $this->run(fn () => $tasks->stopTiming($id, (int) $request->validate(['employee_legacy_id' => 'required|integer|min:1'])['employee_legacy_id'], $user), '已停止这个人的计时。'),
             'assign' => $this->run(fn () => $tasks->assign($id, (int) $request->validate(['employee_legacy_id' => 'required|integer|min:1'])['employee_legacy_id'], $user, $lane), '已派工。'),
@@ -54,7 +54,7 @@ class MfgTaskController extends Controller
             'pass' => $this->pass($request, $id, $user, $lane),
             'prepare' => $this->prepare($request, $id, $user),
             'reject' => $this->reject($request, $id, $tasks, $user, $lane),
-            'semi_order' => $this->semiOrder($request, $id, $user),
+            'semi_order' => $this->semiOrder($request, $id, $user, $lane),
         };
         return response()->json(['message' => $message, 'data' => $query->task($id, $user, $codes, $lane)]);
     }
@@ -137,7 +137,7 @@ class MfgTaskController extends Controller
         $data = $request->validate(['client_command_id' => 'required|string|max:120', 'unit_ids' => 'required|array|min:1|max:1000', 'unit_ids.*' => 'integer|min:1|distinct',
             'warehouse_id' => 'required|integer|exists:erp_warehouses,id', 'location_id' => 'required|integer|exists:erp_locations,id', 'remark' => 'nullable|string|max:500']);
         $result = $this->productionCommand('mfg_receipt.request', $id, $data, $user);
-        return response()->json(['message' => '已提交 '.(int) $result['qty'].' '.$this->unitWord(null, $id).'，待仓库确认（'.$result['receipt_no'].'）。', 'data' => $result]);
+        return response()->json(['message' => '已提交 '.(int) ($result['total_requested_qty'] ?? $result['qty']).' '.$this->unitWord(null, $id).'，待仓库确认（'.$result['receipt_no'].'）。', 'data' => $result]);
     }
 
     public function receiptIndex(Request $request, ReceiptService $receipts)
@@ -258,7 +258,7 @@ class MfgTaskController extends Controller
     {
         $message = $result['received_qty'].' '.$word.($result['completion_action'] === 'handoff'
             ? '已交接给'.$result['handoff_operation_name'].(! empty($result['shipment_no']) ? '（'.$result['shipment_no'].'）' : '').'。'
-            : '已提交入库，待仓库确认（'.$result['receipt_no'].'）。');
+            : '已提交入库，待仓库确认（'.implode('、', $result['receipt_nos'] ?? [$result['receipt_no']]).'）。');
         if (($result['repaired'] ?? 0) > 0) $message .= '另有 '.$result['repaired'].' 台原设备返修合格，请仓库在发货单上返回成品位后重新试水。';
         return $message;
     }
@@ -275,13 +275,14 @@ class MfgTaskController extends Controller
         return $result['count'].' '.$word.'已退回'.$result['return_operation_name'].'返工'.($result['rework_owner_name'] ? '，默认交给 '.$result['rework_owner_name'] : '，等人接返工').'。'.$paused;
     }
 
-    /** 领子件那道：任何有报工权限的人都能按缺口给半成品下工单（不能超过缺口）。 */
-    private function semiOrder(Request $request, int $id, object $user): string
+    /** 领子件那道的正常生产接单人，可按缺口给半成品下工单。 */
+    private function semiOrder(Request $request, int $id, object $user, string $lane): string
     {
+        if ($lane !== 'normal') throw new WorkOrderDomainException('lane_invalid', '返工任务不能开半成品工单。');
         $data = $request->validate(['component_item_id' => 'required|integer|min:1', 'qty' => 'required|integer|min:1|max:100000']);
         $woId = (int) MfgWorkOrderOperation::query()->whereKey($id)->value('work_order_id');
         if (! $woId) throw new WorkOrderDomainException('not_found', '工序不存在。', 404);
-        $child = app(WorkOrderService::class)->createForParent($woId, (int) $data['component_item_id'], (float) $data['qty'], $user);
+        $child = app(WorkOrderService::class)->createForParent($woId, (int) $data['component_item_id'], (float) $data['qty'], $user, $id);
         $text = $child->status === 'released' ? '已下达给下料组' : '资料不全，停在计划：'.$child->block_reason;
         return "半成品工单 {$child->work_order_no}（{$child->item_name} ".(int) $data['qty'].($child->unit_name ?: '')."）已开，{$text}。";
     }

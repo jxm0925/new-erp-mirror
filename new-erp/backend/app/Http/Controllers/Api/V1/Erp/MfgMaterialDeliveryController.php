@@ -35,7 +35,7 @@ class MfgMaterialDeliveryController extends Controller
     {
         $this->user($request, self::MANAGE);
         $data = $request->validate(['units' => 'nullable|integer|min:1|max:100000'] + MaterialDeliveryService::selectionRules());
-        return response()->json(['data' => $deliveries->preview($id, $operationId, isset($data['units']) ? (int) $data['units'] : null, $data['selections'] ?? [])]);
+        return response()->json(['data' => $deliveries->preview($id, $operationId, isset($data['units']) ? (int) $data['units'] : null, $data['selections'] ?? [], $request->validate(['unit_ids' => 'nullable|array|min:1|max:1000', 'unit_ids.*' => 'integer|min:1|distinct'])['unit_ids'] ?? null)]);
     }
 
     public function candidates(Request $request, int $id, int $operationId, MaterialDeliveryService $deliveries)
@@ -53,17 +53,18 @@ class MfgMaterialDeliveryController extends Controller
         $this->user($request, self::MANAGE);
         $data = $request->validate(['units' => 'nullable|integer|min:1|max:100000'] + MaterialDeliveryService::selectionRules());
         return response()->json(['data' => $deliveries->shortagePurchasePreview($id, $operationId,
-            isset($data['units']) ? (int) $data['units'] : null, $data['selections'] ?? [])]);
+            isset($data['units']) ? (int) $data['units'] : null, $data['selections'] ?? [], false, $request->validate(['unit_ids' => 'nullable|array|min:1|max:1000', 'unit_ids.*' => 'integer|min:1|distinct'])['unit_ids'] ?? null)]);
     }
 
     public function shortagePurchaseRequest(Request $request, int $id, int $operationId, ShortageService $shortages)
     {
         [$user] = $this->user($request, self::MANAGE);
         $data = $request->validate(['units' => 'nullable|integer|min:1|max:100000', 'lines' => 'required|array|min:1|max:100',
+            'unit_ids' => 'nullable|array|min:1|max:1000', 'unit_ids.*' => 'integer|min:1|distinct',
             'lines.*.item_id' => 'required|integer|min:1|distinct', 'lines.*.qty' => 'required|numeric|min:0.0001|max:100000000|decimal:0,4',
             'lines.*.purchase_unit_id' => 'required|integer|min:1'] + MaterialDeliveryService::selectionRules());
         $record = $shortages->createRequest($data['lines'], $id, null, $user, ['operation_id' => $operationId,
-            'units' => isset($data['units']) ? (int) $data['units'] : null, 'selections' => $data['selections'] ?? []]);
+            'units' => isset($data['units']) ? (int) $data['units'] : null, 'selections' => $data['selections'] ?? [], 'unit_ids' => $data['unit_ids'] ?? null]);
         return response()->json(['message' => "已生成采购需求 {$record->request_no}（草稿），请采购确认后转计划。",
             'data' => ['id' => $record->id, 'request_no' => $record->request_no]], 201);
     }
@@ -74,7 +75,7 @@ class MfgMaterialDeliveryController extends Controller
         $data = $request->validate(['units' => 'nullable|integer|min:1|max:100000', 'remark' => 'nullable|string|max:500', 'dispatch' => 'nullable|boolean',
             'expected_source_revision' => 'nullable|string|regex:/^[a-f0-9]{64}$/'] + MaterialDeliveryService::selectionRules());
         $delivery = $deliveries->prepare($id, $operationId, isset($data['units']) ? (int) $data['units'] : null, $data['remark'] ?? null, $user,
-            $data['expected_source_revision'] ?? null, $data['selections'] ?? []);
+            $data['expected_source_revision'] ?? null, $data['selections'] ?? [], $request->validate(['unit_ids' => 'nullable|array|min:1|max:1000', 'unit_ids.*' => 'integer|min:1|distinct'])['unit_ids'] ?? null);
         if (! empty($data['dispatch'])) {
             $delivery = $deliveries->dispatch($delivery->id, $user, $data['expected_source_revision'] ?? null);
             return response()->json(['message' => "配料单 {$delivery->delivery_no} 已发出，已扣库存，等车间签收。", 'data' => $deliveries->row($delivery)], 201);

@@ -7,7 +7,7 @@ use Database\Schema\InitialTableMigration;
 require_once __DIR__.'/../schema/InitialTableMigration.php';
 
 // 生产退料单：车间把领多、领错、不良或报废台拆下的料退回仓库；工人申请、库管审核通过时才入库。
-// return_type：surplus 余料/错料（冲减已领）、defective 不良退回（冲减已领，需重新收料）、scrapped 报废台拆回（不冲减已领）。
+// return_type：surplus 余料/错料、defective 不良退回、scrapped 报废台拆回、cancellation 停产拆解退料；仅scrapped不冲减已领。
 return new class extends InitialTableMigration
 {
     public const TABLE = 'erp_mfg_material_returns';
@@ -21,6 +21,7 @@ CREATE TABLE `erp_mfg_material_returns` (
   `return_no` varchar(60) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
   `work_order_id` bigint(20) unsigned NOT NULL,
   `work_order_operation_id` bigint(20) unsigned NOT NULL,
+  `disposition_id` bigint(20) unsigned DEFAULT NULL,
   `return_type` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
   `status` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
   `business_version` int(10) unsigned NOT NULL DEFAULT '1',
@@ -43,6 +44,7 @@ CREATE TABLE `erp_mfg_material_returns` (
   UNIQUE KEY `mfg_return_no_uq` (`return_no`),
   KEY `mfg_return_wo_idx` (`work_order_id`,`work_order_operation_id`),
   KEY `mfg_return_status_idx` (`status`,`id`),
+  KEY `mfg_return_disposition_idx` (`disposition_id`),
   CONSTRAINT `mfg_return_wo_fk` FOREIGN KEY (`work_order_id`) REFERENCES `erp_mfg_work_orders` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
 SQL;

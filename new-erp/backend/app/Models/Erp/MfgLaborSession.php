@@ -6,5 +6,5 @@ namespace App\Models\Erp;
 class MfgLaborSession extends MasterModel
 {
     protected $table = 'erp_mfg_labor_sessions';
-    protected $casts = ['is_rework' => 'boolean', 'started_at' => 'datetime', 'ended_at' => 'datetime', 'labor_minutes' => 'decimal:2'];
+    protected $casts = ['unit_ids' => 'array', 'continuation_of_id' => 'integer', 'is_rework' => 'boolean', 'started_at' => 'datetime', 'ended_at' => 'datetime', 'labor_minutes' => 'decimal:2'];
 }

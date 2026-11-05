@@ -19,6 +19,8 @@ CREATE TABLE `erp_mfg_labor_sessions` (
   `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
   `work_order_id` bigint(20) unsigned NOT NULL,
   `work_order_operation_id` bigint(20) unsigned NOT NULL,
+  `unit_ids` json DEFAULT NULL,
+  `continuation_of_id` bigint(20) unsigned DEFAULT NULL,
   `employee_legacy_id` bigint(20) unsigned NOT NULL,
   `employee_name` varchar(120) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `is_rework` tinyint(1) NOT NULL DEFAULT '0',
@@ -34,6 +36,8 @@ CREATE TABLE `erp_mfg_labor_sessions` (
   KEY `mfg_labor_op_idx` (`work_order_operation_id`,`status`),
   KEY `mfg_labor_wo_idx` (`work_order_id`),
   KEY `mfg_labor_started_idx` (`started_at`),
+  KEY `mfg_labor_continuation_idx` (`continuation_of_id`),
+  CONSTRAINT `mfg_labor_continuation_fk` FOREIGN KEY (`continuation_of_id`) REFERENCES `erp_mfg_labor_sessions` (`id`),
   CONSTRAINT `mfg_labor_op_fk` FOREIGN KEY (`work_order_operation_id`) REFERENCES `erp_mfg_work_order_operations` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
 SQL;

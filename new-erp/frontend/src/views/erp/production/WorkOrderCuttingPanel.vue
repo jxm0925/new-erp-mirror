@@ -10,9 +10,10 @@
         <el-alert v-if="error" :title="error" type="error" show-icon :closable="false" />
         <template v-if="context">
           <div class="cutting-form">
-            <label>加工工序<el-select v-model="operationId" size="small" :disabled="locked" @change="resetPlan"><el-option v-for="op in cuttingOperations" :key="op.id" :value="op.id" :label="op.operation_name" /></el-select></label>
-            <label>本次加工套数<el-input-number v-model="unitQty" size="small" :min="1" :max="remainingUnits || 1" :step="1" step-strictly :disabled="locked" @change="resetPlan" /></label>
+            <label>加工工序<el-select v-model="operationId" size="small" :disabled="locked" @change="changeOperation"><el-option v-for="op in cuttingOperations" :key="op.id" :value="op.id" :label="op.operation_name" /></el-select></label>
+            <label>本次加工编号<el-button size="small" :disabled="locked || !remainingUnits" @click="unitPicker={visible:true,mode:'issue'}">选择具体编号（已选 {{ unitQty }} 套）</el-button></label>
           </div>
+          <div><el-tag v-for="unit in selectedUnits" :key="unit.id" size="small" style="margin:0 6px 6px 0">{{ unit.serial_no || ('第' + unit.unit_no + '个') }}</el-tag></div>
           <h4>下料要求</h4>
           <el-table :data="operationRequirements" border size="small">
             <el-table-column prop="item_name" label="原材料" min-width="130" />
@@ -21,7 +22,7 @@
             <el-table-column label="本次加工量" min-width="110"><template slot-scope="{ row }">{{ qty(Number(row.mode === 'sheet' ? row.per_unit_piece_qty : row.per_unit_measure) * unitQty) }} {{ row.mode === 'sheet' ? '件' : 'm' }}</template></el-table-column>
           </el-table>
           <template v-if="canExecute && context.can_issue && remainingUnits > 0">
-            <div class="cutting-section-head"><h4>实际投入来源</h4><el-button size="small" type="success" plain :disabled="locked" @click="openSources">选择实际原料</el-button></div>
+            <div class="cutting-section-head"><h4>实际投入来源</h4><el-button size="small" type="success" plain :disabled="locked || !unitQty" @click="openSources">选择实际原料</el-button></div>
             <el-table :data="selectedSources" border size="small">
               <el-table-column label="实物 / 批次" min-width="180"><template slot-scope="{ row }">{{ row.physical_no || row.batch_no }}</template></el-table-column>
               <el-table-column prop="item_name" label="原材料" min-width="130" />
@@ -89,7 +90,12 @@
       <el-alert v-if="batch.waiting_reason" :title="batch.waiting_reason" type="warning" :closable="false" />
       <el-button v-if="batch.remnant_receipt && batch.remnant_receipt.id" size="small" type="text" @click="$router.push({ path: '/inventory/inbound-confirmations', query: { kind: 'cutting_remnant', id: batch.remnant_receipt.id } })">查看历史余料申请</el-button>
       <el-alert v-if="batchError" :title="batchError" type="error" show-icon :closable="false" />
-      <div class="cutting-form"><label>实际加工套数<el-input-number v-model="actualUnits" size="small" :min="1" :max="Number(batch.unit_qty || 1)" :step="1" step-strictly :disabled="batchLocked || batch.status !== 'issued'" @change="batchConfirmed = false" /></label></div>
+      <template v-if="(batch.unit_ids || []).length">
+        <p>本批原加工编号：{{ (batch.units || []).map(unitLabel).join('、') }}</p>
+        <div class="cutting-form"><label>本次实际完成编号<el-button size="small" :disabled="batchLocked || batch.status !== 'issued'" @click="unitPicker={visible:true,mode:'completed'}">选择已完成编号（{{ actualUnits }} 套）</el-button></label></div>
+        <div><el-tag v-for="unit in completedUnits" :key="unit.id" size="small" style="margin:0 6px 6px 0">{{ unitLabel(unit) }}</el-tag></div>
+      </template>
+      <template v-else><p>旧批次未区分设备编号，保留原套数记录。</p><div class="cutting-form"><label>实际加工套数<el-input-number v-model="actualUnits" size="small" :min="1" :max="Number(batch.unit_qty || 1)" :step="1" step-strictly :disabled="batchLocked || batch.status !== 'issued'" @change="batchConfirmed = false" /></label></div></template>
       <h4>本批加工结果</h4>
       <el-table :data="actualAssignments" border size="small">
         <el-table-column label="实际来源" min-width="170"><template slot-scope="{ row }">{{ batchSourceName(row.source_key) }}</template></el-table-column>
@@ -110,6 +116,7 @@
       <span slot="footer"><el-button size="small" :disabled="busy" @click="batchOpen = false">关闭</el-button><el-button v-if="batchEditable" type="success" size="small" :loading="busy" :disabled="!pendingSettle && !batchConfirmed" @click="settle">{{ pendingSettle ? '核对上次登记结果' : '确认登记结算' }}</el-button></span>
     </el-dialog>
     <system-record-picker :visible.sync="locator.visible" :type="locator.type" :multiple="false" :value="locatorValue" :warehouse-id="locator.row ? Number(locator.row.warehouse_id || 0) : 0" :location-purposes="['general']" :management-scope="workOrder.management_scope || 'factory'" @confirm="selectLocator" />
+    <system-record-picker :visible.sync="unitPicker.visible" :request="loadUnitOptions" :params="{ mode: unitPicker.mode, operation_id: unitPicker.mode === 'completed' ? batch.work_order_operation_id : operationId, batch_id: unitPicker.mode === 'completed' ? batch.id : undefined }" :value="unitPicker.mode === 'completed' ? completedUnits : selectedUnits" :columns="unitColumns" :config="{title: unitPicker.mode === 'completed' ? '选择本批实际做完的编号' : '选择本次开料的设备 / 子件', placeholder: '搜索设备编号 / 子件编号'}" :label="unitLabel" :selectable="unitSelectable" :multiple="true" @confirm="applyUnits" />
   </div>
 </template>
 
@@ -131,7 +138,9 @@ export default {
   components: { SystemRecordPicker },
   props: { workOrder: { type: Object, required: true } },
   data: () => ({
-    visible: false, loading: false, busy: false, error: '', context: null, operationId: null, unitQty: 1, page: 1,
+    visible: false, loading: false, busy: false, error: '', context: null, operationId: null, unitQty: 0, page: 1,
+    selectedUnits: [], completedUnits: [], unitPicker: { visible: false, mode: 'issue' },
+    unitColumns: [{ prop: 'serial_no', label: '设备 / 子件编号', width: 160 }, { prop: 'unit_no', label: '序号', width: 70 }, { prop: 'status_label', label: '当前进度', width: 110 }, { prop: 'disabled_reason', label: '不可选择原因', width: 160 }],
     selectedSources: [], sourceSelected: {}, preview: null, previewLoading: false, planChecked: false, planConfirmed: false, pendingIssue: false,
     sourceOpen: false, sourceLoading: false, sourceError: '', sourceRows: [], sourceTotal: 0, categories: [],
     sourceQuery: { item_id: null, keyword: '', category_id: null, page: 1 }, sourceRequest: 0,
@@ -169,8 +178,8 @@ export default {
     measureUnit(value) { return value === 'm2' ? 'm²' : value },
     sourceUnit(row) { return row.unit_kind === 'sheet' ? '张' : (row.unit_kind === 'root' ? '根' : this.measureUnit(row.unit_kind)) },
     partUnit(key) { const part = (this.context && this.context.requirements || []).find(row => row.part_key === key); return part && part.quantity_basis === 'total_length' ? 'm' : '件' },
-    async open() { this.visible = true; this.page = 1; this.pendingIssue = Boolean(pendingProductionDecision('cutting_issue_' + this.workOrder.id)); await this.load() },
-    close() { this.sourceRequest++; this.sourceOpen = false; this.batchOpen = false; this.locator.visible = false; this.resetPlan() },
+    async open() { this.visible = true; this.page = 1; const pending = pendingProductionDecision('cutting_issue_' + this.workOrder.id); this.pendingIssue = Boolean(pending); if (pending) { this.operationId = pending.operation_id || this.operationId; this.selectedUnits = (this.workOrder.units || []).filter(unit => (pending.unit_ids || []).includes(unit.id)); this.unitQty = this.selectedUnits.length } await this.load() },
+    close() { this.sourceRequest++; this.sourceOpen = false; this.batchOpen = false; this.locator.visible = false; this.unitPicker.visible = false; this.selectedUnits = []; this.unitQty = 0; this.resetPlan() },
     async load() {
       const id = this.workOrder.id
       this.loading = true; this.error = ''
@@ -179,11 +188,18 @@ export default {
         if (!this.visible || id !== this.workOrder.id) return
         this.context = data.data
         if (!this.cuttingOperations.some(row => row.id === this.operationId)) this.operationId = this.cuttingOperations[0] && this.cuttingOperations[0].id
-        if (this.remainingUnits > 0) this.unitQty = Math.min(this.unitQty, this.remainingUnits)
       } catch (e) { if (this.visible && id === this.workOrder.id) this.error = errorText(e, '开料资料加载失败') }
       finally { this.loading = false }
     },
     changePage(page) { this.page = page; this.load() },
+    changeOperation() { this.selectedUnits = []; this.unitQty = 0; this.resetPlan() },
+    unitLabel(unit) { return unit.serial_no || `第${unit.unit_no}个` },
+    unitSelectable(unit) { return unit.selectable !== false },
+    loadUnitOptions(params) { return getWorkOrderCutting(this.workOrder.id, { ...params, scope: 'units' }) },
+    applyUnits(rows) {
+      if (this.unitPicker.mode === 'completed') { this.completedUnits = rows; this.actualUnits = rows.length; this.batchConfirmed = false }
+      else { this.selectedUnits = rows; this.unitQty = rows.length; this.resetPlan() }
+    },
     resetPlan() { this.preview = null; this.selectedSources = []; this.planChecked = false; this.planConfirmed = false },
     requirementText(row) { return row.mode === 'sheet' ? [row.length_mm, row.width_mm, row.thickness_mm].filter(value => value !== null && value !== undefined).join(' × ') + ' mm' : this.qty(row.per_unit_measure) + ' m / 套' },
     sourceSize(row) {
@@ -235,11 +251,12 @@ export default {
       this.selectedSources = sources; this.preview = null; this.planChecked = false; this.planConfirmed = false; this.sourceOpen = false
     },
     planPayload(assignments) {
-      return { operation_id: this.operationId, unit_qty: this.unitQty, sources: this.selectedSources.map(row => ({ source_key: row.source_key, item_id: row.item_id, inventory_balance_id: row.inventory_balance_id, physical_material_id: row.physical_material_id || null, source_version: row.source_version, qty: String(row.qty) })),
+      return { operation_id: this.operationId, unit_qty: this.unitQty, unit_ids: this.selectedUnits.map(unit => unit.id), sources: this.selectedSources.map(row => ({ source_key: row.source_key, item_id: row.item_id, inventory_balance_id: row.inventory_balance_id, physical_material_id: row.physical_material_id || null, source_version: row.source_version, qty: String(row.qty) })),
         ...(assignments ? { assignments: assignments.map(row => ({ source_key: row.source_key, part_key: row.part_key, qty: String(row.qty) })) } : {}) }
     },
     async calculate(retain) {
       if (this.locked || this.previewLoading) return
+      if (!this.unitQty) return this.$message.warning('请先选择本次开料的具体编号')
       const id = this.workOrder.id
       this.previewLoading = true; this.error = ''; this.planConfirmed = false; this.planChecked = false
       try {
@@ -261,12 +278,15 @@ export default {
       this.busy = true; this.error = ''
       try {
         await executeProductionDecision('cutting_issue_' + id, { ...this.planPayload(this.preview && this.preview.assignments), expected_version: this.context.business_version, idempotency_key: uuid() }, payload => issueWorkOrderCutting(id, payload))
-        this.pendingIssue = false; this.resetPlan(); this.$message.success('原料已正式领入加工'); await this.load(); this.$emit('refresh')
+        this.pendingIssue = false; this.selectedUnits = []; this.unitQty = 0; this.resetPlan(); this.$message.success('原料已正式领入加工'); await this.load(); this.$emit('refresh')
       } catch (e) { this.pendingIssue = Boolean(e.pendingCommand); this.error = errorText(e, '开料领料失败') }
       finally { this.busy = false }
     },
     openBatch(row) {
       this.batch = clone(row); this.batchError = ''; this.batchOpen = true; this.actualUnits = Number(row.completed_unit_qty || row.unit_qty)
+      const completed = row.completed_unit_ids?.length ? row.completed_unit_ids : row.unit_ids || []
+      this.completedUnits = (row.units || []).filter(unit => completed.includes(unit.id))
+      if ((row.unit_ids || []).length) this.actualUnits = this.completedUnits.length
       this.actualAssignments = clone(['settled', 'awaiting_confirm'].includes(row.status) ? row.actual_outputs || [] : row.planned_outputs || [])
       this.batchConfirmed = false; this.batchRemark = row.remark || ''; this.pendingSettle = Boolean(pendingWarehouseCommand('cutting_batch.request', row.id))
       if (['settled', 'awaiting_confirm'].includes(row.status)) { this.remnants = clone((row.remnants || []).length ? row.remnants : row.remnant_receipt?.requested_lines || []); return }
@@ -300,10 +320,11 @@ export default {
     async settle() {
       if (this.busy || !this.batchEditable || !this.pendingSettle && (!this.batchConfirmed || !this.remnants.length)) return
       const batch = this.batch
+      if ((batch.unit_ids || []).length && !this.completedUnits.length) return this.$message.warning('请明确选择本次实际做完的编号')
       if (!this.pendingSettle && this.remnants.some(row => !/^\d+(?:\.\d+)?$/.test(String(row.measure_qty)) || Number(row.measure_qty) > 0 && (!row.warehouse_id || !row.location_id))) return this.$message.warning('请填写非负余料数量及余料回库位置')
       this.busy = true; this.batchError = ''
       try {
-        await settleWorkOrderCutting(batch.id, { expected_version: batch.business_version, unit_qty: this.actualUnits, assignments: this.actualAssignments.map(row => ({ source_key: row.source_key, part_key: row.part_key, qty: String(row.qty) })), remnants: this.remnants.map(row => ({ source_key: row.source_key, measure_qty: String(row.measure_qty), warehouse_id: row.warehouse_id, location_id: row.location_id })), confirmed: true, remark: this.batchRemark || undefined })
+        await settleWorkOrderCutting(batch.id, { expected_version: batch.business_version, unit_qty: this.actualUnits, ...((batch.unit_ids || []).length ? { completed_unit_ids: this.completedUnits.map(unit => unit.id) } : {}), assignments: this.actualAssignments.map(row => ({ source_key: row.source_key, part_key: row.part_key, qty: String(row.qty) })), remnants: this.remnants.map(row => ({ source_key: row.source_key, measure_qty: String(row.measure_qty), warehouse_id: row.warehouse_id, location_id: row.location_id })), confirmed: true, remark: this.batchRemark || undefined })
         this.pendingSettle = false; this.batchOpen = false; this.$message.success('实际产出与余料已登记结算'); await this.load(); this.$emit('refresh')
       } catch (e) { this.pendingSettle = Boolean(e.pendingCommand); this.batchError = errorText(e, '用料结果确认失败') }
       finally { this.busy = false }

@@ -269,10 +269,11 @@ final class CuttingRunService
      * - 逐张管理的板材：按这次第一次过本道的 $units 套领件（只带工时），板材成本由开料池按定额扣。
      * 开料记录还在开（没结束）又不够领时不让备料，避免工时和料漏掉。调用方须在事务内并已锁定工单和工序。返回领到的明细。
      */
-    public function allocate(MfgWorkOrder $wo, MfgWorkOrderOperation $op, int $units, float $upTo, object $actor, ?int $preferRunId = null): array
+    public function allocate(MfgWorkOrder $wo, MfgWorkOrderOperation $op, int $units, float $upTo, object $actor, ?int $preferRunId = null, ?array $unitIds = null): array
     {
-        CancellationProductionService::assertProductionAllowed((int) $wo->id);
         if ($units <= 0) return [];
+        abort_unless($unitIds !== null && count(array_unique($unitIds)) === $units, 422, '请明确本次领用开料产出的设备编号。');
+        CancellationProductionService::assertProductionAllowed((int) $wo->id, $unitIds);
         $materials = MfgWorkOrderMaterial::query()->where('work_order_operation_id', $op->id)->whereIn('cutting_mode', ['sheet', 'length'])
             ->where('required_qty', '>', 0)->orderBy('id')->lockForUpdate()->get();
         if ($materials->isEmpty()) return [];
@@ -295,7 +296,8 @@ final class CuttingRunService
             if (in_array((int) $m->component_item_id, $physical, true)) $pieces = (int) round($per * $poolUnits);
             else {
                 // 已经从仓库收过的料不再领件，免得同一份料算两次。
-                $qty = round($issues->neededFor($m, $wo, $upTo) - (float) $m->issued_qty - (float) ($prepared[$m->id] ?? 0), 4);
+                $qty = round($issues->neededFor($m, $wo, count($unitIds)) - $issues->quantityForUnits($m, $wo, $unitIds)
+                    - (float) (MaterialDeliveryService::preparedQty((int) $op->id, $unitIds)[$m->id] ?? 0), 4);
                 if ($qty <= 0.00001 || $planned <= 0) continue;
                 $pieces = (int) round($per * $qty * $planned / (float) $m->required_qty);
             }
@@ -343,6 +345,7 @@ final class CuttingRunService
             foreach ($rows as &$row) {
                 $minutes = bcdiv(bcmul($runMinutes, (string) $row['pieces'], 8), (string) $taken, 4);
                 MfgCuttingRunAllocation::create(['cutting_run_id' => $run->id, 'work_order_id' => $wo->id, 'work_order_operation_id' => $op->id,
+                    'unit_ids' => array_values(array_map('intval', $unitIds)),
                     'work_order_material_id' => $row['material_id'], 'line_key' => $row['line_key'], 'unit_qty' => $units, 'pieces' => $row['pieces'],
                     'labor_minutes' => $minutes, 'material_qty' => $row['material_qty'], 'cost_amount' => $row['cost_amount'],
                     'allocated_by_legacy_id' => $this->actorId($actor), 'allocated_by_name' => $this->actorName($actor)]);
@@ -520,6 +523,7 @@ final class CuttingRunService
 
     private function assertFree(int $me): void
     {
+        DispositionLaborService::assertNotTiming($me);
         if ($no = self::activeFor($me)) $this->fail('already_timing', "你在开料记录 {$no} 还在计时，请先暂停那一批。");
         if (MfgLaborSession::query()->where('employee_legacy_id', $me)->where('status', 'active')->exists()) $this->fail('already_timing', '你还有工单工序在计时，请先暂停那一道。');
         if (ShipmentPackingLaborSession::query()->where('employee_legacy_id', $me)->where('status', 'ACTIVE')->exists()) $this->fail('already_timing', '你有打包作业正在计时，请先暂停。');

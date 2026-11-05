@@ -7,5 +7,5 @@ class MfgCuttingAllocation extends MasterModel
 {
     protected $table = 'erp_mfg_cutting_allocations';
 
-    protected $casts = ['unit_qty' => 'integer', 'qty' => 'decimal:4', 'measure' => 'decimal:8', 'cost_amount' => 'decimal:4'];
+    protected $casts = ['unit_ids' => 'array', 'unit_qty' => 'integer', 'qty' => 'decimal:4', 'measure' => 'decimal:8', 'cost_amount' => 'decimal:4'];
 }

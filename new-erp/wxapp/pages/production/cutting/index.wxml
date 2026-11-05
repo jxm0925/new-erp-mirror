@@ -26,13 +26,10 @@
         </view>
       </view>
       <view wx:if="{{canIssue}}" class="mt-kv mt-gap">
-        <text class="k" style="color: #1f2329; font-weight: 700;">本次开料套数</text>
-        <view class="ct-step">
-          <text class="ct-step-btn {{unitQty <= 1 ? 'off' : ''}}" data-delta="-1" bindtap="changeUnits">−</text>
-          <input class="ct-step-input" type="number" value="{{unitQty}}" bindblur="unitsInput" />
-          <text class="ct-step-btn {{unitQty >= remaining ? 'off' : ''}}" data-delta="1" bindtap="changeUnits">+</text>
-        </view>
+        <text class="k" style="color: #1f2329; font-weight: 700;">本次已选 {{unitQty}} 套</text>
+        <text class="tk-link red" data-mode="issue" bindtap="openUnitPicker">选择具体编号 ›</text>
       </view>
+      <view wx:for="{{selectedUnits}}" wx:key="id" class="mt-muted">{{item.serial_no || ('第' + item.unit_no + '个')}}</view>
     </view>
 
     <!-- 实际领用原料 -->
@@ -169,13 +166,16 @@
     <scroll-view scroll-y class="tk-sheet-body">
       <view class="mt-kv">
         <text class="k">实际完成套数</text>
-        <view wx:if="{{batch.status === 'issued'}}" class="ct-step">
+        <text wx:if="{{batch.unit_ids.length}}">{{actualUnits}} 套</text>
+        <view wx:elif="{{batch.status === 'issued'}}" class="ct-step">
           <text class="ct-step-btn {{actualUnits <= 1 ? 'off' : ''}}" data-delta="-1" bindtap="changeActualUnits">−</text>
           <input class="ct-step-input" type="number" value="{{actualUnits}}" bindblur="changeActualUnits" />
           <text class="ct-step-btn {{actualUnits >= batch.unit_qty ? 'off' : ''}}" data-delta="1" bindtap="changeActualUnits">+</text>
         </view>
         <text wx:else>{{actualUnits}} 套</text>
       </view>
+      <block wx:if="{{batch.unit_ids.length}}"><view class="mt-muted">本批原加工编号：{{batchUnitText}}</view><text wx:if="{{batch.status === 'issued'}}" class="tk-link red" data-mode="completed" bindtap="openUnitPicker">选择本次实际做完的编号 ›</text><view wx:for="{{completedUnits}}" wx:key="id" class="mt-muted">{{item.serial_no || ('第' + item.unit_no + '个')}}</view></block>
+      <view wx:else class="mt-muted">旧批次未区分设备编号，保留原套数记录。</view>
       <view wx:if="{{batch.status === 'issued' && actualUnits < batch.unit_qty}}" class="mt-muted">若实际完成套数少于计划套数，请同步核改下方各零件实际切出数量。</view>
       <view class="mt-card-title mt-gap">实际产出明细</view>
       <view wx:for="{{actual}}" wx:key="rowKey" class="ct-row">
@@ -223,3 +223,4 @@
 
 <warehouse-locator open="{{locatorOpen}}" value="{{locatorValue}}" location-purpose="general" bind:confirm="chooseLocator" bind:cancel="closeLocator"/>
 <production-dialog id="prodDialog" />
+<warehouse-select open="{{unitPickerOpen}}" title="{{unitPickerMode === 'completed' ? '选择本批实际做完的编号' : '选择本次开料的设备 / 子件'}}" mode="cutting_unit" context="{{unitPickerContext}}" selected="{{unitPickerMode === 'completed' ? completedUnits : selectedUnits}}" scope-key="{{unitPickerScope}}" multiple maximum="{{1000}}" locked="{{busy}}" bind:confirm="applyUnitPicker" bind:cancel="closeUnitPicker" />

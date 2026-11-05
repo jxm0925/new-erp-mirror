@@ -21,7 +21,9 @@ class ProductionPerformanceStatsController extends Controller
 
     public function show(Request $request, int $id, PerformanceStatsService $stats)
     {
-        return response()->json(['data' => $stats->order($id, $this->user($request))]);
+        $amounts = $this->user($request);
+        $filters = $request->validate(['page' => 'nullable|integer|min:1', 'per_page' => 'nullable|integer|min:1|max:100']);
+        return response()->json(['data' => $stats->order($id, $amounts, $filters)]);
     }
 
     public function batch(Request $request, PerformanceLedgerService $ledger)

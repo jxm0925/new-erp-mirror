@@ -49,6 +49,8 @@ class SalesReturnApplicationService
             $salesReturn = SalesReturn::create([
                 'return_no' => $returnNo,
                 'sales_order_id' => $order->id,
+                'aftersales_case_id' => $payload['aftersales_case_id'] ?? null,
+                'aftersales_action_id' => $payload['aftersales_action_id'] ?? null,
                 'customer_id' => $order->customer_id,
                 'return_date' => $payload['return_date'] ?? now()->toDateString(),
                 'return_status' => 'draft',
@@ -288,7 +290,7 @@ class SalesReturnApplicationService
 
             $target = $source;
             $receiptNo = null;
-            if ($disposition === 'restock') {
+            if (in_array($disposition, ['restock', 'defective'], true)) {
                 $warehouseId = $payload['warehouse_id'] ?? $source->warehouse_id;
                 $locationId = $payload['location_id'] ?? $source->location_id;
                 // 序列商品入库批次必须与原发货批次一致，沿用原到货行批次。
@@ -303,7 +305,7 @@ class SalesReturnApplicationService
                     'receipt_date' => now()->toDateString(),
                     'receipt_status' => 'confirmed',
                     'stock_post_status' => 'pending',
-                    'remark' => "待处理转入库（来源到货单 {$source->receipt->receipt_no}）".(!empty($payload['remark']) ? '；'.$payload['remark'] : ''),
+                    'remark' => "待处理".($disposition === 'defective' ? '转残次品' : '转入库')."（来源到货单 {$source->receipt->receipt_no}）".(!empty($payload['remark']) ? '；'.$payload['remark'] : ''),
                     'created_by' => $operatorId,
                     'confirmed_by' => $operatorId,
                     'confirmed_at' => now(),
@@ -317,7 +319,9 @@ class SalesReturnApplicationService
                     'batch_no' => $batchNo,
                     'base_unit_id' => $returnItem->base_unit_id,
                     'received_base_qty' => $qty,
-                    'restock_base_qty' => $qty,
+                    'restock_base_qty' => $disposition === 'restock' ? $qty : 0,
+                    'defective_base_qty' => $disposition === 'defective' ? $qty : 0,
+                    'stock_quality' => $disposition === 'defective' ? 'defective' : 'normal',
                     'inspection_remark' => $payload['remark'] ?? null,
                 ]);
                 // 数量从原到货行转出，保持各到货行“实收 = 各去向之和”。
@@ -348,7 +352,7 @@ class SalesReturnApplicationService
                 'operator_name' => $operatorName,
             ]);
             $this->settlements->refresh($return);
-            $label = ['restock' => '转入库', 'scrap' => '报废', 'rejected' => '退回客户'][$disposition];
+            $label = ['restock' => '转入库', 'defective' => '转残次品', 'scrap' => '报废', 'rejected' => '退回客户'][$disposition];
             $this->log($return, 'dispose', null, null, $operatorId, $operatorName,
                 "待处理数量 {$qty} {$label}".($receiptNo ? "，生成处置到货单 {$receiptNo} 待入库过账" : ''));
             $this->refreshCompletion($return);
@@ -368,6 +372,7 @@ class SalesReturnApplicationService
             $from = $return->return_status;
             $return->update(['return_status' => 'cancelled', 'cancelled_by' => $operatorId, 'cancelled_at' => now()]);
             $this->log($return, 'cancel', $from, 'cancelled', $operatorId, $operatorName, '取消销售退货单');
+            app(\App\Services\Erp\AftersalesActionApplicationService::class)->syncFromSalesReturn($return);
 
             return $this->load($return);
         }, 5);
@@ -390,6 +395,7 @@ class SalesReturnApplicationService
             $return->update(['return_status' => 'closed', 'closed_by' => $operatorId, 'closed_at' => now()]);
             $this->settlements->refresh($return);
             $this->log($return, 'close', $from, 'closed', $operatorId, $operatorName, '关闭销售退货剩余未收数量');
+            app(\App\Services\Erp\AftersalesActionApplicationService::class)->syncFromSalesReturn($return);
 
             return $this->load($return);
         }, 5);
@@ -437,13 +443,20 @@ class SalesReturnApplicationService
     }
 
     /**
-     * Reserve return quantity against the original shipment inventory facts in
-     * FIFO outbound order. A return may span multiple shipments/warehouse batches.
+     * Reserve against the selected aftersales serials' original shipment facts;
+     * other returns keep FIFO. A return may span multiple shipment batches.
      */
     private function allocateOriginalOutboundCosts(SalesReturnItem $returnItem, SalesOrderLine $line): void
     {
+        $identities = app(SalesReturnIdentityService::class);
+        $aftersalesSerials = $identities->aftersalesSerialIds($returnItem);
+        if ($aftersalesSerials !== null && $identities->requiresIdentities($returnItem)
+            && bccomp((string) count($aftersalesSerials), (string) $returnItem->requested_base_qty, 8) !== 0) {
+            throw ValidationException::withMessages(['items' => '售后退货的设备编号必须与本次退回数量一致。']);
+        }
         $outbounds = InventoryTransactionItem::query()
             ->select('erp_inventory_transaction_items.*')
+            ->addSelect('erp_sales_shipment_lines.serial_snapshot as shipment_serial_snapshot')
             ->join('erp_inventory_transactions', 'erp_inventory_transactions.id', '=', 'erp_inventory_transaction_items.transaction_id')
             ->join('erp_sales_shipment_lines', function ($join): void {
                 $join->on('erp_sales_shipment_lines.id', '=', 'erp_inventory_transaction_items.source_item_id')
@@ -472,6 +485,11 @@ class SalesReturnApplicationService
                 ->orderBy('erp_sales_return_cost_allocations.id')->lockForUpdate()->get(['erp_sales_return_cost_allocations.allocated_base_qty'])
                 ->sum('allocated_base_qty');
             $available = max(0, abs((float) $outbound->change_qty) - $alreadyAllocated);
+            // 售后已确定退回设备，预留其实际原发运成本，不能先按 FIFO 占用另一台设备的来源。
+            if ($aftersalesSerials) {
+                $snapshotIds = json_decode((string) $outbound->shipment_serial_snapshot, true)['inventory_serial_ids'] ?? [];
+                $available = min($available, count(array_intersect($aftersalesSerials, $snapshotIds)));
+            }
             if ($available <= 0.00000001) {
                 continue;
             }
@@ -512,14 +530,22 @@ class SalesReturnApplicationService
         if ($allReceived && $allPosted && $noPending && !in_array($return->return_status, ['cancelled', 'closed'], true)) {
             $return->update(['return_status' => 'completed']);
             $this->orderStates->handle(SalesOrderStateCoordinator::RETURN_CHANGED, (int) $return->sales_order_id);
+            app(\App\Services\Erp\AftersalesActionApplicationService::class)->syncFromSalesReturn($return);
         }
     }
 
     private function lockReturn(int $returnId): SalesReturn
     {
         // 归属 ID 创建后不变；仅用于找根锁，所有状态/数量随后用当前读重取。
-        $orderId = SalesReturn::query()->whereKey($returnId)->value('sales_order_id');
-        SalesOrder::query()->whereKey($orderId)->lockForUpdate()->firstOrFail();
+        $reference = SalesReturn::query()->findOrFail($returnId);
+        SalesOrder::query()->whereKey($reference->sales_order_id)->lockForUpdate()->firstOrFail();
+        if ($reference->aftersales_case_id) {
+            app(AftersalesCaseApplicationService::class)->lockCase((int) $reference->aftersales_case_id);
+            if ($reference->aftersales_action_id) {
+                \App\Models\Erp\AftersalesAction::query()->whereKey($reference->aftersales_action_id)
+                    ->where('case_id', $reference->aftersales_case_id)->lockForUpdate()->firstOrFail();
+            }
+        }
         return SalesReturn::query()->with([
             'items' => fn ($query) => $query->orderBy('id')->lockForUpdate(),
             'items.orderLine' => fn ($query) => $query->lockForUpdate(),

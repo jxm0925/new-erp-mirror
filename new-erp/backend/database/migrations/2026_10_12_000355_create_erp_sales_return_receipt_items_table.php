@@ -27,6 +27,8 @@ CREATE TABLE `erp_sales_return_receipt_items` (
   `pending_base_qty` decimal(18,8) NOT NULL DEFAULT '0.00000000',
   `scrap_base_qty` decimal(18,8) NOT NULL DEFAULT '0.00000000',
   `rejected_base_qty` decimal(18,8) NOT NULL DEFAULT '0.00000000',
+  `defective_base_qty` decimal(18,8) NOT NULL DEFAULT '0.00000000',
+  `stock_quality` varchar(16) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'normal',
   `inspection_remark` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci,
   `created_at` timestamp NULL DEFAULT NULL,
   `updated_at` timestamp NULL DEFAULT NULL,

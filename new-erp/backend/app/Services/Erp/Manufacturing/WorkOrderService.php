@@ -11,6 +11,7 @@ use App\Models\Erp\MfgWorkOrderMaterial;
 use App\Models\Erp\MfgWorkOrderOperation;
 use App\Models\Erp\MfgWorkOrderTech;
 use App\Models\Erp\MfgWorkOrderUnit;
+use App\Models\Erp\MfgTaskParticipant;
 use App\Models\Erp\MfgLaborSession;
 use App\Models\Erp\MfgCuttingBatch;
 use App\Models\Erp\MfgMaterialIssue;
@@ -120,13 +121,21 @@ final class WorkOrderService
         return $user ? ($user->nickname ?: $user->username) : null;
     }
 
-    public function createForParent(int $parentId, int $componentItemId, ?float $qty, object $actor): MfgWorkOrder
+    public function createForParent(int $parentId, int $componentItemId, ?float $qty, object $actor, ?int $operationId = null): MfgWorkOrder
     {
-        return DB::transaction(function () use ($parentId, $componentItemId, $qty, $actor) {
-            $parent = MfgWorkOrder::query()->with(['operations', 'materials'])->lockForUpdate()->findOrFail($parentId);
+        return DB::transaction(function () use ($parentId, $componentItemId, $qty, $actor, $operationId) {
+            $parent = MfgWorkOrder::query()->with('operations')->lockForUpdate()->findOrFail($parentId);
             CancellationProductionService::assertProductionAllowed((int) $parent->id);
             if (! in_array($parent->status, ['planned', 'released', 'in_progress', 'paused'], true)) $this->fail('status_invalid', '工单已结束，不能再开半成品工单。');
-            if ($parent->materials->where('component_item_id', $componentItemId)->isEmpty()) $this->fail('component_invalid', '这个物料不在本工单的用料里。');
+            $parent->setRelation('materials', MfgWorkOrderMaterial::query()->where('work_order_id', $parent->id)->orderBy('id')->lockForUpdate()->get());
+            $componentMaterials = $parent->materials->where('component_item_id', $componentItemId);
+            if ($operationId !== null) $componentMaterials = $componentMaterials->where('work_order_operation_id', $operationId);
+            if ($componentMaterials->isEmpty()) $this->fail('component_invalid', $operationId === null ? '这个物料不在本工单的用料里。' : '这个物料不在本工序的用料里。');
+            $operationIds = $parent->operations->where('execution_context', 'production')->whereIn('id', $componentMaterials->pluck('work_order_operation_id'))->pluck('id');
+            // 与接单、改派共用主工单锁；锁内重读本人接单身份，旧页面和管理员也不能绕过。
+            $owner = MfgTaskParticipant::query()->where('work_order_id', $parent->id)->whereIn('work_order_operation_id', $operationIds)
+                ->where('lane', 'normal')->where('role', 'owner')->where('is_active', true)->where('employee_legacy_id', $this->actorId($actor))->lockForUpdate()->first();
+            if (! $owner) $this->fail('claim_required', '请先接下本工单使用该半成品的工序，再开半成品工单。');
             $item = Item::query()->with('unit')->where('status', 'enabled')->find($componentItemId);
             if (! $item) $this->fail('component_invalid', '这个物料不存在或已停用。');
             if ($item->isPhantom()) $this->fail('phantom_item', $item->item_name.' 是虚拟件，用料已展开在本工单里，不单独开工单。');
@@ -184,20 +193,21 @@ final class WorkOrderService
         if ($made->isEmpty()) return [];
         $operations = $parent->operations->map(fn ($op) => ['key' => 'o'.$op->id, 'operation_name' => $op->operation_name, 'sequence' => (int) $op->sequence,
             'execution_context' => $op->execution_context ?: 'production'])->values()->all();
+        $executionQty = $parent->units()->exists() ? count(CancellationProductionService::productionUnitIds((int) $parent->id)) : (float) $parent->planned_qty;
         $materials = $parent->materials->map(fn ($m) => ['operation_key' => 'o'.$m->work_order_operation_id, 'component_item_id' => (int) $m->component_item_id,
-            'required_qty' => (float) $m->required_qty, 'issued_qty' => (float) $m->issued_qty, 'participates_in_kitting' => true])->values()->all();
+            'required_qty' => app(MaterialIssueService::class)->neededFor($m, $parent, $executionQty), 'issued_qty' => (float) $m->issued_qty, 'participates_in_kitting' => true])->values()->all();
         $kit = collect($this->plans->kitting($materials, $operations))->flatMap(fn ($op) => $op['materials']);
         $open = MaterialIssueService::openChildQty((int) $parent->id);
         $held = MaterialReturnService::heldDefectiveQty((int) $parent->id);
         $running = in_array($parent->status, ['planned', 'released', 'in_progress', 'paused'], true);
-        return $made->groupBy('component_item_id')->map(function ($rows, $itemId) use ($items, $kit, $open, $held, $running) {
+        return $made->groupBy('component_item_id')->map(function ($rows, $itemId) use ($items, $kit, $open, $held, $running, $parent, $executionQty) {
             $item = $items->get($itemId);
             $k = $kit->where('component_item_id', (int) $itemId);
             $gap = round(max(0, (float) $k->sum('shortage_qty') - (float) ($open[$itemId] ?? 0) - (float) ($held[$itemId] ?? 0)), 4);
             $ms = WorkOrderQueryService::materialSpecInfo($item);
             return ['component_item_id' => (int) $itemId, 'component_item_name' => $item->item_name, 'component_item_code' => $item->item_code,
                 'component_item_spec' => $ms['component_item_spec'], 'material_grade' => $ms['material_grade'], 'specification' => $ms['specification'],
-                'unit_name' => $rows->first()->unit_name ?: $item->unit?->unit_name, 'required_qty' => round($rows->sum(fn ($m) => (float) $m->required_qty), 4),
+                'unit_name' => $rows->first()->unit_name ?: $item->unit?->unit_name, 'required_qty' => round($rows->sum(fn ($m) => app(MaterialIssueService::class)->neededFor($m, $parent, $executionQty)), 4),
                 'issued_qty' => round($rows->sum(fn ($m) => (float) $m->issued_qty), 4), 'available_qty' => round((float) ($k->first()['available_qty'] ?? 0), 4),
                 'open_qty' => (float) ($open[$itemId] ?? 0), 'held_qty' => (float) ($held[$itemId] ?? 0), 'gap_qty' => $gap,
                 'max_order_qty' => $running && $gap > 0.00001 ? (int) ceil(round($gap, 4)) : 0];
@@ -208,8 +218,9 @@ final class WorkOrderService
     {
         $operations = $parent->operations->map(fn ($op) => ['key' => 'o'.$op->id, 'operation_name' => $op->operation_name, 'sequence' => (int) $op->sequence,
             'execution_context' => $op->execution_context ?: 'production'])->values()->all();
+        $executionQty = $parent->units()->exists() ? count(CancellationProductionService::productionUnitIds((int) $parent->id)) : (float) $parent->planned_qty;
         $materials = $parent->materials->map(fn ($m) => ['operation_key' => 'o'.$m->work_order_operation_id, 'component_item_id' => (int) $m->component_item_id,
-            'required_qty' => (float) $m->required_qty, 'issued_qty' => (float) $m->issued_qty, 'participates_in_kitting' => true])->values()->all();
+            'required_qty' => app(MaterialIssueService::class)->neededFor($m, $parent, $executionQty), 'issued_qty' => (float) $m->issued_qty, 'participates_in_kitting' => true])->values()->all();
         $short = collect($this->plans->kitting($materials, $operations))->flatMap(fn ($op) => $op['materials'])
             ->where('component_item_id', $componentItemId)->sum('shortage_qty');
         $open = MaterialIssueService::openChildQty((int) $parent->id)[$componentItemId] ?? 0;
@@ -395,6 +406,7 @@ final class WorkOrderService
     {
         return DB::transaction(function () use ($id, $expectedVersion, $reason, $actor) {
             $wo = $this->locked($id, $expectedVersion);
+            CancellationProductionService::assertProductionAllowed((int) $wo->id);
             if ($wo->source_type === 'sales_order' && SalesOrder::query()->whereKey($wo->sales_order_id)->where('order_status', 'confirmed')->exists())
                 $this->fail('sales_order_open', '订单工单跟着订单走：订单不要做了请取消订单，数量变了请改订单。');
             $this->doCancel($wo, $reason, $actor);
@@ -402,25 +414,158 @@ final class WorkOrderService
         }, 5);
     }
 
-    /** 订单取消或变更时：未开工的工单一起取消；已开工的留给生产主管处理并记一笔。 */
-    public function cancelForSalesOrder(SalesOrder $order, string $reason, ?object $actor, ?array $lineIds = null): array
+    /** 订单取消或变更复用同一处置链；有实际工时的旧单必须由接单人选择去向。 */
+    public function cancelForSalesOrder(SalesOrder $order, string $reason, ?object $actor, ?array $lineIds = null, ?int $changeId = null, ?\Carbon\CarbonInterface $effectiveAt = null, ?array $productionSelections = null, ?array $unnumberedWorkOrderIds = null): array
     {
-        if ($order->order_status === 'cancelled') return app(CancellationProductionService::class)->begin($order, $reason, $actor);
-        $result = ['cancelled' => [], 'kept' => []];
-        $orders = MfgWorkOrder::query()->where('sales_order_id', $order->id)
-            ->when($lineIds !== null, fn ($query) => $query->whereIn('sales_order_line_id', $lineIds))
-            ->whereNotIn('status', ['completed', 'closed', 'cancelled'])->lockForUpdate()->get();
-        foreach ($orders as $wo) {
-            if ($wo->started_at) {
-                // 已开工的不能取消：转成备货工单继续做，做完的设备进公共库存，不再留给原订单。
-                $this->convertToStock($wo, $reason, $actor);
-                $result['kept'][] = $wo->work_order_no;
-                continue;
-            }
-            $this->doCancel($wo, $reason, $actor);
-            $result['cancelled'][] = $wo->work_order_no;
+        return app(CancellationProductionService::class)->begin($order, $reason, $actor, $lineIds, $changeId, $effectiveAt, $productionSelections, $unnumberedWorkOrderIds);
+    }
+
+    /** 调用方已锁定独占需求链；父单只按自身实物判断，子单单独保留处置。 */
+    public function cancelUnusedForOrderChange(MfgWorkOrder $wo, string $reason, ?object $actor): void
+    {
+        $this->doCancel($wo, $reason, $actor, false);
+    }
+
+    /** 只解除选中编号的销售需求，原工单及其他编号仍按原计划执行。 */
+    public function reduceSelectedSalesQuantity(SalesOrder $order, \App\Models\Erp\SalesOrderLine $line, float $newQty, array $selections, ?object $actor, array $quantityAdjustments = []): void
+    {
+        $protected = \App\Services\Erp\SalesOrderFulfillmentPolicy::protectedLineQuantities($order);
+        if ($newQty + 0.00000001 < (float) ($protected[$line->id] ?? 0) + (float) $line->cancelled_qty)
+            $this->fail('shipped_quantity_protected', '变更数量不能少于已发及已取消数量，请重新编辑剩余未发部分。');
+        $factor = (float) $line->fulfillment_factor_snapshot;
+        if ($factor <= 0) $this->fail('unit_conversion_missing', '该行没有有效的冻结单位换算，不能减少生产设备。');
+        $rootIds = MfgWorkOrder::where('sales_order_id', $order->id)->where('sales_order_line_id', $line->id)->pluck('id')->map(fn ($id) => (int) $id)->all();
+        $groups = collect($selections)->filter(fn ($s) => (int) $s['line_id'] === (int) $line->id && empty($s['parent_unit_id'])
+            && in_array((int) $s['work_order_id'], $rootIds, true) && !empty($s['unit_ids']));
+        foreach ($groups as $selection) {
+            $wo = MfgWorkOrder::where('sales_order_id', $order->id)->where('sales_order_line_id', $line->id)->whereKey($selection['work_order_id'])->lockForUpdate()->firstOrFail();
+            $units = MfgWorkOrderUnit::where('work_order_id', $wo->id)->whereIn('id', $selection['unit_ids'])->orderBy('id')->lockForUpdate()->get();
+            $serialIds = $units->pluck('inventory_serial_id')->filter()->map(fn ($id) => (int) $id)->all();
+            $releasedRepairIds = \App\Models\Erp\SalesShipmentLine::whereHas('shipment', fn ($q) => $q->where('sales_order_id', $order->id))
+                ->where('line_status', 'repair')->get(['serial_snapshot'])->flatMap(fn ($r) => (array) data_get($r->serial_snapshot, 'inventory_serial_ids', []))
+                ->map(fn ($id) => (int) $id)->intersect($serialIds)->all();
+            if ($serialIds) app(\App\Services\Erp\SalesShipmentApplicationService::class)->cancelForOrderChange($order,
+                $actor ? $this->actorName($actor) : '系统', $actor, [(int) $line->id], $serialIds);
+            foreach ($units as $unit) if (!in_array((int) $unit->inventory_serial_id, $releasedRepairIds, true)) $this->releaseReservationForUnit($order, $line, $wo, $unit);
+            $fulfillment = SalesOrderFulfillment::whereKey($wo->sales_fulfillment_id)->where('demand_status', 'confirmed')->lockForUpdate()->firstOrFail();
+            $before = (float) ($fulfillment->item_base_qty ?? $fulfillment->fulfillment_qty);
+            $after = round($before - $units->count(), 8);
+            if ($after < -0.00000001) $this->fail('unit_quantity_changed', '所选编号数量超过当前生产需求，请重新预览。');
+            $history = (array) $fulfillment->match_snapshot;
+            $history['quantity_changes'][] = ['before' => $before, 'after' => max(0, $after), 'unit_ids' => $units->pluck('id')->all(), 'at' => now()->toISOString()];
+            $fulfillment->update($after <= 0.00000001
+                ? ['demand_status' => 'superseded', 'production_requirement_status' => 'superseded', 'match_snapshot' => $history]
+                : ['fulfillment_qty' => $after, 'item_base_qty' => $after, 'sales_qty' => round($after / $factor, 8), 'match_snapshot' => $history]);
         }
-        return $result;
+        foreach ($quantityAdjustments as $adjustment) {
+            if ((int) $adjustment['line_id'] !== (int) $line->id) continue;
+            $fulfillment = SalesOrderFulfillment::where('sales_order_id', $order->id)->where('sales_order_line_id', $line->id)
+                ->whereKey($adjustment['fulfillment_id'])->where('demand_status', 'confirmed')->lockForUpdate()->firstOrFail();
+            $take = (float) $adjustment['qty'];
+            if ($adjustment['origin'] === 'planned') {
+                $planned = MfgWorkOrder::whereKey($adjustment['work_order_id'])->lockForUpdate()->firstOrFail();
+                $this->resizeUnnumberedPlan($planned, (float) $planned->planned_qty - $take, $actor);
+            } else $this->releaseInventoryQuantity($order, $line, $fulfillment, $take, $actor);
+            $before = (float) ($fulfillment->item_base_qty ?? $fulfillment->fulfillment_qty); $after = max(0, round($before - $take, 8));
+            $snapshot = (array) $fulfillment->match_snapshot;
+            $snapshot['quantity_changes'][] = ['before' => $before, 'after' => $after, 'origin' => $adjustment['origin'], 'at' => now()->toISOString()];
+            $fulfillment->update($after <= 0.00000001 ? ['demand_status' => 'superseded', 'production_requirement_status' => 'superseded', 'match_snapshot' => $snapshot]
+                : ['fulfillment_qty' => $after, 'item_base_qty' => $after, 'sales_qty' => round($after / $factor, 8), 'match_snapshot' => $snapshot]);
+        }
+        $productionQty = SalesOrderFulfillment::where('sales_order_line_id', $line->id)->where('fulfillment_type', 'production')->where('demand_status', 'confirmed')->sum('sales_qty');
+        $allQty = SalesOrderFulfillment::where('sales_order_line_id', $line->id)->where('demand_status', 'confirmed')->sum('sales_qty');
+        $inventoryQty = SalesOrderFulfillment::where('sales_order_line_id', $line->id)->where('fulfillment_type', 'inventory')->where('demand_status', 'confirmed')->sum('sales_qty');
+        $line->update(['production_required_qty' => $productionQty, 'inventory_fulfilled_qty' => $inventoryQty, 'undetermined_qty' => max(0,
+            \App\Services\Erp\SalesOrderFulfillmentPolicy::effectiveQuantity($newQty, (float) $line->cancelled_qty) - (float) $allQty)]);
+    }
+
+    private function resizeUnnumberedPlan(MfgWorkOrder $wo, float $qty, ?object $actor): void
+    {
+        if ($qty < -0.00000001 || $wo->status !== 'planned' || $wo->units()->exists() || CancellationProductionService::hasMaterialFacts((int) $wo->id)
+            || OrderChangeLaborService::hasActualWork([(int) $wo->id])) $this->fail('planned_quantity_changed', '待下达计划已有实际投入或编号，请重新预览并选择具体编号。');
+        $old = (float) $wo->planned_qty;
+        foreach ($wo->materials()->lockForUpdate()->get() as $material) $material->update(['required_qty' => $old > 0 ? round((float) $material->required_qty * max(0, $qty) / $old, 4) : 0]);
+        if ($qty <= 0.00000001) $this->doCancel($wo, '订单减少尚未下达的计划数量', $actor, false);
+        else $wo->update(['planned_qty' => $qty, 'business_version' => $wo->business_version + 1]);
+        $this->log($wo, 'planned_quantity_reduced', 'planned', $wo->status, '订单减少未下达计划 '.$old.' → '.max(0, $qty), $actor, ['before_qty' => $old, 'after_qty' => max(0, $qty)]);
+        foreach (MfgWorkOrderLink::where('parent_work_order_id', $wo->id)->get()->groupBy('component_item_id') as $itemId => $links) {
+            $need = ceil((float) $wo->materials()->where('component_item_id', $itemId)->sum('required_qty') - 0.00001);
+            $children = MfgWorkOrder::whereIn('id', $links->pluck('child_work_order_id'))->where('status', '!=', 'cancelled')->orderByDesc('id')->lockForUpdate()->get();
+            $numbered = $children->sum(fn ($child) => count(CancellationProductionService::salesDemandUnitIds((int) $child->id)));
+            $plans = $children->filter(fn ($child) => $child->status === 'planned' && !$child->units()->exists());
+            $remove = max(0, (float) $plans->sum('planned_qty') - max(0, $need - $numbered));
+            foreach ($plans as $child) {
+                $take = min((float) $child->planned_qty, $remove); if ($take <= 0) continue;
+                $this->resizeUnnumberedPlan($child, (float) $child->planned_qty - $take, $actor); $remove -= $take;
+            }
+        }
+    }
+
+    private function releaseInventoryQuantity(SalesOrder $order, \App\Models\Erp\SalesOrderLine $line, SalesOrderFulfillment $fulfillment, float $qty, ?object $actor): void
+    {
+        $rows = \App\Models\Erp\InventoryReservation::where('source_order_id', $order->id)->where('source_order_line_id', $line->id)
+            ->where('sales_order_fulfillment_id', $fulfillment->id)->whereIn('reservation_status', ['active', 'partially_released', 'converted_to_shipment'])->orderByDesc('id')->lockForUpdate()->get()
+            ->sortBy(fn ($row) => $row->reservation_status === 'converted_to_shipment' ? 1 : 0);
+        $left = $qty;
+        foreach ($rows as $reservation) {
+            if ($left <= 0.00000001) break;
+            if ($reservation->reservation_status === 'converted_to_shipment') {
+                $shipmentLines = \App\Models\Erp\SalesShipmentLine::where('inventory_reservation_id', $reservation->id)->current()->where('line_status', '!=', 'shipped')
+                    ->whereHas('shipment', fn ($q) => $q->whereIn('shipment_status', ['draft', 'pending_outbound', 'prepared', 'partially_shipped']))->orderByDesc('id')->lockForUpdate()->get();
+                $cancelIds = []; $cancelQty = 0.0;
+                foreach ($shipmentLines as $shipmentLine) {
+                    if ($cancelQty + (float) $shipmentLine->base_qty > $left + 0.00000001) continue;
+                    $cancelIds[] = (int) $shipmentLine->id; $cancelQty += (float) $shipmentLine->base_qty;
+                }
+                if (!$cancelIds) $this->fail('inventory_shipment_allocated', '减少数量小于对应的旧待发合并明细，请先拆开或撤回这笔待发安排，不能撤销其他设备。');
+                app(\App\Services\Erp\SalesShipmentApplicationService::class)->cancelForOrderChange($order,
+                    $actor ? $this->actorName($actor) : '系统', $actor, [(int) $line->id], null, $cancelIds);
+                if (\App\Models\Erp\SalesShipmentLine::whereIn('id', $cancelIds)->where('line_status', 'cancelled')->count() !== count($cancelIds))
+                    $this->fail('inventory_shipment_changed', '对应待发明细的状态已变化，本次没有完成撤销，请刷新后核对；其他预留保持不变。');
+                $releasedRepairQty = $shipmentLines->whereIn('id', $cancelIds)->where('line_status', 'repair')->sum('base_qty');
+                if ($left - (float) $releasedRepairQty > 0.00000001) $this->releaseInventoryQuantity($order, $line, $fulfillment, $left - (float) $releasedRepairQty, $actor);
+                return;
+            }
+            $take = min((float) $reservation->reserved_qty, $left);
+            if ($take <= 0) continue;
+            if ($take + 0.00000001 < (float) $reservation->reserved_qty) {
+                $fragment = $reservation->replicate();
+                $fragment->fill(['reserved_qty' => $take, 'idempotency_key' => 'order-change-qty:'.$order->id.':'.$order->business_version.':'.$reservation->id]); $fragment->save();
+                $reservation->update(['reserved_qty' => round((float) $reservation->reserved_qty - $take, 8)]); $reservation = $fragment;
+            }
+            app(\App\Services\Erp\InventoryReservationService::class)->releaseForSalesOrder($order, '订单减少库存备货数量', [(int) $line->id], [(int) $reservation->id]);
+            $left = round($left - $take, 8);
+        }
+        // 尚未锁库的库存需求只减少需求数量，不伪造实际库存释放。
+    }
+
+    private function releaseReservationForUnit(SalesOrder $order, \App\Models\Erp\SalesOrderLine $line, MfgWorkOrder $wo, MfgWorkOrderUnit $unit): void
+    {
+        if ($unit->status !== 'stored' && !$unit->inventory_serial_id) return;
+        $receiptIds = DB::table('erp_mfg_receipts')->where('work_order_id', $wo->id)->where('status', 'confirmed')->whereJsonContains('serial_nos', $unit->serial_no)->pluck('id')->all();
+        $rows = \App\Models\Erp\InventoryReservation::where('source_order_id', $order->id)->where('source_order_line_id', $line->id)
+            ->where('sales_order_fulfillment_id', $wo->sales_fulfillment_id)->whereIn('reservation_status', ['active', 'partially_released', 'converted_to_shipment'])->orderBy('id')->lockForUpdate()->get();
+        $reservation = $rows->first(fn ($row) => in_array($unit->serial_no, (array) data_get($row->reservation_snapshot, 'serial_nos', []), true)
+            || in_array((int) data_get($row->reservation_snapshot, 'mfg_receipt_id'), array_map('intval', $receiptIds), true));
+        if (!$reservation) {
+            if ($rows->isNotEmpty()) $this->fail('unit_reservation_source_missing', '编号 '.$unit->serial_no.' 的预留没有保存对应入库来源，请先核对该笔库存备货，其他设备预留保持不变。');
+            return;
+        }
+        if ($reservation->reservation_status === 'converted_to_shipment') $this->fail('unit_shipment_mapping_missing', '编号 '.$unit->serial_no.' 在按数量待发记录中未保存逐台分配，请先在发货单撤回这笔安排，再修改此编号。');
+        $snapshot = (array) $reservation->reservation_snapshot;
+        if ((float) $reservation->reserved_qty > 1.00000001) {
+            $fragment = $reservation->replicate();
+            $fragment->fill(['reserved_qty' => 1, 'idempotency_key' => 'order-change-unit:'.$order->id.':'.$unit->id.':'.$reservation->id,
+                'reservation_snapshot' => array_replace($snapshot, ['serial_nos' => [$unit->serial_no], 'selected_work_order_unit_id' => (int) $unit->id])]);
+            $fragment->save();
+            $reservation->update(['reserved_qty' => round((float) $reservation->reserved_qty - 1, 8),
+                'reservation_snapshot' => array_replace($snapshot, ['serial_nos' => array_values(array_diff((array) ($snapshot['serial_nos'] ?? []), [$unit->serial_no]))])]);
+            $reservation = $fragment;
+        }
+        app(\App\Services\Erp\InventoryReservationService::class)->releaseForSalesOrder($order, '订单减少指定编号 '.$unit->serial_no,
+            [(int) $line->id], [(int) $reservation->id]);
+        if ($unit->inventory_serial_id) \App\Models\Erp\InventorySerial::whereKey($unit->inventory_serial_id)->where('serial_status', '!=', 'repair')
+            ->update(['serial_status' => 'available', 'reserved_at' => null]);
     }
 
     /** 订单工单转备货：断开与订单、生产需求的关联，保留原订单号便于追溯。调用方须已锁工单。 */
@@ -434,18 +579,20 @@ final class WorkOrderService
     }
 
     /** 订单工单的生产需求已作废（订单取消、短交或变更）却还没转备货的，入库前补转；返回是否转了。调用方须已锁工单。 */
-    public function convertIfDemandGone(MfgWorkOrder $wo, ?object $actor): bool
+    public function convertIfDemandGone(MfgWorkOrder $wo, ?object $actor, ?array $unitIds = null): bool
     {
         if ($wo->source_type !== 'sales_order') return false;
-        CancellationProductionService::assertProductionAllowed((int) $wo->id);
-        if ($wo->sales_order_id && SalesOrder::whereKey($wo->sales_order_id)->where('order_status', 'cancelled')->exists())
-            $this->fail('cancellation_pending', '原订单已取消，请生产主管明确转备货后再入库。');
+        $ids = $unitIds ?? MfgWorkOrderUnit::where('work_order_id', $wo->id)->whereNotIn('status', ['cancelled', 'scrapped'])->pluck('id')->map(fn ($id) => (int) $id)->all();
+        CancellationProductionService::assertProductionAllowed((int) $wo->id, $ids);
+        $rows = \App\Models\Erp\CancellationProductionDisposition::where('work_order_id', $wo->id)->whereIn('work_order_unit_id', $ids)->get();
+        if ($rows->contains(fn ($row) => $row->status !== 'stock')) $this->fail('cancellation_pending', '本次编号尚未明确继续备货，不能按原订单直接入库。');
+        $normal = array_diff($ids, $rows->pluck('work_order_unit_id')->map(fn ($id) => (int) $id)->all());
+        if (!$normal && $ids) return false;
         $alive = $wo->sales_fulfillment_id && $wo->sales_order_id
-            && SalesOrderFulfillment::query()->whereKey($wo->sales_fulfillment_id)->where('demand_status', 'confirmed')->exists()
-            && SalesOrder::query()->whereKey($wo->sales_order_id)->where('order_status', 'confirmed')->whereNull('short_closed_at')->exists();
-        if ($alive) return false;
-        $this->convertToStock($wo, '原订单的生产需求已取消', $actor);
-        return true;
+            && SalesOrderFulfillment::whereKey($wo->sales_fulfillment_id)->where('demand_status', 'confirmed')->exists()
+            && SalesOrder::whereKey($wo->sales_order_id)->where('order_status', 'confirmed')->whereNull('short_closed_at')->exists();
+        if (!$alive) $this->fail('unit_demand_gone', '本次仍属原订单的编号需求已失效，请接单人先为这些编号选择去向；不能把整张工单一起转备货。');
+        return false;
     }
 
     /**
@@ -460,9 +607,10 @@ final class WorkOrderService
             ->where('fulfillment_type', 'production')->lockForUpdate()->first();
         if (! $order || ! $fulfillment) return null;
         $siblings = MfgWorkOrder::query()->where('sales_fulfillment_id', $fulfillment->id)->where('status', '!=', 'cancelled')->lockForUpdate()->get();
-        $lost = MfgWorkOrderUnit::query()->whereIn('work_order_id', $siblings->pluck('id'))->whereIn('status', ['scrapped', 'cancelled'])->count();
+        $available = $siblings->sum(fn ($sibling) => $sibling->units()->exists()
+            ? count(CancellationProductionService::salesDemandUnitIds((int) $sibling->id)) : (float) $sibling->planned_qty);
         $required = (float) ($fulfillment->item_base_qty ?: $fulfillment->fulfillment_qty);
-        $gap = round($required - ((float) $siblings->sum('planned_qty') - $lost), 4);
+        $gap = round($required - $available, 4);
         if ($gap <= 0.00001) return null;
         $item = Item::query()->with('unit')->find($wo->item_id);
         if (! $item) return null;
@@ -604,16 +752,25 @@ final class WorkOrderService
         $this->doRelease($wo, $actor);
     }
 
-    private function doCancel(MfgWorkOrder $wo, string $reason, ?object $actor): void
+    private function doCancel(MfgWorkOrder $wo, string $reason, ?object $actor, bool $includeDescendants = true): void
     {
-        if (! in_array($wo->status, self::OPEN, true) || $wo->started_at) $this->fail('status_invalid', '工单已开工或已结束，不能取消。');
+        if (! in_array($wo->status, self::OPEN, true) || app(OrderChangeLaborService::class)->hasActualWork([(int) $wo->id])) $this->fail('status_invalid', '工单已有实际工时或已结束，请办理生产处置。');
         $cuttingOrders = [(int) $wo->id];
-        $pending = $cuttingOrders;
+        $pending = $includeDescendants ? $cuttingOrders : [];
         while ($pending) {
-            $children = MfgWorkOrderLink::query()->whereIn('parent_work_order_id', $pending)->lockForUpdate()->pluck('child_work_order_id')->map(fn ($id) => (int) $id)->all();
+            $children = MfgWorkOrderLink::query()->whereIn('parent_work_order_id', $pending)->where('qty', '>', 0)
+                ->whereIn('child_work_order_id', MfgWorkOrder::where('source_type', '!=', 'stock')->whereNotIn('status', ['closed', 'cancelled'])->select('id'))
+                ->lockForUpdate()->pluck('child_work_order_id')->map(fn ($id) => (int) $id)->all();
             $pending = array_values(array_diff($children, $cuttingOrders));
             $cuttingOrders = array_values(array_unique(array_merge($cuttingOrders, $pending)));
         }
+        if ($includeDescendants) do {
+            $shared = MfgWorkOrderLink::whereIn('child_work_order_id', array_diff($cuttingOrders, [(int) $wo->id]))->where('qty', '>', 0)
+                ->whereNotIn('parent_work_order_id', $cuttingOrders)->whereIn('parent_work_order_id', MfgWorkOrder::where('status', '!=', 'cancelled')->select('id'))
+                ->lockForUpdate()->pluck('child_work_order_id')->map(fn ($id) => (int) $id)->all();
+            $beforeIds = $cuttingOrders; $cuttingOrders = array_values(array_diff($cuttingOrders, $shared));
+        } while ($beforeIds !== $cuttingOrders);
+        if (app(OrderChangeLaborService::class)->hasActualWork($cuttingOrders)) $this->fail('started', '本工单或关联子工单已有实际工时，请按原订单办理生产处置。');
         if (MfgCuttingBatch::query()->whereIn('work_order_id', $cuttingOrders)->lockForUpdate()->first(['id'])
             || \App\Models\Erp\MfgCuttingAllocation::query()->whereIn('work_order_id', $cuttingOrders)->lockForUpdate()->first(['id'])
             || \App\Models\Erp\MfgCuttingRunAllocation::query()->whereIn('work_order_id', $cuttingOrders)->lockForUpdate()->first(['id']))
@@ -624,12 +781,19 @@ final class WorkOrderService
         if (MfgWorkOrderMaterial::query()->whereIn('work_order_id', $cuttingOrders)->where('issued_qty', '>', 0)->lockForUpdate()->first(['id'])
             || MfgMaterialReturn::query()->whereIn('work_order_id', $cuttingOrders)->where('status', 'pending')->lockForUpdate()->first(['id']))
             $this->fail('material_already_issued', '本工单或关联半成品已有真实领料（或待审核的退料），不能直接取消并遗留材料成本；领错的料请先退料并审核入库。');
+        if ($includeDescendants) {
+            foreach (MfgWorkOrder::whereIn('id', array_diff($cuttingOrders, [(int) $wo->id]))->whereIn('status', self::OPEN)->orderByDesc('id')->lockForUpdate()->get() as $child) {
+                if (MfgWorkOrderLink::where('child_work_order_id', $child->id)->whereNotIn('parent_work_order_id', $cuttingOrders)
+                    ->whereIn('parent_work_order_id', MfgWorkOrder::where('status', '!=', 'cancelled')->select('id'))->exists()) continue;
+                $this->doCancel($child, $reason, $actor, false);
+            }
+        }
         $before = $wo->status;
         foreach (\App\Models\Erp\MfgMaterialDelivery::query()->where('work_order_id', $wo->id)->where('status', 'prepared')->lockForUpdate()->get() as $delivery) {
             $delivery->update(['status' => 'cancelled', 'closed_by_name' => $actor ? $this->actorName($actor) : '系统', 'closed_at' => now(), 'close_remark' => '工单取消，未发出的配料单自动取消']);
             $this->log($wo, 'material_delivery_cancelled', $wo->status, $wo->status, "工单取消，配料单 {$delivery->delivery_no} 未发出，自动取消", $actor, ['delivery_id' => $delivery->id]);
         }
-        $wo->update(['status' => 'cancelled', 'cancel_reason' => $reason, 'cancelled_at' => now(), 'business_version' => (int) $wo->business_version + 1, 'updated_by_legacy_id' => $this->actorId($actor)]);
+        $wo->update(['status' => 'cancelled', 'cancel_reason' => $reason, 'cancelled_at' => now(), 'business_version' => (int) $wo->business_version + 1, 'updated_by_legacy_id' => $actor ? $this->actorId($actor) : null]);
         MfgWorkOrderUnit::query()->where('work_order_id', $wo->id)->whereIn('status', ['waiting'])->update(['status' => 'cancelled']);
         $this->log($wo, 'cancelled', $before, 'cancelled', '取消工单：'.$reason, $actor);
     }

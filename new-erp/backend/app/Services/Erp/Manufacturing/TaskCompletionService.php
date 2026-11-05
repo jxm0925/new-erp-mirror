@@ -55,12 +55,13 @@ final class TaskCompletionService
     }
 
     /** 使用本工单冻结路线及主工单实际用料节点，不凭“总装”“试水”等名称猜去向。 */
-    private function target(MfgWorkOrder $wo, MfgWorkOrderOperation $op, bool $lock = false): ?array
+    private function target(MfgWorkOrder $wo, MfgWorkOrderOperation $op, bool $lock = false, ?array $unitIds = null): ?array
     {
-        $link = MfgWorkOrderLink::query()->where('child_work_order_id', $wo->id)->when($lock, fn ($q) => $q->lockForUpdate())->first();
-        if ($link) {
+        if ($wo->source_type === 'stock') return null;
+        if ($unitIds !== null && \App\Models\Erp\CancellationProductionDisposition::where('work_order_id', $wo->id)->whereIn('work_order_unit_id', $unitIds)->where('status', 'stock')->exists()) return null;
+        foreach (CancellationProductionService::activeParentLinks((int) $wo->id, $lock) as $link) {
             $parent = MfgWorkOrder::query()->when($lock, fn ($q) => $q->lockForUpdate())->find($link->parent_work_order_id);
-            if (! $parent || (int) $link->component_item_id !== (int) $wo->item_id) return null;
+            if (! $parent || (int) $link->component_item_id !== (int) $wo->item_id) continue;
             $materials = MfgWorkOrderMaterial::query()->where('work_order_id', $parent->id)->where('component_item_id', $wo->item_id)
                 ->where('participates_in_kitting', true)->where('required_qty', '>', 0)->when($lock, fn ($q) => $q->lockForUpdate())->get();
             $operations = MfgWorkOrderOperation::query()->where('work_order_id', $parent->id)->where('execution_context', 'production')
@@ -80,7 +81,6 @@ final class TaskCompletionService
                     'work_order_id' => (int) $parent->id, 'work_order_no' => $parent->work_order_no, 'remaining_qty' => $remaining,
                     'blocked_reason' => $blocked];
             }
-            return null;
         }
         // 集中备货没有订单接收方，最终产出只入库。
         if ($wo->source_type !== 'sales_order' || ! $wo->sales_order_id || ! $wo->sales_fulfillment_id) return null;
@@ -112,14 +112,17 @@ final class TaskCompletionService
         $action = $data['completion_action'] ?? null;
         if (! in_array($action, ['store', 'handoff'], true)) $this->fail('completion_required', '请选择本次完工后入库，或交接给下一道工序。');
         $mode = self::outputMode($op);
+        $stockCount = \App\Models\Erp\CancellationProductionDisposition::where('work_order_id', $wo->id)->whereIn('work_order_unit_id', $unitIds)->where('status', 'stock')->count();
+        if ($mode === 'flow_only' && $stockCount > 0 && $stockCount < count($unitIds))
+            $this->fail('completion_mixed_destination', '这道工序要求直接交接；正常设备和备货设备请分开提交，备货入库，正常设备按原去向交接。');
         if ($action === 'handoff' && $mode === 'warehouse_required')
             $this->fail('handoff_not_allowed', $op->operation_name.'设为合格后入库，不能直接交接，请选择入库。');
         if ($action === 'store' && $mode === 'flow_only') {
-            $next = $this->target($wo, $op, true);
+            $next = $this->target($wo, $op, true, $unitIds);
             if ($next && empty($next['blocked_reason']) && ($next['kind'] !== 'material' || count($unitIds) <= $next['remaining_qty'] + 0.00001))
                 $this->fail('store_not_allowed', $op->operation_name.'设为直接交接，请交接给'.$next['operation_name'].'。', 409);
         }
-        $target = $action === 'handoff' ? $this->target($wo, $op, true) : null;
+        $target = $action === 'handoff' ? $this->target($wo, $op, true, $unitIds) : null;
         if ($action === 'handoff') {
             if (! $target || (int) ($data['handoff_operation_id'] ?? 0) !== $target['operation_id'])
                 $this->fail('handoff_changed', '下一道工序或待接收数量已变化，请刷新后重新选择交接去向。', 409);
@@ -140,6 +143,7 @@ final class TaskCompletionService
         $receipt = $handoff ? $handoff['receipt'] : $receipts->receive((int) $wo->id, $unitIds, (int) $location->warehouse_id,
             (int) $location->id, '工序完工提交入库', $actor);
         $result = ['completion_action' => $action, 'receipt_no' => $receipt->receipt_no, 'received_qty' => count($unitIds),
+            'receipt_nos' => $receipt->relationLoaded('relatedReceipts') ? $receipt->getRelation('relatedReceipts')->pluck('receipt_no')->all() : [$receipt->receipt_no],
             'receipt_id' => $receipt->id, 'receipt_status' => $receipt->status, 'handoff_operation_name' => $target['operation_name'] ?? null];
         if (isset($handoff['shipment_no'])) $result['shipment_no'] = $handoff['shipment_no'];
         return $result;
@@ -150,7 +154,7 @@ final class TaskCompletionService
     {
         if ($wo->rework_of_work_order_id || $op->execution_context !== 'production' || $this->nextProduction($op)
             || self::outputMode($op) === 'warehouse_required') $this->fail('handoff_not_allowed', '这道工序不能通过完工直接交接。');
-        $target = $this->target($wo, $op, true);
+        $target = $this->target($wo, $op, true, $unitIds);
         if (! $target || (int) $target['operation_id'] !== $targetOperationId)
             $this->fail('handoff_changed', '下一道工序或待接收数量已变化，请刷新后重新选择交接去向。', 409);
         if (! empty($target['blocked_reason'])) $this->fail('handoff_blocked', $target['blocked_reason']);

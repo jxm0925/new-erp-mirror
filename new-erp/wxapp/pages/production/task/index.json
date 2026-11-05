@@ -11,6 +11,7 @@
     "warehouse-locator": "/components/warehouse-locator/index",
     "production-dialog": "/components/production-dialog/index",
     "production-select": "/components/production-select/index",
-    "production-media": "/components/production-media/index"
+    "production-media": "/components/production-media/index",
+    "production-dispositions": "/components/production-dispositions/index"
   }
 }

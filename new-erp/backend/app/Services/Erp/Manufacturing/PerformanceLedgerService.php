@@ -120,11 +120,23 @@ final class PerformanceLedgerService
                 'opening' => 0.0, 'new' => 0.0, 'settled' => 0.0, 'scrap' => 0.0, 'closing' => 0.0, 'commission' => '0', 'rows' => []];
             $people[$emp]['rework'] = $m;
         }
-        $totals = ['opening' => 0.0, 'new' => 0.0, 'settled' => 0.0, 'scrap' => 0.0, 'closing' => 0.0, 'rework' => 0.0, 'commission' => '0'];
+        $additional = app(OrderChangeLaborService::class)->monthAdditional($start, $end, $employeeId);
+        foreach (['disposition_labor' => 'disposition', 'cancelled_labor' => 'cancelled'] as $kind => $field) {
+            foreach ($additional[$kind]['rows'] as $row) {
+                $emp = $row['employee_legacy_id'];
+                $people[$emp] ??= ['employee_legacy_id' => $emp, 'employee_name' => $row['employee_name'],
+                    'opening' => 0.0, 'new' => 0.0, 'settled' => 0.0, 'scrap' => 0.0, 'closing' => 0.0, 'commission' => '0', 'rows' => []];
+                $people[$emp][$field] = ($people[$emp][$field] ?? 0) + $row['labor_minutes'];
+            }
+        }
+        $totals = ['opening' => 0.0, 'new' => 0.0, 'settled' => 0.0, 'scrap' => 0.0, 'closing' => 0.0, 'rework' => 0.0,
+            'disposition' => 0.0, 'cancelled' => 0.0, 'actual_new_minutes' => 0.0, 'commission' => '0'];
         $out = [];
         foreach ($people as $p) {
             $p['rework'] ??= 0.0;
-            foreach (['opening', 'new', 'settled', 'scrap', 'closing', 'rework'] as $k) $totals[$k] += $p[$k];
+            $p['disposition'] ??= 0.0; $p['cancelled'] ??= 0.0;
+            $p['actual_new_minutes'] = $p['new'] + $p['rework'] + $p['disposition'] + $p['cancelled'];
+            foreach (['opening', 'new', 'settled', 'scrap', 'closing', 'rework', 'disposition', 'cancelled', 'actual_new_minutes'] as $k) $totals[$k] += $p[$k];
             $totals['commission'] = bcadd($totals['commission'], $p['commission'], 12);
             $rows = array_values(array_map(fn ($r) => $this->roundRow($r, $amounts), $p['rows']));
             usort($rows, fn ($a, $b) => [$b['settled'], $b['closing']] <=> [$a['settled'], $a['closing']]);
@@ -139,6 +151,7 @@ final class PerformanceLedgerService
             'labor_adjustment' => null, 'commission_adjustment' => null, 'adjustment_status' => '待定（售后按责任手动处理）'];
         usort($returns, fn ($a, $b) => $a['date'] <=> $b['date']);
         return ['month' => $month, 'start' => $start, 'end' => $end, 'employees' => $out, 'returns' => $returns, 'totals' => $this->roundRow($totals, $amounts), 'amount_visible' => $amounts,
+            'additional_labor' => $additional,
             'issues' => array_values(array_unique($this->issues)),
             'rule' => '月初未结（上月结转）+ 本月新做 − 本月出库结算 − 本月报废 = 结转下月。报废的工时单独列出，不摊给合格品。工时挂在做出来的产品上，产品出库（或被装进的整机出库）那个月才结算，没出库的往后结转，不会重复累加。集中开料按实际计时，工单领几件带走几件的工时（这批总工时 ÷ 总件数 × 件数），没领的留在开料记录里往后结转。返工工时按本月实际干活单独列，不进结转和结算，不算提成。'];
     }
@@ -261,7 +274,7 @@ final class PerformanceLedgerService
         foreach ($this->rework as $emp => $list) {
             if ($employeeId && $emp !== $employeeId) continue;
             foreach (collect($list)->groupBy(fn ($r) => $r[2]) as $woId => $rows) {
-                $wo = $this->wos[(int) $woId] ?? null;
+                $wo = $this->wos[(int) $woId] ?? DB::table('erp_mfg_work_orders')->find($woId);
                 if (! $wo) continue;
                 $semi = $wo->source_type === 'work_order' || ($itemTypes[(int) $wo->item_id] ?? null) === 'semi_finished';
                 if ($kind && $kind !== ($semi ? 'semi' : 'finished')) continue;
@@ -289,6 +302,7 @@ final class PerformanceLedgerService
         unset($p);
         usort($out, fn ($a, $b) => [$b['finished_units'], $b['month_minutes']] <=> [$a['finished_units'], $a['month_minutes']]);
         return ['month' => $month, 'start' => $start, 'end' => $end, 'kind' => $kind, 'employees' => $out,
+            'additional_labor' => app(OrderChangeLaborService::class)->monthAdditional($start, $end, $employeeId),
             'rule' => '按干活时间统计，不看出库。只要在工单上做过工序就算参与了这张工单本月完工的台数（多人一起做每人都算）；本人每台工时 = 本人在这张工单上累计工时 ÷ 工单投入台数，工单每台工时 = 全部人累计工时 ÷ 投入台数，工单没做完时还会增加。成品只算整机工单自己的工时，架子、电箱等半成品和集中开料单独列；集中开料还没结束的批次照算已计时的工时，件数在结束那天计入；发货包装按包装完成的日期计入。返工（返工计时、返工工单）单独标「返工」、单列返工工时，不算完工台数，也不进本月工时。'];
     }
 
@@ -608,7 +622,7 @@ final class PerformanceLedgerService
 
     private function roundRow(array $r, bool $amounts): array
     {
-        foreach (['opening', 'new', 'closing', 'scrap', 'rework'] as $k) $r[$k] = round(max(0, $r[$k] ?? 0), 1);
+        foreach (['opening', 'new', 'closing', 'scrap', 'rework', 'disposition', 'cancelled', 'actual_new_minutes'] as $k) $r[$k] = round(max(0, $r[$k] ?? 0), 1);
         $r['settled'] = round(max(0, $r['settled']), 1);
         $r['commission'] = $amounts ? $this->money($r['commission']) : null;
         return $r;

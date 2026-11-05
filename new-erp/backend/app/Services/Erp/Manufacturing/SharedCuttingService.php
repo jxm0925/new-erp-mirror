@@ -244,9 +244,11 @@ final class SharedCuttingService
      * 工单下料「已备料」：本道逐张板材按定额补到做到第 $upTo 台，从开料池先进先出扣，成本按各批每平方米净耗分摊。
      * 调用方须在事务内并已锁定工单和工序。池里不够就不让备料（说明切了没登记）。
      */
-    public function allocate(MfgWorkOrder $wo, MfgWorkOrderOperation $op, float $upTo, int $unitQty, object $actor): array
+    public function allocate(MfgWorkOrder $wo, MfgWorkOrderOperation $op, float $upTo, int $unitQty, object $actor, ?array $unitIds = null): array
     {
-        CancellationProductionService::assertProductionAllowed((int) $wo->id);
+        if ($unitQty <= 0) return [];
+        abort_unless($unitIds !== null && count(array_unique($unitIds)) === $unitQty, 422, '请明确本次领用开料池产出的设备编号。');
+        CancellationProductionService::assertProductionAllowed((int) $wo->id, $unitIds);
         $materials = MfgWorkOrderMaterial::query()->where('work_order_operation_id', $op->id)->where('cutting_mode', 'sheet')
             ->where('required_qty', '>', 0)->orderBy('id')->lockForUpdate()->get()->filter(fn ($m) => MaterialIssueService::isCutting($m));
         if ($materials->isEmpty()) return [];
@@ -292,6 +294,7 @@ final class SharedCuttingService
                     : CuttingDecimal::share(bcsub((string) $b->net_cost_amount, (string) $b->allocated_cost_amount, 4), $room, $take);
                 $qty = CuttingDecimal::share($qtyLeft, $left, $take);
                 MfgCuttingAllocation::create(['cutting_batch_id' => $b->id, 'item_id' => $m->component_item_id, 'work_order_id' => $wo->id,
+                    'unit_ids' => array_values(array_map('intval', $unitIds)),
                     'work_order_operation_id' => $op->id, 'work_order_material_id' => $m->id, 'unit_qty' => $unitQty, 'qty' => $qty,
                     'measure' => $take, 'measure_unit' => 'm2', 'cost_amount' => $cost,
                     'allocated_by_legacy_id' => $this->actorId($actor), 'allocated_by_name' => $this->actorName($actor)]);

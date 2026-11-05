@@ -40,7 +40,8 @@ class SalesReturnInventoryPosting
 
             $restockTotal = 0.0;
             foreach ($receipt->items as $line) {
-                $restock = (float) $line->restock_base_qty;
+                // 残次品处置行同样占用过账：按 defective_base_qty 计可入库数量，仓库/库位/批次要求与转入库一致。
+                $restock = ($line->stock_quality ?? 'normal') === 'defective' ? (float) $line->defective_base_qty : (float) $line->restock_base_qty;
                 if ($restock <= 0) continue;
                 if (!$line->warehouse_id || !$line->location_id || !$line->batch_no) {
                     throw ValidationException::withMessages(['items' => '销售退货可重新入库数量必须选择仓库、库位并确认退货批次。']);
@@ -51,7 +52,7 @@ class SalesReturnInventoryPosting
                 throw ValidationException::withMessages(['items' => '本次销售退货没有可重新入库数量，无需执行库存过账。']);
             }
 
-            $first = $receipt->items->first(fn ($line) => (float) $line->restock_base_qty > 0);
+            $first = $receipt->items->first(fn ($line) => (($line->stock_quality ?? 'normal') === 'defective' ? (float) $line->defective_base_qty : (float) $line->restock_base_qty) > 0);
             $transaction = $this->kernel->begin([
                 
                 'transaction_type' => 'sales_return_inbound',
@@ -69,8 +70,12 @@ class SalesReturnInventoryPosting
             ]);
 
             foreach ($receipt->items as $line) {
+                // 转残次品行按 defective_base_qty 走同一条原发运成本入库链；数量同时计为不良，可售不增加。
+                $isDefective = ($line->stock_quality ?? 'normal') === 'defective';
                 $restock = (float) $line->restock_base_qty;
+                if ($restock <= 0 && $isDefective) $restock = (float) $line->defective_base_qty;
                 if ($restock <= 0) continue;
+                $postedQty = 0.0;
                 foreach ($this->consumeSalesReturnCostAllocations($line, $restock) as $segment) {
                     $originalReturn = $this->originalReturns->proofFor((int) ($segment['outbound_transaction_item_id'] ?? 0), [
                         'item_id' => $line->item_id, 'warehouse_id' => $line->warehouse_id,
@@ -93,7 +98,24 @@ class SalesReturnInventoryPosting
                         'remark' => '销售退货按原发运成本重新入库；原发运单行 #'.$segment['shipment_line_id'],
                     ]);
                     if (isset($segment['return_serial_identity_id'])) {
-                        app(SalesReturnIdentityService::class)->completeRestock((int) $segment['return_serial_identity_id'], $transactionItem, $operatorId);
+                        if ($isDefective) {
+                            app(SalesReturnIdentityService::class)->completeDefective((int) $segment['return_serial_identity_id'], $transactionItem, $operatorId);
+                        } else {
+                            app(SalesReturnIdentityService::class)->completeRestock((int) $segment['return_serial_identity_id'], $transactionItem, $operatorId);
+                        }
+                    }
+                    $postedQty += (float) $segment['base_qty'];
+                }
+                if ($isDefective && $postedQty > 0.00000001) {
+                    $availability = app(\App\Services\Erp\InventoryAvailabilityService::class);
+                    foreach ([\App\Models\Erp\InventoryBalance::class, \App\Models\Erp\InventoryLocationBalance::class] as $model) {
+                        $balance = $model::where('item_id', $line->item_id)->where('warehouse_id', $line->warehouse_id)
+                            ->where('location_id', $line->location_id)->when($model === \App\Models\Erp\InventoryBalance::class, fn ($q) => $q->where('batch_no', $line->batch_no))
+                            ->lockForUpdate()->first();
+                        if (! $balance) continue;
+                        $defective = (float) $balance->quantity_defective + $postedQty;
+                        $balance->update(['quantity_defective' => $defective,
+                            'quantity_available' => $availability->calculate((float) $balance->quantity_on_hand, (float) $balance->quantity_locked, $defective, (float) $balance->quantity_pending)]);
                     }
                 }
             }

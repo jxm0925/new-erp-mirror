@@ -24,6 +24,7 @@ CREATE TABLE `erp_mfg_cutting_run_allocations` (
   `work_order_material_id` bigint(20) unsigned DEFAULT NULL,
   `line_key` varchar(160) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
   `unit_qty` int(10) unsigned NOT NULL DEFAULT '0',
+  `unit_ids` json DEFAULT NULL,
   `pieces` int(10) unsigned NOT NULL,
   `labor_minutes` decimal(14,4) NOT NULL DEFAULT '0.0000',
   `material_qty` decimal(18,4) NOT NULL DEFAULT '0.0000',

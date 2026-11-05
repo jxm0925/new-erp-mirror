@@ -5,6 +5,7 @@ namespace App\Services\Erp;
 use App\Models\Erp\SalesOrderLine;
 use App\Models\Erp\SalesOrder;
 use App\Models\Erp\SalesOrderFulfillment;
+use App\Models\Erp\SalesShipmentLine;
 use App\Exceptions\Erp\WorkOrderDomainException;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -25,6 +26,31 @@ final class SalesOrderFulfillmentPolicy
             ->orWhereHas('dispatches')
             ->orWhereIn('id', DB::table('erp_inventory_transactions')->where('source_type', 'sales_shipment')
                 ->where('transaction_type', 'sales_shipment_outbound')->where('posting_status', 'posted')->select('source_id')))->exists();
+    }
+
+    /** 按发货明细认定已发事实；部分发运单上的其他未发明细不随整单状态被冻结。 */
+    public static function shippedLines()
+    {
+        return SalesShipmentLine::query()->where(function ($query) {
+            $query->where('line_status', 'shipped')->orWhereNotNull('dispatched_at')
+                ->orWhereIn('id', DB::table('erp_inventory_transaction_items as ti')
+                    ->join('erp_inventory_transactions as t', 't.id', '=', 'ti.transaction_id')
+                    ->where('t.source_type', 'sales_shipment')->where('t.transaction_type', 'sales_shipment_outbound')
+                    ->where('t.posting_status', 'posted')->where('ti.source_type', 'sales_shipment')->select('ti.source_item_id'));
+        });
+    }
+
+    /** 发货退回仍保留原已发数量；不得把退货净额当成可重新修改的销售数量。 */
+    public static function protectedLineQuantities(SalesOrder $order): array
+    {
+        $shipped = self::shippedLines()->whereIn('sales_order_line_id', $order->lines->pluck('id'))
+            ->selectRaw('sales_order_line_id, SUM(sales_qty) AS qty')->groupBy('sales_order_line_id')->pluck('qty', 'sales_order_line_id');
+        $returns = DB::table('erp_sales_return_items as ri')->join('erp_sales_returns as r', 'r.id', '=', 'ri.sales_return_id')
+            ->where('r.sales_order_id', $order->id)->where('r.return_status', '!=', 'cancelled')
+            ->selectRaw('ri.sales_order_line_id, SUM(ri.received_base_qty / NULLIF(ri.requested_base_qty / NULLIF(ri.requested_sales_qty, 0), 0)) AS qty')
+            ->groupBy('ri.sales_order_line_id')->pluck('qty', 'sales_order_line_id');
+        return $order->lines->mapWithKeys(fn ($line) => [(int) $line->id => round(max((float) $line->shipped_qty,
+            (float) ($shipped[$line->id] ?? 0), (float) ($returns[$line->id] ?? 0)), 8)])->all();
     }
 
     public static function isPhysical(string $lineType): bool

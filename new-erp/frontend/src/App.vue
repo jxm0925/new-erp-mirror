@@ -551,6 +551,8 @@ export default {
       if (path === '/sales/returns/create') return '销售退货 / 新建'
       if (path.startsWith('/sales/returns/') && path.endsWith('/detail')) return '销售退货 / 详情'
       if (path === '/sales/returns') return '销售退货'
+      if (path.startsWith('/sales/aftersales/') && path.endsWith('/detail')) return '售后单 / 详情'
+      if (path === '/sales/aftersales') return '售后单'
       if (path.startsWith('/sales/orders/') && path.endsWith('/production-confirmation')) return '订单生产确认'
       if (path === '/sales/production-confirmation') return '订单生产确认'
 
@@ -656,6 +658,7 @@ export default {
       if (path.startsWith('/sales/orders')) return '/sales/orders'
       if (path.startsWith('/sales/customers')) return '/sales/customers'
       if (path.startsWith('/sales/returns')) return '/sales/returns'
+      if (path.startsWith('/sales/aftersales')) return '/sales/aftersales'
       if (path.startsWith('/purchase/requests')) return '/purchase/requests'
       if (path.startsWith('/purchase/plans')) return '/purchase/plans'
       if (path.startsWith('/purchase/orders')) return '/purchase/orders'

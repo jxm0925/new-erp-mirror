@@ -16,6 +16,7 @@
   </view>
 
   <view class="tasks-body">
+    <production-dispositions id="dispositions" bind:changed="load" bind:activity="mediaActivity" />
     <!-- 白底一体化筛选卡（胶囊分段 Tab + 搜索框合一） -->
     <view class="tasks-filter-card">
       <view class="tasks-tabs">
@@ -190,9 +191,8 @@
           <button
             class="wo-action-btn {{tab === 'available' || tab === 'done' || item.buttonText === '查看' ? 'outline' : ''}}"
             data-id="{{item.id}}"
-            data-key="{{item.key}}"
             data-lane="{{item.lane}}"
-            catchtap="primary"
+            catchtap="open"
             disabled="{{busy || (item.paused && tab === 'available')}}"
           >{{item.buttonText}}</button>
         </view>
@@ -253,9 +253,8 @@
               <button
                 class="wo-action-btn {{tab === 'available' || tab === 'done' || item.buttonText === '查看' ? 'outline' : ''}}"
                 data-id="{{item.id}}"
-                data-key="{{item.key}}"
                 data-lane="{{item.lane}}"
-                catchtap="primary"
+                catchtap="open"
                 disabled="{{busy || (item.paused && tab === 'available')}}"
               >{{item.buttonText}}</button>
             </view>

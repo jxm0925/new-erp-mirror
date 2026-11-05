@@ -380,6 +380,7 @@ Route::prefix('v1/erp/bom')->group(function () {
     Route::delete('boms/{id}', [BomController::class, 'destroy'])->whereNumber('id');
 });
 
+Route::get('v1/erp/sales-orders/{id}/change-production-units', [SalesOrderController::class, 'changeProductionUnits'])->whereNumber('id');
 Route::prefix('v1/erp/sales')->group(function () {
     Route::get('customers', [SalesCustomerController::class, 'index']);
     Route::post('customers', [SalesCustomerController::class, 'store']);
@@ -387,6 +388,7 @@ Route::prefix('v1/erp/sales')->group(function () {
     Route::put('customers/{id}', [SalesCustomerController::class, 'update'])->whereNumber('id');
     Route::delete('customers/{id}', [SalesCustomerController::class, 'destroy'])->whereNumber('id');
     Route::get('orders/{id}/invoice-requests', [\App\Http\Controllers\Api\V1\Erp\SalesInvoiceRequestController::class, 'orderIndex'])->whereNumber('id');
+    Route::get('orders/{id}/invoice-accounts', [\App\Http\Controllers\Api\V1\Erp\SalesInvoiceRequestController::class, 'accounts'])->whereNumber('id');
     Route::post('orders/{id}/invoice-requests', [\App\Http\Controllers\Api\V1\Erp\SalesInvoiceRequestController::class, 'store'])->whereNumber('id');
     Route::post('invoice-requests/{id}/withdraw', [\App\Http\Controllers\Api\V1\Erp\SalesInvoiceRequestController::class, 'withdraw'])->whereNumber('id');
     Route::get('invoice-requests/{id}/attachments/{attachmentId}', [\App\Http\Controllers\Api\V1\Erp\SalesInvoiceRequestController::class, 'attachment'])->whereNumber(['id', 'attachmentId']);
@@ -400,6 +402,7 @@ Route::prefix('v1/erp/sales')->group(function () {
     Route::get('orders/attachments/{id}/download', [SalesOrderController::class, 'downloadAttachment'])->whereNumber('id');
     Route::delete('orders/attachments/{id}', [SalesOrderController::class, 'deleteDraftAttachment'])->whereNumber('id');
     Route::get('orders/{id}', [SalesOrderController::class, 'show'])->whereNumber('id');
+    Route::get('orders/{id}/aftersales', [\App\Http\Controllers\Api\V1\Erp\AftersalesController::class, 'orderCases'])->whereNumber('id');
     Route::get('orders/{id}/progress/tree', [SalesOrderController::class, 'progressTree'])->whereNumber('id');
     Route::get('orders/{id}/progress/lines/{lineId}/units', [SalesOrderController::class, 'progressUnits'])->whereNumber(['id', 'lineId']);
     Route::get('orders/{id}/progress/lines/{lineId}/units/{unitId}', [SalesOrderController::class, 'progressUnit'])->whereNumber(['id', 'lineId'])->where('unitId', '(unit:[1-9][0-9]*|serial:[1-9][0-9]*|quantity)');
@@ -442,6 +445,7 @@ Route::prefix('v1/erp/sales')->group(function () {
     Route::get('orders/{id}/logs', [SalesOrderController::class, 'logs'])->whereNumber('id');
     Route::get('orders/{id}/versions', [SalesOrderController::class, 'versions'])->whereNumber('id');
     Route::get('orders/{id}/changes', [SalesOrderController::class, 'changes'])->whereNumber('id');
+    Route::get('orders/{id}/change-labor', [\App\Http\Controllers\Api\V1\Erp\OrderChangeLaborController::class, 'order'])->whereNumber('id');
     Route::get('orders/{id}/returns', [SalesReturnController::class, 'orderReturns'])->whereNumber('id');
 
     Route::get('returns/sources', [SalesReturnController::class, 'sources']);
@@ -501,6 +505,10 @@ Route::prefix('v1/erp/production')->group(function () {
     Route::get('work-orders', [MfgWorkOrderController::class, 'index']);
     Route::get('cancellation-dispositions', [\App\Http\Controllers\Api\V1\Erp\SalesCancellationController::class, 'production']);
     Route::post('cancellation-dispositions/{id}/decision', [\App\Http\Controllers\Api\V1\Erp\SalesCancellationController::class, 'decide'])->whereNumber('id');
+    Route::get('cancellation-dispositions/{id}/labor', [\App\Http\Controllers\Api\V1\Erp\OrderChangeLaborController::class, 'show'])->whereNumber('id');
+    Route::post('cancellation-dispositions/{id}/labor/start', [\App\Http\Controllers\Api\V1\Erp\OrderChangeLaborController::class, 'start'])->whereNumber('id');
+    Route::post('cancellation-dispositions/{id}/labor/pause', [\App\Http\Controllers\Api\V1\Erp\OrderChangeLaborController::class, 'pause'])->whereNumber('id');
+    Route::post('cancellation-dispositions/{id}/labor/finish', [\App\Http\Controllers\Api\V1\Erp\OrderChangeLaborController::class, 'finish'])->whereNumber('id');
     Route::post('work-orders', [MfgWorkOrderController::class, 'store']);
     Route::get('work-orders/preview', [MfgWorkOrderController::class, 'preview']);
     Route::get('work-orders/{id}', [MfgWorkOrderController::class, 'show'])->whereNumber('id');
@@ -651,11 +659,24 @@ Route::prefix('v1/erp/departments')->group(function () {
 
 Route::prefix('v1/erp/aftersales')->group(function () {
     Route::get('interface-contract', [AftersalesReservedController::class, 'interfaceContract']);
-    Route::get('cases', [AftersalesReservedController::class, 'indexCases']);
-    Route::post('cases', [AftersalesReservedController::class, 'storeCase']);
-    Route::get('cases/{id}', [AftersalesReservedController::class, 'showCase'])->whereNumber('id');
-    Route::post('cases/{id}/accept', [AftersalesReservedController::class, 'acceptCase'])->whereNumber('id');
-    Route::post('cases/{id}/resolve', [AftersalesReservedController::class, 'resolveCase'])->whereNumber('id');
+    Route::get('cases', [\App\Http\Controllers\Api\V1\Erp\AftersalesController::class, 'index']);
+    Route::post('cases', [\App\Http\Controllers\Api\V1\Erp\AftersalesController::class, 'store']);
+    Route::get('cases/{id}', [\App\Http\Controllers\Api\V1\Erp\AftersalesController::class, 'show'])->whereNumber('id');
+    Route::put('cases/{id}', [\App\Http\Controllers\Api\V1\Erp\AftersalesController::class, 'update'])->whereNumber('id');
+    Route::post('cases/{id}/accept', [\App\Http\Controllers\Api\V1\Erp\AftersalesController::class, 'accept'])->whereNumber('id');
+    Route::post('cases/{id}/cancel', [\App\Http\Controllers\Api\V1\Erp\AftersalesController::class, 'cancel'])->whereNumber('id');
+    Route::post('cases/{id}/close', [\App\Http\Controllers\Api\V1\Erp\AftersalesController::class, 'close'])->whereNumber('id');
+    Route::post('cases/{id}/actions', [\App\Http\Controllers\Api\V1\Erp\AftersalesController::class, 'storeAction'])->whereNumber('id');
+    Route::post('cases/{id}/actions/{actionId}/cancel', [\App\Http\Controllers\Api\V1\Erp\AftersalesController::class, 'cancelAction'])->whereNumber('id')->whereNumber('actionId');
+    Route::post('cases/{id}/claims', [\App\Http\Controllers\Api\V1\Erp\AftersalesController::class, 'storeClaim'])->whereNumber('id');
+    Route::put('cases/{id}/claims/{claimId}', [\App\Http\Controllers\Api\V1\Erp\AftersalesController::class, 'updateClaim'])->whereNumber('id')->whereNumber('claimId');
+    Route::get('reships/{id}/stock-options', [\App\Http\Controllers\Api\V1\Erp\AftersalesController::class, 'reshipStockOptions'])->whereNumber('id');
+    Route::post('reships/{id}/ship', [\App\Http\Controllers\Api\V1\Erp\AftersalesController::class, 'shipReship'])->whereNumber('id');
+    Route::post('attachments/upload', [\App\Http\Controllers\Api\V1\Erp\AftersalesController::class, 'uploadAttachment']);
+    Route::get('attachments/{id}/preview', [\App\Http\Controllers\Api\V1\Erp\AftersalesController::class, 'previewAttachment'])->whereNumber('id');
+    Route::get('attachments/{id}/download', [\App\Http\Controllers\Api\V1\Erp\AftersalesController::class, 'downloadAttachment'])->whereNumber('id');
+    Route::delete('attachments/{id}', [\App\Http\Controllers\Api\V1\Erp\AftersalesController::class, 'deleteAttachment'])->whereNumber('id');
+    Route::get('orders/{orderId}/eligible', [\App\Http\Controllers\Api\V1\Erp\AftersalesController::class, 'eligible'])->whereNumber('orderId');
     Route::get('returns', [SalesReturnController::class, 'index']);
     Route::post('returns', [SalesReturnController::class, 'store']);
     Route::get('returns/{id}', [SalesReturnController::class, 'show'])->whereNumber('id');

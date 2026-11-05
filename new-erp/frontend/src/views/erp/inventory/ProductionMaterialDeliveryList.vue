@@ -183,15 +183,17 @@
     <el-dialog :title="prep.row ? `生产配料 · ${prep.row.work_order_no} · ${prep.row.operation_name}` : '生产配料'" :visible.sync="prep.visible" :width="dialogWidth" custom-class="master-style-dialog" :close-on-click-modal="false">
       <div v-loading="prep.loading" class="prep-dialog-body">
         <div class="units-row">
-          <span class="units-label">本次配几台的料：</span>
-          <el-input-number v-model="prep.units" size="small" :min="1" :max="prep.preview ? Math.max(1, prep.preview.planned_qty) : 100000" placeholder="全部" controls-position="right" @change="loadPreview" />
-          <el-button type="text" size="small" class="fill-rest-btn" @click="prep.units = undefined; loadPreview()">配齐剩余全部台数</el-button>
+          <span class="units-label">本次为哪些编号配料：</span>
+          <el-button size="small" :disabled="prep.loading || saving" @click="prepUnitPicker=true">选择具体编号</el-button>
+          <span>{{ prep.allUnits ? '剩余全部可配编号' : '已选择 ' + prep.unitRows.length + ' 个' }}</span>
+          <el-button type="text" size="small" class="fill-rest-btn" :disabled="prep.loading || saving" @click="useAllPrepUnits">配齐剩余全部</el-button>
         </div>
+        <div v-if="!prep.allUnits"><el-tag v-for="unit in prep.unitRows" :key="unit.id" size="small" style="margin:0 6px 6px 0">{{ unit.serial_no || ('第' + unit.unit_no + '个') }}</el-tag></div>
         <p v-if="prep.preview" class="preview-summary">
-          工单共 <b>{{ qty(prep.preview.planned_qty) }}</b> 台，此前已齐套 <b>{{ qty(prep.preview.covered_units) }}</b> 台，本次配到第 <b>{{ qty(prep.preview.target_units) }}</b> 台（拣货库位与批次按先入先用自动推荐）。
+          工单共 <b>{{ qty(prep.preview.planned_qty) }}</b> 台，此前已齐套 <b>{{ qty(prep.preview.covered_units) }}</b> 台，本次配 <b>{{ qty(Math.max(0, prep.preview.target_units - prep.preview.covered_units)) }}</b> 台（拣货库位与批次按先入先用自动推荐）。
         </p>
         <div v-if="prep.preview && prep.preview.short.length" class="warn">
-          <i class="el-icon-warning" /> 库存不够：{{ prep.preview.short.join('；') }}。可以调小本次配料台数，或联系采购补货。
+          <i class="el-icon-warning" /> 库存不够：{{ prep.preview.short.join('；') }}。可以减少本次选择的编号，或联系采购补货。
         </div>
         <div class="prep-lines-box">
           <div v-for="l in (prep.preview ? prep.preview.lines : [])" :key="l.material_id" class="pick-line">
@@ -218,6 +220,7 @@
         <el-button size="small" type="success" class="btn-theme-create" :loading="saving" :disabled="!canSubmitPrep" @click="submitPrep(true)">配好并直接发出</el-button>
       </span>
     </el-dialog>
+    <system-record-picker :visible.sync="prepUnitPicker" :request="loadPrepUnitOptions" :params="{ operation_id: prep.row && prep.row.operation_id }" :value="prep.unitRows" :columns="prepUnitColumns" :config="{title: '选择本次配料的设备 / 子件', placeholder: '搜索设备编号 / 子件编号'}" :label="prepUnitLabel" :selectable="prepUnitSelectable" :multiple="true" @confirm="applyPrepUnits" />
     <el-dialog title="整单收回配料" :visible.sync="recallForm.visible" width="680px" custom-class="master-style-dialog" :close-on-click-modal="false">
       <template v-if="recallForm.row"><p>配料单 {{ recallForm.row.delivery_no }}。收回后生成待仓库确认的退料单。</p><el-form label-position="top" size="small" :disabled="saving"><el-form-item label="收回原因" required><el-input v-model="recallForm.reason" type="textarea" maxlength="300" /></el-form-item><el-checkbox v-if="$can('inventory.inbound.confirm')" v-model="recallForm.confirmInbound">同时确认接收入库</el-checkbox><template v-if="recallForm.confirmInbound"><el-form-item label="实际接收库位" required><div class="picker-row"><el-button @click="recallPicker = { visible: true, mode: 'warehouse' }">{{ recallForm.warehouse_name || '选择接收仓库' }}</el-button><el-button :disabled="!recallForm.warehouse_id" @click="recallPicker = { visible: true, mode: 'location' }">{{ recallForm.location_name || '选择实际库位' }}</el-button></div></el-form-item><el-form-item v-if="recallSerials.length" :label="'逐个核对序列号 · 已核对 ' + Object.keys(recallChecked).length + ' / ' + recallSerials.length"><el-input v-model="recallSerialCode" placeholder="扫描或输入序列号后回车" @keyup.enter.native="checkRecallSerial"><el-button slot="append" @click="checkRecallSerial">核对</el-button></el-input><el-tag v-for="sn in recallSerials" :key="sn" size="small" :type="recallChecked[sn] ? 'success' : 'info'">{{ sn }} · {{ recallChecked[sn] ? '已核对' : '未核对' }}</el-tag></el-form-item></template></el-form></template>
       <span slot="footer"><el-button size="small" :disabled="saving" @click="recallForm.visible = false">取消</el-button><el-button size="small" type="success" :loading="saving" :disabled="!recallForm.reason.trim() || (recallForm.confirmInbound && (!recallForm.location_id || Object.keys(recallChecked).length !== recallSerials.length))" @click="submitRecall">{{ recallForm.confirmInbound ? '收回并接收入库' : '确认收回' }}</el-button></span>
@@ -227,7 +230,7 @@
 </template>
 
 <script>
-import { listPendingDeliveries, listMaterialDeliveries, previewMaterialDelivery, createMaterialDelivery, materialDeliveryAction } from '../../../api/erp/production'
+import { listPendingDeliveries, listMaterialDeliveries, previewMaterialDelivery, createMaterialDelivery, materialDeliveryAction, getOperationSerialOptions } from '../../../api/erp/production'
 import { qty, errorText } from '../production/mfg-helpers'
 import StocktakeFreezeAlert from '@/components/common/StocktakeFreezeAlert.vue'
 import SystemRecordPicker from '@/components/system/SystemRecordPicker.vue'
@@ -257,12 +260,14 @@ export default {
       { value: 'signed', label: '已签收' },
       { value: '', label: '全部配料单' }
     ],
-    prep: { visible: false, loading: false, row: null, units: undefined, preview: null, remark: '' }
+    prep: { visible: false, loading: false, row: null, allUnits: true, unitRows: [], preview: null, remark: '', requestVersion: 0 },
+    prepUnitPicker: false,
+    prepUnitColumns: [{ prop: 'serial_no', label: '设备 / 子件编号', width: 160 }, { prop: 'unit_no', label: '序号', width: 70 }, { prop: 'status_label', label: '当前进度', width: 110 }, { prop: 'disabled_reason', label: '不可选择原因', width: 160 }]
   }),
   computed: {
     recallSerials() { return Array.from(new Set((this.recallForm.row?.lines || []).flatMap(line => (line.picks || []).flatMap(pick => pick.serial_nos || [])))) },
     dialogWidth() { return window.innerWidth < 768 ? '94%' : '760px' },
-    canSubmitPrep() { const p = this.prep.preview; return !!(p && p.lines.length && !p.short.length) }
+    canSubmitPrep() { const p = this.prep.preview; return !this.saving && !this.prep.loading && (this.prep.allUnits || this.prep.unitRows.length > 0) && !!(p && p.lines.length && !p.short.length) }
   },
   created() {
     if (this.$route.query.status !== undefined) this.status = String(this.$route.query.status)
@@ -301,27 +306,35 @@ export default {
       if (this.$can('production.work_order.view')) this.$router.push(`/production/work-orders/${id}`)
     },
     openPrepare(row) {
-      this.prep = { visible: true, loading: false, row, units: undefined, preview: null, remark: '' }
+      this.prep = { visible: true, loading: false, row, allUnits: true, unitRows: [], preview: null, remark: '', requestVersion: 0 }
       this.loadPreview()
     },
+    loadPrepUnitOptions(params) { return getOperationSerialOptions(this.prep.row.work_order_id, this.prep.row.operation_id, { ...params, scope: 'units' }) },
+    prepUnitLabel(unit) { return unit.serial_no || `第${unit.unit_no}个` },
+    prepUnitSelectable(unit) { return unit.selectable !== false },
+    applyPrepUnits(rows) { this.prep.allUnits = false; this.prep.unitRows = rows; if (!rows.length) { this.prep.preview = null; return this.$message.warning('请选择至少一个本次配料编号，或明确选择配齐剩余全部') } this.loadPreview() },
+    useAllPrepUnits() { this.prep.allUnits = true; this.prep.unitRows = []; this.loadPreview() },
     async loadPreview() {
       const p = this.prep
+      const version = ++p.requestVersion
+      if (!p.allUnits && !p.unitRows.length) { p.preview = null; return }
       p.loading = true
+      p.preview = null
       try {
-        const { data } = await previewMaterialDelivery(p.row.work_order_id, p.row.operation_id, { units: p.units || undefined })
-        p.preview = data.data
+        const { data } = await previewMaterialDelivery(p.row.work_order_id, p.row.operation_id, { units: p.allUnits ? undefined : p.unitRows.length, unit_ids: p.allUnits ? undefined : p.unitRows.map(unit => unit.id) })
+        if (this.prep === p && version === p.requestVersion) p.preview = data.data
       } catch (e) {
-        p.preview = null
-        this.$message.error(errorText(e, '配料预览失败'))
+        if (this.prep === p && version === p.requestVersion) this.$message.error(errorText(e, '配料预览失败'))
       } finally {
-        p.loading = false
+        if (this.prep === p && version === p.requestVersion) p.loading = false
       }
     },
     async submitPrep(dispatch) {
       const p = this.prep
+      if (!this.canSubmitPrep) return
       this.saving = true
       try {
-        const { data } = await createMaterialDelivery(p.row.work_order_id, p.row.operation_id, { units: p.units || undefined, remark: p.remark || undefined, dispatch })
+        const { data } = await createMaterialDelivery(p.row.work_order_id, p.row.operation_id, { units: p.allUnits ? undefined : p.unitRows.length, unit_ids: p.allUnits ? p.preview.unit_ids : p.unitRows.map(unit => unit.id), expected_source_revision: p.preview.source_revision, remark: p.remark || undefined, dispatch })
         this.$message.success(data.message || '已生成配料单')
         p.visible = false
         this.load()

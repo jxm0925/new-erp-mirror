@@ -171,6 +171,8 @@
         <view wx:if="{{!units.length}}" class="mt-muted">当前工单按数量汇总追踪，不生成单台序列号</view>
         <view wx:for="{{units}}" wx:key="id" class="mt-kv">
           <text class="k mono" style="color: #1f2329; font-weight: 700;">{{item.serial_no || ('第 ' + item.unit_no + ' ' + (wo.unit_name || '件'))}}</text>
+          <text wx:if="{{item.disposition_status === 'stock'}}" class="mt-tag green">继续备货</text>
+          <text wx:elif="{{item.disposition_status === 'pending' || item.disposition_status === 'postponed' || item.disposition_status === 'terminating'}}" class="mt-tag amber">订单变更待处理</text>
           <text class="mt-tag {{item.tag}}">{{item.text}}</text>
         </view>
       </view>

@@ -266,6 +266,8 @@
                           {{ u.serial_no || ('第 ' + u.unit_no + ' 台') }}
                         </div>
                         <div class="unit-sub-status">
+                          <el-tag v-if="u.disposition_status === 'stock'" size="mini" type="success">继续备货</el-tag>
+                          <el-tag v-else-if="['pending', 'postponed', 'terminating'].includes(u.disposition_status)" size="mini" type="warning">订单变更待处理</el-tag>
                           <span :class="u.status === 'rework' ? 'text-danger font-medium' : 'text-muted'">
                             {{ u.status === 'rework' ? `返修第 ${u.rework_count || 1} 次` : u.status_label }}
                           </span>
@@ -517,7 +519,7 @@
                           </td>
                           <td class="col-mat-act">
                             <el-button
-                              v-if="m.can_make && m.make_qty > 0 && $can('production.work_order.create')"
+                              v-if="m.can_order && $can('production.work_order.create')"
                               type="text"
                               size="mini"
                               class="btn-make-semi"
@@ -991,15 +993,18 @@
     </el-dialog>
 
     <el-dialog
-      title="指定编号收料"
+      title="选择设备 / 子件并收料"
       :visible.sync="serialReceive.visible"
       width="640px"
       custom-class="master-style-dialog"
       :close-on-click-modal="false"
     >
       <el-form label-position="top" size="small">
-        <el-form-item label="收料设备数（不填收齐整单）">
-          <el-input-number v-model="serialReceive.units" :min="1" :max="100000" controls-position="right" />
+        <el-alert v-if="serialReceive.error" :title="serialReceive.error" type="error" :closable="false" />
+        <el-form-item label="本次为哪些设备 / 子件领料">
+          <el-button size="small" :disabled="serialReceive.loading || saving" @click="receiveUnitPicker=true">选择具体编号</el-button>
+          <span class="text-muted">已选择 {{ serialReceive.unitRows.length }} 个</span>
+          <div><el-tag v-for="unit in serialReceive.unitRows" :key="unit.id" size="small" style="margin:6px 6px 0 0">{{ unit.serial_no || ('第' + unit.unit_no + '个') }}</el-tag></div>
         </el-form-item>
         <el-form-item
           v-for="row in serialReceive.rows"
@@ -1016,13 +1021,14 @@
           </el-select>
         </el-form-item>
       </el-form>
-      <p v-if="!serialReceive.rows.length" class="dialog-hint text-muted">本道没有需要指定编号的追溯物料，直接收料即可。</p>
-      <p class="dialog-hint text-muted">* 所选编号按顺序依次装到尚未配号的设备，数量须与本次应收数量一致；未指定的物料由系统按先入先用分配。</p>
+      <p class="dialog-hint text-muted">只领取本次勾选编号的材料，其余设备保持原安排。</p>
+      <p v-if="serialReceive.rows.length" class="dialog-hint text-muted">* 所选材料编号只分配给本次勾选的设备，数量须与本次应收数量一致；未指定的物料由系统按先入先用分配。</p>
       <span slot="footer">
         <el-button size="small" @click="serialReceive.visible = false">取消</el-button>
-        <el-button size="small" type="success" class="btn-theme-create" :loading="saving" @click="submitSerialReceive">确认收料</el-button>
+        <el-button size="small" type="success" class="btn-theme-create" :loading="saving" :disabled="serialReceive.loading || !!serialReceive.error || !serialReceive.unitRows.length" @click="submitSerialReceive">确认收料</el-button>
       </span>
     </el-dialog>
+    <system-record-picker :visible.sync="receiveUnitPicker" :request="loadReceiveUnitOptions" :params="{ operation_id: serialReceive.opId }" :value="serialReceive.unitRows" :columns="receiveUnitColumns" :config="{title: '选择本次领料的设备 / 子件', placeholder: '搜索设备编号 / 子件编号'}" :label="receiveUnitLabel" :selectable="receiveUnitSelectable" :multiple="true" @confirm="applyReceiveUnitSelection" />
 
     <el-dialog
       title="互换部件编号"
@@ -1103,6 +1109,7 @@ import { getWorkOrder, getWorkOrderOptions, updateWorkOrder, releaseWorkOrder, p
 import { HERO_PILL, qty, money, shortDate, bomLabel, errorText, isCancel, searchProductionUsers } from './mfg-helpers'
 import WorkOrderCuttingPanel from './WorkOrderCuttingPanel.vue'
 import CancellationDispositions from '@/components/production/CancellationDispositions.vue'
+import SystemRecordPicker from '@/components/system/SystemRecordPicker.vue'
 import MaterialReturnDialog from './MaterialReturnDialog.vue'
 import ShortagePurchaseDialog from '../purchase/ShortagePurchaseDialog.vue'
 import unitOptionsMixin from './unit-options-mixin'
@@ -1117,7 +1124,7 @@ const STEPS = [
 
 export default {
   name: 'WorkOrderDetail',
-  components: { CancellationDispositions, WorkOrderCuttingPanel, MaterialReturnDialog, ShortagePurchaseDialog },
+  components: { CancellationDispositions, SystemRecordPicker, WorkOrderCuttingPanel, MaterialReturnDialog, ShortagePurchaseDialog },
   mixins: [unitOptionsMixin],
   data: () => ({
     loading: false,
@@ -1125,7 +1132,9 @@ export default {
     wo: null,
     owners: [],
     unitLimit: 50,
-    serialReceive: { visible: false, opId: null, units: undefined, rows: [], picked: {} },
+    serialReceive: { visible: false, opId: null, unitRows: [], rows: [], picked: {}, loading: false, error: '' },
+    receiveUnitPicker: false,
+    receiveUnitColumns: [{ prop: 'serial_no', label: '设备 / 子件编号', width: 160 }, { prop: 'unit_no', label: '序号', width: 70 }, { prop: 'status_label', label: '当前进度', width: 110 }, { prop: 'disabled_reason', label: '不可选择原因', width: 160 }],
     swap: { visible: false, unitId: null, unitSerial: '', component: null, targetId: null },
     assign: { visible: false, component: null, unitId: null },
     returnDialog: { visible: false, opId: 0, opName: '' },
@@ -1397,6 +1406,7 @@ export default {
       if (d.purchase_request_id && d.request_status !== 'deleted' && this.$can('purchase.request')) this.$router.push(`/purchase/requests/${d.purchase_request_id}/detail`)
     },
     async makeSemi(m) {
+      if (!m.can_order || this.saving) return
       let value
       try {
         const res = await this.$prompt(`${m.component_item_name} 缺料，给下料组开半成品工单，做完入半成品仓后总装再收料。开多少？`, '开半成品工单', {
@@ -1408,42 +1418,42 @@ export default {
         if (isCancel(e)) return
       }
       if (value > 0) {
-        await this.run(() => createSemiWorkOrder(this.wo.id, { component_item_id: m.component_item_id, qty: value }), '半成品工单已开')
+        const operation = (this.wo.kitting || []).find(k => k.operation_key === m.operation_key)
+        const material = operation && operation.materials.find(row => row.component_item_id === m.component_item_id)
+        if (!material || !material.can_order) return this.$message.warning('请先接下使用该半成品的工序，再开半成品工单。')
+        await this.run(() => createSemiWorkOrder(this.wo.id, { component_item_id: m.component_item_id, operation_id: Number(String(m.operation_key).replace(/^o/, '')), qty: value }), '半成品工单已开')
       }
     },
-    async receiveMaterials(k) {
-      let value
-      try {
-        const res = await this.$prompt(`${k.operation_name}收料：收料后从库存扣减，收够才能开工。收几台的料？不填就收齐整单。`, '工序收料', {
-          inputPlaceholder: '不填 = 收齐整单',
-          inputValidator: v => !v || (Number.isInteger(Number(v)) && Number(v) > 0) || '请填正整数设备数'
-        })
-        value = res.value
-      } catch (e) {
-        if (isCancel(e)) return
-        return
-      }
-      const opId = Number(String(k.operation_key).replace(/^o/, ''))
-      await this.run(() => receiveOperationMaterials(this.wo.id, opId, value ? { units: Number(value) } : {}), '已收料')
+    receiveMaterials(k) { this.openSerialReceive(k, false) },
+    loadReceiveUnitOptions(params) { return getOperationSerialOptions(this.wo.id, this.serialReceive.opId, { ...params, scope: 'units' }) },
+    receiveUnitLabel(unit) { return unit.serial_no || `第${unit.unit_no}个` },
+    receiveUnitSelectable(unit) { return unit.selectable !== false },
+    applyReceiveUnitSelection(rows) {
+      const previous = this.serialReceive.unitRows.map(unit => unit.id)
+      if (rows.length !== previous.length || rows.some(unit => !previous.includes(unit.id))) Object.keys(this.serialReceive.picked).forEach(id => { this.serialReceive.picked[id] = [] })
+      this.serialReceive.unitRows = rows
     },
-    async openSerialReceive(k) {
+    async openSerialReceive(k, withMaterialSerials = true) {
       const opId = Number(String(k.operation_key).replace(/^o/, ''))
+      const state = this.serialReceive = { visible: true, opId, unitRows: [], rows: [], picked: {}, loading: withMaterialSerials, error: '' }
+      if (!withMaterialSerials) return
       try {
         const { data } = await getOperationSerialOptions(this.wo.id, opId)
+        if (this.serialReceive !== state || !state.visible) return
         const rows = data.data || []
         const picked = {}
         rows.forEach(r => { picked[r.material_id] = [] })
-        this.serialReceive = { visible: true, opId, units: undefined, rows, picked }
+        state.rows = rows; state.picked = picked
       } catch (e) {
-        this.$message.error(errorText(e, '读取可选编号失败'))
-      }
+        if (this.serialReceive === state) state.error = errorText(e, '读取可选编号失败')
+      } finally { if (this.serialReceive === state) state.loading = false }
     },
     async submitSerialReceive() {
       const f = this.serialReceive
+      if (this.saving || f.loading || f.error || !f.unitRows.length) return
       const selections = f.rows.filter(r => (f.picked[r.material_id] || []).length)
         .map(r => ({ material_id: r.material_id, serial_ids: f.picked[r.material_id] }))
-      const payload = {}
-      if (f.units) payload.units = Number(f.units)
+      const payload = { unit_ids: f.unitRows.map(unit => unit.id) }
       if (selections.length) payload.serial_selections = selections
       if (await this.run(() => receiveOperationMaterials(this.wo.id, f.opId, payload), '已收料')) f.visible = false
     },

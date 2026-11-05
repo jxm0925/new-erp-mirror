@@ -8,6 +8,8 @@
     @update:visible="v => $emit('update:visible', v)"
   >
     <div v-loading="loading">
+      <el-alert v-if="loadError" :title="loadError" type="error" :closable="false" />
+      <p v-if="dispositionId" class="dialog-hint">本次只退 {{ returnUnitText || '所选编号' }} 的材料，其余编号的材料保持原安排。</p>
       <p class="dialog-hint">{{ operationName }}：把领多、领错、不良或报废设备拆下的料退回仓库，按原收料的批次和单价冲回库存和工单材料成本。</p>
       <el-form label-position="top" size="small" :disabled="saving || pendingRequest">
         <el-form-item label="退料类型">
@@ -59,7 +61,8 @@ import { pendingWarehouseCommand } from '@/api/erp/warehouse'
 const HINTS = {
   surplus: '多领或领错的料，最多退到“已领 − 已到本道的设备应用量”，冲减已领数量。',
   defective: '装上后发现不良的料，冲减已领数量，退后重新收料补上。',
-  scrapped: '报废设备上还能用的料拆回仓库，不冲减已领数量。'
+  scrapped: '报废设备上还能用的料拆回仓库，不冲减已领数量。',
+  cancellation: '订单变更或取消后拆回可用料，按原领用来源申请退回，仓库接收入库后形成库存。'
 }
 
 export default {
@@ -69,10 +72,12 @@ export default {
     visible: Boolean,
     workOrderId: { type: Number, default: 0 },
     operationId: { type: Number, default: 0 },
-    operationName: { type: String, default: '' }
+    operationName: { type: String, default: '' },
+    defaultReturnType: { type: String, default: 'surplus' },
+    dispositionId: { type: Number, default: 0 }
   },
   data: () => ({
-    loading: false, saving: false, types: [], materials: [], canApprove: false, pendingRequest: false, checkedSerials: {}, serialCode: '',
+    loading: false, saving: false, types: [], materials: [], canApprove: false, pendingRequest: false, checkedSerials: {}, serialCode: '', loadError: '', returnUnitText: '',
     form: { return_type: 'surplus', qty: {}, serials: {}, reason: '', direct: false, original: true, warehouse_id: null, warehouse_name: '', location_id: null, location_name: '' },
     picker: { visible: false, type: 'warehouses' }
   }),
@@ -89,7 +94,7 @@ export default {
       })).filter(l => l.serial_ids.length || l.qty > 0)
     },
     canSubmit() {
-      return this.pendingRequest || (this.lines.length && this.form.reason.trim() && (!this.form.direct || (this.form.location_id && this.selectedSerialNos.every(sn => this.checkedSerials[sn]))))
+      return this.pendingRequest || (!this.loading && !this.loadError && this.lines.length && this.form.reason.trim() && (!this.form.direct || (this.form.location_id && this.selectedSerialNos.every(sn => this.checkedSerials[sn]))))
     }
   },
   watch: {
@@ -100,13 +105,20 @@ export default {
     checkSerial() { const code = this.serialCode.trim().replace(/^ERP:SN:/i, ''); if (!this.selectedSerialNos.includes(code)) return this.$message.error('该序列号不属于本次退料'); if (this.checkedSerials[code]) return this.$message.warning('该序列号已核对'); this.$set(this.checkedSerials, code, true); this.serialCode = '' },
     async load() {
       this.loading = true
-      this.materials = []
-      this.pendingRequest = Boolean(pendingWarehouseCommand('material_return.request', this.operationId)); this.checkedSerials = {}; this.serialCode = ''
+      this.materials = []; this.types = []; this.loadError = ''; this.pendingRequest = false; this.returnUnitText = ''
+      this.checkedSerials = {}; this.serialCode = ''
       this.form = { return_type: 'surplus', qty: {}, serials: {}, reason: '', direct: false, original: true, warehouse_id: null, warehouse_name: '', location_id: null, location_name: '' }
       try {
-        const { data } = await getMaterialReturnOptions(this.workOrderId, this.operationId)
+        const pending = pendingWarehouseCommand('material_return.request', this.operationId)
+        if (pending && Number(pending.payload.disposition_id || 0) !== this.dispositionId) throw new Error('本道工序另有其他编号的退料结果待核对，请先回到原申请核对，再办理本次退料')
+        this.pendingRequest = Boolean(pending)
+        if (this.defaultReturnType === 'cancellation' && !this.dispositionId) throw new Error('请从本次设备处置进入退料，先确定要退哪台的材料')
+        const { data } = await getMaterialReturnOptions(this.workOrderId, this.operationId, this.dispositionId ? { disposition_id: this.dispositionId } : undefined)
         const d = data.data || {}
-        this.types = d.types || []
+        this.returnUnitText = d.unit_serial_no || d.target_unit?.serial_no || (d.unit_no ? `第${d.unit_no}个` : '')
+        this.types = this.dispositionId ? (d.types || []).filter(t => t.value === 'cancellation') : d.types || []
+        if (this.dispositionId && !this.types.length) throw new Error('这台设备当前不能办理处置退料，请返回核对处理进度')
+        this.form.return_type = this.types.some(t => t.value === this.defaultReturnType) ? this.defaultReturnType : (this.types[0]?.value || 'surplus')
         this.canApprove = !!d.can_approve
         this.materials = d.materials || []
         this.materials.forEach(m => {
@@ -114,13 +126,15 @@ export default {
           this.$set(this.form.serials, m.material_id, [])
         })
       } catch (e) {
-        this.$message.error(errorText(e, '读取可退物料失败'))
+        this.loadError = errorText(e, e?.message || '读取可退物料失败')
+        this.$message.error(this.loadError)
       } finally {
         this.loading = false
       }
     },
     limitOf(m) { return Number((m.limits || {})[this.form.return_type] || 0) },
     serialsFor(m) {
+      if (this.form.return_type === 'cancellation') return m.serials || []
       const scrapped = this.form.return_type === 'scrapped'
       return (m.serials || []).filter(s => (s.kind === 'scrapped') === scrapped)
     },
@@ -146,8 +160,10 @@ export default {
       }
     },
     async submit() {
+      if (!this.canSubmit || this.saving) return
       const f = this.form
       const payload = { return_type: f.return_type, reason: f.reason.trim(), lines: this.lines, with_detail: true }
+      if (this.dispositionId) payload.disposition_id = this.dispositionId
       if (f.direct) {
         payload.direct = true
         payload.location_id = f.location_id

@@ -25,6 +25,7 @@ class ErpDocumentNumberRuleSeeder extends Seeder
             ['sales_return', '销售退货单', 'SR', 'Ymd', 5, 'daily'],
             ['sales_return_receipt', '销售退货到货单', 'SRR', 'Ymd', 5, 'daily'],
             ['aftersales_case', '售后单', 'AS', 'Ymd', 5, 'daily'],
+            ['aftersales_reship', '售后补发单', 'ASD', 'Ymd', 5, 'daily'],
             ['sales_order_change', '订单变更单', 'SOC', 'Ymd', 5, 'daily'],
 
             ['purchase_request', '采购需求', 'PRQ', 'Ymd', 5, 'daily'],

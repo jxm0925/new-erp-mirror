@@ -74,20 +74,11 @@
         <view class="phase-metrics">
           <view>计划数量<text>{{preview.planned_qty}} 台</text></view>
           <view>已齐套<text class="locked">{{preview.covered_units}} 台</text></view>
-          <view>本次配到<text class="available">{{preview.target_units}} 台</text></view>
+          <view>本次配料<text class="available">{{preview.target_units - preview.covered_units}} 台</text></view>
         </view>
-        <view class="warehouse-field" wx:if="{{preview.planned_qty - preview.covered_units > 1}}">
-          <text class="warehouse-label">本次配料数量</text>
-          <input
-            class="warehouse-input material-unit"
-            type="number"
-            value="{{units}}"
-            placeholder="剩余全部"
-            bindblur="changeUnits"
-            disabled="{{saving || pendingActions.length}}"
-          />
-          <text class="mat-unit-suffix">台</text>
-        </view>
+        <view class="warehouse-field"><text class="warehouse-label">本次配料编号</text><text class="warehouse-value">{{unitSelectionExplicit ? '已选择 ' + productionUnits.length + ' 个' : '剩余全部可配编号'}}</text></view>
+        <view class="material-unit-actions"><button class="warehouse-secondary" bindtap="openProductionUnits" disabled="{{saving || loading || pendingActions.length}}">选择具体编号</button><button class="warehouse-secondary" bindtap="useAllProductionUnits" disabled="{{saving || loading || pendingActions.length}}">配齐剩余全部</button></view>
+        <view wx:for="{{productionUnits}}" wx:key="id" class="phase-audit">{{item.serial_no || ('第' + item.unit_no + '个')}}</view>
         <view wx:if="{{shortages.length}}" class="material-shortage-box">
           <view wx:for="{{shortages}}" wx:key="item_id" class="material-shortage-row">
             <view class="material-shortage-title"><text>{{item.name}}</text><text>缺 {{item.shortText}} {{item.unit}}</text></view>
@@ -399,6 +390,7 @@
 <warehouse-locator open="{{locatorOpen}}" value="{{locator}}" bind:confirm="chooseLocator" bind:cancel="closeLocator" />
 <warehouse-material-picker open="{{pickerOpen}}" work-order-id="{{header.work_order_id}}" operation-id="{{id}}" line="{{pickerLine}}" other-picks="{{pickerOtherPicks}}" initial-scan="{{pickerScan}}" error-message="{{pickerError}}" locked="{{saving || loading || pendingActions.length > 0}}" bind:confirm="confirmPicker" bind:cancel="closePicker" />
 <warehouse-select open="{{manualOpen}}" title="{{manualTitle}}" rows="{{manualRows}}" selected="{{manualSelected}}" scope-key="{{manualScope}}" multiple maximum="{{manualRows.length}}" locked="{{saving || loading || pendingActions.length > 0}}" bind:confirm="confirmManual" bind:cancel="closeManual" />
+<warehouse-select open="{{unitPickerOpen}}" title="选择本次配料的设备 / 子件" mode="production_unit" context="{{unitPickerContext}}" selected="{{productionUnits}}" scope-key="{{unitPickerScope}}" multiple maximum="{{1000}}" locked="{{saving || loading || pendingActions.length > 0}}" bind:confirm="applyProductionUnits" bind:cancel="closeProductionUnits" />
 
 <view wx:if="{{dialog}}" class="warehouse-overlay" catchtouchmove="stop">
   <view class="warehouse-dialog">

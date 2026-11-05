@@ -10,6 +10,7 @@ use App\Models\Erp\MfgWorkOrder;
 use App\Models\Erp\MfgWorkOrderLink;
 use App\Models\Erp\MfgWorkOrderMaterial;
 use App\Models\Erp\MfgWorkOrderOperation;
+use App\Models\Erp\MfgWorkOrderUnit;
 use App\Models\Erp\MfgTaskParticipant;
 use App\Models\Erp\SalesOrder;
 use App\Services\Erp\CuttingDecimal;
@@ -42,10 +43,23 @@ final class CuttingService
     public function context(int $workOrderId, array $filters, bool $amounts, object $actor): array
     {
         $wo = MfgWorkOrder::query()->with(['materials', 'operations'])->findOrFail($workOrderId);
+        if (($filters['scope'] ?? null) === 'units') {
+            $operationId = (int) $filters['operation_id'];
+            if (!$wo->operations->contains(fn ($op) => (int) $op->id === $operationId && $op->execution_context === 'production'))
+                $this->fail('operation_invalid', '请选择本工单实际存在的车间工序。');
+            if (!empty($filters['batch_id'])) {
+                $batch = MfgCuttingBatch::where('work_order_id', $wo->id)->where('work_order_operation_id', $operationId)->findOrFail($filters['batch_id']);
+                $unitIds = array_map('intval', data_get($batch->input_lines, '0.unit_ids', []));
+            } else $unitIds = $this->remainingUnits($wo, $operationId)['ids'];
+            $query = MfgWorkOrderUnit::where('work_order_id', $wo->id)->whereIn('id', $unitIds);
+            if ($keyword = trim((string) ($filters['keyword'] ?? ''))) $query->where('serial_no', 'like', '%'.$keyword.'%');
+            return $query->orderBy('unit_no')->paginate($filters['per_page'] ?? 10,
+                ['id', 'unit_no', 'serial_no', 'status'], 'page', $filters['page'] ?? 1)->toArray();
+        }
         $requirements = [];
         $remaining = [];
         foreach ($wo->operations->where('execution_context', 'production') as $op) {
-            $remaining[$op->id] = $this->remainingUnits($wo, (int) $op->id);
+            $remaining[$op->id] = $this->remainingUnits($wo, (int) $op->id)['qty'];
             $requirements = array_merge($requirements, $this->requirements($wo, (int) $op->id));
         }
         $batches = MfgCuttingBatch::query()->where('work_order_id', $wo->id)
@@ -117,7 +131,7 @@ final class CuttingService
         $units = (int) $data['unit_qty'];
         if (! $wo->operations->contains(fn ($op) => (int) $op->id === $operationId && $op->execution_context === 'production'))
             $this->fail('operation_invalid', '请选择本工单实际存在的车间工序。');
-        if ($units < 1 || $units > $this->remainingUnits($wo, $operationId)) $this->fail('qty_invalid', '本次套数超过该工序尚未安排开料的数量。');
+        $this->selectedUnits($wo, $operationId, $data);
         $requirements = $this->requirements($wo, $operationId);
         if (! $requirements) $this->fail('no_cutting_material', '这道工序没有冻结的板材或管材开料需求。');
         $pending = [];
@@ -178,7 +192,6 @@ final class CuttingService
     {
         return DB::transaction(function () use ($workOrderId, $data, $actor, $amounts) {
             $wo = $this->lockedWorkOrder($workOrderId);
-            CancellationProductionService::assertProductionAllowed((int) $wo->id);
             $hash = $this->hash($data);
             $old = MfgCuttingBatch::query()->where('idempotency_key', $data['idempotency_key'])->lockForUpdate()->first();
             if ($old) {
@@ -239,6 +252,21 @@ final class CuttingService
             if (! ($data['confirmed'] ?? false)) $this->fail('remnant_confirmation_required', '请人工核实每个来源的真实余料，无余料明确填零。');
             $registered = $batch->status === 'awaiting_confirm';
             $actualUnits = (int) ($data['unit_qty'] ?? ($registered ? $batch->completed_unit_qty : 0));
+            $unitIds = data_get($batch->input_lines, '0.unit_ids');
+            $completedIds = null;
+            if ($unitIds !== null) {
+                $completedIds = $data['completed_unit_ids'] ?? ($registered ? data_get($batch->input_lines, '0.completed_unit_ids')
+                    : ($actualUnits === (int) $batch->unit_qty ? $unitIds : null));
+                if ($completedIds === null) $this->fail('completed_unit_selection_required', '本批只完成部分套数，请明确选择已经完成的设备编号。');
+                $completedIds = array_map('intval', $completedIds);
+                if (!$completedIds || count(array_unique($completedIds)) !== count($completedIds) || array_diff($completedIds, array_map('intval', $unitIds)))
+                    $this->fail('completed_unit_invalid', '实际完成编号必须从本批原领入名单中选择，且不能重复。');
+                sort($completedIds);
+                $actualUnits = count($completedIds);
+                $frozenIds = array_map('intval', data_get($batch->input_lines, '0.completed_unit_ids', []));
+                sort($frozenIds);
+                if ($registered && $completedIds !== $frozenIds) $this->fail('outputs_frozen', '本批已登记的实际完成编号不能改动。', 409);
+            } elseif (isset($data['completed_unit_ids'])) $this->fail('legacy_batch_scope', '本批原记录没有设备编号，继续按原共同套数结算，不能补猜历史归属。');
             if ($actualUnits < 1 || $actualUnits > (int) $batch->unit_qty) $this->fail('qty_invalid', '实际合格套数必须大于零，且不能超过本批计划套数。');
             $rows = $data['assignments'] ?? ($registered ? $batch->actual_outputs : ($actualUnits === (int) $batch->unit_qty ? $batch->planned_outputs : null));
             if ($rows === null) $this->fail('output_required', '实际套数改变后，请登记实际板件或管件分配。');
@@ -261,7 +289,10 @@ final class CuttingService
                     $material->update(['issued_qty' => $newQty]);
                 }
             }
-            $batch->update(['actual_outputs' => $outputs, 'completed_unit_qty' => $actualUnits, 'status' => 'awaiting_confirm',
+            $inputs = $batch->input_lines;
+            if ($completedIds !== null) foreach ($inputs as &$input) $input['completed_unit_ids'] = $completedIds;
+            unset($input);
+            $batch->update(['actual_outputs' => $outputs, 'completed_unit_qty' => $actualUnits, 'input_lines' => $inputs, 'status' => 'awaiting_confirm',
                 'remnant_cost_amount' => '0.0000', 'net_cost_amount' => '0.0000', 'pool_measure' => '0.00000000',
                 'business_version' => (int) $batch->business_version + 1, 'settlement_key' => $key, 'settlement_hash' => $hash,
                 'remark' => $data['remark'] ?? $batch->remark]);
@@ -279,6 +310,10 @@ final class CuttingService
             'input_lines', 'planned_outputs', 'actual_outputs', 'remnants', 'input_cost_amount', 'remnant_cost_amount', 'net_cost_amount',
             'issued_by_name', 'settled_by_name', 'issued_at', 'settled_at', 'remark']);
         $row += app(CuttingRemnantReceiptService::class)->batchConfirmation($batch, $amounts, $actor);
+        $row['unit_ids'] = array_map('intval', data_get($batch->input_lines, '0.unit_ids', []));
+        $row['completed_unit_ids'] = array_map('intval', data_get($batch->input_lines, '0.completed_unit_ids', []));
+        $row['units'] = MfgWorkOrderUnit::where('work_order_id', $batch->work_order_id)->whereIn('id', $row['unit_ids'])
+            ->orderBy('unit_no')->get(['id', 'unit_no', 'serial_no'])->toArray();
         $row['status_label'] = ['issued' => '切割中，待登记', 'awaiting_confirm' => '待下料人登记结算', 'settled' => '已结算'][$batch->status] ?? $batch->status;
         if ($batch->status !== 'settled') foreach (['remnant_cost_amount', 'net_cost_amount'] as $field) $row[$field] = null;
         $row['summaries'] = array_map(fn ($input) => array_intersect_key($input, array_flip(['source_key', 'input_measure', 'output_measure', 'suggested_remnant', 'measure_unit'])), $batch->input_lines);
@@ -290,8 +325,8 @@ final class CuttingService
         $op = MfgWorkOrderOperation::query()->where('work_order_id', $wo->id)->where('execution_context', 'production')->whereKey($data['operation_id'])
             ->when($lock, fn ($q) => $q->lockForUpdate())->first();
         if (! $op) $this->fail('operation_invalid', '请选择本工单实际存在的车间工序。');
-        $unitQty = (int) $data['unit_qty'];
-        if ($unitQty < 1 || $unitQty > $this->remainingUnits($wo, (int) $op->id, $lock)) $this->fail('qty_invalid', '本次套数超过该工序尚未安排开料的数量。');
+        $unitIds = $this->selectedUnits($wo, (int) $op->id, $data, $lock);
+        $unitQty = count($unitIds);
         $requirements = $this->requirements($wo, (int) $op->id);
         if (! $requirements) $this->fail('no_cutting_material', '这道工序没有冻结的板材或管材开料需求。');
         $allowed = array_unique(array_column($requirements, 'item_id'));
@@ -330,7 +365,7 @@ final class CuttingService
             if (bccomp($cost, $costRemaining[$id]['cost'], 4) > 0) $this->fail('source_cost_invalid', '所选实物成本超过来源余额，请先核对库存成本。');
             $costRemaining[$id] = ['qty' => bcsub($costRemaining[$id]['qty'], $inventoryQty, 8), 'cost' => bcsub($costRemaining[$id]['cost'], $cost, 4)];
             $balanceRemaining[$id] = bcsub($balanceRemaining[$id], $inventoryQty, 8);
-            $sources[] = array_replace($source, ['source_key' => $key, 'qty' => $qty, 'inventory_qty' => $inventoryQty, 'cost_amount' => $cost,
+            $sources[] = array_replace($source, ['source_key' => $key, 'qty' => $qty, 'inventory_qty' => $inventoryQty, 'cost_amount' => $cost, 'unit_ids' => $unitIds,
                 'input_measure' => bcmul($source['measure_qty'], $qty, 8)]);
         }
         if (! $sources) $this->fail('source_required', '请选择实际领入的板材或管材来源。');
@@ -341,7 +376,7 @@ final class CuttingService
         $total = '0.0000';
         foreach ($sources as $source) $total = bcadd($total, $source['cost_amount'], 4);
         return ['work_order_id' => (int) $wo->id, 'business_version' => (int) $wo->business_version, 'operation_id' => (int) $op->id,
-            'unit_qty' => $unitQty, 'requirements' => $requirements, 'sources' => $sources, 'assignments' => $outputs,
+            'unit_qty' => $unitQty, 'unit_ids' => $unitIds, 'requirements' => $requirements, 'sources' => $sources, 'assignments' => $outputs,
             'summaries' => array_values($summaries), 'input_cost_amount' => $total];
     }
 
@@ -363,6 +398,7 @@ final class CuttingService
     private function requirements(MfgWorkOrder $wo, int $operationId): array
     {
         $lines = collect(data_get($wo->bom_snapshot, 'items', []))->keyBy('id');
+        $remainingQty = $this->remainingUnits($wo, $operationId)['qty'];
         // 当前主档规格仅用于区分同名原料；加工尺寸和数量仍完全采用工单冻结资料。
         $items = Item::query()->whereIn('id', $wo->materials->where('work_order_operation_id', $operationId)->pluck('component_item_id')->unique())
             ->get(['id', 'spec', 'model'])->keyBy('id');
@@ -392,7 +428,7 @@ final class CuttingService
                     'thickness_mm' => $dimension['thickness_mm'] ?? null, 'allow_rotation' => (bool) ($dimension['allow_rotation'] ?? false),
                     'per_piece_measure' => $total ? '1.00000000' : $measure,
                     'per_unit_measure' => bcmul($measure, $ratio, 8), 'per_unit_piece_qty' => $total ? null : (int) $ratio,
-                    'remaining_unit_qty' => $this->remainingUnits($wo, $operationId)];
+                    'remaining_unit_qty' => $remainingQty];
             }
         }
         return $out;
@@ -690,13 +726,56 @@ final class CuttingService
         return null;
     }
 
-    private function remainingUnits(MfgWorkOrder $wo, int $operationId, bool $lock = false): int
+    private function selectedUnits(MfgWorkOrder $wo, int $operationId, array $data, bool $lock = false): array
     {
-        $batches = MfgCuttingBatch::query()->where('work_order_id', $wo->id)->where('work_order_operation_id', $operationId)->when($lock, fn ($q) => $q->lockForUpdate())->get();
+        $submitted = array_map('intval', (array) ($data['unit_ids'] ?? []));
+        $ids = array_values(array_unique($submitted));
+        sort($ids);
+        if (!$ids || count($ids) !== count($submitted) || count($ids) !== (int) $data['unit_qty'])
+            $this->fail('unit_selection_required', '请选择本次实际开料的设备编号，套数必须与所选编号一致。');
+        CancellationProductionService::assertProductionAllowed((int) $wo->id, $ids);
+        $remaining = $this->remainingUnits($wo, $operationId, $lock);
+        if (count($ids) > $remaining['qty'] || array_diff($ids, $remaining['ids']))
+            $this->fail('unit_selection_changed', '所选编号已安排开料、已取消或不在本道当前需求中，请刷新后重新选择。', 409);
+        return $ids;
+    }
+
+    private function remainingUnits(MfgWorkOrder $wo, int $operationId, bool $lock = false): array
+    {
+        $units = MfgWorkOrderUnit::where('work_order_id', $wo->id)->whereIn('id', CancellationProductionService::productionUnitIds((int) $wo->id))
+            ->whereNotIn('status', ['completed', 'pending_receipt', 'stored'])
+            ->whereNotIn('id', DB::table('erp_mfg_unit_reports')->where('work_order_operation_id', $operationId)->where('result', 'passed')->select('unit_id'))
+            ->orderBy('unit_no')->when($lock, fn ($q) => $q->lockForUpdate())->get(['id']);
+        $batches = MfgCuttingBatch::query()->where('work_order_id', $wo->id)->where('work_order_operation_id', $operationId)
+            ->where('status', '!=', 'cancelled')->when($lock, fn ($q) => $q->lockForUpdate())->get();
         $arranged = (int) $batches->sum(fn ($batch) => in_array($batch->status, ['settled', 'awaiting_confirm'], true) ? $batch->completed_unit_qty : $batch->unit_qty);
         $materials = $wo->materials->where('work_order_operation_id', $operationId)->filter(fn ($material) => in_array($material->cutting_mode, ['sheet', 'length'], true) && (float) $material->required_qty > 0);
         $covered = $materials->isEmpty() ? 0 : $materials->map(fn ($material) => (int) bcdiv(bcmul((string) $material->issued_qty, (string) $wo->planned_qty, 12), (string) $material->required_qty, 0))->min();
-        return max(0, (int) $wo->planned_qty - max($arranged, $covered));
+        $assigned = [];
+        foreach ($batches as $batch) {
+            $cohort = data_get($batch->input_lines, '0.unit_ids');
+            if ($cohort === null) continue;
+            $done = in_array($batch->status, ['settled', 'awaiting_confirm'], true)
+                ? data_get($batch->input_lines, '0.completed_unit_ids', (int) $batch->completed_unit_qty === (int) $batch->unit_qty ? $cohort : []) : $cohort;
+            $assigned = array_merge($assigned, array_map('intval', $done));
+        }
+        $allocated = [];
+        foreach (['erp_mfg_cutting_run_allocations' => 'material_qty', 'erp_mfg_cutting_allocations' => 'qty'] as $table => $field) {
+            foreach (DB::table($table)->whereIn('work_order_material_id', $materials->pluck('id'))->get() as $allocation) {
+                $cohort = OrderChangeLaborService::recordedUnitIds($allocation);
+                if (!$cohort) continue;
+                foreach ($cohort as $id) $allocated[$id][$allocation->work_order_material_id]
+                    = ($allocated[$id][$allocation->work_order_material_id] ?? 0) + (float) $allocation->$field / count($cohort);
+            }
+        }
+        foreach ($allocated as $id => $quantities) {
+            if ($materials->isNotEmpty() && $materials->every(fn ($material) => ($quantities[$material->id] ?? 0) + 0.00001
+                >= (float) $material->required_qty / max(1, (float) $wo->planned_qty))) $assigned[] = (int) $id;
+        }
+        $ids = $units->pluck('id')->map(fn ($id) => (int) $id)->diff($assigned)->values()->all();
+        // 旧批次只有共同套数，仍只抵总量，不按编号顺序猜测历史产出归属。
+        $qty = max(0, min(count($ids), (int) $wo->planned_qty - max($arranged, $covered)));
+        return ['ids' => $qty > 0 ? $ids : [], 'qty' => $qty];
     }
 
     public function lockedWorkOrder(int $id): MfgWorkOrder

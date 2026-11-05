@@ -14,6 +14,7 @@ use App\Models\Erp\MfgWorkOrderOperation;
 use App\Models\Erp\MfgUnitReport;
 use App\Models\Erp\SalesOrder;
 use App\Models\Erp\Warehouse;
+use App\Models\Erp\CancellationProductionDisposition as Disposition;
 use App\Services\Erp\DocumentNumberService;
 use App\Services\Erp\AuthContextService;
 use Illuminate\Support\Collection;
@@ -40,18 +41,23 @@ final class ReceiptService
         $this->assertPermission($actor, ['production.receipt.execute', 'production.task.execute']);
         return DB::transaction(function () use ($workOrderId, $unitIds, $warehouseId, $locationId, $remark, $actor) {
             $wo = $this->lockWorkOrder($workOrderId, $actor);
-            CancellationProductionService::assertProductionAllowed((int) $wo->id);
+            CancellationProductionService::assertProductionAllowed((int) $wo->id, $unitIds);
             $units = $this->completedUnits($wo, $unitIds);
             $this->receiptLocation($wo, $warehouseId, $locationId);
-            $receipt = $this->createReceipt($wo, $units, $warehouseId, $locationId, $remark, $actor, 'manual');
-            foreach ($units as $unit) {
-                $unit->update(['status' => 'pending_receipt']);
-                $this->workOrders->log($wo, 'unit_receipt_requested', 'completed', 'pending_receipt',
-                    $unit->serial_no.' 提交入库，待仓库确认（'.$receipt->receipt_no.'）', $actor, ['receipt_id' => $receipt->id], $unit->id);
+            $stockIds = Disposition::where('work_order_id', $wo->id)->where('status', 'stock')->pluck('work_order_unit_id')->map(fn ($id) => (int) $id)->all();
+            $receipts = collect();
+            foreach ($units->groupBy(fn ($unit) => in_array((int) $unit->id, $stockIds, true) ? 'stock' : 'demand') as $destination => $group) {
+                $receipt = $this->createReceipt($wo, $group, $warehouseId, $locationId, $remark, $actor, 'manual');
+                foreach ($group as $unit) {
+                    $unit->update(['status' => 'pending_receipt']);
+                    $this->workOrders->log($wo, 'unit_receipt_requested', 'completed', 'pending_receipt',
+                        $unit->serial_no.' 提交'.($destination === 'stock' ? '备货' : '').'入库，待仓库确认（'.$receipt->receipt_no.'）', $actor, ['receipt_id' => $receipt->id], $unit->id);
+                }
+                $this->workOrders->log($wo, 'receipt_requested', $wo->status, $wo->status,
+                    '提交入库 '.$group->count().' 台，待仓库确认（'.$receipt->receipt_no.'）', $actor, ['receipt_id' => $receipt->id, 'production_destination' => $destination]);
+                $receipts->push($receipt->fresh());
             }
-            $this->workOrders->log($wo, 'receipt_requested', $wo->status, $wo->status,
-                '提交入库 '.$units->count().' 台，待仓库确认（'.$receipt->receipt_no.'）', $actor, ['receipt_id' => $receipt->id]);
-            return $receipt->fresh();
+            return $receipts->first()->setRelation('relatedReceipts', $receipts);
         }, 5);
     }
 
@@ -61,7 +67,7 @@ final class ReceiptService
         $this->assertPermission($actor, ['production.task.execute']);
         return DB::transaction(function () use ($workOrderId, $operationId, $unitIds, $targetOperationId, $actor) {
             $wo = $this->lockWorkOrder($workOrderId, $actor);
-            CancellationProductionService::assertProductionAllowed((int) $wo->id);
+            CancellationProductionService::assertProductionAllowed((int) $wo->id, $unitIds);
             $units = $this->completedUnits($wo, $unitIds);
             $op = MfgWorkOrderOperation::query()->where('work_order_id', $wo->id)->lockForUpdate()->findOrFail($operationId);
             // 自动入库只接受该冻结末道已报合格的设备，不能借手填工序把普通待入库伪装为交接。
@@ -87,7 +93,7 @@ final class ReceiptService
         $this->assertPermission($actor, ['inventory.inbound.confirm']);
         return DB::transaction(function () use ($id, $data, $actor) {
             [$receipt, $wo, $units] = $this->pendingReceipt($id, $data, $actor);
-            CancellationProductionService::assertProductionAllowed((int) $wo->id);
+            CancellationProductionService::assertProductionAllowed((int) $wo->id, $units->pluck('id')->map(fn ($id) => (int) $id)->all());
             $location = Location::query()->lockForUpdate()->find((int) ($data['location_id'] ?? 0));
             $warehouseId = (int) ($data['warehouse_id'] ?? $location?->warehouse_id ?? 0);
             $this->receiptLocation($wo, $warehouseId, (int) $location?->id);
@@ -98,7 +104,7 @@ final class ReceiptService
             $requiresSerialCheck = \App\Models\Erp\Item::query()->findOrFail($wo->item_id)->serialTrackingMode() !== 'none';
             if ($requiresSerialCheck && ($scanned !== $expected || count(array_unique($scanned)) !== count($scanned)))
                 $this->fail('serial_confirmation_mismatch', '请逐个核对本单全部编号，不能重复、漏扫或带入其他编号。');
-            $this->workOrders->convertIfDemandGone($wo, $actor);
+            $this->workOrders->convertIfDemandGone($wo, $actor, $units->pluck('id')->map(fn ($id) => (int) $id)->all());
             $receipt->update(['warehouse_id' => $warehouseId, 'location_id' => $location->id, 'status' => 'confirmed',
                 'confirmed_by_legacy_id' => $this->actorId($actor), 'confirmed_by_name' => $this->actorName($actor),
                 'business_version' => (int) $receipt->business_version + 1]);
@@ -206,6 +212,7 @@ final class ReceiptService
 
     private function postConfirmed(MfgReceipt $receipt, MfgWorkOrder $wo, Collection $units, object $actor, bool $staging = false): void
     {
+        app(DispositionMaterialService::class)->refreshWorkOrder($wo);
         $warehouseId = (int) $receipt->warehouse_id;
         $locationId = (int) $receipt->location_id;
         $location = Location::query()->findOrFail($locationId);
@@ -232,7 +239,25 @@ final class ReceiptService
         $remainingCost = bcsub($actualCost, $alreadyCost, 4);
         if (bccomp($remainingCost, '0', 4) < 0) $this->fail('cost_reconciliation_required', '已入库暂估金额超过当前实际材料净耗，请先按正式成本调整核对，不能改写历史入库。');
         // 早批按已领材料暂估，尾批承接全部差额；人工、外协和后到费用仍未结算，不能把实际材料成本称为最终制造成本。
-        $costAmount = CuttingDecimal::share($remainingCost, (string) max($qty, $open), (string) $qty);
+        $dispositions = Disposition::where('work_order_id', $wo->id)->lockForUpdate()->get();
+        $reserved = '0'; $loss = '0'; $stockCost = '0'; $stockIds = [];
+        foreach ($dispositions as $d) {
+            $reserved = bcadd($reserved, (string) $d->reserved_material_cost, 4);
+            $loss = bcadd($loss, (string) $d->loss_material_cost, 4);
+            if ($d->status === 'stock') {
+                $stockIds[] = (int) $d->work_order_unit_id;
+                if ($units->contains('id', (int) $d->work_order_unit_id)) $stockCost = bcadd($stockCost, (string) $d->reserved_material_cost, 4);
+            }
+        }
+        $normalQty = $units->whereNotIn('id', $stockIds)->count();
+        $normalOpen = MfgWorkOrderUnit::where('work_order_id', $wo->id)->whereNotIn('status', ['stored', 'scrapped', 'cancelled'])
+            ->whereNotIn('id', [...$stockIds, ...CancellationProductionService::blockedUnitIds((int) $wo->id)])->count();
+        $normalPool = bcsub(bcsub($remainingCost, $reserved, 4), $loss, 4);
+        if ($normalQty && bccomp($normalPool, '0', 4) < 0) $this->fail('cost_reconciliation_required', '其他设备的已入库成本与本台冻结份额存在差额，请先核对原材料结算，不能挪用待处置设备成本。');
+        $costAmount = bcadd($stockCost, $normalQty ? CuttingDecimal::share($normalPool, (string) max($normalQty, $normalOpen), (string) $normalQty) : '0', 4);
+        $availableForBatch = bcsub(bcsub($remainingCost, $loss, 4), bcsub($reserved, $stockCost, 4), 4);
+        if (bccomp($availableForBatch, '0', 4) < 0 || bccomp($costAmount, $availableForBatch, 4) > 0)
+            $this->fail('cost_reconciliation_required', '本批入库成本超过扣除其他设备冻结份额后的真实剩余成本，请先办理正式成本调整，不能重复结转原材料成本。');
         $unitCost = bcdiv($costAmount, (string) $qty, 4);
         $receipt->update(['unit_cost' => $unitCost, 'cost_amount' => $costAmount, 'cost_source' => 'actual_materials_provisional']);
         $posted = $this->inventory->postProductionReceipt($receipt, $wo, $units->pluck('serial_no')->all(), $this->actorId($actor));
@@ -247,13 +272,16 @@ final class ReceiptService
                 $actor, ['receipt_id' => $receipt->id, 'confirmation_source' => $receipt->confirmation_source], $unit->id);
         }
         $wo->update(['stored_qty' => (float) $wo->stored_qty + $qty]);
+        app(DispositionMaterialService::class)->refreshWorkOrder($wo);
         $where = $staging ? '自动记入成品待发区 '.$location->location_code.'，等发货试水' : ($semi ? '半成品入库' : '成品入库');
         $this->workOrders->log($wo, 'received', $wo->status, $wo->status, "{$where} {$qty} 台（{$receipt->receipt_no}）", $actor,
             ['receipt_id' => $receipt->id, 'staging' => $staging, 'confirmation_source' => $receipt->confirmation_source]);
-        if ($wo->source_type === 'work_order' && ($link = MfgWorkOrderLink::query()->where('child_work_order_id', $wo->id)->first())) {
-            $parent = MfgWorkOrder::query()->find($link->parent_work_order_id);
-            if ($parent) $this->workOrders->log($parent, 'semi_stored', $parent->status, $parent->status,
-                "半成品工单 {$wo->work_order_no} 入库 {$wo->item_name} {$qty}".($wo->unit_name ?: '').'，可以收料了', $actor, ['child_work_order_id' => $wo->id]);
+        if ($wo->source_type === 'work_order') {
+            foreach (CancellationProductionService::activeParentLinks((int) $wo->id) as $link) {
+                $parent = MfgWorkOrder::query()->find($link->parent_work_order_id);
+                if ($parent) $this->workOrders->log($parent, 'semi_stored', $parent->status, $parent->status,
+                    "半成品工单 {$wo->work_order_no} 入库 {$wo->item_name} {$qty}".($wo->unit_name ?: '').'，可以收料了', $actor, ['child_work_order_id' => $wo->id]);
+            }
         }
         $this->workOrders->refreshCompletion($wo, $actor);
     }
@@ -310,6 +338,8 @@ final class ReceiptService
         $confirmedAt = $confirmed ? ($receipt->confirmed_at ?? $receipt->inventoryTransaction?->posted_at ?? $receipt->created_at) : null;
         return [
             'id' => $receipt->id, 'receipt_no' => $receipt->receipt_no, 'work_order_id' => $receipt->work_order_id,
+            'related_receipts' => $receipt->relationLoaded('relatedReceipts') ? $receipt->getRelation('relatedReceipts')->map(fn ($r) => ['id' => $r->id, 'receipt_no' => $r->receipt_no, 'qty' => (float) $r->qty])->values()->all() : [],
+            'total_requested_qty' => $receipt->relationLoaded('relatedReceipts') ? $receipt->getRelation('relatedReceipts')->sum('qty') : (float) $receipt->qty,
             'work_order_no' => $wo?->work_order_no, 'product_name' => $wo?->product_name ?: $wo?->item_name,
             'item_id' => $wo?->item_id, 'item_name' => $wo?->item_name, 'sku_name' => $wo?->sku_name, 'unit_name' => $wo?->unit_name,
             'status' => $receipt->status, 'status_label' => self::STATUS_LABELS[$receipt->status] ?? $receipt->status,

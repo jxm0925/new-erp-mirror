@@ -35,6 +35,7 @@ final class PerformanceStatsService
         $page = DB::table('erp_sales_orders as o')
             ->where(function ($w) {
                 $w->whereExists(fn ($s) => $s->selectRaw('1')->from('erp_mfg_work_orders as wo')->whereColumn('wo.sales_order_id', 'o.id'))
+                    ->orWhereExists(fn ($s) => $s->selectRaw('1')->from('erp_cancellation_production_dispositions as d')->whereColumn('d.sales_order_id', 'o.id'))
                     ->orWhereExists(fn ($s) => $s->selectRaw('1')->from('erp_sales_shipments as sh')->whereColumn('sh.sales_order_id', 'o.id')
                         ->where('sh.shipment_status', '!=', 'cancelled'));
             })
@@ -53,7 +54,7 @@ final class PerformanceStatsService
         return ['data' => $rows, 'total' => $page->total(), 'current_page' => $page->currentPage(), 'per_page' => $page->perPage()];
     }
 
-    public function order(int $id, bool $amounts): array
+    public function order(int $id, bool $amounts, array $laborFilters = []): array
     {
         $order = DB::table('erp_sales_orders')->where('id', $id)->first();
         if (! $order) throw new WorkOrderDomainException('order_not_found', '订单不存在。', 404);
@@ -90,7 +91,7 @@ final class PerformanceStatsService
                 $ctx['root_plan'] = $src['shipment_plan'] ?? null
                     ? (is_array($src['shipment_plan']) ? $src['shipment_plan'] : json_decode((string) $src['shipment_plan'], true))
                     : (is_string($src['wo']->performance_plan ?? null) ? json_decode($src['wo']->performance_plan, true) : null);
-                $sources[] = ['kind' => $src['kind'], 'kind_label' => $src['label']] + $this->node($src['wo'], $src['qty'], $fraction, $ctx, 0, []);
+                $sources[] = ['kind' => $src['kind'], 'kind_label' => $src['label']] + $this->node($src['wo'], $src['qty'], $fraction, $ctx, 0, [], '', $src['unit_ids'] ?? null);
             }
             $packing = $this->packing($line, $ctx);
             $returned = (float) DB::table('erp_sales_return_receipt_items as ri')->join('erp_sales_return_items as i', 'i.id', '=', 'ri.sales_return_item_id')
@@ -132,6 +133,7 @@ final class PerformanceStatsService
                 'rework_minutes' => round($reworkTotal, 1)],
             'issues' => array_values(array_unique($issues)), 'amount_visible' => $amounts,
             'block_reasons' => array_values(array_unique($blocks)),
+            'change_labor' => app(OrderChangeLaborService::class)->order($id, $laborFilters),
         ];
     }
 
@@ -146,7 +148,8 @@ final class PerformanceStatsService
             $wo = $shipment->batch_no ? $this->woByBatch((string) $shipment->batch_no, (int) $shipment->item_id) : null;
             if ($wo) $shippedByBatch[$wo->id] = bcadd($shippedByBatch[$wo->id] ?? '0', $q, 8);
             $sources[] = ['kind' => 'shipped', 'label' => $wo && $wo->source_type !== 'sales_order' ? '已发货（用库存现货）' : '已发货',
-                'wo' => $wo, 'qty' => $q, 'batch_no' => $shipment->batch_no, 'shipment_plan' => $shipment->performance_plan ?? null];
+                'wo' => $wo, 'qty' => $q, 'batch_no' => $shipment->batch_no, 'shipment_plan' => $shipment->performance_plan ?? null,
+                'unit_ids' => $wo ? $this->shipmentUnitIds($wo, $shipment, (int) $line->sales_order_id) : null];
         }
         $left = bcsub($qty, array_reduce($sources, fn ($s, $r) => bcadd($s, $r['qty'], 8), '0'), 8);
         $orderWos = DB::table('erp_mfg_work_orders')->where('sales_order_line_id', $line->id)->where('source_type', 'sales_order')
@@ -158,13 +161,14 @@ final class PerformanceStatsService
             if (bccomp($remain, '0', 8) <= 0) continue;
             if (bccomp($remain, $left, 8) > 0) $remain = $left;
             $left = bcsub($left, $remain, 8);
-            $sources[] = ['kind' => 'pending', 'label' => '未发货（按订单工单预估）', 'wo' => $wo, 'qty' => $remain, 'batch_no' => $wo->work_order_no];
+            $sources[] = ['kind' => 'pending', 'label' => '未发货（按订单工单预估）', 'wo' => $wo, 'qty' => $remain, 'batch_no' => $wo->work_order_no,
+                'unit_ids' => CancellationProductionService::salesDemandUnitIds((int) $wo->id)];
         }
         return $sources;
     }
 
     /** 一张工单的工序工时/提成，以及它用到的半成品来源（递归）。$positionPath 是这张工单在根 BOM 里的位置路径，空串表示根工单本身。 */
-    private function node(object $wo, string $used, string $fraction, array &$ctx, int $depth, array $path, string $positionPath = ''): array
+    private function node(object $wo, string $used, string $fraction, array &$ctx, int $depth, array $path, string $positionPath = '', ?array $unitIds = null): array
     {
         $isRoot = $depth === 0;
         $scrapped = (string) DB::table('erp_mfg_unit_reports')->where('work_order_id', $wo->id)->where('result', 'scrap')->where('review_status', 'approved')->distinct()->count('unit_id');
@@ -172,18 +176,22 @@ final class PerformanceStatsService
         // 工时按“合格 + 报废”平摊，报废那部分单独列出，不摊给订单。
         $base = in_array($wo->status, ['completed', 'closed'], true) ? bcadd($output, $scrapped, 8) : (bccomp($output, $scrapped, 8) > 0 ? $output : $scrapped);
         $laborRatio = bccomp($base, '0', 8) > 0 ? min(1.0, (float) bcdiv($used, $base, 10)) : 0.0;
+        $legacy = OrderChangeLaborService::legacyUnitIds((int) $wo->id);
+        $scopeFraction = $unitIds === null ? 1 : min(1.0, (float) $used / max(1, count($unitIds)));
         $operations = [];
         $ops = DB::table('erp_mfg_work_order_operations')->where('work_order_id', $wo->id)->where('execution_context', 'production')->orderBy('sequence')->get();
         $sessionsOf = fn (bool $rework) => DB::table('erp_mfg_labor_sessions')->where('work_order_id', $wo->id)->where('status', '!=', 'active')
-            ->where('is_rework', $rework)->groupBy('work_order_operation_id', 'employee_legacy_id', 'employee_name')
-            ->selectRaw('work_order_operation_id, employee_legacy_id, employee_name, SUM(labor_minutes) AS m')->get()->groupBy('work_order_operation_id');
+            ->where('is_rework', $rework)->get()->map(function ($session) use ($unitIds, $scopeFraction, $legacy) {
+                $session->m = (float) $session->labor_minutes;
+                $session->scoped_m = $unitIds === null ? null : $session->m * $this->scopeRatio($session, $unitIds, $legacy) * $scopeFraction;
+                return $session;
+            })->groupBy('work_order_operation_id');
         $sessions = $sessionsOf(false);
         $reworkSessions = $sessionsOf(true);
         $participants = DB::table('erp_mfg_task_participants')->where('work_order_id', $wo->id)->where('lane', 'normal')->where('is_active', true)->get()->groupBy('work_order_operation_id');
         $runAllocs = DB::table('erp_mfg_cutting_run_allocations as a')->join('erp_mfg_cutting_runs as r', 'r.id', '=', 'a.cutting_run_id')
             ->where('a.work_order_id', $wo->id)->where('r.status', 'finished')
-            ->groupBy('a.work_order_operation_id', 'a.cutting_run_id', 'r.run_no')
-            ->selectRaw('a.work_order_operation_id, a.cutting_run_id, r.run_no, SUM(a.pieces) AS n, SUM(a.labor_minutes) AS m')->get()->groupBy('work_order_operation_id');
+            ->select(['a.*', 'r.run_no'])->selectRaw('a.pieces AS n, a.labor_minutes AS m')->get()->groupBy('work_order_operation_id');
         $notes = [];
         // 子工单节点比例：按 (operation_id, 第几次出现) 回到根工单整套提成计划查；查不到记未配置，不回退自身比例。
         $aloneSale = $isRoot && ($ctx['root_plan']['source'] ?? null) === 'alone_sale';
@@ -206,6 +214,7 @@ final class PerformanceStatsService
             foreach ($sessions->get($op->id, collect()) as $s) {
                 $people[(int) $s->employee_legacy_id] ??= ['name' => $s->employee_name, 'minutes' => 0.0, 'fixed' => null];
                 $people[(int) $s->employee_legacy_id]['minutes'] += (float) $s->m;
+                if ($unitIds !== null) $people[(int) $s->employee_legacy_id]['attributed_minutes'] = ($people[(int) $s->employee_legacy_id]['attributed_minutes'] ?? 0) + $s->scoped_m;
             }
             // 集中开料：这道下料用了开料记录的件，带过来的工时按开料的人各自实际计时占比分到人，提成和本道计时的人一起按工时分。
             foreach ($runAllocs->get($op->id, collect()) as $a) {
@@ -217,6 +226,8 @@ final class PerformanceStatsService
                 foreach ($runPeople as $rp) {
                     $people[(int) $rp->employee_legacy_id] ??= ['name' => $rp->employee_name, 'minutes' => 0.0, 'fixed' => null];
                     $people[(int) $rp->employee_legacy_id]['minutes'] += $runTotal > 0 ? (float) $a->m * (float) $rp->m / $runTotal : 0;
+                    if ($unitIds !== null) $people[(int) $rp->employee_legacy_id]['attributed_minutes'] = ($people[(int) $rp->employee_legacy_id]['attributed_minutes'] ?? 0)
+                        + ($runTotal > 0 ? (float) $a->m * (float) $rp->m / $runTotal : 0) * $this->scopeRatio($a, $unitIds, $legacy) * $scopeFraction;
                 }
                 $notes[] = "{$op->operation_name}用了集中开料 {$a->run_no} 的 ".(int) $a->n.' 件，按件数带过来 '.round((float) $a->m, 1).' 分钟开料工时。';
             }
@@ -224,6 +235,7 @@ final class PerformanceStatsService
             foreach ($reworkSessions->get($op->id, collect()) as $s) {
                 $rework[(int) $s->employee_legacy_id] ??= ['name' => $s->employee_name, 'minutes' => 0.0];
                 $rework[(int) $s->employee_legacy_id]['minutes'] += (float) $s->m;
+                if ($unitIds !== null) $rework[(int) $s->employee_legacy_id]['attributed_minutes'] = ($rework[(int) $s->employee_legacy_id]['attributed_minutes'] ?? 0) + $s->scoped_m;
             }
             $operations[] = $this->operationRow($op->operation_name, $op->status, $rate, $people, $fraction, $laborRatio, $ctx, $rework);
         }
@@ -268,7 +280,8 @@ final class PerformanceStatsService
                         continue;
                     }
                     if ($pos['position_path'] === '') $ctx['issues'][] = "半成品 {$pos['item_name']} 的用料行缺位置标识，整套提成无法定位，按未配置处理。";
-                    $children[] = $this->node($child, $childUsed, bcmul($fraction, $share, 12), $ctx, $depth + 1, [...$path, $wo->id], $fullPath);
+                    $children[] = $this->node($child, $childUsed, bcmul($fraction, $share, 12), $ctx, $depth + 1, [...$path, $wo->id], $fullPath,
+                        $this->childUnitIds($wo, $child, $unitIds));
                 }
             }
         }
@@ -276,7 +289,10 @@ final class PerformanceStatsService
             'source_label' => self::SOURCE_LABELS[$wo->source_type] ?? $wo->source_type, 'sales_order_no' => $wo->sales_order_no,
             'item_name' => $wo->item_name, 'unit_name' => $wo->unit_name, 'status' => $wo->status,
             'output_qty' => $this->num($output), 'used_qty' => $this->num($used), 'labor_ratio' => round($laborRatio, 6), 'scrapped_qty' => (float) $scrapped,
-            'coverage' => round((float) $fraction, 6), 'operations' => $operations, 'children' => $children, 'rework_orders' => $reworkOrders, 'notes' => $notes];
+            'coverage' => round((float) $fraction, 6), 'operations' => $operations, 'children' => $children, 'rework_orders' => $reworkOrders, 'notes' => $notes,
+            'change_labor_origins' => app(OrderChangeLaborService::class)->origins((int) $wo->id),
+            'sourcing_unit_ids' => $unitIds, 'labor_allocation_method' => $unitIds === null ? 'source_quantity' : 'recorded_units_and_shared_labor',
+            'labor_trace_keys' => DB::table('erp_mfg_labor_sessions')->where('work_order_id', $wo->id)->orderBy('id')->pluck('id')->map(fn ($id) => 'mfg:'.$id)->all()];
     }
 
     private function addRework(array &$ctx, int $id, string $name, float $minutes): void
@@ -344,10 +360,12 @@ final class PerformanceStatsService
         $pool = $hasRate && $ctx['amount'] !== null ? bcmul(bcmul($ctx['amount'], $fraction, 12), (string) $rate, 12) : '0';
         $employees = [];
         $totalMinutes = 0.0;
+        $attributedTotal = 0.0;
         foreach ($people as $id => $p) {
             $share = $shares[$id] ?? '0';
             $amount = bcmul($pool, $share, 12);
-            $minutes = $p['minutes'] * $laborRatio;
+            $minutes = $p['attributed_minutes'] ?? ($p['minutes'] * $laborRatio);
+            $attributedTotal += $minutes;
             $totalMinutes += $p['minutes'];
             $employees[] = ['employee_legacy_id' => $id, 'employee_name' => $p['name'], 'share_ratio' => (float) $share,
                 'share_mode' => $fixed ? 'fixed' : 'labor', 'labor_minutes_total' => round($p['minutes'], 1),
@@ -359,19 +377,22 @@ final class PerformanceStatsService
         }
         $reworkRows = [];
         $reworkTotal = 0.0;
+        $attributedRework = 0.0;
         foreach ($rework as $id => $p) {
             $reworkTotal += $p['minutes'];
+            $minutes = $p['attributed_minutes'] ?? ($p['minutes'] * $laborRatio);
+            $attributedRework += $minutes;
             $reworkRows[] = ['employee_legacy_id' => $id, 'employee_name' => $p['name'], 'rework_minutes_total' => round($p['minutes'], 1),
-                'rework_minutes' => round($p['minutes'] * $laborRatio, 1)];
-            $this->addRework($ctx, $id, $p['name'], $p['minutes'] * $laborRatio);
+                'rework_minutes' => round($minutes, 1)];
+            $this->addRework($ctx, $id, $p['name'], $minutes);
         }
         $redact = ! isset($ctx['line']) || $ctx['amount'] === null;
         return ['operation_name' => $name, 'status' => $status, 'performance_rate' => $hasRate ? (float) $rate : null,
             'basis_amount' => $redact || ! $hasRate ? null : $this->calc->round(bcmul($ctx['amount'], $fraction, 12)),
             'performance_pool_amount' => $redact || ! $hasRate ? null : $this->calc->round($pool),
-            'labor_minutes_total' => round($totalMinutes, 1), 'labor_minutes' => round($totalMinutes * $laborRatio, 1),
+            'labor_minutes_total' => round($totalMinutes, 1), 'labor_minutes' => round($attributedTotal, 1),
             'share_mode' => $fixed ? 'fixed' : 'labor', 'employees' => $employees,
-            'rework_minutes_total' => round($reworkTotal, 1), 'rework_minutes' => round($reworkTotal * $laborRatio, 1), 'rework_employees' => $reworkRows];
+            'rework_minutes_total' => round($reworkTotal, 1), 'rework_minutes' => round($attributedRework, 1), 'rework_employees' => $reworkRows];
     }
 
     /** 退料先按 material_id 回冲；提成按位置合池，工时仍保留每条物理用料行的原分母。 */
@@ -421,7 +442,42 @@ final class PerformanceStatsService
             ->where('s.sales_order_id', $orderId)->where('s.shipment_status', '!=', 'cancelled')
             ->whereNotIn('l.line_status', ['cancelled', 'replaced'])
             ->where(fn ($w) => $w->whereNotNull('l.dispatched_at')->orWhereIn('s.shipment_status', ['shipped', 'completed']))
-            ->get(['l.sales_order_line_id', 'l.item_id', 'l.batch_no', 'l.sales_qty', 'l.base_qty', 'l.performance_plan']);
+            ->get(['l.sales_order_line_id', 'l.item_id', 'l.batch_no', 'l.sales_qty', 'l.base_qty', 'l.performance_plan', 'l.serial_snapshot', 'l.inventory_reservation_id']);
+    }
+
+    private function scopeRatio(object $source, array $unitIds, array $legacy): float
+    {
+        $cohort = OrderChangeLaborService::recordedUnitIds($source) ?? $legacy;
+        return $cohort ? count(array_intersect($cohort, $unitIds)) / count($cohort) : 0;
+    }
+
+    private function shipmentUnitIds(object $wo, object $shipment, int $orderId): ?array
+    {
+        $serials = json_decode((string) $shipment->serial_snapshot, true) ?: [];
+        $ids = DB::table('erp_mfg_work_order_units')->where('work_order_id', $wo->id)->whereIn('inventory_serial_id', $serials['inventory_serial_ids'] ?? [])->pluck('id')->map(fn ($id) => (int) $id)->all();
+        if ($ids) return $ids;
+        $reservation = $shipment->inventory_reservation_id ? DB::table('erp_inventory_reservations')->where('id', $shipment->inventory_reservation_id)->first() : null;
+        $snapshot = $reservation ? json_decode((string) $reservation->reservation_snapshot, true) : [];
+        if (!empty($snapshot['serial_nos'])) return DB::table('erp_mfg_work_order_units')->where('work_order_id', $wo->id)->whereIn('serial_no', $snapshot['serial_nos'])->pluck('id')->map(fn ($id) => (int) $id)->all();
+        if ((int) $wo->sales_order_id === $orderId) return CancellationProductionService::salesDemandUnitIds((int) $wo->id);
+        $stock = DB::table('erp_cancellation_production_dispositions')->where('work_order_id', $wo->id)->where('status', 'stock')->whereNotNull('work_order_unit_id')->pluck('work_order_unit_id')->map(fn ($id) => (int) $id)->all();
+        return $stock ?: null;
+    }
+
+    private function childUnitIds(object $parent, object $child, ?array $parentUnitIds): ?array
+    {
+        if ($parentUnitIds !== null) {
+            $serials = \App\Models\Erp\MfgUnitComponent::installed()->where('work_order_id', $parent->id)->whereIn('unit_id', $parentUnitIds)
+                ->where('component_item_id', $child->item_id)->where('batch_no', $child->work_order_no)->pluck('component_serial_no')->filter()->all();
+            $ids = DB::table('erp_mfg_work_order_units')->where('work_order_id', $child->id)->whereIn('serial_no', $serials)->pluck('id')->map(fn ($id) => (int) $id)->all();
+            if ($ids) return $ids;
+        }
+        if (DB::table('erp_cancellation_production_dispositions')->where('work_order_id', $child->id)->exists()) {
+            $originalParent = DB::table('erp_mfg_work_order_links')->where('child_work_order_id', $child->id)->value('parent_work_order_id');
+            return (int) $originalParent === (int) $parent->id ? CancellationProductionService::salesDemandUnitIds((int) $child->id)
+                : DB::table('erp_cancellation_production_dispositions')->where('work_order_id', $child->id)->where('status', 'stock')->whereNotNull('work_order_unit_id')->pluck('work_order_unit_id')->map(fn ($id) => (int) $id)->all();
+        }
+        return null;
     }
 
     private function woByBatch(string $batchNo, int $itemId): ?object

@@ -18,6 +18,8 @@ CREATE TABLE `erp_sales_returns` (
   `return_no` varchar(80) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
   `sales_order_id` bigint(20) unsigned NOT NULL,
   `customer_id` bigint(20) unsigned DEFAULT NULL,
+  `aftersales_case_id` bigint(20) unsigned DEFAULT NULL,
+  `aftersales_action_id` bigint(20) unsigned DEFAULT NULL,
   `return_date` date NOT NULL,
   `return_status` varchar(30) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'draft',
   `return_reason` varchar(160) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
@@ -35,6 +37,8 @@ CREATE TABLE `erp_sales_returns` (
   UNIQUE KEY `erp_sales_returns_return_no_unique` (`return_no`),
   KEY `erp_sales_returns_customer_id_foreign` (`customer_id`),
   KEY `erp_sr_order_status_idx` (`sales_order_id`,`return_status`),
+  KEY `erp_sales_returns_case_idx` (`aftersales_case_id`),
+  KEY `erp_sales_returns_action_idx` (`aftersales_action_id`),
   CONSTRAINT `erp_sales_returns_customer_id_foreign` FOREIGN KEY (`customer_id`) REFERENCES `erp_sales_customers` (`id`) ON DELETE SET NULL,
   CONSTRAINT `erp_sales_returns_sales_order_id_foreign` FOREIGN KEY (`sales_order_id`) REFERENCES `erp_sales_orders` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci

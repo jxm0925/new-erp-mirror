@@ -18,6 +18,7 @@
     <el-table :data="info.requests || []" border size="small" empty-text="还没有开票申请">
       <el-table-column label="申请单号" min-width="150"><template slot-scope="{row}"><span class="font-mono">{{ row.request_no }}</span><div class="muted">{{ row.requested_by_name || '-' }} · {{ date(row.created_at) }}</div></template></el-table-column>
       <el-table-column label="发票类型 / 抬头" min-width="200"><template slot-scope="{row}">{{ row.invoice_type_label }}<div class="muted">{{ row.invoice_title }}<template v-if="row.invoice_tax_no"> · {{ row.invoice_tax_no }}</template></div></template></el-table-column>
+      <el-table-column label="资金账户" min-width="160"><template slot-scope="{row}">{{ row.finance_account_name_snapshot || '-' }}<div v-if="row.finance_account_no_snapshot" class="muted">{{ row.finance_account_no_snapshot }}</div></template></el-table-column>
       <el-table-column label="开票金额" width="120" align="right"><template slot-scope="{row}"><b>¥{{ money(row.amount) }}</b><div class="muted">税率 {{ Number(row.tax_rate) }}%</div></template></el-table-column>
       <el-table-column label="状态" width="90"><template slot-scope="{row}"><el-tag size="mini" :type="statusTone(row.status)">{{ row.status_label }}</el-tag></template></el-table-column>
       <el-table-column label="发票号 / 财务处理" min-width="200">
@@ -40,8 +41,11 @@
         <el-form-item label="发票类型" prop="invoice_type">
           <el-radio-group v-model="form.invoice_type"><el-radio label="vat_normal">增值税普通发票</el-radio><el-radio label="vat_special">增值税专用发票</el-radio></el-radio-group>
         </el-form-item>
+        <el-form-item label="资金账户" prop="finance_account_id">
+          <paged-record-select v-model="form.finance_account_id" :request="listAccounts" :selected-rows.sync="accounts" :label="accountLabel" :columns="[{ prop: 'account_no', label: '账户编号' }, { prop: 'account_name', label: '账户名称' }, { prop: 'currency', label: '币种' }]" title="选择资金账户" placeholder="请选择资金账户" />
+        </el-form-item>
         <el-form-item label="发票抬头" prop="invoice_title"><el-input v-model.trim="form.invoice_title" maxlength="200" placeholder="公司全称或个人姓名" /></el-form-item>
-        <el-form-item label="纳税人识别号" prop="invoice_tax_no"><el-input v-model.trim="form.invoice_tax_no" maxlength="60" :placeholder="isSpecial ? '专票必填' : '企业抬头建议填写'" /></el-form-item>
+        <el-form-item label="纳税人识别号" prop="invoice_tax_no"><el-input v-model.trim="form.invoice_tax_no" maxlength="60" placeholder="请填写纳税人识别号" /></el-form-item>
         <el-form-item label="地址、电话" prop="invoice_address_phone"><el-input v-model.trim="form.invoice_address_phone" maxlength="300" :placeholder="isSpecial ? '专票必填' : '选填'" /></el-form-item>
         <el-form-item label="开户行及账号" prop="invoice_bank_account"><el-input v-model.trim="form.invoice_bank_account" maxlength="300" :placeholder="isSpecial ? '专票必填' : '选填'" /></el-form-item>
         <el-form-item label="收票邮箱" prop="invoice_email"><el-input v-model.trim="form.invoice_email" maxlength="160" placeholder="电子发票发到这个邮箱（选填）" /></el-form-item>
@@ -61,16 +65,18 @@
 </template>
 
 <script>
-import { getSalesOrderInvoiceRequests, createSalesOrderInvoiceRequest, withdrawSalesInvoiceRequest, downloadSalesInvoiceFile } from '@/api/erp/sales'
+import { getSalesOrderInvoiceRequests, listSalesInvoiceAccounts, createSalesOrderInvoiceRequest, withdrawSalesInvoiceRequest, downloadSalesInvoiceFile } from '@/api/erp/sales'
+import PagedRecordSelect from '@/components/common/PagedRecordSelect.vue'
 
 const required = message => [{ required: true, message, trigger: 'blur' }]
 
 export default {
+  components: { PagedRecordSelect },
   props: { orderId: { type: [Number, String], required: true } },
   data() {
     return {
       loading: false, saving: false, error: '', info: {}, dialogVisible: false,
-      taxRates: [13, 9, 6, 3, 1, 0],
+      taxRates: [13, 9, 6, 3, 1, 0], accounts: [],
       form: this.emptyForm()
     }
   },
@@ -82,8 +88,10 @@ export default {
     rules() {
       const special = this.isSpecial
       return {
+        invoice_type: [{ required: true, message: '请选择发票类型', trigger: 'change' }],
+        finance_account_id: [{ required: true, message: '请选择资金账户', trigger: 'change' }],
         invoice_title: required('请填写发票抬头'),
-        invoice_tax_no: special ? required('专票必须填写纳税人识别号') : [],
+        invoice_tax_no: required('请填写纳税人识别号'),
         invoice_address_phone: special ? required('专票必须填写地址、电话') : [],
         invoice_bank_account: special ? required('专票必须填写开户行及账号') : [],
         invoice_email: [{ type: 'email', message: '邮箱格式不对', trigger: 'blur' }],
@@ -93,7 +101,9 @@ export default {
   },
   watch: { orderId: { immediate: true, handler() { this.load() } } },
   methods: {
-    emptyForm() { return { invoice_type: 'vat_normal', invoice_title: '', invoice_tax_no: '', invoice_address_phone: '', invoice_bank_account: '', invoice_email: '', amount: undefined, tax_rate: 13, remark: '', save_to_customer: true } },
+    emptyForm() { return { invoice_type: '', finance_account_id: null, invoice_title: '', invoice_tax_no: '', invoice_address_phone: '', invoice_bank_account: '', invoice_email: '', amount: undefined, tax_rate: 13, remark: '', save_to_customer: true } },
+    listAccounts(params) { return listSalesInvoiceAccounts(this.orderId, params) },
+    accountLabel(row) { return `${row.account_name}（${row.currency}）` },
     money(v) { return Number(v || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) },
     date(v) { return v ? String(v).slice(0, 10) : '-' },
     statusTone(v) { return ({ pending: 'warning', issued: 'success', rejected: 'danger', withdrawn: 'info' })[v] || 'info' },
@@ -111,7 +121,8 @@ export default {
     },
     openCreate() {
       const d = this.info.billing_defaults || {}
-      this.form = { ...this.emptyForm(), invoice_type: d.invoice_type || 'vat_normal', invoice_title: d.invoice_title || '', invoice_tax_no: d.invoice_tax_no || '', invoice_address_phone: d.invoice_address_phone || '', invoice_bank_account: d.invoice_bank_account || '', invoice_email: d.invoice_email || '', amount: Number((this.summary && this.summary.available_amount) || 0) || undefined }
+      this.accounts = this.info.receipt_accounts || []
+      this.form = { ...this.emptyForm(), finance_account_id: this.accounts.length === 1 ? this.accounts[0].id : null, invoice_title: d.invoice_title || '', invoice_tax_no: d.invoice_tax_no || '', invoice_address_phone: d.invoice_address_phone || '', invoice_bank_account: d.invoice_bank_account || '', invoice_email: d.invoice_email || '', amount: Number((this.summary && this.summary.available_amount) || 0) || undefined }
       this.dialogVisible = true
       this.$nextTick(() => this.$refs.form && this.$refs.form.clearValidate())
     },

@@ -337,6 +337,7 @@ class ShipmentPackingApplicationService
                     // The same employee row also serializes ordinary production starts, so
                     // simultaneous commands in separate tasks cannot both open a timer.
                     DB::table('erp_legacy_admin_users')->where('legacy_id', $actorId)->lockForUpdate()->first();
+                    \App\Services\Erp\Manufacturing\DispositionLaborService::assertNotTiming($actorId);
                     if (ShipmentPackingLaborSession::query()->where('employee_legacy_id', $actorId)->where('status', 'ACTIVE')->lockForUpdate()->first()) {
                         $this->fail('本人已有正在计时的包装作业，请先暂停原作业。');
                     }
