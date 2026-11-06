@@ -37,7 +37,7 @@ return Application::configure(basePath: dirname(__DIR__))
             return response()->json(['message' => $message, 'error_code' => 'forbidden', 'errors' => ['permission' => [$message]], 'details' => ['permission_codes' => $codes]], 403);
         });
         $exceptions->render(function (WorkOrderDomainException $exception, $request) {
-            if ($request->is('api/v1/erp/production/*') || $request->is('api/v1/erp/sales/*') || $request->is('api/v1/erp/inventory/warehouse-*') || $request->is('api/v1/erp/inventory/scan/*')) {
+            if ($request->is('api/v1/erp/production/*', 'api/v1/erp/sales/*', 'api/v1/erp/warehouse/*', 'api/v1/erp/inventory/warehouse-*', 'api/v1/erp/inventory/scan/*')) {
                 return response()->json([
                     'message' => $exception->getMessage(),
                     'error_code' => $exception->errorCode,
@@ -47,7 +47,7 @@ return Application::configure(basePath: dirname(__DIR__))
             }
         });
         $exceptions->render(function (ValidationException $exception, $request) {
-            if ($request->is('api/v1/erp/production/*') || $request->is('api/v1/erp/sales/*') || $request->is('api/v1/erp/inventory/warehouse-*') || $request->is('api/v1/erp/inventory/scan/*')) {
+            if ($request->is('api/v1/erp/production/*', 'api/v1/erp/sales/*', 'api/v1/erp/warehouse/*', 'api/v1/erp/inventory/warehouse-*', 'api/v1/erp/inventory/scan/*')) {
                 return response()->json([
                     'message' => '请求参数校验失败。',
                     'error_code' => 'validation_error',
@@ -57,7 +57,7 @@ return Application::configure(basePath: dirname(__DIR__))
             }
         });
         $exceptions->render(function (QueryException $exception, $request) {
-            if (! $request->is('api/v1/erp/production/*') && ! $request->is('api/v1/erp/sales/*') && ! $request->is('api/v1/erp/inventory/warehouse-*') && ! $request->is('api/v1/erp/inventory/scan/*')) return;
+            if (! $request->is('api/v1/erp/production/*', 'api/v1/erp/sales/*', 'api/v1/erp/warehouse/*', 'api/v1/erp/inventory/warehouse-*', 'api/v1/erp/inventory/scan/*')) return;
             $sqlState = (string) $exception->getCode();
             $driverCode = (string) ($exception->errorInfo[1] ?? '');
             $concurrency = $sqlState === '40001' || in_array($driverCode, ['1205', '1213'], true);

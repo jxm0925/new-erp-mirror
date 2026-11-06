@@ -80,7 +80,7 @@
             v-model="filters.keyword"
             size="small"
             clearable
-            placeholder="搜索工单号 / 序列号 / 产品名称"
+            placeholder="工单号 / 发货单号 / 序列号 / 产品名称"
             prefix-icon="el-icon-search"
             class="search-input"
             @keyup.enter.native="load(false)"
@@ -107,6 +107,7 @@
         <div class="legend-bar">
           <span class="legend-item"><i class="lg-dot lg-waiting" /> 待作业</span>
           <span class="legend-item"><i class="lg-dot lg-doing" /> 进行中</span>
+          <span class="legend-item"><i class="lg-dot lg-quality" /> 待质检</span>
           <span class="legend-item"><i class="lg-dot lg-rework" /> 返工中</span>
           <span class="legend-item"><i class="lg-dot lg-done" /> 已完成</span>
         </div>
@@ -239,6 +240,45 @@
               <div v-if="!board.today_receipts.length" class="empty-lane">今日暂无入库设备</div>
             </div>
           </div>
+
+          <div v-for="col in board.shipment_columns" :key="col.key" class="board-lane">
+            <div class="lane-header">
+              <span class="lane-title">发货 · {{ col.title }}</span>
+              <span class="lane-count-tag">{{ col.cards.length }} 项 · {{ col.people_count }} 人</span>
+            </div>
+            <div class="lane-content">
+              <div v-for="c in col.cards" :key="c.id" :class="['board-card shipment-card', { 'is-rework': c.state === 'rework' }]">
+                <div class="card-head-row">
+                  <span class="mono-code">{{ c.sales_order_no || c.shipment_no }}</span>
+                  <span :class="['chip', shipmentStates[c.state].color]">{{ shipmentStates[c.state].label }}</span>
+                </div>
+                <div class="card-prod-title">{{ c.product_name || c.operation_name }} <b class="card-qty">×{{ qtyText(c.planned_qty) }}</b></div>
+                <div class="card-op-sub">{{ [c.sales_order_no && c.shipment_no, c.package_no, c.operation_name].filter(Boolean).join(' · ') }}</div>
+                <div v-if="c.priority !== 3 || c.is_custom" class="card-badges">
+                  <span v-if="c.priority === 1" class="chip chip-urgent">特急</span>
+                  <span v-else-if="c.priority === 2" class="chip chip-urgent">加急</span>
+                  <span v-else-if="c.priority === 4" class="chip">可延后</span>
+                  <span v-if="c.is_custom" class="chip chip-custom">定制</span>
+                </div>
+                <div v-if="c.units.length" class="sn-list">
+                  <span v-for="u in c.units" :key="u.id" :class="['sn-chip', shipmentStates[u.state].color]" :title="`${u.serial_no} · ${shipmentStates[u.state].label}`">
+                    {{ u.short }}
+                    <em v-if="u.state === 'wait_quality' || u.state === 'rework'" class="sn-flag">{{ shipmentStates[u.state].label }}</em>
+                  </span>
+                </div>
+                <div class="card-footer-row">
+                  <span class="text-secondary">
+                    {{ c.owner_name || (c.state === 'ready' ? '未接单' : '') }}<template v-if="c.timing_count">{{ c.owner_name ? ' · ' : '' }}{{ c.timing_count }} 人计时中</template>
+                  </span>
+                  <router-link v-if="$can('sales_order.shipment.view')" class="action-link-theme" :to="{ path: '/sales/shipments', query: { shipment_id: c.shipment_id } }">详情</router-link>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div v-if="!board.shipment_columns || !board.shipment_columns.length" class="board-lane">
+            <div class="lane-header"><span class="lane-title">发货工序</span></div>
+            <div class="empty-lane">暂无发货作业</div>
+          </div>
         </div>
 
         <!-- 右侧辅助面板 -->
@@ -316,7 +356,7 @@
       <!-- 底部业务说明条 -->
       <div class="board-footnote-alert">
         <i class="el-icon-info" />
-        <span>看板说明：泳道依工艺阶段聚合呈现；点击“详情”可下钻查看工单单台流转进度；质检返工设备将回退至责任工序泳道并标识返工预警。</span>
+        <span>看板说明：泳道依工艺阶段聚合呈现；点击“详情”可查看对应工单或发货单；质检返工设备将回退至责任工序泳道并标识返工预警。</span>
       </div>
     </div>
 
@@ -427,6 +467,17 @@ import SystemRecordPicker from '../../../components/system/SystemRecordPicker.vu
 import { pendingWarehouseCommand, pendingWarehouseCommands, submitWarehouseCommand } from '../../../api/erp/warehouse'
 import { qty, shortDate, errorText, isCancel } from './mfg-helpers'
 
+const shipmentStates = {
+  waiting_staging: { label: '待移至待发区', color: 'chip-paused' },
+  waiting_previous: { label: '等前道', color: 'chip-paused' },
+  ready: { label: '待作业', color: 'chip-paused' },
+  claimed: { label: '已接单待开工', color: 'chip-paused' },
+  working: { label: '进行中', color: 'shipment-working' },
+  wait_quality: { label: '待质检', color: 'chip-custom' },
+  rework: { label: '返工', color: 'chip-urgent' },
+  completed: { label: '已完成', color: 'chip-receipt-ready' }
+}
+
 export default {
   name: 'ProductionBoard',
   components: { SystemRecordPicker },
@@ -434,6 +485,7 @@ export default {
     loading: false,
     saving: false,
     board: null,
+    shipmentStates,
     timer: null,
     people: [],
     pendingReceipts: [],
@@ -876,6 +928,7 @@ export default {
 }
 .lg-waiting { background: #f1f5f9; border: 1px solid #cbd5e1; }
 .lg-doing   { background: #fef3c7; border: 1px solid #fde68a; }
+.lg-quality { background: #f3e8ff; border: 1px solid #e9d5ff; }
 .lg-rework  { background: #fee2e2; border: 1px solid #fecaca; }
 .lg-done    { background: #dcfce7; border: 1px solid #bbf7d0; }
 
@@ -961,6 +1014,8 @@ export default {
 .board-card.is-paused {
   opacity: 0.7;
 }
+.shipment-card { overflow-wrap: anywhere; }
+.shipment-card .card-head-row .chip { flex-shrink: 0; }
 
 .card-head-row {
   display: flex;
@@ -984,9 +1039,10 @@ export default {
   font-weight: 600;
 }
 .chip-paused { background: #f1f5f9; color: #64748b; }
-.chip-urgent { background: #fee2e2; color: #b91c1c; }
-.chip-custom { background: #f3e8ff; color: #7e22ce; }
-.chip-receipt-ready { background: #f0fdf4; color: #15803d; }
+.chip-urgent, .sn-chip.chip-urgent { background: #fee2e2; color: #b91c1c; }
+.chip-custom, .sn-chip.chip-custom { background: #f3e8ff; color: #7e22ce; }
+.shipment-working, .sn-chip.shipment-working { background: #fef3c7; color: #92400e; }
+.chip-receipt-ready, .sn-chip.chip-receipt-ready { background: #f0fdf4; color: #15803d; }
 .chip-stored { background: #eff6ff; color: #1d4ed8; }
 
 .card-prod-title {

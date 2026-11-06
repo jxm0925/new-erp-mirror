@@ -6,15 +6,17 @@ const PACK_STATUS = { READY: '待作业', WAITING: '等待前序', IN_PROGRESS: 
 function packMinutes(m) { const v = Number(m || 0); return v >= 60 ? `${Math.floor(v / 60)}时${Math.round(v % 60)}分` : `${Math.round(v)}分`; }
 
 // 发货作业（试水 / 打包 / 装车）和生产工序放在同一个「我的待做」「可接工序」里
-function decoratePack(row) {
+function decoratePack(row, tab) {
   const contents = row.contents || [];
   const owner = (row.participants || []).find(p => p.role === 'OWNER');
   const my = row.my || {};
+  const salesOrderNo = (row.order_info && row.order_info.sales_order_no) || row.sales_order_no || '';
   return {
     id: row.id,
     title: row.operation_name,
-    statusLabel: PACK_STATUS[row.status] || row.status,
+    statusLabel: tab === 'mine' && row.status === 'COMPLETED' ? '待出库' : PACK_STATUS[row.status] || row.status,
     timing: Boolean(my.timing),
+    salesOrderNo,
     product: contents.map(c => c.product_name || c.item_name).filter(Boolean).filter((v, i, a) => a.indexOf(v) === i).join('、'),
     specText: contents.map(c => c.specification || c.item_spec || c.sku_name).filter(Boolean).filter((v, i, a) => a.indexOf(v) === i).join('、'),
     line: [row.shipment_no, row.package_no, row.order_info && row.order_info.customer_name].filter(Boolean).join(' · '),
@@ -47,7 +49,9 @@ function decorate(row, tab, canExecute) {
   const planned = Number(row.planned_qty || 0);
   const done = Number(row.done_qty || 0);
   const canClaim = Boolean(canExecute && row.allowed && row.allowed.claim);
-  const isSub = Boolean(row.is_sub_work_order || row.parent_work_order_id || row.parent_work_order);
+  const parent = row.parent_work_order;
+  const parentOrderId = String(row.parent_work_order_id || (parent && parent.id) || '');
+  const isSub = Boolean(row.is_sub_work_order || parentOrderId || parent);
   const specText = buildSpecText(row);
   let opStatusLabel = row.work_status_label || '';
   let opStatusTheme = 'gray';
@@ -73,6 +77,8 @@ function decorate(row, tab, canExecute) {
     title: row.title || row.operation_name,
     unitShort: row.unit_short || '台',
     isSub,
+    parentOrderId,
+    parentOrderNo: row.parent_work_order_no || (parent && parent.work_order_no),
     specText,
     opStatusLabel,
     opStatusTheme,
@@ -92,70 +98,52 @@ function decorate(row, tab, canExecute) {
 function buildGroups(rows, expandedMap) {
   const map = {};
   const list = [];
+  const workOrders = new Map();
+  const parentIds = new Set();
+  rows.forEach(item => {
+    const id = String(item.work_order_id);
+    if (!workOrders.has(id)) workOrders.set(id, item);
+    if (item.parentOrderId && item.parentOrderId !== id) parentIds.add(item.parentOrderId);
+  });
+
   rows.forEach(item => {
     const parent = item.parent_work_order;
-    const isSub = Boolean(item.isSub && parent && parent.id);
-    const rootId = isSub ? parent.id : item.work_order_id;
-    const groupKey = `wo-${rootId}`;
+    const id = String(item.work_order_id);
+    const parentRow = item.parentOrderId !== id && workOrders.get(item.parentOrderId);
+    // 折叠区只展示一级，带有本页子工序的工单要保留自己的卡片。
+    const nested = Boolean(parentRow && !parentIds.has(id));
+    const card = nested ? parentRow : item;
+    const groupKey = `wo-${card.work_order_id}`;
     if (!map[groupKey]) {
-      const mainInfo = isSub ? {
-        id: parent.id,
-        work_order_no: parent.work_order_no,
-        product_name: parent.product_name || parent.item_name,
-        item_name: parent.item_name,
-        item_code: parent.item_code,
-        sku_name: parent.sku_name,
-        specText: buildSpecText(parent),
-        customer_name: parent.customer_name || item.customer_name,
-        sales_order_no: parent.sales_order_no || item.sales_order_no,
-        planned_qty: parent.planned_qty,
-        plannedText: view.quantity(parent.planned_qty),
-        unit_name: parent.unit_name || '台',
-        dueText: String(parent.planned_finish_date || '').slice(5, 10),
-        status: parent.status,
-        status_label: parent.status_label,
-        priority: parent.priority,
-        priority_label: parent.priority_label,
-        is_urgent: parent.is_urgent,
-        paused: parent.paused,
-        pause_reason: parent.pause_reason,
-        is_rework_order: parent.is_rework_order,
-        is_custom: parent.is_custom,
-        has_drawing: parent.has_drawing,
-        drawings_updated: parent.drawings_updated,
-        source_label: parent.source_label || '主工单',
+      const mainInfo = {
+        id: card.work_order_id,
+        work_order_no: card.work_order_no,
+        product_name: card.product_name || card.item_name,
+        item_name: card.item_name,
+        item_code: card.item_code,
+        sku_name: card.sku_name,
+        specText: card.specText,
+        customer_name: card.customer_name,
+        sales_order_no: card.sales_order_no,
+        planned_qty: card.planned_qty,
+        plannedText: card.plannedText,
+        unit_name: card.unit_name || card.unitShort || '台',
+        dueText: card.dueText,
+        status: card.work_order_status,
+        status_label: card.work_order_status_label,
+        priority: card.priority,
+        priority_label: card.priority_label,
+        is_urgent: card.is_urgent,
+        paused: card.paused,
+        pause_reason: card.pause_reason,
+        is_rework_order: card.is_rework_order,
+        is_custom: card.is_custom,
+        has_drawing: card.has_drawing,
+        drawings_updated: card.drawings_updated,
+        source_label: card.source_label || '主工单',
+        isSub: card.isSub,
+        parentOrderNo: card.parentOrderNo,
         semi_summary: [],
-      } : {
-        id: item.work_order_id,
-        work_order_no: item.work_order_no,
-        product_name: item.product_name || item.item_name,
-        item_name: item.item_name,
-        item_code: item.item_code,
-        sku_name: item.sku_name,
-        specText: item.specText,
-        customer_name: item.customer_name,
-        sales_order_no: item.sales_order_no,
-        planned_qty: item.planned_qty,
-        plannedText: item.plannedText,
-        unit_name: item.unit_name || item.unitShort || '台',
-        dueText: item.dueText,
-        status: item.work_order_status,
-        status_label: item.work_order_status_label,
-        priority: item.priority,
-        priority_label: item.priority_label,
-        is_urgent: item.is_urgent,
-        paused: item.paused,
-        pause_reason: item.pause_reason,
-        is_rework_order: item.is_rework_order,
-        is_custom: item.is_custom,
-        has_drawing: item.has_drawing,
-        drawings_updated: item.drawings_updated,
-        source_label: item.source_label || '主工单',
-        semi_summary: (item.semi_summary || []).map(s => Object.assign({}, s, {
-          specText: buildSpecText(s),
-          plannedText: view.quantity(s.planned_qty),
-          storedText: view.quantity(s.stored_qty),
-        })),
       };
       map[groupKey] = {
         key: groupKey,
@@ -168,14 +156,20 @@ function buildGroups(rows, expandedMap) {
       list.push(map[groupKey]);
     }
     const group = map[groupKey];
-    if (!isSub && item.semi_summary && item.semi_summary.length && (!group.main.semi_summary || !group.main.semi_summary.length)) {
+    if (!group.main.sales_order_no && (item.sales_order_no || (parent && parent.sales_order_no))) {
+      group.main.sales_order_no = (parent && parent.sales_order_no) || item.sales_order_no;
+    }
+    if (!group.main.customer_name && (item.customer_name || (parent && parent.customer_name))) {
+      group.main.customer_name = (parent && parent.customer_name) || item.customer_name;
+    }
+    if (!nested && item.semi_summary && item.semi_summary.length && !group.main.semi_summary.length) {
       group.main.semi_summary = item.semi_summary.map(s => Object.assign({}, s, {
         specText: buildSpecText(s),
         plannedText: view.quantity(s.planned_qty),
         storedText: view.quantity(s.stored_qty),
       }));
     }
-    if (isSub) {
+    if (nested) {
       const subKey = `sub-${item.work_order_id}`;
       if (!group.subMap[subKey]) {
         const subGroup = {
@@ -208,6 +202,7 @@ function buildGroups(rows, expandedMap) {
   list.forEach(group => {
     const semiList = group.main.semi_summary || [];
     semiList.forEach(semi => {
+      if (map[`wo-${semi.id}`]) return;
       const subKey = `sub-${semi.id}`;
       if (!group.subMap[subKey]) {
         const subGroup = {
@@ -372,11 +367,11 @@ Page({
       this.setData({ packs: [], packCounts: { mine: 0, available: 0 }, packLastPage: 1 });
       return;
     }
-    if (!['mine', 'available'].includes(tab)) { this.setData({ packs: [], packLastPage: 1 }); return; }
     return packing.operations({ scope: tab, page: this.data.packPage, per_page: 10, keyword: this.data.keyword, include_counts: 1 }).then(response => {
       if (sequence !== this.sequence) return;
       const paged = view.rows(response);
-      this.setData({ packs: paged.rows.map(decoratePack), packPage: paged.page, packLastPage: paged.lastPage, packCounts: response.counts || this.data.packCounts });
+      if (paged.page > paged.lastPage) { this.setData({ packPage: paged.lastPage }); return this.loadPacks(sequence); }
+      this.setData({ packs: paged.rows.map(row => decoratePack(row, tab)), packPage: paged.page, packLastPage: paged.lastPage, packCounts: response.counts || this.data.packCounts });
     }).catch(error => { if (sequence === this.sequence) this.setData({ packs: [], packCounts: { mine: 0, available: 0 }, packLastPage: 1, packError: view.errorText(error) }); });
   },
   openPack(event) { wx.navigateTo({ url: `/pages/production/shipment-packing/index?operation_id=${Number(event.currentTarget.dataset.id)}` }); },

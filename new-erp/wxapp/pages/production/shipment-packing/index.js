@@ -4,6 +4,8 @@ const personalShares = require('../../../utils/personal-shares');
 const materialUsage = require('../../../utils/packing-material-usage');
 const statusLabels = { READY: '待作业', WAITING: '等待前序', IN_PROGRESS: '作业中', WAIT_QUALITY: '待质检', COMPLETED: '已完成', CANCELLED: '已取消' };
 const statusTags = { READY: 'blue', WAITING: 'gray', IN_PROGRESS: 'amber', WAIT_QUALITY: 'purple', COMPLETED: 'green', CANCELLED: 'gray' };
+const outboundLabels = { pending: '待库管审核', approved: '审核通过', rejected: '已驳回', posted: '已出库', withdrawn: '已撤回' };
+const outboundTags = { pending: 'amber', approved: 'green', rejected: 'red', posted: 'green', withdrawn: 'gray' };
 const TABS = [{ key: 'mine', label: '我的待做' }, { key: 'available', label: '可接作业' }, { key: 'all', label: '全部作业' }];
 const clone = value => JSON.parse(JSON.stringify(value));
 const pad = n => (n < 10 ? '0' : '') + n;
@@ -28,6 +30,18 @@ function buildSpecText(obj) {
   if (obj.sku_name && obj.sku_name !== obj.product_name && obj.sku_name !== obj.item_name) return obj.sku_name;
   return obj.sku_name || '';
 }
+function describeOutbound(application) {
+  if (!application) return null;
+  const { status, delivery_mode } = application;
+  const deliveryLabel = ({ dispatch: '物流发运', pickup: '客户自提' })[delivery_mode] || '';
+  const statusLabel = status === 'posted' && deliveryLabel
+    ? (delivery_mode === 'pickup' ? '已提货' : '已发运')
+    : (outboundLabels[status] || '出库申请');
+  return Object.assign({}, application, {
+    statusLabel, deliveryLabel, statusTag: outboundTags[status] || 'gray',
+    packageText: (application.package_nos || []).join('、'),
+  });
+}
 Page({
   data: { shipmentId: 0, page: 1, lastPage: 1, total: 0, rows: [], loading: true, busy: false, error: '', keyword: '',
     tabs: TABS, scope: 'mine', counts: { mine: 0, available: 0 }, userName: '', clockText: '00:00:00',
@@ -35,6 +49,7 @@ Page({
     detailOpen: false, showMaterials: false, operation: {}, pending: false, operationError: '', peopleOpen: false, peopleRows: [], selectedPeople: [], peopleKeyword: '',
     peoplePage: 1, peopleLast: 1, departments: [{ id: 0, name: '全部部门' }], departmentIndex: 0, shareRows: [], peopleError: '',
     materialsOpen: false, materialRows: [], materialDrafts: [], materialKeyword: '', materialPage: 1, materialLast: 1, materialError: '',
+    dispatchOpen: false, dispatchMode: 'dispatch', carrierName: '', trackingNo: '', dispatchError: '',
     categories: [{ id: 0, category_name: '全部分类' }], categoryIndex: 0,
     identityOpen: false, identityRows: [], selectedIdentities: [], identityMaterial: {}, identityPage: 1, identityLast: 1, identityKeyword: '',
     operationSerialIds: [], inspectionOpen: false, inspectionResult: 'passed', inspectionReason: '', inspectionMedia: [], mediaBusy: false, inspectionError: '', inspectionNeedsReturn: false,
@@ -47,7 +62,10 @@ Page({
   onShow() { if (this.data.detailOpen && this.data.operation.id) this.startClock(); },
   onUnload() { this.stopClock(); this.sequence = (this.sequence || 0) + 1; this.detailSequence = (this.detailSequence || 0) + 1; this.invalidateSelectors(); },
   invalidateSelectors() { ['peopleSequence', 'materialSequence', 'identitySequence'].forEach(key => { this[key] = (this[key] || 0) + 1; }); },
-  onPullDownRefresh() { this.load().finally(() => wx.stopPullDownRefresh()); },
+  onPullDownRefresh() {
+    const refresh = this.data.detailOpen ? this.refreshDetail() : this.load();
+    return Promise.resolve(refresh).finally(() => wx.stopPullDownRefresh());
+  },
   decorate(row) {
     const can = view.permissions();
     const actions = Object.assign({}, row.allowed_actions || {});
@@ -58,9 +76,18 @@ Page({
     const my = row.my || { closed_minutes: 0, timing: false };
     const repairRows = (row.serial_results || []).filter(serial => serial.repair && serial.repair.state !== 'returned');
     const specText = contents.map(c => buildSpecText(c)).filter(Boolean).filter((v, i, a) => a.indexOf(v) === i).join('、');
+    const outbound = row.outbound || {};
+    const outboundMaterials = describeOutbound(outbound.materials);
+    actions.materials = Boolean(actions.materials && !['pending', 'approved'].includes(outboundMaterials?.status));
     return Object.assign({}, row, { statusLabel: statusLabels[row.status] || row.status, statusTag: statusTags[row.status] || 'gray', ownerName: owner ? owner.name : '待接单',
       my, productText: contents.map(c => c.product_name || c.item_name).filter(Boolean).filter((v, i, a) => a.indexOf(v) === i).join('、'),
       specText,
+      outbound: {
+        materials: outboundMaterials, dispatch: describeOutbound(outbound.dispatch),
+        can_request_dispatch: Boolean(outbound.can_request_dispatch),
+        dispatch_block_reason: outbound.dispatch_block_reason || '',
+        dispatchPackageText: (outbound.dispatch_package_nos || []).join('、') || row.package_no || '',
+      },
       myMinutesText: minutesText(my.closed_minutes) + (my.timing ? '+' : ''), totalMinutesText: minutesText(row.labor && row.labor.closed_minutes),
       changedText: ((info && info.changed) || []).map(c => c.label).join('、'),
       repairRows, repairCount: repairRows.length,
@@ -121,7 +148,7 @@ Page({
   },
   stopClock() { if (this.timer) { clearInterval(this.timer); this.timer = null; } },
   toggleMaterialsSection() { this.setData({ showMaterials: !this.data.showMaterials }); },
-  refreshDetail() { if (this.data.operation.id) this.showOperation(this.data.operation.id); },
+  refreshDetail() { if (!this.data.busy && this.detailOperationId) return this.showOperation(this.detailOperationId); },
   toggleSerial(event) {
     const id = Number(event.currentTarget.dataset.id);
     const serial = (this.data.operation.serialResults || []).find(row => row.inventory_serial_id === id);
@@ -157,6 +184,7 @@ Page({
   turnPage(event) { const page = this.data.page + Number(event.currentTarget.dataset.delta); if (page > 0 && page <= this.data.lastPage && !this.data.busy) { this.setData({ page }); this.load(); } },
   openOperation(event) { this.setData({ operationSerialIds: [] }); return this.showOperation(Number(event.currentTarget.dataset.id)); },
   showOperation(id) {
+    this.detailOperationId = id;
     const sequence = this.detailSequence = (this.detailSequence || 0) + 1;
     this.setData({ detailOpen: true, operation: Number(this.data.operation.id) === Number(id) ? this.data.operation : {}, operationError: '', pending: Boolean(packing.pending(id)) });
     return packing.operation(id).then(response => { if (sequence === this.detailSequence) { this.setData({ operation: this.decorate(response.data || response) }); this.startClock(); } })
@@ -167,25 +195,65 @@ Page({
     this.stopClock();
     if (this.fromOutside && getCurrentPages().length > 1) { wx.navigateBack(); return; }
     this.fromOutside = false;
+    this.detailOperationId = 0;
     this.detailSequence = (this.detailSequence || 0) + 1; this.invalidateSelectors();
-    this.setData({ detailOpen: false, peopleOpen: false, materialsOpen: false, identityOpen: false, inspectionOpen: false, repairReturnOpen: false });
+    this.setData({ detailOpen: false, peopleOpen: false, materialsOpen: false, dispatchOpen: false, identityOpen: false, inspectionOpen: false, repairReturnOpen: false });
     this.load();
   },
   runAction(event) { const action = event.currentTarget.dataset.action; if (action === 'complete') return this.complete(); return this.execute(action); },
   execute(action, payload) {
     if (this.data.busy || !this.data.operation.id) return Promise.resolve(false);
-    this.setData({ busy: true, operationError: '', materialError: '' });
+    this.setData({ busy: true, operationError: '', materialError: '', dispatchError: '' });
     const op = this.data.operation;
     return packing.action(op.id, Object.assign({ action, expected_version: op.business_version }, payload || {})).then(() => {
-      this.setData({ pending: false, peopleOpen: false, materialsOpen: false, identityOpen: false, inspectionOpen: false, operationSerialIds: [] });
+      this.setData({ pending: false, peopleOpen: false, materialsOpen: false, dispatchOpen: false, identityOpen: false, inspectionOpen: false, operationSerialIds: [] });
       return Promise.all([this.load(), this.showOperation(op.id)]).then(() => true);
     }).catch(error => {
-      const details = Object.values(error.errors || (error.details && error.details.errors) || {}).flat().join('；');
-      this.setData({ operationError: details || view.errorText(error), materialError: details || view.errorText(error), peopleError: error.pendingCommand ? '原操作结果待确认，请重试原操作。' : details || view.errorText(error), pending: Boolean(error.pendingCommand) });
+      const message = Object.values(error.errors || (error.details && error.details.errors) || {}).flat().join('；') || view.errorText(error);
+      this.setData({ operationError: message, materialError: message, dispatchError: message, peopleError: error.pendingCommand ? '原操作结果待确认，请重试原操作。' : message, pending: Boolean(error.pendingCommand) });
       return false;
     }).finally(() => this.setData({ busy: false }));
   },
   recover() { return this.execute('recover'); },
+  openDispatch() {
+    const op = this.data.operation;
+    if (this.data.busy || this.data.pending || !op.outbound?.can_request_dispatch) return;
+    const previous = op.outbound.dispatch || {};
+    this.setData({
+      dispatchOpen: true, dispatchMode: previous.delivery_mode === 'pickup' ? 'pickup' : 'dispatch',
+      carrierName: previous.carrier_name || op.order_info?.carrier_name || '', trackingNo: previous.tracking_no || '', dispatchError: '',
+    });
+  },
+  closeDispatch() { if (!this.data.busy) this.setData({ dispatchOpen: false }); },
+  chooseDispatchMode(event) { this.setData({ dispatchMode: event.detail.value }); },
+  dispatchInput(event) {
+    const field = event.currentTarget.dataset.field;
+    if (field === 'carrierName' || field === 'trackingNo') this.setData({ [field]: event.detail.value });
+  },
+  saveDispatch() {
+    if (this.data.busy) return;
+    if (this.data.pending) return this.recover();
+    const { dispatchMode, carrierName, trackingNo } = this.data;
+    const payload = { delivery_mode: dispatchMode };
+    if (dispatchMode === 'dispatch') Object.assign(payload, { carrier_name: carrierName.trim(), tracking_no: trackingNo.trim() });
+    return this.execute('request_dispatch', payload);
+  },
+  changeOutbound(event) {
+    const { kind, action } = event.currentTarget.dataset;
+    const op = this.data.operation;
+    const application = op.outbound?.[kind];
+    const confirming = action === 'confirm_dispatch';
+    if (this.data.busy || this.data.pending || !(confirming ? application?.can_confirm : application?.can_withdraw)) return;
+    const title = confirming ? (application.delivery_mode === 'pickup' ? '确认提货' : '确认发运') : '撤回出库申请';
+    view.modal(this, {
+      title, confirmText: title,
+      subtitle: confirming ? '请在货物实际交付后确认' : '',
+      kvRows: [{ k: '包裹', v: application.packageText || op.package_no }],
+      success: result => {
+        if (result.confirm && op.id === this.data.operation.id && !this.data.pending) this.execute(action, { application_id: application.id });
+      },
+    });
+  },
   complete() {
     if (this.data.busy) return;
     const ids = this.actionSerials('complete');
@@ -240,7 +308,7 @@ Page({
   equalPeopleShares() { if (this.data.busy || this.data.pending || !this.data.shareRows.length) return; const equal = personalShares.defaultShares(this.data.shareRows); this.data.shareRows.forEach(person => { person.percent = personalShares.ratioToPercent(equal.find(share => share.employee_legacy_id === Number(person.employee_legacy_id)).share_ratio); }); this.setData({ shareRows: this.data.shareRows, peopleError: '' }); },
   savePeople() { if (this.data.busy || (!this.data.pending && !this.data.shareRows.length)) return; if (this.data.pending) return this.execute('recover'); let shares; try { shares = personalShares.buildShares(this.data.shareRows); } catch (error) { return this.setData({ peopleError: error.message }); } return this.execute('collaborators', { employee_legacy_ids: Object.keys(this.peopleSelected).map(Number), shares }); },
   closePeople() { if (!this.data.busy) { this.peopleSequence = (this.peopleSequence || 0) + 1; this.setData({ peopleOpen: false }); } },
-  openMaterials() { if (this.data.busy || this.data.pending) return; this.materialSelected = {}; this.setData({ materialsOpen: true, materialRows: [], materialDrafts: [], materialError: '', materialKeyword: '', materialPage: 1, materialLast: 1, categoryIndex: 0 }); return this.loadMaterials(true); },
+  openMaterials() { if (this.data.busy || this.data.pending || !this.data.operation.allowed_actions?.materials) return; this.materialSelected = {}; this.setData({ materialsOpen: true, materialRows: [], materialDrafts: [], materialError: '', materialKeyword: '', materialPage: 1, materialLast: 1, categoryIndex: 0 }); return this.loadMaterials(true); },
   loadMaterials(include) {
     const sequence = this.materialSequence = (this.materialSequence || 0) + 1; const operationId = this.data.operation.id;
     return packing.materials(this.data.operation.id, { keyword: this.data.materialKeyword, page: this.data.materialPage, per_page: 10,
@@ -254,7 +322,7 @@ Page({
   searchMaterials() { this.setData({ materialPage: 1 }); this.loadMaterials(); },
   chooseCategory(event) { this.setData({ categoryIndex: Number(event.detail.value), materialPage: 1 }); this.loadMaterials(); },
   turnMaterials(event) { const page = this.data.materialPage + Number(event.currentTarget.dataset.delta); if (page > 0 && page <= this.data.materialLast) { this.setData({ materialPage: page }); this.loadMaterials(); } },
-  chooseMaterial(event) { const id = Number(event.currentTarget.dataset.id); const row = this.data.materialRows.find(row => Number(row.id) === id); if (!row || this.materialSelected[id]) return; const size = String(row.spec || '').match(/(\d+(?:\.\d+)?)\s*[*×xX]\s*(\d+(?:\.\d+)?)/); this.materialSelected[id] = Object.assign({}, clone(row), { base_qty: '', identities: [], usage_dimensions: { length_mm: '', width_mm: '', thickness_mm: '' }, usage_remark: '', area: { enabled: false, board_length_mm: size ? size[1] : '', board_width_mm: size ? size[2] : '', pieces_text: '', remnant: 'return', text: '' } }); this.updateDrafts(); },
+  chooseMaterial(event) { if (this.data.busy || this.data.pending) return; const id = Number(event.currentTarget.dataset.id); const row = this.data.materialRows.find(row => Number(row.id) === id); if (!row || this.materialSelected[id]) return; const size = String(row.spec || '').match(/(\d+(?:\.\d+)?)\s*[*×xX]\s*(\d+(?:\.\d+)?)/); this.materialSelected[id] = Object.assign({}, clone(row), { base_qty: '', identities: [], usage_dimensions: { length_mm: '', width_mm: '', thickness_mm: '' }, usage_remark: '', area: { enabled: false, board_length_mm: size ? size[1] : '', board_width_mm: size ? size[2] : '', pieces_text: '', remnant: 'return', text: '' } }); this.updateDrafts(); },
   areaToggle(event) { const id = Number(event.currentTarget.dataset.id); const row = this.materialSelected[id]; if (this.data.busy || this.data.pending || !row || row.physical) return; row.area.enabled = !row.area.enabled; this.applyArea(row); },
   areaInput(event) { const id = Number(event.currentTarget.dataset.id); const field = event.currentTarget.dataset.field; const row = this.materialSelected[id]; if (this.data.busy || this.data.pending || !row || !['board_length_mm', 'board_width_mm', 'pieces_text'].includes(field)) return; row.area[field] = event.detail.value; this.applyArea(row); },
   areaRemnant(event) { const id = Number(event.currentTarget.dataset.id); const row = this.materialSelected[id]; if (this.data.busy || this.data.pending || !row) return; row.area.remnant = event.currentTarget.dataset.value === 'loss' ? 'loss' : 'return'; this.applyArea(row); },
@@ -263,8 +331,8 @@ Page({
   quantityInput(event) { if (this.data.busy || this.data.pending) return; const id = Number(event.currentTarget.dataset.id); if (this.materialSelected[id]) { this.materialSelected[id].base_qty = event.detail.value; this.updateDrafts(); } },
   usageDimensionInput(event) { const id = Number(event.currentTarget.dataset.id); const axis = event.currentTarget.dataset.axis; if (this.data.busy || this.data.pending || !this.materialSelected[id] || !['length_mm', 'width_mm', 'thickness_mm'].includes(axis)) return; this.materialSelected[id].usage_dimensions[axis] = event.detail.value; this.updateDrafts(); },
   usageRemarkInput(event) { const id = Number(event.currentTarget.dataset.id); if (!this.data.busy && !this.data.pending && this.materialSelected[id]) { this.materialSelected[id].usage_remark = event.detail.value; this.updateDrafts(); } },
-  removeMaterial(event) { delete this.materialSelected[Number(event.currentTarget.dataset.id)]; this.updateDrafts(); },
-  openIdentities(event) { const material = this.materialSelected[Number(event.currentTarget.dataset.id)]; if (!material || this.data.busy) return; this.identitySelected = Object.fromEntries(material.identities.map(row => [row.id, row])); this.setData({ identityOpen: true, identityRows: [], identityKeyword: '', identityMaterial: material, identityPage: 1, identityLast: 1, selectedIdentities: Object.values(this.identitySelected) }); return this.loadIdentities(); },
+  removeMaterial(event) { if (this.data.busy || this.data.pending) return; delete this.materialSelected[Number(event.currentTarget.dataset.id)]; this.updateDrafts(); },
+  openIdentities(event) { const material = this.materialSelected[Number(event.currentTarget.dataset.id)]; if (!material || this.data.busy || this.data.pending) return; this.identitySelected = Object.fromEntries(material.identities.map(row => [row.id, row])); this.setData({ identityOpen: true, identityRows: [], identityKeyword: '', identityMaterial: material, identityPage: 1, identityLast: 1, selectedIdentities: Object.values(this.identitySelected) }); return this.loadIdentities(); },
   loadIdentities() { const sequence = this.identitySequence = (this.identitySequence || 0) + 1; const sourceId = this.data.identityMaterial.id; const operationId = this.data.operation.id; return packing.identities(operationId, { inventory_balance_id: sourceId, keyword: this.data.identityKeyword, page: this.data.identityPage, per_page: 10 }).then(response => { if (sequence !== this.identitySequence || !this.data.identityOpen || sourceId !== this.data.identityMaterial.id || operationId !== this.data.operation.id) return; const paged = view.rows(response); this.setData({ identityRows: paged.rows.map(row => Object.assign({}, row, { selected: Boolean(this.identitySelected[row.id]) })), identityPage: paged.page, identityLast: paged.lastPage }); }).catch(error => { if (sequence === this.identitySequence && this.data.identityOpen) wx.showToast({ title: view.errorText(error), icon: 'none' }); }); },
   identityInput(event) { this.setData({ identityKeyword: event.detail.value }); },
   searchIdentities() { this.setData({ identityPage: 1 }); this.loadIdentities(); },
@@ -272,7 +340,13 @@ Page({
   toggleIdentity(event) { const id = Number(event.currentTarget.dataset.id); const row = this.data.identityRows.find(row => Number(row.id) === id) || this.identitySelected[id]; if (this.identitySelected[id]) delete this.identitySelected[id]; else this.identitySelected[id] = row; this.setData({ selectedIdentities: Object.values(this.identitySelected), identityRows: this.data.identityRows.map(row => Object.assign({}, row, { selected: Boolean(this.identitySelected[row.id]) })) }); },
   confirmIdentities() { const material = this.materialSelected[this.data.identityMaterial.id]; material.identities = Object.values(this.identitySelected); material.base_qty = String(material.physical || material.serial_tracking_mode === 'required' ? material.identities.length : Math.max(Number(material.base_qty) || 0, material.identities.length)); this.updateDrafts(); this.setData({ identityOpen: false }); },
   closeIdentities() { if (!this.data.busy) { this.identitySequence = (this.identitySequence || 0) + 1; this.setData({ identityOpen: false }); } },
-  saveMaterials() { let materials; try { materials = materialUsage.buildMaterials(Object.values(this.materialSelected)); } catch (error) { return this.setData({ materialError: error.message }); } return this.execute('materials', { materials }); },
+  saveMaterials() {
+    if (this.data.busy) return;
+    if (this.data.pending) return this.recover();
+    let materials;
+    try { materials = materialUsage.buildMaterials(Object.values(this.materialSelected)); } catch (error) { return this.setData({ materialError: error.message }); }
+    return this.execute('materials', { materials });
+  },
   closeMaterials() { if (!this.data.busy) { this.materialSequence = (this.materialSequence || 0) + 1; this.identitySequence = (this.identitySequence || 0) + 1; this.setData({ materialsOpen: false, identityOpen: false }); } },
   chooseOperationSerials(event) { const ids = event.detail.value.map(Number); this.setData({ operationSerialIds: ids, 'operation.serialResults': (this.data.operation.serialResults || []).map(row => Object.assign({}, row, { selected: ids.includes(row.inventory_serial_id) })) }); },
   actionSerials(action) {

@@ -21,7 +21,8 @@ function action(id, payload) {
   const job = old || { operation_id: Number(id), payload: Object.assign({}, clone(payload), { client_command_id: request.createClientCommandId('packing') }) };
   if (!old) wx.setStorageSync(storageKey, job);
   const sameActor = () => { if (actor() !== actorId) throw new Error('登录账号已变化，请重新打开当前包装作业'); };
-  const finish = response => { sameActor(); if (Number(response.operation_id) !== Number(id)) throw new Error('返回结果与当前包装工序不一致'); wx.removeStorageSync(storageKey); return response; };
+  const finish = response => { sameActor(); if (Number(response.operation_id) !== Number(id)) throw new Error('返回结果与当前发货作业不一致'); wx.removeStorageSync(storageKey); return response; };
+  let posting = false;
   const operation = Promise.resolve().then(async () => {
     if (old) {
       const queried = await get(`${base}/commands/result`, { client_command_id: job.payload.client_command_id });
@@ -29,13 +30,13 @@ function action(id, payload) {
       if (result.status === 'SUCCEEDED') return finish(result.response);
       if (result.status !== 'NOT_FOUND') throw new Error('原操作正在处理，请稍后核对结果');
     }
-    sameActor();
+    sameActor(); posting = true;
     const response = await request.request({ path: `${base}/operations/${Number(id)}/actions`, method: 'POST', data: clone(job.payload), loading: false });
     return finish(response.data || response);
   }).catch(error => {
     // A business rejection rolls back the entire packing command. Network and permission
     // errors cannot prove the previous attempt failed, so the exact request remains frozen.
-    if (error.statusCode === 422) wx.removeStorageSync(storageKey);
+    if (posting && error.statusCode === 422) wx.removeStorageSync(storageKey);
     error.pendingCommand = Boolean(wx.getStorageSync(storageKey));
     throw error;
   }).finally(() => inflight.delete(storageKey));

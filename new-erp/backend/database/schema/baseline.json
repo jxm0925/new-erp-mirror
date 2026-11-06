@@ -242,7 +242,8 @@
     "erp_aftersales_logs": "2026_11_09_000006_create_erp_aftersales_logs_table",
     "erp_aftersales_attachments": "2026_11_09_000007_create_erp_aftersales_attachments_table",
     "erp_aftersales_reships": "2026_11_09_000008_create_erp_aftersales_reships_table",
-    "erp_aftersales_reship_items": "2026_11_09_000009_create_erp_aftersales_reship_items_table"
+    "erp_aftersales_reship_items": "2026_11_09_000009_create_erp_aftersales_reship_items_table",
+    "erp_shipment_outbound_applications": "2026_11_09_000010_create_erp_shipment_outbound_applications_table"
   },
   "legacy_migrations": {
     "2026_07_09_000002_remove_legacy_scan_questions_table": "89a9fd386c9acd658007b681a9b8e13c5c1e346f97577c63ab78d34e1fe1cb04",

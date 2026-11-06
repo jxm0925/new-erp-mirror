@@ -16,7 +16,7 @@ final class TradePlatformController extends Controller
         $data = $request->validate(['keyword' => 'nullable|string|max:160', 'status' => 'nullable|in:enabled,disabled', 'page' => 'nullable|integer|min:1', 'per_page' => 'nullable|integer|min:1|max:100']);
         $query = DB::table('erp_sales_order_trade_platforms as p')
             ->leftJoin('erp_sales_order_trade_platforms as parent', 'parent.legacy_id', '=', 'p.parent_legacy_id')
-            ->select('p.*', 'parent.name as parent_name');
+            ->select('p.*', 'parent.name as parent_name', 'parent.legacy_payload as parent_metadata');
         if (!empty($data['status'])) $query->where('p.enabled', $data['status'] === 'enabled');
         if ($keyword = trim((string) ($data['keyword'] ?? ''))) $query->where(fn ($q) => $q->where('p.name', 'like', "%{$keyword}%")->orWhere('p.short_name', 'like', "%{$keyword}%"));
         $stats = $request->boolean('include_stats') ? [
@@ -52,6 +52,7 @@ final class TradePlatformController extends Controller
     {
         return $request->validate([
             'name' => 'required|string|max:160', 'short_name' => 'nullable|string|max:160', 'trade_type' => 'nullable|in:domestic,foreign',
+            'payment_mode' => 'nullable|in:online,offline',
             'parent_legacy_id' => 'required|integer|min:0', 'sort' => 'required|integer|min:0|max:9999', 'status' => 'required|in:enabled,disabled',
             'expected_version' => $editing ? 'required|string|size:64' : 'prohibited',
             'client_request_id' => $editing ? 'prohibited' : 'required|uuid',

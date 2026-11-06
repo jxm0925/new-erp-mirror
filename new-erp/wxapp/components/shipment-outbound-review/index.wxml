@@ -1,0 +1,162 @@
+<template name="application-summary">
+  <view class="review-row-head">
+    <text class="review-number">{{row.shipment_no}}</text>
+    <text class="phase-tag review-status {{row.status}}">{{row.statusLabel}}</text>
+  </view>
+  <view class="warehouse-field">
+    <text class="warehouse-label">申请类型</text>
+    <text class="warehouse-value">{{row.kindLabel}}</text>
+  </view>
+  <view wx:if="{{row.package_no}}" class="warehouse-field">
+    <text class="warehouse-label">包裹号</text>
+    <text class="warehouse-value">{{row.package_no}}</text>
+  </view>
+  <view wx:if="{{row.operation_name}}" class="warehouse-field">
+    <text class="warehouse-label">申请工序</text>
+    <text class="warehouse-value">{{row.operation_name}}</text>
+  </view>
+  <view class="warehouse-field">
+    <text class="warehouse-label">申请人</text>
+    <text class="warehouse-value">{{row.applicant_name || '—'}}</text>
+  </view>
+  <view wx:if="{{row.createdAt}}" class="warehouse-field">
+    <text class="warehouse-label">申请时间</text>
+    <text class="warehouse-value">{{row.createdAt}}</text>
+  </view>
+</template>
+
+<view class="warehouse-overlay" catchtouchmove="stop">
+  <view class="warehouse-dialog review-dialog">
+    <view class="warehouse-dialog-header">
+      <text>{{detailId ? '出库申请详情' : '出库申请审核'}}</text>
+      <button class="warehouse-close" aria-label="关闭" disabled="{{busy}}" bindtap="close">
+        <van-icon name="cross" />
+      </button>
+    </view>
+    <view wx:if="{{!detailId}}" class="review-filters">
+      <view class="phase-tabs">
+        <view class="{{status === 'pending' ? 'active' : ''}}" data-status="pending" bindtap="switchStatus">待审核</view>
+        <view class="{{status === 'processed' ? 'active' : ''}}" data-status="processed" bindtap="switchStatus">审核记录</view>
+      </view>
+      <view class="warehouse-search">
+        <van-icon name="search" color="#64748b" size="30rpx" />
+        <input value="{{keyword}}" maxlength="100" placeholder="搜索发货单号 / 包裹号" aria-label="发货单号或包裹号"
+          confirm-type="search" bindinput="keywordInput" bindconfirm="search" />
+        <button bindtap="search">搜索</button>
+      </view>
+    </view>
+
+    <scroll-view scroll-y class="warehouse-dialog-body review-scroll" scroll-into-view="{{decision ? 'review-decision' : ''}}">
+      <view wx:if="{{loading}}" class="warehouse-empty">
+        <van-loading color="#d81e06" />
+        <text>加载中</text>
+      </view>
+      <view wx:elif="{{error && !detail}}" class="warehouse-empty">
+        <view class="warehouse-error">{{error}}</view>
+        <button class="warehouse-secondary" bindtap="load">重新加载</button>
+      </view>
+      <block wx:elif="{{detail}}">
+        <template is="application-summary" data="{{row: detail}}" />
+        <view wx:if="{{detail.deliveryLabel}}" class="warehouse-field">
+          <text class="warehouse-label">交付方式</text>
+          <text class="warehouse-value">{{detail.deliveryLabel}}</text>
+        </view>
+        <view wx:if="{{detail.carrier_name}}" class="warehouse-field">
+          <text class="warehouse-label">承运商</text>
+          <text class="warehouse-value">{{detail.carrier_name}}</text>
+        </view>
+        <view wx:if="{{detail.tracking_no}}" class="warehouse-field">
+          <text class="warehouse-label">物流单号</text>
+          <text class="warehouse-value">{{detail.tracking_no}}</text>
+        </view>
+        <view wx:if="{{detail.reviewer_name}}" class="warehouse-field">
+          <text class="warehouse-label">审核人</text>
+          <text class="warehouse-value">{{detail.reviewer_name}} {{detail.reviewed_at}}</text>
+        </view>
+        <view wx:if="{{detail.review_reason}}" class="warehouse-field">
+          <text class="warehouse-label">审核意见</text>
+          <text class="warehouse-value">{{detail.review_reason}}</text>
+        </view>
+        <view class="warehouse-title">出库明细</view>
+        <view wx:for="{{detail.lines}}" wx:key="key" class="review-line">
+          <view class="phase-line-title">
+            <text>{{item.name}}</text>
+            <text>{{item.quantityText}} {{item.unit_name}}</text>
+          </view>
+          <view wx:if="{{item.warehouse_name}}" class="warehouse-field">
+            <text class="warehouse-label">仓库</text>
+            <text class="warehouse-value">{{item.warehouse_name}}</text>
+          </view>
+          <view wx:if="{{item.location_name}}" class="warehouse-field">
+            <text class="warehouse-label">库位</text>
+            <text class="warehouse-value">{{item.location_name}}</text>
+          </view>
+          <view wx:if="{{item.batch_no}}" class="warehouse-field">
+            <text class="warehouse-label">批次</text>
+            <text class="warehouse-value">{{item.batch_no}}</text>
+          </view>
+          <view wx:if="{{item.serialText}}" class="warehouse-field">
+            <text class="warehouse-label">设备编号</text>
+            <text class="warehouse-value">{{item.serialText}}</text>
+          </view>
+          <view wx:if="{{item.physicalText}}" class="warehouse-field">
+            <text class="warehouse-label">实物编号</text>
+            <text class="warehouse-value">{{item.physicalText}}</text>
+          </view>
+        </view>
+        <view wx:if="{{!detail.lines.length}}" class="warehouse-muted">暂无出库明细</view>
+        <view id="review-decision" wx:if="{{detail.can_review && (decision || pendingDecision)}}" class="review-decision">
+          <view wx:if="{{pendingDecision}}" class="warehouse-note">
+            上次{{pendingDecision === 'approve' ? '通过' : '驳回'}}操作的结果待确认。
+          </view>
+          <view wx:elif="{{decision === 'approve'}}" class="warehouse-note">
+            {{detail.kind === 'materials' ? '通过后按本次申请扣减包装用料库存。' : '通过后由车间确认' + (detail.deliveryLabel || '交付') + '，确认时扣减成品库存。'}}
+          </view>
+          <block wx:elif="{{decision === 'reject'}}">
+            <view class="warehouse-title">驳回原因</view>
+            <textarea class="warehouse-input" value="{{reason}}" maxlength="500" aria-label="驳回原因" placeholder="请填写驳回原因"
+              disabled="{{busy}}" bindinput="reasonInput" />
+          </block>
+        </view>
+      </block>
+      <block wx:else>
+        <view wx:if="{{!rows.length}}" class="warehouse-empty">
+          <van-icon name="records" size="68rpx" color="#cbd5e1" />
+          <text>{{status === 'pending' ? '暂无待审核的出库申请' : '暂无出库申请审核记录'}}</text>
+        </view>
+        <view wx:for="{{rows}}" wx:key="id" class="review-row">
+          <template is="application-summary" data="{{row: item}}" />
+          <button class="warehouse-secondary" data-id="{{item.id}}" bindtap="openDetail">
+            {{item.can_review ? '查看并审核' : '查看详情'}}
+          </button>
+        </view>
+      </block>
+    </scroll-view>
+
+    <view wx:if="{{detail && error}}" class="warehouse-error review-error">{{error}}</view>
+    <view wx:if="{{!detailId && !error}}" class="warehouse-dialog-footer review-pagination">
+      <view class="warehouse-pager">
+        <button disabled="{{loading || page <= 1}}" data-delta="-1" bindtap="turnPage">上一页</button>
+        <text>共 {{total}} 条 · {{page}} / {{lastPage}}</text>
+        <button disabled="{{loading || page >= lastPage}}" data-delta="1" bindtap="turnPage">下一页</button>
+      </view>
+    </view>
+    <view wx:elif="{{detailId}}" class="warehouse-dialog-footer">
+      <block wx:if="{{detail.can_review && pendingDecision}}">
+        <button class="warehouse-secondary" disabled="{{busy}}" bindtap="backToQueue">返回列表</button>
+        <button class="warehouse-primary" loading="{{busy}}" disabled="{{busy}}" bindtap="submit">重试原审核</button>
+      </block>
+      <block wx:elif="{{detail.can_review && decision}}">
+        <button class="warehouse-secondary" disabled="{{busy}}" bindtap="cancelDecision">取消</button>
+        <button class="warehouse-primary" loading="{{busy}}" disabled="{{busy}}" bindtap="submit">
+          {{decision === 'approve' ? '确认通过' : '确认驳回'}}
+        </button>
+      </block>
+      <block wx:elif="{{detail.can_review}}">
+        <button class="warehouse-secondary" data-decision="reject" bindtap="chooseDecision">驳回申请</button>
+        <button class="warehouse-primary" data-decision="approve" bindtap="chooseDecision">审核通过</button>
+      </block>
+      <button wx:else class="warehouse-secondary" disabled="{{busy}}" bindtap="backToQueue">返回列表</button>
+    </view>
+  </view>
+</view>

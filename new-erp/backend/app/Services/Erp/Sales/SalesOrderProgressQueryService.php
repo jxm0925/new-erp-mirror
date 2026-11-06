@@ -7,7 +7,6 @@ use App\Services\Erp\Manufacturing\TaskCompletionService;
 use App\Services\Erp\Manufacturing\CancellationProductionService;
 use App\Services\Erp\Manufacturing\OrderChangeLaborService;
 use App\Models\Erp\CancellationProductionDisposition;
-use App\Services\Erp\SalesOrderFundingGateService;
 use App\Services\Erp\SalesOrderInventoryLockService;
 use App\Services\Erp\SalesOrderFulfillmentPolicy;
 use Illuminate\Database\Query\Builder;
@@ -216,7 +215,7 @@ final class SalesOrderProgressQueryService
             'notice' => $anonymous ? (($quantitySummary['fulfillment_strategy'] ?? null) === 'purchase'
                 ? '外购商品按订单行数量显示备货和发货进度。' : '工厂产品按订单行数量显示备货、生产和发货进度。') : null,
             'permissions' => ['work_order_links' => $workOrderLinks]];
-        return $payload + $this->timeline($order, $payload, $this->subGroups($subParents, $workOrderLinks));
+        return $payload + app(OrderProgressTimeline::class)->attach($payload, $this->subGroups($subParents, $workOrderLinks));
     }
 
     public function workOrderView(SalesOrder $order, int $workOrderId, ?string $unitKey, bool $workOrderLinks, bool $historyOnly = false): array
@@ -240,20 +239,7 @@ final class SalesOrderProgressQueryService
             'materials' => $production['materials'] ?? [],
             'notice' => $total ? null : '本工单没有逐台设备记录，按工序数量显示。', 'permissions' => ['work_order_links' => $workOrderLinks]];
         if ($scopeIds !== null) $payload['subject']['quantity'] = $total;
-        return $payload + $this->timeline($order, $payload, $historical ? [] : $this->subGroups(collect([$wo]), $workOrderLinks));
-    }
-
-    /**
-     * 把节点、记录和子工单合并成“最新在上”的时间线。
-     * 资金状态只用来提示“定金未到”：仅在生产工序仍未开始时才查，查询失败不影响进度展示。
-     */
-    private function timeline(SalesOrder $order, array $payload, array $groups): array
-    {
-        $funding = null;
-        if (collect($payload['production_nodes'])->contains(fn ($node) => in_array($node['status'], ['pending', 'in_progress'], true))) {
-            try { $funding = app(SalesOrderFundingGateService::class)->status($order); } catch (\Throwable) { $funding = null; }
-        }
-        return app(OrderProgressTimeline::class)->attach($payload, $groups, $funding);
+        return $payload + app(OrderProgressTimeline::class)->attach($payload, $historical ? [] : $this->subGroups(collect([$wo]), $workOrderLinks));
     }
 
     /**

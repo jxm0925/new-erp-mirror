@@ -7,6 +7,7 @@ use App\Models\Erp\InventoryReservation;
 use App\Models\Erp\SalesCustomer;
 use App\Models\Erp\SalesCustomerAddress;
 use App\Models\Erp\SalesCustomerContact;
+use App\Models\Erp\SalesChannel;
 use App\Models\Erp\SalesFundingPolicy;
 use App\Models\Erp\SalesOrderAttachment;
 use App\Models\Erp\Sku;
@@ -45,7 +46,7 @@ class SalesOrderEditImpactService
         'delay_date', 'freight_amount', 'currency', 'remark', 'carrier_id',
         'default_carrier_id', 'shipping_snapshot', 'logistics_snapshot',
         'customer_snapshot', 'payment_terms_snapshot', 'funding_policy_id',
-        'funding_policy_snapshot', 'sales_channel_id', 'external_order_no', 'transaction_mode',
+        'funding_policy_snapshot', 'sales_channel_id', 'channel_type_snapshot', 'external_order_no', 'transaction_mode',
         'platform_buyer_id', 'payment_method_id', 'logistics_requirement', 'is_share', 'share_user',
         'pay_type', 'sales_user_legacy_id', 'agreed_deposit_amount',
     ];
@@ -87,7 +88,7 @@ class SalesOrderEditImpactService
         'customer_kind' => '客户类型', 'platform_buyer_id' => '平台买家ID', 'payment_method_id' => '付款方式',
         'logistics_requirement' => '客户物流备注', 'is_share' => '共享订单', 'share_user' => '共享人员',
         'valid_days' => '报价有效期', 'trade_type' => '贸易类型',
-        'external_order_no' => '外部订单号', 'sales_channel_id' => '销售渠道', 'currency' => '币种',
+        'external_order_no' => '外部订单号', 'sales_channel_id' => '销售渠道', 'channel_type_snapshot' => '成交平台收款类型', 'currency' => '币种',
         'transaction_mode' => '交易方式', 'sales_user_legacy_id' => '销售人员', 'order_time' => '下单时间',
         'agreed_deposit_amount' => '约定定金',
         'platform2' => '子平台', 'order_source' => '订单来源',
@@ -127,6 +128,9 @@ class SalesOrderEditImpactService
             }
             $order = $this->lockedOrder($orderId);
             $this->assertChangeable($order);
+            if (array_key_exists('origin_order_no', $updates) || array_key_exists('external_order_no', $updates)) {
+                $updates = array_replace($updates, SalesTradePlatformService::originalNumberFields($updates, $order, $order->channel_type_snapshot === 'online_platform'));
+            }
             // 复用正式订单变更与版本记录；完整保留明细，避免局部字段更新被解释为删除订单行。
             $candidate = ['header' => $updates, 'lines' => $order->lines->toArray(), 'deleted_line_ids' => []];
             $impact = $this->analyse($order, $candidate);
@@ -735,7 +739,21 @@ class SalesOrderEditImpactService
      */
     private function normalizeHeader(array $header, SalesOrder $order): array
     {
-        unset($header['customer_snapshot'], $header['pay_type']);
+        unset($header['customer_snapshot'], $header['pay_type'], $header['channel_type_snapshot']);
+        $channelId = (int) ($header['sales_channel_id'] ?? $order->sales_channel_id);
+        $externalOrderNo = array_key_exists('external_order_no', $header) ? $header['external_order_no'] : $order->external_order_no;
+        if ($channelId !== (int) $order->sales_channel_id) {
+            $channel = SalesChannel::query()->where('status', 'enabled')->find($channelId);
+            if (!$channel) throw ValidationException::withMessages(['sales_channel_id' => '原销售渠道已停用，请刷新订单后重试。']);
+            $header = array_replace($header, app(SalesOrderSnapshotService::class)->channelFields($channel, $externalOrderNo));
+        } else {
+            unset($header['sales_channel_id']);
+            if (array_key_exists('external_order_no', $header)) {
+                $number = trim((string) $externalOrderNo);
+                $header['external_order_no'] = $number === '' ? null : $number;
+            }
+        }
+        $header = array_replace($header, app(SalesTradePlatformService::class)->orderPaymentFields($header, $order));
         $customerId = array_key_exists('customer_id', $header) && filled($header['customer_id']) ? (int) $header['customer_id'] : (int) $order->customer_id;
         if (array_key_exists('customer_id', $header)) {
             if (blank($header['customer_id'])) unset($header['customer_id']);
@@ -950,8 +968,7 @@ class SalesOrderEditImpactService
     private function headerImpacts(string $field, mixed $before, mixed $after, array $facts): array
     {
         return match ($field) {
-            // Funding rules alter production/shipment gates; payment account
-            // labels (`pay_type`) remain informational when the gates do not.
+            // 付款条款仍需审核，付款方式的派生名称沿用对应主档。
             'payment_terms_snapshot', 'funding_policy_id', 'agreed_deposit_amount' => ['FINANCIAL', 'FULFILLMENT'],
             'freight_amount', 'carrier_fee', 'currency', 'transaction_mode' => ['FINANCIAL'],
             'required_delivery_date', 'is_delay', 'delay_date' => $facts['has_fulfillment_facts']
@@ -959,7 +976,7 @@ class SalesOrderEditImpactService
             // 客户指定物流只是发货时快递公司的预填值，实际快递在每次发运时填写，不影响任何交付事实。
             'carrier_id', 'default_carrier_id' => ['INFO'],
             'trade_type' => ['COMMERCIAL', 'FULFILLMENT'],
-            'customer_id', 'customer_name', 'platform', 'sales_channel_id' => ['COMMERCIAL'],
+            'customer_id', 'customer_name', 'platform', 'sales_channel_id', 'channel_type_snapshot' => ['COMMERCIAL'],
             default => ['INFO'],
         };
     }
@@ -1061,7 +1078,7 @@ class SalesOrderEditImpactService
                 'fulfillment_method' => '订单行备货方式切换涉及生产定义，需要业务审核。',
                 'trade_type' => '贸易类型发生变化，影响订单商业口径，需要业务审核。',
                 'customer_id', 'customer_name' => '订单客户发生变化，需要业务审核。',
-                'platform', 'sales_channel_id' => '成交平台或销售渠道发生变化，需要业务审核。',
+                'platform', 'sales_channel_id', 'channel_type_snapshot' => '成交平台或收款类型发生变化，需要业务审核。',
                 default => '订单已生产确认，'.$label.'发生变化，需要业务审核。',
             },
             'finance' => match ($key) {
@@ -1076,7 +1093,7 @@ class SalesOrderEditImpactService
                 default => $label.'发生变化，触发财务审核条件。',
             },
             'fulfillment' => match ($key) {
-                'payment_terms_snapshot' => '付款规则发生变化，影响生产或发货资金门槛，需要库存交付审核。',
+                'payment_terms_snapshot' => '付款规则发生变化，需要库存交付审核。',
                 'funding_policy_id' => '资金策略发生变化，影响生产或发货资金门槛，需要库存交付审核。',
                 'required_delivery_date', 'is_delay', 'delay_date' => '要求交期发生调整，影响现有库存、生产或交付计划，需要库存交付审核。',
                 'sku_id' => 'SKU 身份发生变化，需要重新核对库存、生产和交付安排。',
@@ -1101,6 +1118,7 @@ class SalesOrderEditImpactService
         if ($field === 'customer_kind') return $value === 'enterprise' ? '企业' : '个人';
         if ($field === 'is_share') return filter_var($value, FILTER_VALIDATE_BOOLEAN) ? '是' : '否';
         if ($value === null || $value === '') return '';
+        if ($field === 'channel_type_snapshot') return $value === 'online_platform' ? '线上收款' : '线下收款';
         if ($field === 'payment_method_id') {
             return (string) (DB::table('erp_payment_methods')->where('id', (int) $value)->value('method_name') ?: $value);
         }

@@ -34,7 +34,7 @@ final class WarehouseActionService
         'mfg_receipt.cancel' => ['production.receipt.execute', 'production.task.execute'],
         'purchase.post' => 'inventory.post.execute', 'purchase.allocate' => 'inventory.post.repair',
         'sales_return.receive' => 'sales_return.receive', 'sales_return.post' => 'sales_return.post',
-        'sales_shipment.post' => 'sales_order.shipment.post', 'sales_shipment.dispatch' => 'sales_order.shipment.dispatch',
+        'sales_shipment.post' => 'sales_order.shipment.post',
         'purchase_return.post' => 'purchase_return.post',
         'material_delivery.prepare' => 'production.material_delivery.manage',
         'material_delivery.dispatch' => 'production.material_delivery.manage', 'material_delivery.repick' => 'production.material_delivery.manage',
@@ -151,9 +151,6 @@ final class WarehouseActionService
             'mfg_receipt.cancel' => ['expected_version' => 'required|integer|min:1'],
             'purchase.post', 'sales_return.post', 'purchase_return.post' => [],
             'sales_shipment.post' => ['expected_version' => 'required|integer|min:1', 'staging_location_id' => 'required|integer|min:1'],
-            'sales_shipment.dispatch' => ['expected_version' => 'required|integer|min:1', 'package_ids' => 'required|array|min:1|max:100',
-                'package_ids.*' => 'required|integer|min:1|distinct', 'delivery_mode' => 'required|in:dispatch,pickup',
-                'carrier_name' => 'nullable|string|max:120', 'tracking_no' => 'nullable|string|max:120'],
             'purchase.allocate' => [
                 'items' => 'required|array|min:1|max:100', 'items.*.receipt_item_id' => 'required|integer|min:1|distinct',
                 'items.*.expected_revision' => 'required|string|size:64',
@@ -305,7 +302,6 @@ final class WarehouseActionService
             'sales_return.receive' => app(SalesReturnApplicationService::class)->receive($payload + ['sales_return_id' => $id], $actor, $name),
             'sales_return.post' => app(SalesReturnApplicationService::class)->postReceipt($id, $actor, $name),
             'sales_shipment.post' => app(SalesShipmentApplicationService::class)->postOutbound(SalesShipment::findOrFail($id), $name, $command, $user),
-            'sales_shipment.dispatch' => app(SalesShipmentApplicationService::class)->dispatch(SalesShipment::findOrFail($id), $name, $command, $user),
             'purchase_return.post' => app(PurchaseReturnApplicationService::class)->post($id, $actor, $name),
         };
     }

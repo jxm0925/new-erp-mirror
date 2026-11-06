@@ -177,6 +177,13 @@
               </template>
             </el-table-column>
 
+            <el-table-column v-if="kind === 'platforms'" label="线上 / 线下" min-width="130">
+              <template slot-scope="{ row }">
+                <el-tag v-if="row.effective_payment_mode" size="mini" effect="plain">{{ row.effective_payment_mode === 'online' ? '线上' : '线下' }}{{ row.payment_mode ? '' : '（继承）' }}</el-tag>
+                <span v-else class="text-muted">未设置</span>
+              </template>
+            </el-table-column>
+
             <el-table-column v-if="kind === 'payments'" label="适用业务" min-width="210">
               <template slot-scope="{ row }">
                 <div class="usage-tags-row">
@@ -328,6 +335,12 @@
               <el-option label="国外交易" value="foreign" />
             </el-select>
             <div v-if="Number(form.parent_legacy_id)" class="field-help">子平台自动继承上级平台的交易类型</div>
+          </el-form-item>
+          <el-form-item label="线上 / 线下">
+            <el-select v-model="form.payment_mode" class="full" :placeholder="Number(form.parent_legacy_id) ? '继承主平台' : '未设置'" clearable>
+              <el-option label="线上" value="online" />
+              <el-option label="线下" value="offline" />
+            </el-select>
           </el-form-item>
         </div>
 
@@ -522,6 +535,7 @@ export default {
         parent_legacy_id: parent ? parent.legacy_id : 0,
         short_name: '',
         trade_type: parent && this.kind === 'platforms' ? (parent.trade_type || '') : '',
+        payment_mode: '',
         available_for_sales: true,
         available_for_receipt: true,
         available_for_payment: true
@@ -534,6 +548,7 @@ export default {
     openEdit (row) {
       this.form = {
         ...row,
+        payment_mode: row.payment_mode || '',
         status: this.isEnabled(row) ? 'enabled' : 'disabled',
         available_for_sales: !!row.available_for_sales,
         available_for_receipt: !!row.available_for_receipt,
@@ -595,6 +610,7 @@ export default {
             name: f.name,
             short_name: f.short_name,
             trade_type: f.trade_type || null,
+            payment_mode: f.payment_mode || null,
             parent_legacy_id: Number(f.parent_legacy_id || 0),
             sort: f.sort,
             status: f.status

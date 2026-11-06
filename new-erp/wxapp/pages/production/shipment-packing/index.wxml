@@ -128,11 +128,21 @@
   </view>
 
   <!-- 包装用料与规格型号（默认收起，可点击展开） -->
-  <view wx:if="{{operation.material_requirements.length || operation.materials.length}}" class="mt-card">
+  <view wx:if="{{operation.material_requirements.length || operation.materials.length || operation.allowed_actions.materials || operation.outbound.materials}}" class="mt-card">
     <view class="mt-card-title" bindtap="toggleMaterialsSection">
       <text>包装用料与规格型号</text>
-      <text wx:if="{{operation.allowed_actions.materials}}" class="tk-link red" catchtap="openMaterials">登记实际用料 ›</text>
+      <text wx:if="{{operation.allowed_actions.materials && !pending}}" class="tk-link red" catchtap="openMaterials">申请出库 ›</text>
     </view>
+    <block wx:if="{{operation.outbound.materials}}">
+      <view class="mt-kv">
+        <text class="k">包装材料出库</text>
+        <text class="mt-tag {{operation.outbound.materials.statusTag}}">{{operation.outbound.materials.statusLabel}}</text>
+      </view>
+      <view wx:if="{{operation.outbound.materials.review_reason}}" class="mt-muted mt-gap">审核说明：{{operation.outbound.materials.review_reason}}</view>
+      <view wx:if="{{operation.outbound.materials.can_withdraw && !pending}}" class="mt-gap">
+        <text class="tk-link red" data-kind="materials" data-action="withdraw_outbound" bindtap="changeOutbound">撤回申请 ›</text>
+      </view>
+    </block>
     <view class="tk-mat-summary-bar" bindtap="toggleMaterialsSection">
       <view class="tk-mat-summary-text">
         定额 <text class="tk-num-bold">{{operation.material_requirements.length}}</text> 项 · 已登记实际耗用 <text class="{{operation.materials.length ? 'tk-num-green' : 'tk-num-red'}}">{{operation.materials.length}}</text> 项
@@ -160,6 +170,39 @@
         <view class="clean-item-right">
           <view class="clean-item-req">实际耗用 {{material.base_qty}}</view>
         </view>
+      </view>
+    </block>
+  </view>
+
+  <view wx:if="{{operation.outbound.can_request_dispatch || operation.outbound.dispatch || operation.outbound.dispatch_block_reason}}" class="mt-card">
+    <view class="mt-card-title">
+      <text>发货出库</text>
+      <text wx:if="{{operation.outbound.can_request_dispatch && !pending}}" class="tk-link red" bindtap="openDispatch">申请出库 ›</text>
+    </view>
+    <view wx:if="{{operation.outbound.dispatch_block_reason}}" class="mt-muted mt-gap">{{operation.outbound.dispatch_block_reason}}</view>
+    <block wx:if="{{operation.outbound.dispatch}}">
+      <view class="mt-kv">
+        <text class="k">申请状态</text>
+        <text class="mt-tag {{operation.outbound.dispatch.statusTag}}">{{operation.outbound.dispatch.statusLabel}}</text>
+      </view>
+      <view wx:if="{{operation.outbound.dispatch.packageText}}" class="mt-kv">
+        <text class="k">包裹</text><text class="v mono">{{operation.outbound.dispatch.packageText}}</text>
+      </view>
+      <view wx:if="{{operation.outbound.dispatch.deliveryLabel}}" class="mt-kv">
+        <text class="k">交付方式</text><text class="v">{{operation.outbound.dispatch.deliveryLabel}}</text>
+      </view>
+      <view wx:if="{{operation.outbound.dispatch.carrier_name}}" class="mt-kv">
+        <text class="k">承运商</text><text class="v">{{operation.outbound.dispatch.carrier_name}}</text>
+      </view>
+      <view wx:if="{{operation.outbound.dispatch.tracking_no}}" class="mt-kv">
+        <text class="k">运单号</text><text class="v mono">{{operation.outbound.dispatch.tracking_no}}</text>
+      </view>
+      <view wx:if="{{operation.outbound.dispatch.review_reason}}" class="mt-muted mt-gap">审核说明：{{operation.outbound.dispatch.review_reason}}</view>
+      <view wx:if="{{operation.outbound.dispatch.can_withdraw && !pending}}" class="mt-gap">
+        <text class="tk-link red" data-kind="dispatch" data-action="withdraw_outbound" bindtap="changeOutbound">撤回申请 ›</text>
+      </view>
+      <view wx:if="{{operation.outbound.dispatch.can_confirm && !pending}}" class="mt-gap">
+        <button class="mt-btn" disabled="{{busy}}" data-kind="dispatch" data-action="confirm_dispatch" bindtap="changeOutbound">{{operation.outbound.dispatch.delivery_mode === 'pickup' ? '确认提货' : '确认发运'}}</button>
       </view>
     </block>
   </view>
@@ -349,14 +392,14 @@
   </view>
 </view>
 
-<!-- 登记实际包装用料弹窗 -->
+<!-- 包装材料出库申请 -->
 <view wx:if="{{materialsOpen}}" class="packing-overlay packing-selector-overlay" catchtouchmove="stop">
   <view class="packing-dialog">
     <view class="packing-dialog-accent"></view>
     <view class="packing-dialog-head">
       <view class="packing-dialog-head-left">
-        <view class="packing-dialog-title">登记实际包装用料</view>
-        <view class="packing-dialog-sub">选择包装材料库存来源并填写本次实际耗用数量</view>
+        <view class="packing-dialog-title">申请包装材料出库</view>
+        <view class="packing-dialog-sub">选择本次包装用料和数量，提交库管审核</view>
       </view>
       <view class="packing-close-btn" bindtap="closeMaterials"><van-icon name="cross" size="30rpx" color="#64748b" /></view>
     </view>
@@ -413,9 +456,9 @@
           <text class="tk-link red" data-id="{{material.id}}" bindtap="removeMaterial">移除</text>
         </view>
         <view class="packing-field">
-          <text class="packing-field-label">实际耗用数量</text>
+          <text class="packing-field-label">申请出库数量</text>
           <view class="collab-pct-box">
-            <input class="collab-pct-input" type="digit" value="{{material.base_qty}}" disabled="{{material.physical || material.serial_tracking_mode === 'required' || busy}}" data-id="{{material.id}}" bindinput="quantityInput" placeholder="0"/>
+            <input class="collab-pct-input" type="digit" value="{{material.base_qty}}" disabled="{{material.physical || material.serial_tracking_mode === 'required' || busy || pending}}" data-id="{{material.id}}" bindinput="quantityInput" placeholder="0"/>
             <text class="collab-pct-unit">{{material.unit_name}}</text>
           </view>
         </view>
@@ -425,7 +468,7 @@
           <input class="packing-box-input" type="digit" placeholder="实际厚 mm（选填）" value="{{material.usage_dimensions.thickness_mm}}" data-id="{{material.id}}" data-axis="thickness_mm" bindinput="usageDimensionInput" disabled="{{busy || pending}}"/>
         </view>
         <view wx:if="{{!material.physical}}" class="packing-area">
-          <view class="packing-chip-btn {{material.area.enabled ? 'active' : ''}}" data-id="{{material.id}}" bindtap="areaToggle">{{material.area.enabled ? '✓ 木板按面积扣库存' : '木板按面积扣库存'}}</view>
+          <view class="packing-chip-btn {{material.area.enabled ? 'active' : ''}}" data-id="{{material.id}}" bindtap="areaToggle">{{material.area.enabled ? '✓ 按木板裁切面积核算' : '按木板裁切面积核算'}}</view>
           <block wx:if="{{material.area.enabled}}">
             <view class="packing-usage-dimensions">
               <input class="packing-box-input" type="digit" placeholder="整板长 mm" value="{{material.area.board_length_mm}}" data-id="{{material.id}}" data-field="board_length_mm" bindinput="areaInput" disabled="{{busy || pending}}"/>
@@ -452,7 +495,47 @@
     </scroll-view>
     <view class="packing-dialog-footer">
       <view class="packing-btn-cancel" bindtap="closeMaterials">取消</view>
-      <view class="packing-btn-confirm {{busy || pending ? 'disabled' : ''}}" bindtap="saveMaterials">确认实际耗用</view>
+      <view class="packing-btn-confirm {{busy ? 'disabled' : ''}}" bindtap="saveMaterials">{{pending ? '查询原操作结果' : '提交出库申请'}}</view>
+    </view>
+  </view>
+</view>
+
+<view wx:if="{{dispatchOpen}}" class="packing-overlay packing-selector-overlay" catchtouchmove="stop">
+  <view class="packing-dialog">
+    <view class="packing-dialog-accent"></view>
+    <view class="packing-dialog-head">
+      <view class="packing-dialog-head-left">
+        <view class="packing-dialog-title">申请发货出库</view>
+        <view class="packing-dialog-sub">包裹 {{operation.outbound.dispatchPackageText}} · 提交库管审核</view>
+      </view>
+      <view class="packing-close-btn" bindtap="closeDispatch"><van-icon name="cross" size="30rpx" color="#64748b" /></view>
+    </view>
+    <scroll-view scroll-y class="packing-dialog-body">
+      <radio-group bindchange="chooseDispatchMode" class="packing-radio-group">
+        <label class="packing-radio-card {{dispatchMode === 'dispatch' ? 'active-pass' : ''}}">
+          <radio value="dispatch" checked="{{dispatchMode === 'dispatch'}}" disabled="{{busy || pending}}" color="#059669"/>
+          <text class="packing-radio-title">物流发运</text>
+        </label>
+        <label class="packing-radio-card {{dispatchMode === 'pickup' ? 'active-pass' : ''}}">
+          <radio value="pickup" checked="{{dispatchMode === 'pickup'}}" disabled="{{busy || pending}}" color="#059669"/>
+          <text class="packing-radio-title">客户自提</text>
+        </label>
+      </radio-group>
+      <block wx:if="{{dispatchMode === 'dispatch'}}">
+        <view>
+          <view class="packing-section-title">承运商</view>
+          <input class="packing-box-input" value="{{carrierName}}" data-field="carrierName" bindinput="dispatchInput" maxlength="120" placeholder="承运商名称（选填）" disabled="{{busy || pending}}"/>
+        </view>
+        <view>
+          <view class="packing-section-title">运单号</view>
+          <input class="packing-box-input" value="{{trackingNo}}" data-field="trackingNo" bindinput="dispatchInput" maxlength="120" placeholder="运单号或柜号（选填）" disabled="{{busy || pending}}"/>
+        </view>
+      </block>
+      <view wx:if="{{dispatchError}}" class="packing-error">{{dispatchError}}</view>
+    </scroll-view>
+    <view class="packing-dialog-footer">
+      <view class="packing-btn-cancel" bindtap="closeDispatch">取消</view>
+      <view class="packing-btn-confirm {{busy ? 'disabled' : ''}}" bindtap="saveDispatch">{{pending ? '查询原操作结果' : '提交出库申请'}}</view>
     </view>
   </view>
 </view>
@@ -464,7 +547,7 @@
     <view class="packing-dialog-head">
       <view class="packing-dialog-head-left">
         <view class="packing-dialog-title">{{identityMaterial.physical ? '选择实物板料' : '选择序列号'}}</view>
-        <view class="packing-dialog-sub">勾选本次实际领用的实物或序列号</view>
+        <view class="packing-dialog-sub">勾选本次申请出库的实物或序列号</view>
       </view>
       <view class="packing-close-btn" bindtap="closeIdentities"><van-icon name="cross" size="30rpx" color="#64748b" /></view>
     </view>

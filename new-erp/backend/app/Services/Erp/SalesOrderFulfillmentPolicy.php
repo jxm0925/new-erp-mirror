@@ -106,6 +106,9 @@ final class SalesOrderFulfillmentPolicy
         $requirements = self::confirmationRequirements($order->attributesToArray(), $order->lines->map(fn ($line) => $line->getAttributes())->all());
         if (! $requirements['customer_complete']) throw ValidationException::withMessages(['customer' => '订单确认前必须填写客户名称及联系电话。']);
         if (! $requirements['shipping_complete']) throw ValidationException::withMessages(['full_address' => '实物订单确认前必须填写收货地址。']);
+        if ($order->channel_type_snapshot === 'online_platform' && SalesTradePlatformService::originalOrderNumber($order) === null) {
+            throw ValidationException::withMessages(['origin_order_no' => SalesTradePlatformService::ORIGINAL_NUMBER_REQUIRED]);
+        }
     }
 
     public static function isPurchaseLine(SalesOrderLine $line): bool

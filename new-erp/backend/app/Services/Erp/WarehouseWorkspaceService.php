@@ -79,7 +79,7 @@ final class WarehouseWorkspaceService
 
     private function assertAccess(array $permissions): void
     {
-        if ($this->types($permissions) === [] && ! array_intersect(['inventory.balance.view', 'sales_order.shipment.packing.execute', 'sales_order.shipment.packing.quality'], $permissions))
+        if ($this->types($permissions) === [] && ! array_intersect(['inventory.balance.view', 'sales_order.shipment.post', 'sales_order.shipment.packing.execute', 'sales_order.shipment.packing.quality'], $permissions))
             throw new WorkOrderDomainException('warehouse_access_denied', '当前账号没有仓库业务查看权限。', 403);
     }
 
@@ -254,7 +254,10 @@ final class WarehouseWorkspaceService
         $salesOrders = SalesOrder::query()->select('id'); $this->salesScope->apply($salesOrders, $user, true);
         if ($kind === 'sales_shipment') {
             $q = DB::table('erp_sales_shipments as d')->join('erp_sales_orders as so', 'so.id', '=', 'd.sales_order_id')->whereIn('d.sales_order_id', $salesOrders);
-            $done ? $q->whereIn('d.shipment_status', ['shipped', 'completed']) : $q->whereIn('d.shipment_status', ['pending_outbound', 'prepared', 'partially_shipped', 'outbound_posted']);
+            if ($done) $q->whereIn('d.shipment_status', ['shipped', 'completed']);
+            else $q->whereIn('d.shipment_status', ['pending_outbound', 'prepared', 'partially_shipped'])
+                ->whereExists(fn ($lines) => $lines->selectRaw('1')->from('erp_sales_shipment_lines as pending')
+                    ->whereColumn('pending.shipment_id', 'd.id')->where('pending.line_status', 'pending_outbound'));
             return [$this->row($q, $kind, $done, ['number' => 'd.shipment_no', 'related_number' => 'so.sales_order_no', 'party' => 'so.customer_name', 'status' => 'd.shipment_status', 'completed_at' => 'd.outbound_posted_at'], $f,
                 ['erp_sales_shipment_lines', 'shipment_id', 'item_id', 'base_qty'])];
         }

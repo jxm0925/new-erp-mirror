@@ -4,7 +4,7 @@ const labels = { pending: '待入库', posted: '已入库', not_required: '无�
   SUBMITTED: '待接收', WAIT_QUALITY: '待检验', RECEIVED: '已接收', COMPLETED: '已完成', WAIT_WAREHOUSE: '待入库', PART_WAREHOUSED: '部分入库', WAREHOUSED: '已入库', CREATED: '待办理' };
 const titles = { purchase_receipt: '采购入库', sales_return: '销售退货入库', sales_shipment: '销售发货', purchase_return: '采购退货出库' };
 const actionLabels = { 'purchase.post': '确认入库',
-  'sales_return.receive': '确认收货', 'sales_return.post': '确认入库', 'sales_shipment.post': '移至待发区', 'sales_shipment.dispatch': '确认发运 / 提货并出库', 'purchase_return.post': '确认退货出库' };
+  'sales_return.receive': '确认收货', 'sales_return.post': '确认入库', 'sales_shipment.post': '移至待发区', 'purchase_return.post': '确认退货出库' };
 const fields = entries => entries.filter(entry => entry[1] !== null && entry[1] !== undefined && entry[1] !== '').map(([label, value]) => ({ label, value: String(value) }));
 function dimensions(d) { return ['length_mm', 'width_mm', 'thickness_mm'].map(k => d && d[k]).filter(v => v !== undefined && v !== null && v !== '').map(quantity).join(' × '); }
 function line(row, canViewAmount = false) {

@@ -7,62 +7,61 @@
     <!-- 顶部精简红底背景弧线 -->
     <view class="wo-top-bg"></view>
 
-    <!-- 1. 工单与销售订单关联主卡（主工单/半成品子工单统一 V2 白底结构化主卡） -->
+    <!-- 1. 工单与销售订单关联主卡（清爽结构化主卡，消除杂乱粉框与截断标签） -->
     <view class="wo-main-card">
-      <view class="wo-mc-top">
-        <view class="wo-mc-title-wrap">
-          <view class="wo-mc-title">
-            <text>{{wo.productText}}</text>
-            <text class="wo-mc-qty">× {{wo.plannedText}} {{wo.unit_name || '台'}}</text>
-          </view>
-          <view class="wo-mc-spec">
-            <text>规格型号：{{wo.specText || '标准规格'}}</text>
-            <text wx:if="{{wo.item_code}}" class="mono"> · {{wo.item_code}}</text>
-          </view>
+      <view class="wo-mc-head">
+        <view class="wo-mc-head-left">
+          <text class="mono wo-mc-wo-no">{{wo.work_order_no}}</text>
+          <text wx:if="{{wo.is_sub_work_order}}" class="wo-mini-tag amber">半成品子工单</text>
+          <text wx:if="{{wo.priority === 1}}" class="wo-mini-tag red">特急</text>
+          <text wx:elif="{{wo.is_urgent}}" class="wo-mini-tag red">加急</text>
+          <text wx:if="{{wo.is_custom}}" class="wo-mini-tag amber">定制</text>
         </view>
-        <view class="wo-mc-status-pill {{wo.is_sub_work_order ? 'sub' : ''}}">{{wo.is_sub_work_order ? '子工单 · ' : ''}}{{wo.status_label}}</view>
+        <view class="wo-mc-status-pill {{wo.is_sub_work_order ? 'sub' : ''}}">{{wo.status_label}}</view>
       </view>
 
-      <!-- 核心关联信息区：销售订单号 + 销售员 + 客户 + 工单号 + 所属主工单 -->
-      <view class="wo-order-banner">
-        <view class="wo-ob-row">
-          <view class="wo-ob-left">
-            <text class="wo-ob-badge">{{wo.salesOrderNo ? '销售订单' : '生产来源'}}</text>
-            <text wx:if="{{wo.salesOrderNo}}" class="wo-ob-so mono">{{wo.salesOrderNo}}</text>
-            <text wx:else class="wo-ob-so-empty">备货生产（无关联销售单）</text>
-          </view>
-          <view class="wo-ob-right">
-            <text wx:if="{{wo.salespersonName}}" class="wo-ob-sales">销售: {{wo.salespersonName}}</text>
-            <text wx:if="{{wo.customerName}}" class="wo-ob-cust">客户: {{wo.customerName}}</text>
-          </view>
+      <view class="wo-mc-hero">
+        <view class="wo-mc-title-row">
+          <text class="wo-mc-title">{{wo.productText}}</text>
+          <text class="wo-mc-qty">× {{wo.plannedText}} {{wo.unit_name || '台'}}</text>
         </view>
+        <view class="wo-mc-spec">规格型号：{{wo.specText || '标准规格'}}</view>
+      </view>
 
-        <view class="wo-ob-row sub">
-          <view class="wo-ob-left">
-            <text class="wo-ob-wo-lbl">工单: <text class="mono wo-ob-wo">{{wo.work_order_no}}</text></text>
-            <text wx:if="{{wo.is_sub_work_order}}" class="wo-mini-tag amber">半成品子工单</text>
-            <text wx:if="{{wo.priority === 1}}" class="wo-mini-tag red">特急</text>
-            <text wx:elif="{{wo.is_urgent}}" class="wo-mini-tag red">加急</text>
-            <text wx:if="{{wo.is_custom}}" class="wo-mini-tag amber">定制</text>
+      <!-- 结构化 2×2 关联信息网格 -->
+      <view class="wo-meta-box">
+        <view class="wo-meta-grid">
+          <view class="wo-meta-cell">
+            <text class="wo-meta-lbl">销售订单</text>
+            <text class="wo-meta-val mono {{wo.salesOrderNo ? 'is-so' : 'is-muted'}}">{{wo.salesOrderNo || '备货生产'}}</text>
           </view>
-          <view class="wo-ob-right">
-            <text class="wo-ob-due">交期: <text class="wo-ob-due-val">{{wo.dueText || '-'}}</text></text>
+          <view class="wo-meta-cell">
+            <text class="wo-meta-lbl">计划交期</text>
+            <text class="wo-meta-val">{{wo.dueText || '-'}}</text>
+          </view>
+          <view class="wo-meta-cell">
+            <text class="wo-meta-lbl">客户名称</text>
+            <text class="wo-meta-val">{{wo.customerName || '-'}}</text>
+          </view>
+          <view class="wo-meta-cell">
+            <text class="wo-meta-lbl">负责销售</text>
+            <text class="wo-meta-val">{{wo.salespersonName || '-'}}</text>
           </view>
         </view>
 
         <!-- 所属主工单关联行（半成品子工单时直接内嵌展示并可点击跳转） -->
-        <view wx:if="{{wo.parent_work_order}}" class="wo-ob-row parent" data-id="{{wo.parent_work_order.id}}" bindtap="openWorkOrder">
-          <view class="wo-ob-left">
-            <text class="wo-mini-tag amber">所属主工单</text>
-            <text class="mono wo-ob-wo">{{wo.parent_work_order.work_order_no}}</text>
-            <text class="wo-ob-parent-name">{{wo.parent_work_order.product_name || wo.parent_work_order.item_name}} × {{wo.parent_work_order.plannedText}}{{wo.parent_work_order.unit_name || '台'}}</text>
+        <view wx:if="{{wo.parent_work_order}}" class="wo-meta-parent" data-id="{{wo.parent_work_order.id}}" bindtap="openWorkOrder">
+          <view class="wo-meta-parent-left">
+            <text class="wo-meta-parent-tag">主工单</text>
+            <text class="wo-meta-parent-name">{{wo.parent_work_order.product_name || wo.parent_work_order.item_name}} × {{wo.parent_work_order.plannedText}}{{wo.parent_work_order.unit_name || '台'}}</text>
+            <text class="mono wo-meta-parent-no">({{wo.parent_work_order.work_order_no}})</text>
           </view>
-          <text class="wo-link-go">查看主工单 ›</text>
+          <text class="wo-link-go">查看 ›</text>
         </view>
 
         <!-- 待仓库确认入库提示行 -->
-        <view wx:if="{{wo.pending_receipt_qty > 0}}" class="wo-ob-row parent" bindtap="openReceiptRequests">
-          <text class="wo-ob-due">待仓库确认入库：{{wo.pending_receipt_qty}} {{wo.unit_name || '台'}}</text>
+        <view wx:if="{{wo.pending_receipt_qty > 0}}" class="wo-meta-parent" bindtap="openReceiptRequests">
+          <text class="wo-meta-parent-name">待仓库确认入库：{{wo.pending_receipt_qty}} {{wo.unit_name || '台'}}</text>
           <text class="wo-link-go">查看申请 ›</text>
         </view>
       </view>
@@ -137,15 +136,15 @@
         </view>
       </view>
 
-      <!-- 下挂子工单（主工单时展示） -->
+      <!-- 下挂子工单（主工单时展示，去除重复的双层展开栏） -->
       <view wx:if="{{wo.child_work_orders && wo.child_work_orders.length}}" class="mt-card">
         <view class="mt-card-title" bindtap="toggleChildren">
           <text>下挂半成品子工单 ({{wo.child_work_orders.length}})</text>
           <text class="wo-link-go">{{showChildren ? '收起 ▴' : '展开 ▾'}}</text>
         </view>
-        <view class="wo-sub-summary-bar" bindtap="toggleChildren">
-          <text>子工单 {{wo.child_work_orders.length}} 个（生产：{{wo.childSummaryNames}}）</text>
-          <text class="wo-link-go">{{showChildren ? '收起' : '查看'}}</text>
+        <view wx:if="{{!showChildren}}" class="wo-sub-summary-bar" bindtap="toggleChildren">
+          <text>生产：{{wo.childSummaryNames}}</text>
+          <text class="wo-link-go">点击查看 ›</text>
         </view>
         <block wx:if="{{showChildren}}">
           <view wx:for="{{wo.child_work_orders}}" wx:key="id" class="wo-child-box" data-id="{{item.id}}" bindtap="openWorkOrder">

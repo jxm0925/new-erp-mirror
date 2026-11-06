@@ -38,14 +38,9 @@ class SalesFinanceSettlementService
             'allocated_amount' => $received,
             'unallocated_amount' => $outstanding,
             'receipt_ratio' => $ratio,
-            'production_funds_satisfied' => !$cancelled && Money::compare($net, '0') > 0,
+            'production_funds_satisfied' => !$cancelled,
             'shipment_funds_satisfied' => !$cancelled && Money::compare($net, $netReceivable) >= 0,
         ];
-    }
-
-    public function assertCanStartProduction(int|SalesOrder $order): void
-    {
-        if (!$this->status($order)['production_funds_satisfied']) throw new \DomainException('销售订单尚无有效已核销收款，不能进入生产。');
     }
 
     public function assertCanShip(int|SalesOrder $order): void

@@ -10,7 +10,7 @@ use Throwable;
 
 final class SalesOrderFundingGateService
 {
-    /** 只有“定金开工”类付款条件允许销售按与客户的约定逐单填写定金；全额预付仍须收满才开工。 */
+    /** 分次付款条件允许销售按与客户的约定逐单填写定金。 */
     public const AGREED_DEPOSIT_POLICY_TYPES = ['deposit_production', 'installment_contract', 'custom_threshold'];
 
     public static function supportsAgreedDeposit(?string $policyType): bool
@@ -33,7 +33,10 @@ final class SalesOrderFundingGateService
         return $amount;
     }
 
-    public function __construct(private readonly SalesFinanceSettlementService $settlements) {}
+    public function __construct(
+        private readonly SalesFinanceSettlementService $settlements,
+        private readonly SalesOrderPlatformPaymentService $platformPayments,
+    ) {}
 
     public function status(SalesOrder|int $order): array
     {
@@ -43,30 +46,32 @@ final class SalesOrderFundingGateService
             $order = $query->findOrFail($order);
         }
         $settlement = $this->settlements->status($order);
-        // 退货退款冲减后的净应收是定金/尾款门槛的口径基数。
+        // 退货退款冲减后的净应收用于计算约定定金及未收款。
         $receivable = $settlement['net_receivable_amount'];
         $policy = $this->normalizePolicy((array) $order->funding_policy_snapshot, $receivable);
         $net = $settlement['net_received_amount'];
-        $productionPassed = $policy['production_valid']
-            && Money::compare($net, $policy['production_required_amount']) >= 0;
-        $shipmentPassed = $policy['shipment_valid']
-            && Money::compare($net, $receivable) >= 0;
-        $productionReason = $productionPassed ? null : ($policy['production_block_reason'] ?: 'production_funds_insufficient');
-        $shipmentReason = $shipmentPassed ? null : ($policy['shipment_block_reason'] ?: 'shipment_funds_insufficient');
-        if ($order->order_status === 'cancelled') {
-            $productionPassed = $shipmentPassed = false;
-            $productionReason = $shipmentReason = 'order_cancelled';
-        }
+        $productionPassed = $settlement['production_funds_satisfied'];
+        $platform = $this->platformPayments->status($order, $settlement);
+        $shipmentPassed = $settlement['shipment_funds_satisfied'] || $platform['platform_payment'] !== null;
+        $platformPaymentRequired = $productionPassed && !$shipmentPassed && $order->channel_type_snapshot === 'online_platform';
+        $productionReason = $productionPassed ? null : 'order_cancelled';
+        $shipmentReason = match (true) {
+            $shipmentPassed => null,
+            !$productionPassed => 'order_cancelled',
+            $platformPaymentRequired && !$platform['platform_payment_eligible'] => 'platform_payment_order_missing',
+            $platformPaymentRequired => 'platform_payment_unconfirmed',
+            default => 'shipment_funds_insufficient',
+        };
         // 未收金额拆成“还差定金”和“定金之后的尾款”，避免把含定金的全部未收款显示成尾款。
         $depositOutstanding = Money::maxZero(Money::sub($policy['production_required_amount'], $net));
         $balanceOutstanding = Money::maxZero(Money::sub($settlement['outstanding_amount'], $depositOutstanding));
 
-        return array_merge($settlement, [
+        return array_merge($settlement, $platform, [
             'policy_configured' => $policy['configured'],
-            'policy_valid' => $policy['production_valid'] && $policy['shipment_valid'],
+            'policy_valid' => $policy['valid'],
             'policy_type' => $policy['policy_type'],
             'policy_name' => $policy['policy_name'],
-            'shipment_requires_full_payment' => $policy['shipment_requires_full_payment'],
+            'shipment_requires_full_payment' => true,
             'production_required_amount' => $policy['production_required_amount'],
             'deposit_source' => $policy['deposit_source'],
             'agreed_deposit_supported' => self::supportsAgreedDeposit($policy['policy_type']),
@@ -80,7 +85,8 @@ final class SalesOrderFundingGateService
             'production_block_message' => $this->reasonMessage($productionReason),
             'shipment_block_reason' => $shipmentReason,
             'shipment_block_message' => $this->reasonMessage($shipmentReason),
-            'payment_status' => Money::compare($net, '0') <= 0 ? 'unpaid' : ($shipmentPassed ? 'paid' : 'partially_paid'),
+            'platform_payment_required' => $platformPaymentRequired,
+            'payment_status' => Money::compare($net, '0') <= 0 ? 'unpaid' : ($settlement['shipment_funds_satisfied'] ? 'paid' : 'partially_paid'),
             'production_funding_status' => $productionPassed ? 'passed' : 'blocked',
             'shipment_funding_status' => $shipmentPassed ? 'passed' : 'blocked',
         ]);
@@ -90,12 +96,6 @@ final class SalesOrderFundingGateService
     public function statusForPermissions(SalesOrder|int $order, array $permissions, bool $superAdmin = false): array
     {
         return $this->status($order);
-    }
-
-    public function assertCanStartProduction(SalesOrder|int $order): void
-    {
-        $status = $this->status($order);
-        if (! $status['production_funds_satisfied']) throw new \DomainException($status['production_block_message']);
     }
 
     public function assertCanShip(SalesOrder|int $order): void
@@ -108,12 +108,17 @@ final class SalesOrderFundingGateService
     public function writeProjection(SalesOrder $order): array
     {
         $status = $this->status($order);
-        $order->update([
+        $updates = [
             'payment_status' => $status['payment_status'],
             'production_funding_status' => $status['production_funding_status'],
             'shipment_funding_status' => $status['shipment_funding_status'],
             'final_receivable_amount' => $status['contract_amount'],
-        ]);
+        ];
+        if ($status['platform_payment'] === null && isset($order->order_flags[SalesOrderPlatformPaymentService::FLAG]['basis'])) {
+            $updates['order_flags'] = $this->platformPayments->invalidate((array) $order->order_flags);
+        }
+        $order->update($updates);
+        if (isset($updates['order_flags'])) $status = array_replace($status, $this->platformPayments->status($order, $status));
         return $status;
     }
 
@@ -131,35 +136,23 @@ final class SalesOrderFundingGateService
             'configured' => $configured,
             'policy_type' => $policyType ?: 'unconfigured',
             'policy_name' => $policyName,
-            'shipment_requires_full_payment' => true,
             'production_required_amount' => $receivable,
             'deposit_source' => 'policy',
             'policy_deposit_amount' => null,
             'agreed_deposit_amount' => null,
-            'production_valid' => false,
-            'shipment_valid' => false,
-            'production_block_reason' => 'funding_policy_missing',
-            'shipment_block_reason' => 'funding_policy_missing',
+            'valid' => false,
         ];
         if (! $configured || $policyType === '') return $base;
 
         $shipmentFull = array_key_exists('shipment_requires_full_payment', $snapshot)
             ? (bool) $snapshot['shipment_requires_full_payment']
             : ($legacyFullPayment === null ? true : (bool) $legacyFullPayment);
-        $base['shipment_requires_full_payment'] = $shipmentFull;
-        $base['shipment_valid'] = $shipmentFull;
-        $base['shipment_block_reason'] = $shipmentFull ? null : 'credit_policy_not_enabled';
-
         if ($policyType === 'full_prepay') {
             $base['deposit_source'] = 'full_prepay';
-            $base['production_valid'] = true;
-            $base['production_block_reason'] = null;
+            $base['valid'] = $shipmentFull;
             return $base;
         }
         if (! in_array($policyType, ['deposit_production', 'installment_contract', 'custom_threshold'], true)) {
-            $base['production_block_reason'] = 'funding_policy_invalid';
-            $base['shipment_valid'] = false;
-            $base['shipment_block_reason'] = 'funding_policy_invalid';
             return $base;
         }
 
@@ -177,9 +170,6 @@ final class SalesOrderFundingGateService
                 throw new \InvalidArgumentException();
             }
         } catch (Throwable) {
-            $base['production_block_reason'] = 'funding_policy_invalid';
-            $base['shipment_valid'] = false;
-            $base['shipment_block_reason'] = 'funding_policy_invalid';
             return $base;
         }
         $base['policy_deposit_amount'] = Money::normalize($required);
@@ -198,8 +188,7 @@ final class SalesOrderFundingGateService
             }
         }
         $base['production_required_amount'] = Money::normalize($required);
-        $base['production_valid'] = true;
-        $base['production_block_reason'] = null;
+        $base['valid'] = $shipmentFull;
         return $base;
     }
 
@@ -208,11 +197,9 @@ final class SalesOrderFundingGateService
         return match ($reason) {
             null => null,
             'order_cancelled' => '销售订单已取消，不能按原订单开工或发货。',
-            'funding_policy_missing' => '订单未冻结明确的付款资金策略，生产与发货均被阻断。',
-            'funding_policy_invalid' => '订单冻结的付款资金策略无效，生产与发货均被阻断。',
-            'credit_policy_not_enabled' => '当前系统未启用授信发货，必须全额收款后才能发货。',
-            'production_funds_insufficient' => '当前有效净收款未达到生产资金门槛，不能进入生产。',
-            'shipment_funds_insufficient' => '当前有效净收款未达到最终应收金额，不能发货。',
+            'platform_payment_order_missing' => '请先补齐成交平台和原始单号，再由录单人核对平台全款。',
+            'platform_payment_unconfirmed' => '请由录单人在订单表单核对平台全款并勾选确认，确认后才能发货。',
+            'shipment_funds_insufficient' => '订单款项未收齐，暂不能发货。',
             default => '当前资金条件未满足。',
         };
     }

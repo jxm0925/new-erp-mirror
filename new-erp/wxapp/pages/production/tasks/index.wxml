@@ -38,7 +38,7 @@
           class="tasks-search-input"
           value="{{keyword}}"
           bindinput="keywordInput"
-          placeholder="搜工单号 / 产品 / 规格型号 / 序列号"
+          placeholder="搜工单号 / 订单号 / 产品 / 规格型号 / 序列号"
           confirm-type="search"
           bindconfirm="search"
         />
@@ -103,8 +103,9 @@
       </view>
       <view class="wo-card-main">
         <view class="wo-main-product">{{item.product}}</view>
-        <view wx:if="{{item.specText}}" class="wo-meta-row">
-          <text class="wo-spec-chip">规格型号：{{item.specText}}</text>
+        <view wx:if="{{item.salesOrderNo || item.specText}}" class="wo-meta-row">
+          <text wx:if="{{item.salesOrderNo}}" class="wo-order-chip mono">订单号：{{item.salesOrderNo}}</text>
+          <text wx:if="{{item.specText}}" class="wo-spec-chip">规格型号：{{item.specText}}</text>
         </view>
       </view>
       <view class="wo-task-list">
@@ -124,13 +125,14 @@
       <button class="mt-btn ghost mt-btn-mini" disabled="{{packPage >= packLastPage || loading}}" data-delta="1" bindtap="turnPackPage">下一页</button>
     </view>
 
-    <!-- 主工单列表：本单工序直接展示，仅下挂子工单可折叠 -->
+    <!-- 工单列表：本单工序直接展示，仅下挂子工单可折叠 -->
     <view wx:for="{{groups}}" wx:for-item="group" wx:key="key" class="wo-group-card">
       <!-- 卡片顶栏：工单号 + 状态徽标 + 工单详情入口 -->
       <view class="wo-card-head" data-id="{{group.main.id}}" bindtap="openWorkOrder">
         <view class="wo-head-left">
           <text class="wo-no mono">{{group.main.work_order_no}}</text>
-          <text wx:if="{{group.main.is_rework_order}}" class="mt-tag red">返工工单</text>
+          <text wx:if="{{group.main.is_rework_order}}" class="mt-tag red">{{group.main.isSub ? '返工子工单' : '返工工单'}}</text>
+          <text wx:elif="{{group.main.isSub}}" class="mt-tag gray">子工单</text>
           <text wx:if="{{group.main.priority === 1}}" class="mt-tag red">特急</text>
           <text wx:elif="{{group.main.is_urgent}}" class="mt-tag red">加急</text>
           <text wx:elif="{{group.main.priority === 4}}" class="mt-tag gray">低优先级</text>
@@ -140,7 +142,7 @@
           <text wx:elif="{{group.main.is_custom}}" class="mt-tag purple">定制{{group.main.has_drawing ? ' · 含图纸' : ''}}</text>
         </view>
         <view class="wo-detail-pill" data-id="{{group.main.id}}" catchtap="openWorkOrder">
-          <text>工单详情</text>
+          <text>{{group.main.isSub ? '子工单详情' : (group.subCount ? '主工单详情' : '工单详情')}}</text>
           <van-icon name="arrow" size="22rpx" color="#64748b" />
         </view>
       </view>
@@ -153,6 +155,9 @@
         </view>
 
         <view class="wo-meta-row">
+          <text wx:if="{{group.main.sales_order_no}}" class="wo-order-chip mono">订单号：{{group.main.sales_order_no}}</text>
+          <text wx:elif="{{!group.main.isSub && group.main.source_label}}" class="wo-meta-chip">{{group.main.source_label}}</text>
+          <text wx:if="{{group.main.parentOrderNo}}" class="wo-meta-chip mono">上级工单：{{group.main.parentOrderNo}}</text>
           <text class="wo-spec-chip">规格型号：{{group.main.specText || '标准规格'}}</text>
           <text wx:if="{{group.main.dueText}}" class="wo-meta-chip">交期 {{group.main.dueText}}</text>
           <text wx:if="{{group.main.customer_name}}" class="wo-meta-chip">{{group.main.customer_name}}</text>
@@ -216,7 +221,7 @@
             <view class="wo-sub-head" data-id="{{sub.id}}" catchtap="openWorkOrder">
               <view class="mt-row">
                 <text class="wo-sub-title">{{sub.is_rework_order ? '返工子工单' : '子工单 ' + (subIdx + 1)}}：{{sub.product_name}} × {{sub.plannedText}} {{sub.unit_name}}</text>
-                <text class="wo-sub-link">详情 ›</text>
+                <text class="wo-sub-link">子工单详情 ›</text>
               </view>
               <view class="wo-sub-meta">
                 <text class="mono">{{sub.work_order_no}}</text>

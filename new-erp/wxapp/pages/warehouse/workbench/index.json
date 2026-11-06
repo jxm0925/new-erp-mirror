@@ -6,6 +6,7 @@
   "usingComponents": {
     "scan-input": "/components/scan-input/index",
     "van-icon": "@vant/weapp/icon/index",
-    "van-loading": "@vant/weapp/loading/index"
+    "van-loading": "@vant/weapp/loading/index",
+    "shipment-outbound-review": "/components/shipment-outbound-review/index"
   }
 }

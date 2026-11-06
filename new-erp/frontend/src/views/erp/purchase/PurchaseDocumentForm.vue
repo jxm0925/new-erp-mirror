@@ -214,6 +214,7 @@
             <el-table-column label="优先级" width="105" align="center">
               <template slot-scope="{row}">
                 <el-select v-model="row.priority" size="small" style="width: 100%">
+                  <el-option label="紧急" value="urgent" />
                   <el-option label="高" value="high" />
                   <el-option label="中" value="normal" />
                   <el-option label="低" value="low" />

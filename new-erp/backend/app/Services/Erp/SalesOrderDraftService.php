@@ -21,18 +21,19 @@ class SalesOrderDraftService
     ) {
     }
 
-    public function create(array $payload, string $operator): SalesOrder
+    public function create(array $payload, string $operator, ?object $actor = null): SalesOrder
     {
-        return DB::transaction(function () use ($payload, $operator) {
-            [$header, $lines, $deletedLineIds, $draftToken] = $this->split($payload);
+        return DB::transaction(function () use ($payload, $operator, $actor) {
+            [$header, $lines, $deletedLineIds, $draftToken, $platformPaid] = $this->split($payload);
             $reservationToken = $header['reservation_token'] ?? null;
             $creationSessionId = $header['creation_session_id'] ?? null;
             unset($header['reservation_token'], $header['creation_session_id']);
-            $header = $this->normalize($header);
-            // 带预占令牌时以预占号为准，避免另取新号与预占号不一致而创建失败、跳号。
-            $header['sales_order_no'] = $reservationToken
+            // 先确定系统编号，再读取业务快照，确保首次衔接能看见最新提交的旧单号。
+            $number = $reservationToken
                 ? $this->numbers->reservedNumber($reservationToken, 'sales_order', $header['created_by_legacy_id'] ?? null, $creationSessionId)
-                : ($header['sales_order_no'] ?: $this->numbers->next('sales_order', 'SO'));
+                : $this->numbers->next('sales_order');
+            $header = $this->normalize($header);
+            $header['sales_order_no'] = $number;
             $header['order_status'] = 'draft';
             $header['confirm_status'] = 'unconfirmed';
             $header['fulfillment_status'] = 'pending';
@@ -53,30 +54,31 @@ class SalesOrderDraftService
             $this->lines->sync($order, $lines, $deletedLineIds, $draftToken, $operator);
             $this->attachments->bindOrderDraft($order->id, $draftToken);
             $order = $this->amounts->refresh($order);
+            if ($platformPaid !== null) app(SalesOrderPlatformPaymentService::class)->update($order, $platformPaid, $actor);
             $this->orderStates->handle(SalesOrderStateCoordinator::ORDER_TERMS_CHANGED, $order);
             $this->recordVersion($order, 'create', null, $order->fresh('lines')->toArray(), $operator);
             $this->recordLog($order, 'create', null, 'draft', '新增销售订单草稿', $operator);
 
             return $order->fresh($this->relations());
-        });
+        }, 5);
     }
 
-    public function update(SalesOrder $order, array $payload, string $operator): SalesOrder
+    public function update(SalesOrder $order, array $payload, string $operator, ?object $actor = null): SalesOrder
     {
         abort_if($order->order_status !== 'draft', 422, '只有草稿订单允许直接编辑');
         abort_if($order->shipment_status !== 'not_shipped', 422, '已有发货记录的订单不能编辑草稿');
 
-        return DB::transaction(function () use ($order, $payload, $operator) {
+        return DB::transaction(function () use ($order, $payload, $operator, $actor) {
             $order = SalesOrder::query()->lockForUpdate()->findOrFail($order->id);
             abort_if($order->order_status !== 'draft', 422, 'Only draft orders can be edited directly.');
             abort_if($order->shipment_status !== 'not_shipped', 422, 'Orders with shipments cannot be edited as drafts.');
             $before = $order->fresh(['lines', 'attachments'])->toArray();
-            [$header, $lines, $deletedLineIds, $draftToken] = $this->split($payload);
+            [$header, $lines, $deletedLineIds, $draftToken, $platformPaid] = $this->split($payload);
             // Number reservations belong to the create-page lifecycle. They are
             // accepted in the shared form payload, but are not sales-order columns
             // and must never be persisted while editing an existing draft.
             unset($header['reservation_token'], $header['creation_session_id'], $header['created_by_legacy_id'], $header['created_by']);
-            $header = $this->normalize($header);
+            $header = $this->normalize($header, $order);
             unset($header['sales_order_no']);
             // 草稿也可能已有预收核销，换客户同样要先由财务撤销核销。
             app(SalesOrderEditImpactService::class)->assertCustomerChangeAllowed($order, $header['customer_id'] ?? null);
@@ -91,6 +93,7 @@ class SalesOrderDraftService
             $this->lines->sync($order, $lines, $deletedLineIds, $draftToken, $operator);
             $this->attachments->bindOrderDraft($order->id, $draftToken);
             $order = $this->amounts->refresh($order);
+            if ($platformPaid !== null) app(SalesOrderPlatformPaymentService::class)->update($order, $platformPaid, $actor);
             $this->orderStates->handle(SalesOrderStateCoordinator::ORDER_TERMS_CHANGED, $order);
             $after = $order->fresh('lines')->toArray();
             $this->recordVersion($order, 'update', $before, $after, $operator);
@@ -211,6 +214,9 @@ class SalesOrderDraftService
         $add('CUSTOMER_COMPLETE', $requirements['customer_complete'] && $requirements['shipping_complete'], $requirements['requires_delivery'] ? '客户及收货信息完整' : '客户及联系信息完整', '客户名称、联系电话或实物收货地址不完整', 'customer');
         $platformProblem = app(SalesTradePlatformService::class)->problem($order->trade_type ?: 'domestic', $order->platform, $order->platform2);
         $add('TRADE_PLATFORM', $platformProblem === null, '成交平台已选择', (string) $platformProblem, 'platform');
+        if ($order->channel_type_snapshot === 'online_platform') {
+            $add('ORIGINAL_ORDER_NO', SalesTradePlatformService::originalOrderNumber($order) !== null, '已填写原始单号', SalesTradePlatformService::ORIGINAL_NUMBER_REQUIRED, 'origin_order_no');
+        }
         $add('ORDER_LINES_REQUIRED', $order->lines->isNotEmpty(), '订单明细已填写', '订单至少需要一行明细', 'lines');
         $add('ORDER_AMOUNT_NOT_NEGATIVE', round((float) $order->lines->sum(fn ($line) => (float) ($line->amount_incl_tax ?? $line->amount)) + (float) $order->freight_amount, 2) >= 0,
             '订单金额正确', '扣减项（红包、优惠）合计不能超过商品金额，订单金额不能小于 0', 'lines');
@@ -271,13 +277,21 @@ class SalesOrderDraftService
         $lines = $payload['lines'] ?? [];
         $deleted = $payload['deleted_line_ids'] ?? [];
         $draftToken = $payload['draft_token'] ?? null;
-        unset($payload['lines'], $payload['deleted_line_ids'], $payload['draft_token']);
-        return [$payload, $lines, $deleted, $draftToken];
+        $platformPaid = isset($payload['platform_payment_confirmed']) ? (bool) $payload['platform_payment_confirmed'] : null;
+        unset($payload['lines'], $payload['deleted_line_ids'], $payload['draft_token'], $payload['platform_payment_confirmed']);
+        return [$payload, $lines, $deleted, $draftToken, $platformPaid];
     }
 
-    private function normalize(array $payload): array
+    private function normalize(array $payload, ?SalesOrder $order = null): array
     {
         $payload = app(SalesCostVisibilityService::class)->redact($payload);
+        if (array_key_exists('order_flags', $payload)) {
+            $flags = (array) $payload['order_flags'];
+            $key = SalesOrderPlatformPaymentService::FLAG;
+            unset($flags[$key]);
+            if (isset($order?->order_flags[$key])) $flags[$key] = $order->order_flags[$key];
+            $payload['order_flags'] = $flags ?: null;
+        }
         foreach (['is_urgent', 'quickly', 'is_customized', 'is_special_customized', 'is_delay', 'delay', 'need_pump', 'is_share'] as $field) {
             $payload[$field] = (bool) ($payload[$field] ?? false);
         }
@@ -296,7 +310,7 @@ class SalesOrderDraftService
         $payload['delay'] = $payload['delay'] || $payload['is_delay'];
         $payload['is_delay'] = $payload['delay'];
 
-        return $this->snapshots->lock($payload);
+        return $this->snapshots->lock($payload, $order);
     }
 
     private function recordVersion(

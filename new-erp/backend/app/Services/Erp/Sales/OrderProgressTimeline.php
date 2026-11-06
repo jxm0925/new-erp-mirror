@@ -17,9 +17,8 @@ final class OrderProgressTimeline
     /**
      * @param array $detail 含 production_nodes/shipment_nodes/production_records/shipment_records
      * @param array<int, array> $groups SalesOrderProgressQueryService::subGroups 的结果
-     * @param array|null $funding 订单资金放行状态，只用来提示“定金未到”，不展示金额
      */
-    public function attach(array $detail, array $groups, ?array $funding): array
+    public function attach(array $detail, array $groups): array
     {
         $nodes = [];
         foreach ($groups as $group) $nodes[] = ['stage' => 'sub', 'key' => 'sub:'.$group['work_order_id'], 'node' => $this->groupNode($group)];
@@ -56,7 +55,7 @@ final class OrderProgressTimeline
 
         return [
             'timeline' => $this->strip($events),
-            'progress' => $this->progress($nodes, $detail, $events, $funding),
+            'progress' => $this->progress($nodes, $detail, $events),
         ];
     }
 
@@ -140,7 +139,7 @@ final class OrderProgressTimeline
             'status_label' => $group['summary']];
     }
 
-    private function progress(array $nodes, array $detail, array $events, ?array $funding): ?array
+    private function progress(array $nodes, array $detail, array $events): ?array
     {
         $open = array_values(array_filter($nodes, fn ($e) => in_array($e['node']['status'], ['pending', 'in_progress'], true)));
         if (! $nodes) return null;
@@ -159,13 +158,8 @@ final class OrderProgressTimeline
         }
         $label = $node['label'];
         $statusLabel = $currentRecord['status_label'] ?? ($node['status'] === 'in_progress' ? '进行中' : ($node['status_label'] ?? '待开始'));
-        $hint = null;
-        if (str_starts_with((string) $current['key'], 'production:') && $funding && ! ($funding['production_funds_satisfied'] ?? true)
-            && (! $currentRecord || ($currentRecord['status'] ?? null) === 'pending')) {
-            $hint = '定金未到，不能开工';
-        }
         $upcoming = array_values(array_unique(array_map(fn ($e) => $e['node']['label'], array_slice($open, 1))));
-        return ['state' => 'doing', 'title' => $label.' · '.$statusLabel, 'detail' => $hint, 'upcoming' => $upcoming, 'stage' => $current['stage'], 'node_key' => $current['key']];
+        return ['state' => 'doing', 'title' => $label.' · '.$statusLabel, 'detail' => null, 'upcoming' => $upcoming, 'stage' => $current['stage'], 'node_key' => $current['key']];
     }
 
     private function ts(mixed $value): ?string

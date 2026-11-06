@@ -97,6 +97,8 @@
       <el-table :data="activeOperation.participants || []" border size="small"><el-table-column prop="name" label="人员" /><el-table-column label="身份"><template slot-scope="{ row }">{{ row.role === 'OWNER' ? '接单人' : '协同人' }}{{ row.is_active ? '' : '（已移除）' }}</template></el-table-column><el-table-column prop="actual_labor_minutes" label="实际工时（分钟）" /><el-table-column label="计时状态"><template slot-scope="{ row }">{{ row.is_timing ? '计时中' : '已暂停' }}</template></el-table-column></el-table>
       <PackingLaborPanel v-if="activeOperation.labor" :labor="activeOperation.labor" :busy="busy || laborLoading || pendingOperation" @page="loadPackingLabor" />
       <h4>实际用料</h4>
+      <el-alert v-if="materialApplication && materialApplication.status === 'pending'" title="包装用料出库申请待库管审核" type="warning" :closable="false" />
+      <el-alert v-if="materialApplication && materialApplication.status === 'rejected'" :title="'包装用料出库申请已驳回' + (materialApplication.review_reason ? '：' + materialApplication.review_reason : '')" type="warning" :closable="false" />
       <el-table :data="activeOperation.materials || []" border size="small"><el-table-column prop="item_name" label="物料" /><el-table-column prop="base_qty" label="实际耗用数量" /><el-table-column label="裁切尺寸 / 用料备注" min-width="180"><template slot-scope="{ row }">{{ usageText(row.usage_snapshot) }}</template></el-table-column><el-table-column prop="posted_at" label="过账时间" /></el-table>
       <el-alert v-if="operationError" :title="operationError" type="error" :closable="false" />
       <div slot="footer" class="packing-actions">
@@ -107,8 +109,9 @@
           <el-button v-if="allow('collaborators')" size="small" :disabled="busy" @click="openPeople">选择协同人</el-button>
           <el-button v-if="allow('start')" size="small" type="success" :loading="busy" @click="execute(activeOperation, 'start')">开始我的作业</el-button>
           <el-button v-if="allow('pause')" size="small" :loading="busy" @click="execute(activeOperation, 'pause')">暂停我的作业</el-button>
-          <el-button v-if="allow('materials')" size="small" :disabled="busy" @click="openMaterials">登记实际用料</el-button>
-          <el-button v-if="allow('complete')" size="small" type="success" :loading="busy" @click="complete">完成工序</el-button>
+          <el-button v-if="allow('materials')" size="small" :disabled="busy || materialApplicationPending" @click="openMaterials">申请用料出库</el-button>
+          <el-button v-if="materialApplication && materialApplication.can_withdraw" size="small" :disabled="busy" @click="withdrawMaterialApplication">撤回用料申请</el-button>
+          <el-button v-if="allow('complete')" size="small" type="success" :disabled="materialApplicationPending" :loading="busy" @click="complete">完成工序</el-button>
           <el-button v-if="allow('inspect')" size="small" type="success" :disabled="busy" @click="openInspection">{{ activeOperation.shipment_operation_type === 'water_test' ? '试水检验' : '作业质检' }}</el-button>
         </template>
       </div>
@@ -128,7 +131,7 @@
       <div slot="footer"><el-button size="small" :disabled="busy" @click="peopleOpen = false">取消</el-button><el-button size="small" type="success" :loading="busy" @click="savePeople">{{ pendingOperation ? '查询原操作结果' : '确认协同人及份额' }}</el-button></div>
     </el-dialog>
 
-    <el-dialog title="登记实际用料" :visible.sync="materialsOpen" append-to-body width="min(1050px, calc(100vw - 32px))" top="5vh" custom-class="shipment-packing-dialog" :close-on-click-modal="false">
+    <el-dialog title="申请用料出库" :visible.sync="materialsOpen" append-to-body width="min(1050px, calc(100vw - 32px))" top="5vh" custom-class="shipment-packing-dialog" :close-on-click-modal="false">
       <div class="packing-requirements"><div v-for="material in activeOperation.material_requirements" :key="material.item_id">{{ material.item_name }} · 工艺用料数量 {{ qty(material.required_base_qty) }}</div></div>
       <div class="packing-picker"><aside><el-tree :data="materialTree" node-key="id" :props="{ label: 'name', children: 'children' }" default-expand-all @node-click="selectCategory" /></aside><main>
         <div class="packing-search"><el-input v-model.trim="materialQuery.keyword" size="small" clearable placeholder="物料编码 / 名称 / 规格" @keyup.enter.native="searchMaterials" /><el-button size="small" type="success" @click="searchMaterials">查询</el-button></div>
@@ -153,7 +156,7 @@
         <el-input v-model.trim="material.usage_remark" type="textarea" :rows="2" maxlength="500" :disabled="busy || pendingOperation" placeholder="裁切与用料备注（选填）" />
       </div>
       <el-alert v-if="materialError" :title="materialError" type="error" :closable="false" />
-      <span slot="footer"><el-button size="small" :disabled="busy" @click="materialsOpen = false">取消</el-button><el-button size="small" type="success" :loading="busy" @click="saveMaterials">确认实际耗用</el-button></span>
+      <span slot="footer"><el-button size="small" :disabled="busy" @click="materialsOpen = false">取消</el-button><el-button size="small" type="success" :loading="busy" @click="saveMaterials">提交出库申请</el-button></span>
     </el-dialog>
 
     <el-dialog :title="identityMaterial.physical ? '选择实物板料' : '选择序列号'" :visible.sync="identityOpen" append-to-body width="min(800px, calc(100vw - 32px))" top="8vh" custom-class="shipment-packing-dialog" :close-on-click-modal="false">
@@ -216,6 +219,8 @@ export default {
     repairLocator: { visible: false, type: 'warehouses' }, reworkPicker: { visible: false, loading: false, keyword: '', page: 1, total: 0, rows: [], error: '' }, reworkSequence: 0 }),
   computed: {
     packingContext () { return `${this.executionOnly ? 'execution' : 'shipment'}:${this.shipmentId}` },
+    materialApplication () { return this.activeOperation.outbound?.materials },
+    materialApplicationPending () { return this.materialApplication?.status === 'pending' },
     usageFields () { return [{ key: 'length_mm', label: '裁切长' }, { key: 'width_mm', label: '裁切宽' }, { key: 'thickness_mm', label: '厚度' }] },
     // 已开工或已发出的包裹重设时原样保留；只给剩下没装的明细排包裹
     openRequirements () {
@@ -355,6 +360,14 @@ export default {
       finally { if (sequence === this.laborSequence) this.laborLoading = false }
     },
     allow (action) { return Boolean((this.activeOperation.allowed_actions || {})[action]) && this.$can(action === 'inspect' ? 'sales_order.shipment.packing.quality' : 'sales_order.shipment.packing.execute') },
+    async withdrawMaterialApplication () {
+      const application = this.materialApplication
+      if (!application?.can_withdraw || this.busy) return
+      try {
+        await this.$confirm('撤回这张包装用料出库申请？', '撤回申请', { type: 'warning', confirmButtonText: '撤回申请' })
+      } catch (error) { return }
+      await this.execute(this.activeOperation, 'withdraw_outbound', { application_id: application.id })
+    },
     async execute (op, action, extra = {}) {
       if (this.busy) return false
       const context = this.packingContext; const sequence = this.operationSequence

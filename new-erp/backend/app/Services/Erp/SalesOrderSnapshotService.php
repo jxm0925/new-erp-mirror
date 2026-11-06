@@ -15,7 +15,7 @@ class SalesOrderSnapshotService
 {
     public function __construct(private readonly PaymentMethodApplicationService $paymentMethods) {}
 
-    public function lock(array $payload): array
+    public function lock(array $payload, ?SalesOrder $current = null): array
     {
         // 约定定金不是订单表字段，只随付款资金策略快照保存，先从表头载荷中取出。
         $agreedDeposit = SalesOrderFundingGateService::normalizeAgreedDeposit($payload['agreed_deposit_amount'] ?? null);
@@ -76,24 +76,22 @@ class SalesOrderSnapshotService
 
         $channel = !empty($payload['sales_channel_id'])
             ? SalesChannel::query()->where('status', 'enabled')->findOrFail($payload['sales_channel_id'])
-            : SalesChannel::query()->where('status', 'enabled')->where('is_default', true)->orderBy('sort')->firstOrFail();
+            : ($current?->salesChannel ?? SalesChannel::query()->where('status', 'enabled')->where('is_default', true)->orderBy('sort')->firstOrFail());
         $policy = !empty($payload['funding_policy_id'])
             ? SalesFundingPolicy::query()->where('status', 'enabled')->findOrFail($payload['funding_policy_id'])
             : SalesFundingPolicy::query()
                 ->where('status', 'enabled')
-                ->where('policy_code', $channel->default_funding_policy_code)
+                ->where('policy_type', 'full_prepay')
+                ->orderByRaw('CASE WHEN policy_code = ? THEN 0 ELSE 1 END', ['FULL_PREPAY'])
+                ->orderBy('id')
                 ->firstOrFail();
         $paymentMethodValue = $payload['payment_method_id'] ?? $payload['pay_type'] ?? null;
         abort_if(blank($paymentMethodValue), 422, '请选择正式付款方式');
         $paymentMethod = $this->paymentMethods->resolveForSales($paymentMethodValue);
-        $externalOrderNo = trim((string) ($payload['external_order_no'] ?? '')) ?: null;
-        abort_if($channel->requires_external_order_no && !$externalOrderNo, 422, '当前成交渠道必须填写外部订单号');
-        $payload['sales_channel_id'] = $channel->id;
-        $payload['sales_channel_code_snapshot'] = $channel->channel_code;
-        $payload['sales_channel_name_snapshot'] = $channel->channel_name;
-        $payload['channel_type_snapshot'] = $channel->channel_type;
-        $payload['transaction_mode'] = $payload['transaction_mode'] ?? $channel->transaction_mode;
-        $payload['external_order_no'] = $externalOrderNo;
+        $channelFields = $this->channelFields($channel, $payload['external_order_no'] ?? $current?->external_order_no);
+        $channelFields['transaction_mode'] = $payload['transaction_mode'] ?? $current?->transaction_mode ?? $channelFields['transaction_mode'];
+        $paymentFields = app(SalesTradePlatformService::class)->orderPaymentFields($payload, $current);
+        $payload = array_replace($payload, $channelFields, $paymentFields);
         $payload['channel_ordered_at'] = $payload['channel_ordered_at'] ?? $payload['order_time'] ?? now();
         $payload['funding_policy_id'] = $policy->id;
         $payload['funding_policy_snapshot'] = [
@@ -134,6 +132,20 @@ class SalesOrderSnapshotService
         );
 
         return $payload;
+    }
+
+    public function channelFields(SalesChannel $channel, ?string $externalOrderNo): array
+    {
+        $number = trim((string) $externalOrderNo);
+
+        return [
+            'sales_channel_id' => $channel->id,
+            'sales_channel_code_snapshot' => $channel->channel_code,
+            'sales_channel_name_snapshot' => $channel->channel_name,
+            'channel_type_snapshot' => $channel->channel_type,
+            'transaction_mode' => $channel->transaction_mode,
+            'external_order_no' => $number === '' ? null : $number,
+        ];
     }
 
     /** Freeze the currently selected master records again at formal confirmation. */

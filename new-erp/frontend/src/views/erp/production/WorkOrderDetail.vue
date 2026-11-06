@@ -723,17 +723,9 @@
                     <span class="kv-label">收付款政策</span>
                     <span class="kv-val">{{ wo.sales_order.funding.policy_name || '未配置' }}</span>
                   </div>
-                  <div class="spec-kv-row">
-                    <span class="kv-label">开工资金门禁</span>
-                    <span class="kv-val">
-                      <span :class="wo.sales_order.funding.production_funds_satisfied ? 'text-success font-medium' : 'text-danger font-medium'">
-                        <i :class="wo.sales_order.funding.production_funds_satisfied ? 'el-icon-circle-check' : 'el-icon-warning'" />
-                        {{ wo.sales_order.funding.production_funds_satisfied ? '已满足开工定金门禁' : '定金未到账，限制开工' }}
-                      </span>
-                      <div v-if="wo.sales_order.funding.net_received_amount !== undefined" class="text-muted font-mono" style="font-size: 11px;">
-                        已收定金金额：{{ money(wo.sales_order.funding.net_received_amount) }}
-                      </div>
-                    </span>
+                  <div v-if="wo.sales_order.funding.net_received_amount !== undefined" class="spec-kv-row">
+                    <span class="kv-label">已收金额</span>
+                    <span class="kv-val code-mono">{{ money(wo.sales_order.funding.net_received_amount) }}</span>
                   </div>
                 </template>
               </template>

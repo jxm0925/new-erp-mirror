@@ -86,6 +86,8 @@ export const STATUS_LABELS = {
   confirmed_order_change: '正式订单变更',
   confirmed_order_edit: '正式订单直接编辑',
   confirmed_order_change_applied: '正式订单变更已生效',
+  platform_payment_confirmed: '确认平台全款',
+  platform_payment_revoked: '撤销平台收款确认',
   production_confirm: '订单生产确认',
 
   sales_order: '销售订单工单',

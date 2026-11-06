@@ -46,6 +46,7 @@ Page({
     actorInitial: '仓',
     today: '',
     shortcuts: [],
+    shipmentReviewOpen: false,
     heroMetrics: {
       total: 0,
       inbound: 0,
@@ -72,6 +73,7 @@ Page({
         todos: [],
         freezes: [],
         error: '',
+        shipmentReviewOpen: false,
       });
       return Promise.resolve();
     }
@@ -79,15 +81,15 @@ Page({
     const can = page.permissions();
     const shortcuts = [
       { label: '入库办理', subtitle: '采购 · 销退入库', theme: 'red', icon: 'wap-home-o', url: '/pages/warehouse/list/index?direction=inbound', visible: can('inventory.post.view') || can('sales_return.view') },
-      { label: '出库办理', subtitle: '发货 · 采退出库', theme: 'blue', icon: 'upgrade', url: '/pages/warehouse/list/index?direction=outbound', visible: can('sales_order.shipment.view') || can('purchase_return.view') },
+      { label: '出库办理', subtitle: '待发移位 · 采退出库', theme: 'blue', icon: 'upgrade', url: '/pages/warehouse/list/index?direction=outbound', visible: can('sales_order.shipment.view') || can('purchase_return.view') },
+      { label: '出库申请审核', subtitle: '包装用料 · 成品发货', theme: 'orange', icon: 'todo-list-o', action: 'shipmentReview', visible: can('sales_order.shipment.post') },
       { label: '生产配料', subtitle: '按工单齐套拣料', theme: 'orange', icon: 'setting-o', url: '/pages/warehouse/deliveries/index', visible: can('production.material_delivery.manage') },
       { label: '退料接收', subtitle: '车间退料核对', theme: 'amber', icon: 'revoke', url: '/pages/warehouse/list/index?direction=all&kind=material_return', visible: can('inventory.inbound.confirm') || can('production.material_return.approve') },
       { label: '入库确认', subtitle: '生产完工入库', theme: 'green', icon: 'passed', url: '/pages/warehouse/list/index?direction=inbound&kind=mfg_receipt', visible: can('inventory.inbound.confirm') },
       { label: '调拨', subtitle: '跨仓 · 库位移动', theme: 'purple', icon: 'exchange', url: '/pages/warehouse/transfer/index', visible: can('inventory.transfer.view') || can('inventory.transfer.create') || can('inventory.inbound.confirm') || can('inventory.physical.manage') },
       { label: '库存查询', subtitle: '批次 · 序列号 · 实物', theme: 'blue', icon: 'search', url: '/pages/warehouse/inventory/index', visible: can('inventory.balance.view') },
       { label: '盘点', subtitle: '实盘录入 · 复核', theme: 'red', icon: 'records-o', url: '/pages/warehouse/stocktake/index', visible: can('inventory.stocktake.view') },
-      { label: '打包', subtitle: '发货打包与复核', theme: 'orange', icon: 'logistics', url: '/pages/production/shipment-packing/index', visible: can('sales_order.shipment.packing.execute') || can('sales_order.shipment.packing.quality') },
-    ].filter(row => row.visible);
+    ].filter(row => row.visible).map(row => Object.assign({ key: row.url || row.action }, row));
     const now = new Date();
     const today = [
       now.getFullYear(),
@@ -103,6 +105,7 @@ Page({
       actorInitial: String(actorName || '仓').trim().slice(0, 1) || '仓',
       today,
       shortcuts,
+      shipmentReviewOpen: this.data.shipmentReviewOpen && can('sales_order.shipment.post'),
     });
     return warehouse
       .summary()
@@ -170,7 +173,15 @@ Page({
       });
   },
   openShortcut(event) {
-    wx.navigateTo({ url: event.currentTarget.dataset.url });
+    const { action, url } = event.currentTarget.dataset;
+    if (action === 'shipmentReview') {
+      if (wx.getStorageSync('erp_token') && page.permissions()('sales_order.shipment.post')) this.setData({ shipmentReviewOpen: true });
+      return;
+    }
+    if (url) wx.navigateTo({ url });
+  },
+  closeShipmentReview() {
+    this.setData({ shipmentReviewOpen: false });
   },
   openList() {
     wx.navigateTo({ url: '/pages/warehouse/list/index?direction=all' });

@@ -38,7 +38,7 @@ Design status: 按“基础档案”页面风格重做（页头卡片 / 提示�
 
       <div class="filter-toolbar">
         <div class="filter-fields">
-          <el-input v-model="query.keyword" clearable size="small" prefix-icon="el-icon-search" class="filter-input-search" placeholder="搜索订单号、原始订单号、客户、Product、SKU" @keyup.enter.native="reload" />
+          <el-input v-model="query.keyword" clearable size="small" prefix-icon="el-icon-search" class="filter-input-search" placeholder="搜索订单号、原始单号、客户、Product、SKU" @keyup.enter.native="reload" />
           <el-select v-model="query.order_status" clearable size="small" placeholder="订单状态" class="filter-select">
             <el-option label="草稿" value="draft" />
             <el-option label="已确认" value="confirmed" />
@@ -70,7 +70,9 @@ Design status: 按“基础档案”页面风格重做（页头卡片 / 提示�
               <el-button type="text" size="mini" class="order-no-link" @click="openSummary(row)">{{ row.sales_order_no }}</el-button>
             </template>
           </el-table-column>
-          <el-table-column prop="origin_order_no" label="原始订单号" width="120" show-overflow-tooltip />
+          <el-table-column label="原始单号" width="120" show-overflow-tooltip>
+            <template slot-scope="{ row }">{{ salesOrderOriginalNo(row) || '-' }}</template>
+          </el-table-column>
           <el-table-column label="客户名称" min-width="150" show-overflow-tooltip>
             <template slot-scope="{row}">
               <strong>{{ row.customer_name || '-' }}</strong>
@@ -103,10 +105,7 @@ Design status: 按“基础档案”页面风格重做（页头卡片 / 提示�
           <el-table-column label="资金" width="92">
             <template slot-scope="{row}">
               <span v-if="['draft', 'cancelled'].includes(row.order_status)" class="muted">-</span>
-              <template v-else>
-                <el-tag size="mini" :type="row.production_funding_status === 'passed' ? 'success' : 'warning'">{{ row.production_funding_status === 'passed' ? '可开工' : '定金未到' }}</el-tag>
-                <small class="muted">{{ row.shipment_funding_status === 'passed' ? '可发货' : '尾款未齐' }}</small>
-              </template>
+              <el-tag v-else size="mini" :type="row.shipment_funding_status === 'passed' ? 'success' : 'warning'">{{ row.shipment_funding_status === 'passed' ? '款项已放行' : (row.channel_type_snapshot === 'online_platform' ? '款项待确认' : '尾款未齐') }}</el-tag>
             </template>
           </el-table-column>
           <el-table-column label="交付状态" width="112">
@@ -187,6 +186,7 @@ Design status: 按“基础档案”页面风格重做（页头卡片 / 提示�
 
 <script>
 import { erpDateTime } from '@/utils/dateTime'
+import { salesOrderOriginalNo } from '@/utils/salesOrderOriginalNo'
 import { confirmSalesOrder, deleteSalesOrderDraft, listSalesOrders } from '@/api/erp/sales'
 import { statusTag, statusText, shipmentStatusText, orderStatusText, orderStatusTag } from '@/utils/erpStatus'
 
@@ -228,6 +228,7 @@ export default {
     this.load()
   },
   methods: {
+    salesOrderOriginalNo,
     priorityTagType(p) {
       return { 1: 'danger', 2: 'warning', 4: 'info' }[p] || ''
     },

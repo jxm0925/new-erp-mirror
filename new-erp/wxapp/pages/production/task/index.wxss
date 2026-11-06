@@ -24,43 +24,35 @@
   z-index: 1;
   background: #ffffff;
   border-radius: 28rpx;
-  padding: 26rpx 24rpx 22rpx;
+  padding: 24rpx 24rpx 20rpx;
   margin-bottom: 18rpx;
-  box-shadow: 0 12rpx 32rpx rgba(15, 23, 42, 0.08);
+  box-shadow: 0 10rpx 28rpx rgba(15, 23, 42, 0.06);
   border: 1rpx solid rgba(15, 23, 42, 0.05);
 }
 
-.tk-mc-top {
+.tk-mc-head {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
-  gap: 16rpx;
+  gap: 14rpx;
+  padding-bottom: 16rpx;
+  border-bottom: 1rpx solid #f1f5f9;
 }
 
-.tk-mc-title-wrap {
+.tk-mc-head-left {
+  display: flex;
+  align-items: center;
+  gap: 8rpx;
+  flex-wrap: wrap;
   flex: 1;
   min-width: 0;
 }
 
-.tk-mc-title {
-  font-size: 32rpx;
-  font-weight: 900;
-  color: #1f2329;
-  line-height: 1.35;
-  word-break: break-all;
-}
-
-.tk-mc-qty {
-  color: #d81e06;
-  margin-left: 10rpx;
-  font-weight: 900;
-}
-
-.tk-mc-spec {
-  font-size: 24rpx;
-  color: #64748b;
-  margin-top: 6rpx;
-  line-height: 1.4;
+.tk-mc-wo-no {
+  font-size: 25rpx;
+  font-weight: 800;
+  color: #334155;
+  letter-spacing: 0.3rpx;
 }
 
 .tk-mc-detail-btn {
@@ -70,142 +62,156 @@
   color: #475569;
   background: #f8fafc;
   border: 1rpx solid #e2e8f0;
-  padding: 8rpx 18rpx;
+  padding: 6rpx 18rpx;
   border-radius: 999rpx;
 }
 
-/* 核心关联信息区：销售订单号 + 销售员 + 客户 + 工单号（严格单行对齐不折行） */
-.tk-order-banner {
-  margin-top: 20rpx;
-  background: #fff8f6;
-  border: 2rpx solid #fee2e2;
-  border-radius: 20rpx;
-  padding: 16rpx 18rpx;
-  display: flex;
-  flex-direction: column;
-  gap: 12rpx;
+.tk-mc-hero {
+  padding-top: 16rpx;
 }
 
-.tk-ob-row {
+.tk-mc-title-row {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   justify-content: space-between;
-  gap: 10rpx;
-  flex-wrap: nowrap;
+  gap: 14rpx;
+  flex-wrap: wrap;
 }
 
-.tk-ob-row.sub {
-  padding-top: 12rpx;
-  border-top: 1rpx dashed #fecaca;
-}
-
-.tk-ob-row.parent {
-  padding-top: 12rpx;
-  border-top: 1rpx dashed #fecaca;
-}
-
-.tk-ob-left {
-  display: flex;
-  align-items: center;
-  gap: 8rpx;
-  flex-wrap: nowrap;
+.tk-mc-title {
+  font-size: 33rpx;
+  font-weight: 900;
+  color: #1f2329;
+  line-height: 1.35;
   flex: 1;
   min-width: 0;
+}
+
+.tk-mc-qty {
+  font-size: 32rpx;
+  color: #d81e06;
+  font-weight: 900;
+  flex-shrink: 0;
+}
+
+.tk-mc-spec {
+  font-size: 24rpx;
+  color: #64748b;
+  margin-top: 8rpx;
+  line-height: 1.4;
+}
+
+/* 结构化 2×2 关联信息网格（清爽冷静灰底，取代拥挤粉框） */
+.tk-meta-box {
+  margin-top: 18rpx;
+  background: #f8fafc;
+  border: 1rpx solid #e2e8f0;
+  border-radius: 18rpx;
   overflow: hidden;
 }
 
-.tk-ob-right {
+.tk-meta-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  padding: 14rpx 18rpx;
+  gap: 12rpx 20rpx;
+}
+
+.tk-meta-cell {
   display: flex;
   align-items: center;
   gap: 10rpx;
-  flex-wrap: nowrap;
+  min-width: 0;
+}
+
+.tk-meta-lbl {
+  font-size: 22rpx;
+  color: #94a3b8;
+  font-weight: 600;
   flex-shrink: 0;
 }
 
-.tk-ob-badge {
-  background: #d81e06;
-  color: #ffffff;
-  font-size: 19rpx;
-  font-weight: 800;
-  padding: 3rpx 10rpx;
-  border-radius: 7rpx;
-  flex-shrink: 0;
-  line-height: 1.2;
-}
-
-.tk-ob-so {
-  font-size: 24rpx;
-  font-weight: 900;
-  color: #b91c1c;
-  white-space: nowrap;
-}
-
-.tk-ob-so-empty {
+.tk-meta-val {
   font-size: 23rpx;
-  font-weight: 700;
-  color: #64748b;
-  white-space: nowrap;
-}
-
-.tk-ob-sales {
-  font-size: 21rpx;
-  font-weight: 800;
-  color: #991b1b;
-  background: #fee2e2;
-  padding: 3rpx 12rpx;
-  border-radius: 7rpx;
-  white-space: nowrap;
-  line-height: 1.25;
-}
-
-.tk-ob-cust {
-  font-size: 22rpx;
-  font-weight: 700;
-  color: #475569;
-  white-space: nowrap;
-}
-
-.tk-ob-wo-lbl {
-  font-size: 22rpx;
-  color: #64748b;
-  white-space: nowrap;
-}
-
-.tk-ob-wo {
-  color: #334155;
-  font-weight: 700;
-}
-
-.tk-ob-parent-name {
-  font-size: 22rpx;
   font-weight: 700;
   color: #1f2329;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  flex: 1;
+  min-width: 0;
 }
 
-.tk-ob-due {
-  font-size: 22rpx;
+.tk-meta-val.is-so {
+  color: #1e40af;
+}
+
+.tk-meta-val.is-muted {
   color: #64748b;
+  font-weight: 600;
+}
+
+.tk-meta-parent {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12rpx;
+  padding: 12rpx 18rpx;
+  background: #f1f5f9;
+  border-top: 1rpx solid #e2e8f0;
+}
+
+.tk-meta-parent-left {
+  display: flex;
+  align-items: center;
+  gap: 8rpx;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.tk-meta-parent-tag {
+  font-size: 20rpx;
+  font-weight: 800;
+  color: #b45309;
+  background: #fef3c7;
+  padding: 2rpx 10rpx;
+  border-radius: 6rpx;
+  flex-shrink: 0;
+}
+
+.tk-meta-parent-name {
+  font-size: 23rpx;
+  font-weight: 700;
+  color: #334155;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.tk-ob-due-val {
-  color: #1f2329;
-  font-weight: 800;
+.tk-meta-parent-no {
+  font-size: 21rpx;
+  color: #64748b;
+  flex-shrink: 0;
+}
+
+.tk-meta-parent-link {
+  font-size: 22rpx;
+  font-weight: 700;
+  color: #d81e06;
+  flex-shrink: 0;
 }
 
 .tk-mini-tag {
-  font-size: 19rpx;
+  font-size: 20rpx;
   font-weight: 700;
-  padding: 2rpx 10rpx;
-  border-radius: 6rpx;
+  padding: 3rpx 12rpx;
+  border-radius: 8rpx;
   background: #f1f5f9;
   color: #475569;
   white-space: nowrap;
   flex-shrink: 0;
-  line-height: 1.25;
+  line-height: 1.3;
 }
 .tk-mini-tag.green {
   background: #ecfdf5;
@@ -364,10 +370,36 @@
   flex-shrink: 0;
 }
 
+.tk-tv2-unit-bar {
+  margin-top: 14rpx;
+  padding: 10rpx 16rpx;
+  background: #f8fafc;
+  border: 1rpx solid #e2e8f0;
+  border-radius: 12rpx;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12rpx;
+}
+
+.tk-tv2-unit-lbl {
+  font-size: 22rpx;
+  color: #64748b;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.tk-tv2-unit-val {
+  font-size: 23rpx;
+  font-weight: 800;
+  color: #334155;
+  word-break: break-all;
+}
+
 .tk-tv2-foot {
-  margin-top: 18rpx;
-  padding-top: 16rpx;
-  border-top: 1rpx dashed #e2e8f0;
+  margin-top: 16rpx;
+  padding-top: 14rpx;
+  border-top: 1rpx solid #f1f5f9;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -532,20 +564,73 @@
   font-weight: 700;
 }
 
-/* ==================== 本道用料齐套速览卡 ==================== */
-.tk-mat-quick-card {
-  padding-bottom: 22rpx;
+/* ==================== 一体化开料作业卡与内联缺料提醒栏 ==================== */
+.tk-cutting-pill {
+  font-size: 22rpx;
+  font-weight: 700;
+  color: #475569;
+  background: #f1f5f9;
+  padding: 4rpx 14rpx;
+  border-radius: 999rpx;
 }
 
-.tk-mq-bar {
+.tk-cutting-status {
+  font-size: 25rpx;
+  font-weight: 700;
+  color: #059669;
+  background: #ecfdf5;
+  border: 1rpx solid #a7f3d0;
+  padding: 12rpx 16rpx;
+  border-radius: 14rpx;
+}
+
+.tk-cutting-desc {
+  font-size: 24rpx;
+  color: #64748b;
+  line-height: 1.5;
+}
+
+.tk-cutting-actions {
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+  margin-top: 18rpx;
+}
+
+.tk-cut-btn {
+  flex: 1;
+  height: 68rpx;
+  border-radius: 16rpx;
+  font-size: 25rpx;
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tk-cut-btn.primary {
+  background: #fff5f5;
+  color: #d81e06;
+  border: 2rpx solid #fca5a5;
+}
+
+.tk-cut-btn.ghost {
+  background: #f8fafc;
+  color: #334155;
+  border: 2rpx solid #e2e8f0;
+}
+
+.tk-mat-inline-bar {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 14rpx;
-  background: #f8fafc;
-  border: 1rpx solid #e2e8f0;
-  border-radius: 18rpx;
-  padding: 16rpx 20rpx;
+  background: #ffffff;
+  border: 1rpx solid #fecaca;
+  border-radius: 22rpx;
+  padding: 18rpx 22rpx;
+  margin-bottom: 18rpx;
+  box-shadow: 0 6rpx 18rpx rgba(15, 23, 42, 0.04);
 }
 
 .tk-mq-stats {

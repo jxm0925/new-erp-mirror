@@ -393,8 +393,7 @@ final class WorkOrderQueryService
         $qty = (float) $wo->planned_qty;
         $funding = $wo->source_type === 'sales_order' && $wo->sales_order_id && ! $wo->started_at && in_array($wo->status, ['planned', 'released', 'paused'], true)
             ? $this->fundingFor((int) $wo->sales_order_id, $amounts) : null;
-        $stuck = $wo->status === 'paused' ? '暂停：'.($wo->pause_reason ?: '未写原因')
-            : ($wo->block_reason ?: ($funding && ! ($funding['production_funds_satisfied'] ?? true) ? '定金未到，不能开工' : null));
+        $stuck = $wo->status === 'paused' ? '暂停：'.($wo->pause_reason ?: '未写原因') : ($wo->block_reason ?: null);
         $production = $wo->operations->where('execution_context', 'production')->values();
         $specInfo = self::itemSpecInfo($wo->relationLoaded('item') ? $wo->item : null, $wo);
         $disposition = CancellationProductionService::pending((int) $wo->id);
@@ -455,7 +454,6 @@ final class WorkOrderQueryService
         $items = [];
         if ($row['block_reason']) $items[] = ['type' => 'danger', 'title' => '资料不全，工单停在计划', 'text' => $row['block_reason'].'。补齐后点“下达”。'];
         if ($row['status'] === 'paused') $items[] = ['type' => 'warning', 'title' => '工单已暂停', 'text' => $row['pause_reason'] ?: '未写原因'];
-        if ($row['funding'] && ! ($row['funding']['production_funds_satisfied'] ?? true)) $items[] = ['type' => 'warning', 'title' => '定金未到，不能开工', 'text' => $row['funding']['production_block_message'] ?? '请联系业务员催收定金。'];
         foreach ($kitting as $op) {
             if ($op['status'] !== 'short') continue;
             $names = collect($op['materials'])->filter(fn ($m) => $m['shortage_qty'] > 0)->map(fn ($m) => $m['component_item_name'].' 缺 '.rtrim(rtrim(number_format($m['shortage_qty'], 4, '.', ''), '0'), '.').($m['unit_name'] ?: ''))->implode('、');

@@ -27,6 +27,16 @@
         >
           编辑单据
         </el-button>
+        <el-button
+          v-if="canConfirmRequest"
+          size="small"
+          type="success"
+          icon="el-icon-check"
+          :loading="confirmingRequest"
+          @click="confirmRequest"
+        >
+          确认需求
+        </el-button>
       </div>
     </div>
 
@@ -268,7 +278,7 @@
 
 <script>
 import { purchaseScopeLabel, purchaseScopeIssue } from '@/utils/purchaseManagementScope.mjs'
-import { getPurchase, getOrderPriceCheck } from '@/api/erp/purchase'
+import { getPurchase, getOrderPriceCheck, submitRequest } from '@/api/erp/purchase'
 import PurchasePriceCheckPanel from '@/components/purchase/PurchasePriceCheckPanel.vue'
 
 const statusMap = {
@@ -297,7 +307,7 @@ export default {
   name: 'PurchaseSimpleDetail',
   components: { PurchasePriceCheckPanel, PurchasePaymentPlanDialog: () => import('@/components/finance/PurchasePaymentPlanDialog.vue') },
   props: { type: { type: String, required: true } },
-  data: () => ({ doc: null, paymentPlanVisible: false, priceCheck: null, priceCheckError: '', viewportWidth: window.innerWidth }),
+  data: () => ({ doc: null, confirmingRequest: false, paymentPlanVisible: false, priceCheck: null, priceCheckError: '', viewportWidth: window.innerWidth }),
   computed: {
     descriptionsColumns() { return this.viewportWidth >= 1920 ? 4 : this.viewportWidth >= 1200 ? 3 : this.viewportWidth >= 992 ? 2 : 1 },
     orderProgress() {
@@ -336,6 +346,10 @@ export default {
     title() { return `${this.no} ${this.type === 'requests' ? '采购需求详情' : '采购订单详情'}` },
     no() { return this.doc?.request_no || this.doc?.purchase_order_no || '--' },
     mainStatus() { return this.doc?.request_status || this.doc?.purchase_status || this.doc?.confirm_status || this.doc?.receipt_status || '' },
+    canConfirmRequest() {
+      return this.type === 'requests' && this.doc?.request_status === 'draft' && !this.doc.deleted_at &&
+        !this.scopeIssue && this.$can('purchase.request.submit')
+    },
     canEdit() {
       if (!this.doc) return false
       if (this.type === 'requests') return Boolean(this.doc.can_edit) && this.$can(['purchase.request.edit', 'purchase.request'])
@@ -363,19 +377,41 @@ export default {
       return ({ purchase_plan: '采购计划', manual: '手工创建', production: '生产需求', sales: '销售订单', inventory_alert: '库存预警', production_shortage: '生产缺料' })[this.doc?.source_type || this.doc?.data_source] || this.doc?.source_type || this.doc?.data_source || '手工创建'
     }
   },
-  async mounted() {
+  mounted() {
     window.addEventListener('resize', this.updateViewportWidth)
-    try {
-      const res = await getPurchase(this.type, this.$route.params.id)
-      this.doc = res.data
-      if (this.type === 'orders') this.loadPriceCheck()
-    } catch (e) {
-      this.$message?.error?.('获取单据详情失败')
-    }
+    this.loadDetail()
   },
   beforeDestroy() { window.removeEventListener('resize', this.updateViewportWidth) },
   methods: {
     updateViewportWidth() { this.viewportWidth = window.innerWidth },
+    async loadDetail() {
+      try {
+        const res = await getPurchase(this.type, this.$route.params.id)
+        this.doc = res.data
+        if (this.type === 'orders') this.loadPriceCheck()
+      } catch (error) {
+        this.$message.error(this.doc ? '单据详情刷新失败，请重新打开单据' : '获取单据详情失败')
+      }
+    },
+    async confirmRequest() {
+      if (!this.canConfirmRequest || this.confirmingRequest) return
+      this.confirmingRequest = true
+      try {
+        await this.$confirm(`确认采购需求 ${this.no}？确认后可转采购计划。`, '业务确认', {
+          type: 'warning',
+          confirmButtonText: '确认需求',
+          cancelButtonText: '取消'
+        })
+        const { data } = await submitRequest(this.doc.id)
+        this.doc.request_status = data.data.request_status
+        this.$message.success(data.message || '采购需求已确认')
+        await this.loadDetail()
+      } catch (error) {
+        if (error !== 'cancel' && error !== 'close') this.$message.error(error.userMessage || '确认采购需求失败，请重试')
+      } finally {
+        this.confirmingRequest = false
+      }
+    },
     async loadPriceCheck() {
       this.priceCheck = null; this.priceCheckError = ''
       try {
@@ -717,6 +753,7 @@ export default {
     align-items: stretch;
   }
   .head-actions {
+    flex-wrap: wrap;
     justify-content: flex-end;
   }
 }

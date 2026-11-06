@@ -10,6 +10,7 @@ use App\Services\Erp\AuthContextService;
 use App\Services\Erp\InventoryAvailabilityService;
 use App\Services\Erp\ItemManagementScopeService;
 use App\Services\Erp\SalesOrderVisibilityService;
+use App\Services\Erp\ShipmentOutboundApplicationService;
 use App\Services\Erp\ShipmentPackingApplicationService;
 use App\Services\Erp\ProductionMediaService;
 use Illuminate\Http\Request;
@@ -80,7 +81,8 @@ class ShipmentPackingController extends Controller
             'packages' => 'required|array|min:1|max:100', 'packages.*.package_no' => 'nullable|string|max:80',
             'packages.*.carrier_name' => 'nullable|string|max:120', 'packages.*.tracking_no' => 'nullable|string|max:120',
             'packages.*.weight' => 'nullable|numeric|min:0', 'packages.*.volume' => 'nullable|numeric|min:0',
-            'packages.*.freight_amount' => 'nullable|numeric|min:0', 'packages.*.contents' => 'required|array|min:1|max:200',
+            'packages.*.freight_amount' => 'nullable|numeric|min:0', 'packages.*.remark' => 'nullable|string|max:500',
+            'packages.*.contents' => 'required|array|min:1|max:200',
             'packages.*.contents.*.shipment_line_id' => 'required|integer',
             'packages.*.contents.*.base_qty' => 'required|numeric|min:0.00000001',
             'packages.*.contents.*.packaging_scheme_id' => 'nullable|integer',
@@ -96,28 +98,39 @@ class ShipmentPackingController extends Controller
         return response()->json(['message' => '包装方案已保存，工序已生成', 'data' => $service->configure($id, $data, $actor)]);
     }
 
-    public function operations(Request $request, ShipmentPackingApplicationService $service)
+    public function operations(Request $request, ShipmentPackingApplicationService $service, ShipmentOutboundApplicationService $outbound)
     {
         $actor = $this->authorizeExecutionRead($request);
         $request->validate(['unfinished' => 'nullable|boolean', 'include_summary' => 'nullable|boolean', 'scope' => 'nullable|in:mine,available,done', 'include_counts' => 'nullable|boolean']);
         $me = (int) $actor->legacy_id;
         $auth = app(AuthContextService::class);
-        $quality = $auth->isSuperAdmin($actor) || in_array('sales_order.shipment.packing.quality', $auth->permissionCodes($actor), true);
+        $super = $auth->isSuperAdmin($actor);
+        $permissions = $super ? [] : $auth->permissionCodes($actor);
+        $quality = $super || in_array('sales_order.shipment.packing.quality', $permissions, true);
         // 和生产任务一样分「我的」（我接的或协同、没做完；有质检权限的含待质检）「可接」（轮到了还没人接）「做完的」
-        $scoped = function ($q, ?string $scope) use ($me, $quality) {
+        $execute = $super || in_array('sales_order.shipment.packing.execute', $permissions, true);
+        $scoped = function ($q, ?string $scope) use ($me, $quality, $execute, $outbound) {
             $mine = fn ($w) => $w->where(fn ($x) => $x->whereHas('participants', fn ($p) => $p->where('employee_legacy_id', $me)->where('is_active', true))
                 ->when($quality, fn ($y) => $this->includePendingQuality($y)));
             return match ($scope) {
-                'mine' => $mine($q)->whereNotIn('status', ['COMPLETED', 'CANCELLED']),
+                'mine' => $q->where(function ($work) use ($mine, $execute, $outbound, $me) {
+                    $work->where(fn ($active) => $mine($active)->whereNotIn('status', ['COMPLETED', 'CANCELLED']));
+                    if ($execute) $work->orWhere(fn ($pending) => $outbound->includeOutboundWork($pending, $me));
+                }),
                 'available' => $q->where('status', 'READY')->whereNull('owner_legacy_id'),
                 'done' => $q->whereHas('participants', fn ($p) => $p->where('employee_legacy_id', $me))->where('status', 'COMPLETED'),
                 default => $q,
             };
         };
-        $query = ShipmentPackingOperation::query()->whereHas('shipment', fn ($q) => $q->whereIn('shipment_status', ['draft', 'pending_outbound', 'prepared', 'partially_shipped', 'outbound_posted']))
+        $shipmentStatuses = ['draft', 'pending_outbound', 'prepared', 'partially_shipped', 'outbound_posted'];
+        if ($request->input('scope') === 'done') $shipmentStatuses = array_merge($shipmentStatuses, ['shipped', 'completed']);
+        $query = ShipmentPackingOperation::query()->whereHas('shipment', fn ($q) => $q->whereIn('shipment_status', $shipmentStatuses))
             ->when($request->filled('shipment_id'), fn ($q) => $q->where('shipment_id', $request->integer('shipment_id')))
             ->when($request->filled('status'), fn ($q) => $q->where('status', $request->input('status')))
-            ->when($request->boolean('unfinished'), fn ($q) => $q->whereNotIn('status', ['COMPLETED', 'CANCELLED']))
+            ->when($request->boolean('unfinished'), fn ($q) => $q->where(function ($work) use ($execute, $outbound, $me) {
+                $work->whereNotIn('status', ['COMPLETED', 'CANCELLED']);
+                if ($execute) $work->orWhere(fn ($pending) => $outbound->includeOutboundWork($pending, $me));
+            }))
             ->when($request->filled('keyword'), fn ($q) => $q->where('operation_name_snapshot', 'like', '%'.trim((string) $request->input('keyword')).'%'));
         $this->applyExecutionScope($query, $actor);
         $counts = $request->boolean('include_counts') ? ['mine' => $scoped(clone $query, 'mine')->count(), 'available' => $scoped(clone $query, 'available')->count()] : null;
@@ -133,10 +146,13 @@ class ShipmentPackingController extends Controller
         ]]));
     }
 
-    public function operation(Request $request, int $id, ShipmentPackingApplicationService $service)
+    public function operation(Request $request, int $id, ShipmentPackingApplicationService $service, ShipmentOutboundApplicationService $outbound)
     {
         $actor = $this->authorizeExecutionRead($request);
-        return response()->json(['data' => $service->projection($this->visibleOperation($id, $actor), (int) $actor->legacy_id, $this->laborFilters($request))]);
+        $operation = $this->visibleOperation($id, $actor);
+        $me = (int) $actor->legacy_id;
+        return response()->json(['data' => $service->projection($operation, $me, $this->laborFilters($request))
+            + ['outbound' => $outbound->operationStatus($operation, $me)]]);
     }
 
     public function action(Request $request, int $id, ShipmentPackingApplicationService $service)
@@ -144,8 +160,11 @@ class ShipmentPackingController extends Controller
         $actor = $this->authorize($request, $request->input('action') === 'inspect'
             ? 'sales_order.shipment.packing.quality' : 'sales_order.shipment.packing.execute');
         $this->visibleOperation($id, $actor);
-        $data = $request->validate(['action' => 'required|in:claim,collaborators,start,pause,materials,complete,inspect',
+        $data = $request->validate(['action' => 'required|in:claim,collaborators,start,pause,materials,complete,inspect,request_dispatch,confirm_dispatch,withdraw_outbound',
             'expected_version' => 'required|integer|min:1', 'client_command_id' => 'required|string|max:100',
+            'application_id' => 'required_if:action,confirm_dispatch,withdraw_outbound|integer|min:1',
+            'delivery_mode' => 'required_if:action,request_dispatch|in:dispatch,pickup',
+            'carrier_name' => 'nullable|string|max:120', 'tracking_no' => 'nullable|string|max:120',
             'employee_legacy_ids' => 'nullable|array|max:100', 'employee_legacy_ids.*' => 'integer|distinct',
             'shares' => 'nullable|array|max:200',
             'shares.*.employee_legacy_id' => 'required|integer|min:1|distinct',

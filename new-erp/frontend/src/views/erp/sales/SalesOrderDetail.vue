@@ -135,7 +135,7 @@ Progress design: 用户确认的订单产品树、单台整链路与工单聚合
         <div v-else class="kpi-sub">共 {{ totalLineCount }} 项明细 · 总计 {{ totalOrderQty }} 件</div>
       </div>
       <div class="kpi-card">
-        <div class="kpi-label"><i class="el-icon-coin" /> 收款进度{{ order.funding_status && order.funding_status.policy_name ? ` · ${order.funding_status.policy_name}` : '' }}</div>
+        <div class="kpi-label"><i class="el-icon-coin" /> {{ order.channel_type_snapshot === 'online_platform' ? 'ERP 核销进度' : '收款进度' }}{{ order.funding_status && order.funding_status.policy_name ? ` · ${order.funding_status.policy_name}` : '' }}</div>
         <template v-if="order.funding_status && order.order_status !== 'cancelled'">
           <div class="kpi-value" :class="receiptProgress.done ? 'green' : 'orange'">¥{{ money(order.funding_status.net_received_amount) }}<small class="kpi-of">/ {{ money(receiptProgress.target) }}</small></div>
           <div class="kpi-bar"><i :style="{ width: receiptProgress.percent + '%' }" /></div>
@@ -197,7 +197,7 @@ Progress design: 用户确认的订单产品树、单台整链路与工单聚合
           </div>
           <div class="kv-item">
             <span class="kv-label">原始单号</span>
-            <span class="kv-value font-mono">{{ order.origin_order_no || '-' }}</span>
+            <span class="kv-value font-mono">{{ originalOrderNo || '-' }}</span>
           </div>
           <div class="kv-item">
             <span class="kv-label">优先级</span>
@@ -218,6 +218,14 @@ Progress design: 用户确认的订单产品树、单台整链路与工单聚合
           <div class="kv-item">
             <span class="kv-label">付款条件</span>
             <span class="kv-value">{{ (order.funding_status && order.funding_status.policy_name) || '未配置' }}</span>
+          </div>
+          <div v-if="platformPayment || (order.funding_status && order.funding_status.platform_payment_eligible)" class="kv-item">
+            <span class="kv-label">平台付款确认</span>
+            <span class="kv-value">
+              <el-tag size="mini" :type="platformPayment ? 'success' : 'info'">{{ platformPayment ? '已确认平台付款' : '未确认平台付款' }}</el-tag>
+              <el-button v-if="order.allowed_actions && order.allowed_actions.platform_payment_confirm" type="text" size="mini" @click="$router.push({ path: `/sales/orders/${order.id}/edit`, query: { platform_payment: '1' } })">前往核对</el-button>
+            </span>
+            <small v-if="platformPayment" class="text-muted">{{ platformPayment.confirmed_by }} · {{ date(platformPayment.confirmed_at) }}</small>
           </div>
           <div class="kv-item">
             <span class="kv-label">备货组成</span>
@@ -244,7 +252,7 @@ Progress design: 用户确认的订单产品树、单台整链路与工单聚合
             </span>
           </div>
           <div v-if="order.order_status !== 'cancelled' && order.funding_status && order.funding_status.agreed_deposit_supported" class="kv-item">
-            <span class="kv-label">开工定金</span>
+            <span class="kv-label">约定定金</span>
             <span class="kv-value">
               <template v-if="order.funding_status.production_required_amount !== undefined">
                 ¥{{ Number(order.funding_status.production_required_amount || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }}
@@ -832,6 +840,7 @@ import OrderProgress from './components/OrderProgress.vue'
 import AftersalesCaseForm from '../aftersales/AftersalesCaseForm.vue'
 import { listOrderAftersales, getAftersalesEligible } from '@/api/erp/aftersales'
 import { promptAgreedDeposit } from '@/utils/salesAgreedDeposit'
+import { salesOrderOriginalNo } from '@/utils/salesOrderOriginalNo'
 import { statusTag, statusText, shipmentStatusText, orderStatusText, orderStatusTag } from '@/utils/erpStatus'
 import { listSalesOrderWorkOrders } from '@/api/erp/production'
 
@@ -896,14 +905,21 @@ export default {
       if (danger.length && list.length) danger[0].divided = true
       return [...list, ...danger]
     },
+    originalOrderNo() {
+      return salesOrderOriginalNo(this.order)
+    },
+    platformPayment() {
+      return this.order.funding_status?.platform_payment || null
+    },
     receiptProgress() {
       const f = this.order.funding_status || {}
       const target = Number(f.net_receivable_amount != null ? f.net_receivable_amount : (f.contract_amount || 0))
       const received = Number(f.net_received_amount || 0)
       const percent = target > 0 ? Math.min(100, Math.max(0, (received / target) * 100)) : 0
-      const text = !f.production_funds_satisfied ? (f.production_block_reason === 'production_funds_insufficient' ? '定金未到，不能开工' : (f.production_block_message || '收款条件未满足'))
-        : (f.shipment_funds_satisfied ? '已收齐，可发货' : `可开工，尾款未齐（未收 ¥${this.money(f.outstanding_amount)}）`)
-      return { target, percent, text, done: !!f.shipment_funds_satisfied }
+      let text = f.shipment_funds_satisfied ? '款项已结清' : `尾款未齐，暂不能发货（未收 ¥${this.money(f.outstanding_amount)}）`
+      if (f.platform_payment) text = '平台已付，满足发货款项要求'
+      if (f.platform_payment_required) text = f.shipment_block_message
+      return { target, percent, text, done: received >= target }
     },
     shipmentProgress() {
       const lines = (this.fulfillmentQuantities.lines || []).filter(line => line.requires_delivery !== false && Number(line.order_qty || 0) > 0 && (line.pending_fulfillment_qty > 0 || line.shipped_qty > 0))

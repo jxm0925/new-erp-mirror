@@ -170,6 +170,15 @@ export default {
         : (row.location_id ? [{ id: row.location_id, location_name: row.location_name }] : [])
     }
   },
+  watch: {
+    '$route.query.shipment_id': {
+      immediate: true,
+      handler (value) {
+        const id = Number(value)
+        if (Number.isSafeInteger(id) && id > 0 && this.$can('sales_order.shipment.view')) this.openDetail(id)
+      }
+    }
+  },
   created () { this.query.sales_order_id = this.$route.query.sales_order_id || ''; this.load() },
   beforeDestroy () { this.loadSequence++ },
   methods: {

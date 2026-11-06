@@ -8,7 +8,9 @@ Page({
     this.setData({ direction, kind: options.kind || '', keyword: options.keyword || '', statusGroup: options.kind === 'cutting_remnant' ? 'completed' : 'pending' });
     wx.setNavigationBarTitle({ title: options.kind === 'material_return' ? '退料接收' : direction === 'inbound' ? '入库办理' : direction === 'outbound' ? '出库办理' : '仓库待办' });
   },
-  onShow() { if (!page.resumingScan(this)) this.load(); },
+  onShow() {
+    if (!page.resumingScan(this)) this.load();
+  },
   onUnload() { this.sequence = (this.sequence || 0) + 1; },
   onPullDownRefresh() { this.load().finally(() => wx.stopPullDownRefresh()); },
   load() {

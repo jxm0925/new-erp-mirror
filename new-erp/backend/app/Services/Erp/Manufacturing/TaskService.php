@@ -14,7 +14,6 @@ use App\Models\Erp\SalesOrder;
 use App\Models\Erp\ShipmentPackingLaborSession;
 use App\Services\Erp\AuthContextService;
 use App\Services\Erp\ProductionMediaService;
-use App\Services\Erp\SalesOrderFundingGateService;
 use Carbon\CarbonInterface;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -38,7 +37,6 @@ final class TaskService
 
     public function __construct(
         private readonly WorkOrderService $workOrders,
-        private readonly SalesOrderFundingGateService $funding,
         private readonly MaterialIssueService $materials,
     ) {}
 
@@ -142,7 +140,7 @@ final class TaskService
     {
         $this->closeOverdueSessions();
         DB::transaction(function () use ($opId, $actor, $lane, $unitIds) {
-            [$wo, $op] = $this->lockTask($opId);
+            [$wo, $op, $order] = $this->lockTask($opId);
             $this->assertRunnable($wo, $op);
             if ($op->status === 'done') $this->fail('operation_done', '这道工序已经做完。');
             $me = (int) $this->actorId($actor);
@@ -164,7 +162,7 @@ final class TaskService
             if ((int) $owner->employee_legacy_id !== $me
                 && ! MfgLaborSession::query()->where('work_order_operation_id', $op->id)->where('lane', $lane)->where('employee_legacy_id', $owner->employee_legacy_id)->exists())
                 $this->fail('owner_first', '接单人还没开始，协同人不能先计时。');
-            $this->assertFunds($wo);
+            $this->assertSalesOrderNotCancelled($wo, $order);
             DispositionLaborService::assertNotTiming($me);
             if (MfgLaborSession::query()->where('employee_legacy_id', $me)->where('status', 'active')->lockForUpdate()->first())
                 $this->fail('already_timing', '你还有别的工序在计时，请先暂停那一道。');
@@ -289,7 +287,7 @@ final class TaskService
         $this->closeOverdueSessions();
         $submissionKey = (string) Str::uuid();
         return DB::transaction(function () use ($opId, $unitIds, $remark, $actor, $cuttingRunId, $completion, $submissionKey) {
-            [$wo, $op] = $this->lockTask($opId);
+            [$wo, $op, $order] = $this->lockTask($opId);
             $this->assertRunnable($wo, $op);
             $sheet = in_array((int) $op->id, MaterialIssueService::cuttingOperationIds((int) $wo->id), true);
             if (! $sheet && ! in_array((int) $op->id, MaterialIssueService::prepOperationIds((int) $wo->id), true))
@@ -301,7 +299,7 @@ final class TaskService
                 if (! $this->canDo($op, $me)) $this->fail('not_worker', '你不在这道工序“能做的人”里，请找主管派工。');
                 $this->setParticipant($op, $me, $this->actorName($actor), 'owner', $actor);
             }
-            $this->assertFunds($wo);
+            $this->assertSalesOrderNotCancelled($wo, $order);
             $units = $this->pickUnits($op, $unitIds, 'normal');
             $remark = trim((string) $remark) ?: null;
             // 只为这次第一次过本道的设备收料；返工回来的设备料已经收过。
@@ -560,13 +558,10 @@ final class TaskService
             ->whereColumn('r.unit_id', 'erp_mfg_work_order_units.id')->where('r.review_status', 'pending'))->get();
     }
 
-    /** 订单工单第一次开工（含已备料交下道）前，定金须满足生产要求。 */
-    private function assertFunds(MfgWorkOrder $wo): void
+    private function assertSalesOrderNotCancelled(MfgWorkOrder $wo, ?SalesOrder $order): void
     {
         if ($wo->started_at || $wo->source_type !== 'sales_order' || ! $wo->sales_order_id) return;
-        $order = SalesOrder::query()->find($wo->sales_order_id);
-        $status = $order ? $this->funding->status($order) : ['production_funds_satisfied' => true];
-        if (! ($status['production_funds_satisfied'] ?? false)) $this->fail('funds_unsatisfied', $status['production_block_message'] ?? '定金未到，不能开工。');
+        if ($order?->order_status === 'cancelled') $this->fail('order_cancelled', '销售订单已取消，不能按原订单开工。');
     }
 
     private function markStarted(MfgWorkOrder $wo, MfgWorkOrderOperation $op, object $actor): void
@@ -655,11 +650,11 @@ final class TaskService
             $parentId = MfgWorkOrderLink::query()->where('child_work_order_id', $woId)->value('parent_work_order_id');
             if ($parentId) $orderId = MfgWorkOrder::query()->whereKey($parentId)->value('sales_order_id');
         }
-        if ($orderId) SalesOrder::query()->whereKey($orderId)->lockForUpdate()->firstOrFail();
+        $order = $orderId ? SalesOrder::query()->whereKey($orderId)->lockForUpdate()->firstOrFail() : null;
         $wo = MfgWorkOrder::query()->lockForUpdate()->findOrFail($woId);
         $op = MfgWorkOrderOperation::query()->where('work_order_id', $wo->id)->lockForUpdate()->findOrFail($opId);
         if ($op->execution_context !== 'production') $this->fail('not_production', '这道不是车间工序，不能在这里报工。');
-        return [$wo, $op];
+        return [$wo, $op, $order];
     }
 
     private function assertRunnable(MfgWorkOrder $wo, MfgWorkOrderOperation $op): void

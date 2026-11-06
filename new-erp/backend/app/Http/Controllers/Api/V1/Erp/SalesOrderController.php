@@ -33,6 +33,7 @@ use App\Services\Erp\LengthCutRequirementService;
 use App\Services\Erp\SalesOrderDraftService;
 use App\Services\Erp\SalesOrderAttachmentService;
 use App\Services\Erp\SalesOrderFundingGateService;
+use App\Services\Erp\SalesOrderPlatformPaymentService;
 use App\Services\Erp\SalesOrderPriorityService;
 use App\Services\Erp\SalesOrderStateCoordinator;
 use App\Services\Erp\SalesOrderEditImpactService;
@@ -72,7 +73,7 @@ class SalesOrderController extends Controller
         $payload = $this->attachCurrentOperator($this->validateOrder($request), $request, true);
         $this->assertTradePlatform($payload, null, false);
         $payload['agreed_deposit_amount'] = $this->validatedAgreedDeposit($request);
-        $order = app(SalesOrderDraftService::class)->create($payload, $this->operatorName($request));
+        $order = app(SalesOrderDraftService::class)->create($payload, $this->operatorName($request), app(AuthContextService::class)->currentUser($request));
 
         return response()->json(['message' => '销售订单草稿已保存', 'data' => $order], 201);
     }
@@ -85,15 +86,11 @@ class SalesOrderController extends Controller
         $payload = $this->attachCurrentOperator($this->validateOrder($request, true), $request);
         $this->assertTradePlatform($payload, $order, false);
         $payload['agreed_deposit_amount'] = $this->validatedAgreedDeposit($request);
-        $order = app(SalesOrderDraftService::class)->update($order, $payload, $this->operatorName($request));
+        $order = app(SalesOrderDraftService::class)->update($order, $payload, $this->operatorName($request), app(AuthContextService::class)->currentUser($request));
 
         return response()->json(['message' => '销售订单草稿已更新', 'data' => $order]);
     }
 
-    /**
-     * 销售按与客户的实际约定修改开工定金。定金只影响开工资金门槛，不改合同金额、
-     * 收款或发货条件。生产确认前可直接维护，确认后在订单编辑页提交审核。
-     */
     /** 销售负责人单独调整订单优先级，没做完的工单（含半成品、补做工单）跟着改。 */
     public function adjustPriority(Request $request, int $id)
     {
@@ -111,6 +108,7 @@ class SalesOrderController extends Controller
         return response()->json(['message' => '优先级已调整'.($result['work_orders'] ? '，'.count($result['work_orders']).' 张工单已跟着调整' : ''), 'data' => $result]);
     }
 
+    /** 约定定金是付款条款。生产确认后在订单编辑页提交审核。 */
     public function updateAgreedDeposit(Request $request, int $id)
     {
         $this->abortUnlessAnyPermission($request, ['sales_order.edit_draft', 'sales_order.change', 'sales_order.change.submit']);
@@ -124,7 +122,7 @@ class SalesOrderController extends Controller
             abort_unless(in_array($order->order_status, ['draft', 'confirmed'], true), 422, '只有草稿或已确认的订单可以修改约定定金');
             abort_if($order->order_status === 'confirmed' && app(SalesOrderEditImpactService::class)->productionReleased($order), 422, '生产确认后修改约定定金须在订单编辑页提交审核。');
             $snapshot = (array) $order->funding_policy_snapshot;
-            abort_unless(SalesOrderFundingGateService::supportsAgreedDeposit($snapshot['policy_type'] ?? null), 422, '当前付款条件不是定金开工，不能填写约定定金');
+            abort_unless(SalesOrderFundingGateService::supportsAgreedDeposit($snapshot['policy_type'] ?? null), 422, '当前付款条件不支持填写约定定金');
 
             $gate = app(SalesOrderFundingGateService::class);
             $before = $gate->status($order);
@@ -168,6 +166,21 @@ class SalesOrderController extends Controller
         $visible = app(SalesOrderFundingGateService::class)->statusForPermissions($id, $permissions, $superAdmin);
 
         return response()->json(['message' => '约定定金已更新', 'data' => $visible]);
+    }
+
+    public function updatePlatformPayment(Request $request, int $id, SalesOrderPlatformPaymentService $payments): JsonResponse
+    {
+        $this->abortUnlessPermission($request, 'sales_order.view');
+        $data = $request->validate(['confirmed' => 'required|boolean', 'confirmation_token' => 'required|string|size:64']);
+        $actor = app(AuthContextService::class)->currentUser($request);
+        $funding = DB::transaction(function () use ($request, $id, $data, $actor, $payments): array {
+            $order = SalesOrder::query()->lockForUpdate()->findOrFail($id);
+            $this->abortUnlessOrderVisible($request, $order, true);
+            $payments->update($order, (bool) $data['confirmed'], $actor, $data['confirmation_token']);
+            return app(SalesOrderStateCoordinator::class)->handle(SalesOrderStateCoordinator::PAYMENT_CHANGED, $order);
+        }, 5);
+
+        return response()->json(['message' => $data['confirmed'] ? '已确认平台全款' : '已撤销平台收款确认', 'funding_status' => $funding]);
     }
 
     private function validatedAgreedDeposit(Request $request): ?string
@@ -524,6 +537,7 @@ class SalesOrderController extends Controller
             $query->where(function (Builder $q) use ($keyword) {
                 $q->where('sales_order_no', 'like', "%{$keyword}%")
                     ->orWhere('origin_order_no', 'like', "%{$keyword}%")
+                    ->orWhere('external_order_no', 'like', "%{$keyword}%")
                     ->orWhere('customer_name', 'like', "%{$keyword}%")
                     ->orWhereHas('lines', function (Builder $line) use ($keyword) {
                         $line->where('product_name', 'like', "%{$keyword}%")
@@ -585,14 +599,7 @@ class SalesOrderController extends Controller
                 ->orderBy('sort')
                 ->orderBy('id')
                 ->get(['id', 'method_code as code', 'method_name as name']),
-            'platforms' => DB::table('erp_sales_order_trade_platforms')
-                ->where('enabled', true)
-                ->orderBy('parent_legacy_id')
-                ->orderBy('sort')
-                ->orderBy('legacy_id')
-                ->get(['legacy_id as id', 'parent_legacy_id as pid', 'name', 'short_name', 'trade_type'])
-                // 停用的主平台连同其子平台一起隐藏，避免只剩子平台的孤立选项。
-                ->pipe(fn ($rows) => $rows->filter(fn ($row) => (int) $row->pid === 0 || $rows->contains(fn ($p) => (int) $p->id === (int) $row->pid))->values()),
+            'platforms' => app(\App\Services\Erp\SalesTradePlatformService::class)->options(),
             'carriers' => (! $request->has('include_carriers') || $request->boolean('include_carriers')) ? DB::table('erp_sales_order_deliveries')
                 ->where('enabled', true)
                 ->orderBy('sort')
@@ -1224,6 +1231,7 @@ class SalesOrderController extends Controller
             'payment_method_id' => 'nullable|integer|exists:erp_payment_methods,id',
             'transaction_mode' => ['nullable', Rule::in(['cash_sale', 'contract', 'online_prepay'])],
             'external_order_no' => 'nullable|string|max:160',
+            'platform_payment_confirmed' => 'sometimes|boolean',
             'channel_ordered_at' => 'nullable|date',
             'contract_no' => 'nullable|string|max:120',
             'payment_terms_snapshot' => 'nullable|array',
@@ -1577,6 +1585,8 @@ class SalesOrderController extends Controller
                 || (($changeEligibility['allowed'] ?? ($order->order_status === 'confirmed' && $order->confirm_status === 'confirmed' && !$order->short_closed_at))
                     && ($released ? $canChange : ($canChange || in_array('sales_order.edit_draft', $codes, true)))),
             'production_released' => $released,
+            'platform_payment_recorder' => SalesOrderPlatformPaymentService::isRecorder($order, (int) ($user->legacy_id ?? 0)),
+            'platform_payment_confirm' => SalesOrderPlatformPaymentService::canConfirm($order, (int) ($user->legacy_id ?? 0)),
             // 生产确认前可独立维护定金；确认后统一在订单编辑页提交审核。
             'edit_agreed_deposit' => in_array($order->order_status, ['draft', 'confirmed'], true)
                 && !$released
@@ -1594,7 +1604,7 @@ class SalesOrderController extends Controller
         $order->setAttribute('read_only', !$writable->exists());
         if ($order->read_only) {
             foreach ($actions as $key => $value) {
-                if (!in_array($key, ['view_attachment', 'production_released'], true)) $actions[$key] = false;
+                if (!in_array($key, ['view_attachment', 'production_released', 'platform_payment_recorder', 'platform_payment_confirm'], true)) $actions[$key] = false;
             }
         }
         return $actions;

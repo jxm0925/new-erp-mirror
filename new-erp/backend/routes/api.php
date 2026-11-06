@@ -44,6 +44,7 @@ use App\Http\Controllers\Api\V1\Erp\ProductionPerformanceStatsController;
 use App\Http\Controllers\Api\V1\Erp\MfgTaskController;
 use App\Http\Controllers\Api\V1\Erp\MfgTechController;
 use App\Http\Controllers\Api\V1\Erp\ShipmentPackingController;
+use App\Http\Controllers\Api\V1\Erp\ShipmentOutboundApplicationController;
 use App\Http\Controllers\Api\V1\Erp\RbacController;
 use App\Http\Controllers\Api\V1\Erp\SalesOrderController;
 use App\Http\Controllers\Api\V1\Erp\SalesShipmentController;
@@ -276,6 +277,9 @@ Route::prefix('v1/erp/finance')->group(function () {
 });
 
 Route::prefix('v1/erp/inventory')->group(function () {
+    Route::get('shipment-outbound-applications', [ShipmentOutboundApplicationController::class, 'index']);
+    Route::get('shipment-outbound-applications/{id}', [ShipmentOutboundApplicationController::class, 'show'])->whereNumber('id');
+    Route::post('shipment-outbound-applications/{id}/review', [ShipmentOutboundApplicationController::class, 'review'])->whereNumber('id');
     Route::get('scan/resolve', [\App\Http\Controllers\Api\V1\Erp\InventoryScanController::class, 'resolve']);
     Route::get('warehouse-workspace', [\App\Http\Controllers\Api\V1\Erp\WarehouseWorkspaceController::class, 'index']);
     Route::get('warehouse-workspace/summary', [\App\Http\Controllers\Api\V1\Erp\WarehouseWorkspaceController::class, 'summary']);
@@ -423,6 +427,7 @@ Route::prefix('v1/erp/sales')->group(function () {
     Route::get('orders/{id}/short-close-preview', [SalesOrderController::class, 'shortClosePreview'])->whereNumber('id');
     Route::post('orders/{id}/short-close', [SalesOrderController::class, 'shortClose'])->whereNumber('id');
     Route::put('orders/{id}/agreed-deposit', [SalesOrderController::class, 'updateAgreedDeposit'])->whereNumber('id');
+    Route::put('orders/{id}/platform-payment', [SalesOrderController::class, 'updatePlatformPayment'])->whereNumber('id');
     Route::post('orders/{id}/priority', [SalesOrderController::class, 'adjustPriority'])->whereNumber('id');
     Route::get('shipments', [SalesShipmentController::class, 'index']);
     Route::post('shipments', [SalesShipmentController::class, 'store']);

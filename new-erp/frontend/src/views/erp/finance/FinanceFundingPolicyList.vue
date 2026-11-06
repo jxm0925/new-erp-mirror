@@ -1,7 +1,7 @@
 <template>
   <div class="funding-page">
     <div class="page-title">
-      <div><h1>付款条件</h1><p>销售订单选用的付款条件：收够多少钱才能开工；发货一律要求收齐全款。</p></div>
+      <div><h1>付款条件</h1><p>维护销售订单的付款条款。收齐款项后可确认发运或提货。</p></div>
       <el-button v-if="canManage" class="primary" type="success" icon="el-icon-plus" @click="openCreate">新增付款条件</el-button>
     </div>
     <section class="filter-card">
@@ -14,7 +14,7 @@
         <el-table-column prop="policy_code" label="编码" min-width="130" />
         <el-table-column prop="policy_name" label="名称" min-width="150" />
         <el-table-column label="类型" width="110"><template slot-scope="{ row }">{{ typeLabel(row.policy_type) }}</template></el-table-column>
-        <el-table-column label="开工条件" min-width="170"><template slot-scope="{ row }">{{ startText(row) }}</template></el-table-column>
+        <el-table-column label="默认定金" min-width="170"><template slot-scope="{ row }">{{ depositText(row) }}</template></el-table-column>
         <el-table-column label="发货条件" width="110"><template>收齐全款</template></el-table-column>
         <el-table-column label="状态" width="76" align="center"><template slot-scope="{ row }"><el-tag size="mini" :type="row.status === 'enabled' ? 'success' : 'info'">{{ row.status === 'enabled' ? '启用' : '停用' }}</el-tag></template></el-table-column>
         <el-table-column prop="remark" label="备注" min-width="160"><template slot-scope="{ row }">{{ row.remark || '--' }}</template></el-table-column>
@@ -31,24 +31,23 @@
     <el-dialog :title="form.id ? '编辑付款条件' : '新增付款条件'" :visible.sync="dialog" width="560px" custom-class="funding-dialog" :close-on-click-modal="false">
       <el-form label-width="96px" size="small">
         <el-form-item label="编码" required><el-input v-model.trim="form.policy_code" :disabled="!!form.id" maxlength="60" placeholder="字母、数字、下划线，例如 DEPOSIT_30" /></el-form-item>
-        <el-form-item label="名称" required><el-input v-model.trim="form.policy_name" maxlength="120" placeholder="例如：定金 30% 开工" /></el-form-item>
+        <el-form-item label="名称" required><el-input v-model.trim="form.policy_name" maxlength="120" placeholder="例如：定金 30%" /></el-form-item>
         <el-form-item label="类型" required>
           <el-select v-model="form.policy_type" style="width:100%"><el-option v-for="t in types" :key="t.value" :label="t.label" :value="t.value" /></el-select>
         </el-form-item>
         <template v-if="form.policy_type !== 'full_prepay'">
-          <el-form-item label="开工门槛" required>
+          <el-form-item label="定金算法" required>
             <el-radio-group v-model="form.production_threshold_type"><el-radio label="ratio">按比例</el-radio><el-radio label="amount">按金额</el-radio></el-radio-group>
           </el-form-item>
-          <el-form-item :label="form.production_threshold_type === 'ratio' ? '收款比例' : '收款金额'" required>
+          <el-form-item :label="form.production_threshold_type === 'ratio' ? '定金比例' : '定金金额'" required>
             <el-input-number v-model="form.threshold" :min="0" :max="form.production_threshold_type === 'ratio' ? 100 : 999999999" :precision="2" controls-position="right" />
             <span class="unit">{{ form.production_threshold_type === 'ratio' ? '% 合同额' : '元' }}</span>
           </el-form-item>
         </template>
-        <el-form-item v-else label="开工门槛"><span class="hint">收齐全款才能开工</span></el-form-item>
         <el-form-item label="发货条件"><el-checkbox :value="true" disabled>收齐全款才能发货</el-checkbox></el-form-item>
         <el-form-item label="备注"><el-input v-model.trim="form.remark" type="textarea" :rows="2" maxlength="1000" /></el-form-item>
       </el-form>
-      <p class="hint">销售渠道可设置默认付款条件；改这里不影响已下的订单（订单保存时记下当时的条件）。</p>
+      <p class="hint">新订单默认全额付款，订单保存时记录选用的付款条件。</p>
       <span slot="footer"><el-button @click="dialog = false">取消</el-button><el-button class="primary" type="success" :loading="saving" @click="save">保存</el-button></span>
     </el-dialog>
   </div>
@@ -58,8 +57,8 @@
 import { listFundingPolicies, createFundingPolicy, updateFundingPolicy, setFundingPolicyStatus } from '../../../api/erp/finance'
 
 const TYPES = [
-  { value: 'full_prepay', label: '全额预付' }, { value: 'deposit_production', label: '定金开工' },
-  { value: 'installment_contract', label: '分期合同' }, { value: 'custom_threshold', label: '自定义门槛' }
+  { value: 'full_prepay', label: '全额付款' }, { value: 'deposit_production', label: '定金付款' },
+  { value: 'installment_contract', label: '分期合同' }, { value: 'custom_threshold', label: '自定义定金' }
 ]
 const blank = () => ({ id: null, policy_code: '', policy_name: '', policy_type: 'deposit_production', production_threshold_type: 'ratio', threshold: 30, remark: '', business_version: 1 })
 
@@ -72,11 +71,11 @@ export default {
   created() { this.load() },
   methods: {
     typeLabel(v) { return (TYPES.find(t => t.value === v) || {}).label || v },
-    startText(row) {
-      if (row.policy_type === 'full_prepay') return '收齐全款'
+    depositText(row) {
+      if (row.policy_type === 'full_prepay') return '—'
       const v = Number(row.production_threshold_value || 0)
-      if (row.production_threshold_type === 'ratio') return v > 0 ? `收到合同额 ${Number((v * 100).toFixed(2))}%` : '不用收款即可开工'
-      return v > 0 ? `收到 ¥${v.toLocaleString('zh-CN')}` : '不用收款即可开工'
+      if (row.production_threshold_type === 'ratio') return `合同额 ${Number((v * 100).toFixed(2))}%`
+      return `¥${v.toLocaleString('zh-CN')}`
     },
     async load() {
       this.loading = true

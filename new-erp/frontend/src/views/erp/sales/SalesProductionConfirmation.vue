@@ -26,10 +26,6 @@
             <span v-if="order.creator">创建者：<b>{{ order.creator.display_name || (order.created_by_legacy_id ? `账号 ${order.created_by_legacy_id}` : '-') }}</b></span>
             <span>付款条件：<b>{{ funding ? (funding.policy_name || '标准收款') : '-' }}</b></span>
             <span v-if="funding">
-              开工款项：<b :class="funding.production_funds_satisfied ? 'text-success font-medium' : 'text-warning font-medium'">{{ productionFundingText }}</b>
-              <el-button v-if="canEditDeposit" type="text" size="mini" :loading="depositSaving" @click="editAgreedDeposit">修改定金</el-button>
-            </span>
-            <span v-if="funding">
               发货款项：<b :class="funding.shipment_funds_satisfied ? 'text-success font-medium' : 'text-warning font-medium'">{{ shipmentFundingText }}</b>
             </span>
           </div>
@@ -63,14 +59,6 @@
         :closable="false"
         show-icon
         title="系统提示：上次确认结果尚未接收完成。请点击“重试原确认”，系统将按幂等性识别同一次操作；核实前暂不能修改分配数量。"
-      />
-      <el-alert
-        v-if="funding && !funding.production_funds_satisfied && !confirmed"
-        class="custom-alert"
-        type="warning"
-        :closable="false"
-        show-icon
-        :title="`财务前置提示：${funding.production_block_message || '定金尚未足额到账'}。允许先行确认备货并生成工单，但定金未达标前车间暂不可开工作业。`"
       />
 
       <!-- 双栏布局 -->
@@ -303,7 +291,7 @@
               <li>生产工单确认后自动下达并生成唯一产品序列号（SN）</li>
               <li>仓储部门依据工艺工序齐套发料，车间班组核实签收</li>
               <li>生产主管可在工单管理中调整负责人、完工交期与优先级</li>
-              <li>款项前置控制：定金未足额到账暂不开工，尾款未清结暂不发运</li>
+              <li>尾款未结清，暂不发运</li>
             </ul>
           </div>
 
@@ -329,14 +317,12 @@
 import { erpDateTime } from '../../../utils/dateTime'
 import cachedPageRoute from '@/utils/cachedPageRoute'
 import { confirmProduction, getProductionPreview } from '@/api/erp/sales'
-import { promptAgreedDeposit } from '@/utils/salesAgreedDeposit'
 import { confirmationAllocationSum, currentConfirmationSuggestion, confirmationIsAdjusted, buildSalesProductionConfirmation } from '../../../utils/sales-production-confirmation.mjs'
 
 export default {
   mixins: [cachedPageRoute],
   name: 'SalesProductionConfirmation',
   data: () => ({
-    depositSaving: false,
     loading: false,
     submitting: false,
     preview: {},
@@ -385,17 +371,10 @@ export default {
     serviceDone () {
       return this.lines.filter(row => this.isService(row) && row.service_completed !== false && Number(row.service_qty || 0) > 0).length
     },
-    productionFundingText () {
-      const f = this.funding
-      const got = f.net_received_amount !== undefined ? `已收 ${this.money(f.net_received_amount)} · ` : ''
-      if (f.production_funds_satisfied) return `${got}满足开工条件`
-      if (f.production_required_amount === undefined) return `${got}定金未到`
-      const label = f.deposit_source === 'agreed' ? '约定定金' : '需付定金'
-      const short = Number(f.net_received_amount || 0) > 0 && f.deposit_outstanding_amount !== undefined ? `，还差 ${this.money(f.deposit_outstanding_amount)}` : ''
-      return `${got}${label} ${this.money(f.production_required_amount)}${short}`
-    },
     shipmentFundingText () {
       const f = this.funding
+      if (f.platform_payment) return '平台已付，满足发货款项要求'
+      if (f.platform_payment_required) return f.platform_payment_eligible ? '待录单人核对平台付款' : '待补齐平台订单信息'
       if (f.shipment_funds_satisfied) return '已结清满足发运'
       if (f.outstanding_amount === undefined) return '尾款未结清'
       // 未收金额包含尚未到账的定金时拆开显示，避免把全部未收款当成尾款。
@@ -403,12 +382,6 @@ export default {
         return `未收 ${this.money(f.outstanding_amount)}（定金 ${this.money(f.deposit_outstanding_amount)} + 尾款 ${this.money(f.balance_outstanding_amount)}）`
       }
       return `待付尾款 ${this.money(f.outstanding_amount)}`
-    },
-    canEditDeposit () {
-      const f = this.funding
-      return Boolean(f && f.agreed_deposit_supported && f.production_required_amount !== undefined && this.order
-        && ['draft', 'confirmed'].includes(this.order.order_status)
-        && (this.$can('sales_order.edit_draft') || this.$can('sales_order.change') || this.$can('sales_order.change.submit')))
     },
     attention () {
       const list = []
@@ -426,16 +399,6 @@ export default {
     'pageRoute.params.id' () { this.load() }
   },
   methods: {
-    async editAgreedDeposit () {
-      if (this.depositSaving || !this.order) return
-      this.depositSaving = true
-      try {
-        await promptAgreedDeposit(this, this.order.id, this.funding)
-        await this.load()
-      } catch (error) {
-        if (!['cancel', 'close'].includes(error)) this.$message.error(error.userMessage || '约定定金保存失败')
-      } finally { this.depositSaving = false }
-    },
     returnToOrder () {
       if (!this.order || !this.order.id) return this.$router.push('/sales/orders')
       return this.$router.push(`/sales/orders/${this.order.id}/detail`)

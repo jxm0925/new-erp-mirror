@@ -20,7 +20,6 @@ use App\Services\Erp\DocumentNumberService;
 use App\Services\Erp\InventoryAvailabilityService;
 use App\Services\Erp\Inventory\ProductionInventoryPosting;
 use App\Services\Erp\MaterialPhysicalService;
-use App\Services\Erp\SalesOrderFundingGateService;
 use App\Services\Erp\UnitConversionDomainService;
 use Illuminate\Support\Facades\DB;
 
@@ -37,7 +36,6 @@ final class CuttingService
         private readonly UnitConversionDomainService $units,
         private readonly WorkOrderService $workOrders,
         private readonly DocumentNumberService $numbers,
-        private readonly SalesOrderFundingGateService $funding,
     ) {}
 
     public function context(int $workOrderId, array $filters, bool $amounts, object $actor): array
@@ -191,7 +189,7 @@ final class CuttingService
     public function issue(int $workOrderId, array $data, object $actor, bool $amounts): array
     {
         return DB::transaction(function () use ($workOrderId, $data, $actor, $amounts) {
-            $wo = $this->lockedWorkOrder($workOrderId);
+            [$wo, $order] = $this->lockWorkOrder($workOrderId);
             $hash = $this->hash($data);
             $old = MfgCuttingBatch::query()->where('idempotency_key', $data['idempotency_key'])->lockForUpdate()->first();
             if ($old) {
@@ -200,7 +198,7 @@ final class CuttingService
             }
             if (! in_array($wo->status, ['released', 'in_progress'], true)) $this->fail('status_invalid', '只有已下达或生产中的工单可以领入开料。');
             if ((int) $wo->business_version !== (int) $data['expected_version']) $this->fail('version_conflict', '工单已经变更，请刷新后重新选料。', 409);
-            $this->assertFunding($wo);
+            if ($order?->order_status === 'cancelled') $this->fail('order_cancelled', '销售订单已取消，不能按原订单领入开料。');
             $plan = $this->plan($wo, $data, true);
             $this->assertActor((int) $plan['operation_id'], $actor);
             $batch = MfgCuttingBatch::create([
@@ -236,7 +234,7 @@ final class CuttingService
         return DB::transaction(function () use ($batchId, $data, $actor, $amounts) {
             $workOrderId = MfgCuttingBatch::query()->whereKey($batchId)->value('work_order_id');
             if (! $workOrderId) $this->fail('not_found', '随单开料批次不存在。', 404);
-            $wo = $this->lockedWorkOrder((int) $workOrderId);
+            [$wo] = $this->lockWorkOrder((int) $workOrderId);
             $batch = MfgCuttingBatch::query()->lockForUpdate()->findOrFail($batchId);
             $this->assertActor((int) $batch->work_order_operation_id, $actor);
             $hash = $this->hash($data);
@@ -778,7 +776,7 @@ final class CuttingService
         return ['ids' => $qty > 0 ? $ids : [], 'qty' => $qty];
     }
 
-    public function lockedWorkOrder(int $id): MfgWorkOrder
+    private function lockWorkOrder(int $id): array
     {
         $origin = MfgWorkOrder::query()->findOrFail($id);
         $seen = [];
@@ -790,28 +788,11 @@ final class CuttingService
             $origin = MfgWorkOrder::query()->findOrFail($parentId);
         }
         $orderId = $origin->sales_order_id;
-        if ($orderId) SalesOrder::query()->whereKey($orderId)->lockForUpdate()->firstOrFail();
+        $order = $orderId ? SalesOrder::query()->whereKey($orderId)->lockForUpdate()->firstOrFail() : null;
         $wo = MfgWorkOrder::query()->lockForUpdate()->findOrFail($id);
         $wo->setRelation('materials', MfgWorkOrderMaterial::query()->where('work_order_id', $wo->id)->orderBy('id')->lockForUpdate()->get());
         $wo->setRelation('operations', MfgWorkOrderOperation::query()->where('work_order_id', $wo->id)->orderBy('sequence')->orderBy('id')->lockForUpdate()->get());
-        return $wo;
-    }
-
-    private function assertFunding(MfgWorkOrder $wo): void
-    {
-        $seen = [];
-        while (! $wo->sales_order_id && $wo->source_type === 'work_order') {
-            if (isset($seen[$wo->id])) $this->fail('parent_cycle', '半成品工单来源存在循环，请核实关联。');
-            $seen[$wo->id] = true;
-            $parentId = MfgWorkOrderLink::query()->where('child_work_order_id', $wo->id)->value('parent_work_order_id');
-            if (! $parentId) break;
-            $wo = MfgWorkOrder::query()->findOrFail($parentId);
-        }
-        if ($wo->sales_order_id) {
-            $order = SalesOrder::query()->whereKey($wo->sales_order_id)->lockForUpdate()->firstOrFail();
-            $status = $this->funding->status($order);
-            if (! ($status['production_funds_satisfied'] ?? false)) $this->fail('funds_unsatisfied', $status['production_block_message'] ?? '生产收款条件未满足，不能领入开料。');
-        }
+        return [$wo, $order];
     }
 
     private function assertActor(int $operationId, object $actor): void

@@ -13,6 +13,7 @@ use App\Models\Erp\SalesShipmentLine;
 use App\Models\Erp\SalesShipmentLog;
 use App\Models\Erp\SalesShipmentPackage;
 use App\Models\Erp\ShipmentDispatch;
+use App\Models\Erp\ShipmentOutboundApplication;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
@@ -56,7 +57,6 @@ class SalesShipmentApplicationService
     {
         return DB::transaction(function () use ($orderId, $payload, $operator): SalesShipment {
             $order = SalesOrder::query()->with('lines')->lockForUpdate()->findOrFail($orderId);
-            $this->fundingGates->assertCanShip($order);
             if (!in_array($order->order_status, ['confirmed'], true)) {
                 throw ValidationException::withMessages(['order' => '只有已确认的销售订单才可以创建发货单。']);
             }
@@ -244,7 +244,7 @@ class SalesShipmentApplicationService
     public function confirm(SalesShipment $shipment, string $operator, array $payload, object $actor): SalesShipment
     {
         return $this->mutate('confirm_shipment', $shipment, $payload, $actor, function ($shipment) use ($operator): void {
-            $this->fundingGates->assertCanShip($shipment->sales_order_id);
+            abort_if($shipment->order->order_status === 'cancelled', 422, '销售订单已取消，不能确认发货单。');
             if ($shipment->shipment_status !== 'draft') throw ValidationException::withMessages(['shipment' => '只有草稿发货单可以确认。']);
             $shipment->update(['shipment_status' => 'pending_outbound', 'confirmed_at' => now(), 'confirmed_by' => $operator]);
             $shipment->lines()->where('line_status', 'draft')->update(['line_status' => 'pending_outbound']);
@@ -264,7 +264,7 @@ class SalesShipmentApplicationService
             $before = $shipment->shipment_status;
             if ($before !== 'pending_outbound' && ! (in_array($before, ['prepared', 'partially_shipped'], true) && $pending->isNotEmpty()))
                 throw ValidationException::withMessages(['shipment' => '当前发货单没有待移至待发区的明细。']);
-            $this->fundingGates->assertCanShip($shipment->sales_order_id);
+            abort_if($shipment->order->order_status === 'cancelled', 422, '销售订单已取消，不能移至待发区。');
             $target = $this->location((int) ($payload['staging_location_id'] ?? 0), 'shipping_staging');
             foreach ($pending as $line) {
                 $this->inventory->moveSalesShipmentLine($line, (int) $target->id, 'stage', $actor);
@@ -280,68 +280,103 @@ class SalesShipmentApplicationService
     public function dispatch(SalesShipment $shipment, string $operator, array $payload, object $actor): SalesShipment
     {
         return $this->mutate('dispatch_shipment', $shipment, $payload, $actor, function ($shipment) use ($payload, $actor, $operator): void {
-            if (! in_array($shipment->shipment_status, ['prepared', 'partially_shipped', 'outbound_posted'], true)) throw ValidationException::withMessages(['shipment' => '只有已移至待发区的发货单可以确认发运或提货。']);
-            $this->fundingGates->assertCanShip($shipment->sales_order_id);
-            $packageIds = array_values(array_unique(array_map('intval', $payload['package_ids'] ?? [])));
-            $packages = $shipment->packages()->whereIn('id', $packageIds)->whereNotIn('package_status', ['shipped', 'cancelled'])->orderBy('id')->lockForUpdate()->get();
-            if ($packageIds === [] || $packages->count() !== count($packageIds)) throw ValidationException::withMessages(['package_ids' => '请选择本单尚未发运的真实包裹。']);
-            $mode = $payload['delivery_mode'] ?? '';
-            if (! in_array($mode, ['dispatch', 'pickup'], true)) throw ValidationException::withMessages(['delivery_mode' => '请选择发运或客户提货。']);
-            $this->packing->assertReady($shipment, $packageIds);
-            $contents = $shipment->packingContents()->current()->whereIn('package_id', $packageIds)->get();
-            $lineIds = $contents->pluck('shipment_line_id')->unique()->map('intval')->all();
-            $lines = $shipment->lines()->whereIn('id', $lineIds)->orderBy('id')->lockForUpdate()->get();
-            if ($lines->isEmpty()) throw ValidationException::withMessages(['package_ids' => '包裹没有可发运的产品明细。']);
-            foreach ($lines as $line) {
-                if (in_array($line->line_status, ['shipped', 'replaced', 'repair', 'cancelled'], true)
-                    || bccomp((string) $contents->where('shipment_line_id', $line->id)->sum('base_qty'), (string) $line->base_qty, 8) !== 0) {
-                    throw ValidationException::withMessages(['package_ids' => '所选包裹必须完整覆盖对应发货明细，返修、换出或已发设备不能发运。']);
-                }
-            }
-            // 旧单已经扣库的事实只认真实过账，状态本身不是免扣库凭证。
-            $legacy = DB::table('erp_inventory_transactions')->where('source_type', 'sales_shipment')->where('source_id', $shipment->id)
-                ->where('transaction_type', 'sales_shipment_outbound')->where('posting_status', 'posted')->first();
-            if ($shipment->shipment_status === 'outbound_posted' && ! $legacy) throw ValidationException::withMessages(['shipment' => '历史发货单缺少真实销售出库事实，不能跳过库存记账。']);
-            if ($legacy) foreach ($lines as $line) {
-                $proof = DB::table('erp_inventory_transaction_items')->where('transaction_id', $legacy->id)->where('source_type', 'sales_shipment')
-                    ->where('source_id', $shipment->id)->where('source_item_id', $line->id)->where('item_id', $line->item_id)
-                    ->where('warehouse_id', $line->warehouse_id)->where('location_id', $line->location_id)->where('batch_no', $line->batch_no)
-                    ->where('change_qty', bcsub('0', (string) $line->base_qty, 8))->exists();
-                if (! $proof) throw ValidationException::withMessages(['shipment' => '历史销售出库与本次所选明细不符，不能免记库存。']);
-            }
-            // 这次选中的包裹共用一个快递公司和运单号（海运填柜号），填一次即可
-            $carrier = trim((string) ($payload['carrier_name'] ?? '')) ?: null;
-            $tracking = trim((string) ($payload['tracking_no'] ?? '')) ?: null;
-            $dispatch = ShipmentDispatch::create(['dispatch_no' => $this->numbers->next('shipment_dispatch', 'DSP'), 'shipment_id' => $shipment->id,
-                'delivery_mode' => $mode, 'carrier_name' => $carrier, 'tracking_no' => $tracking, 'package_ids' => $packageIds, 'shipment_line_ids' => $lineIds,
-                'operator_legacy_id' => (int) $actor->legacy_id, 'operator_name' => $operator, 'dispatched_at' => now()]);
-            $transaction = $legacy ?: $this->inventory->postSalesShipmentDispatch($dispatch, $shipment, $lineIds, $actor);
-            $dispatch->update(['inventory_transaction_id' => $transaction->id]);
-            // 半成品单独销售：发货冻结其当前默认 BOM 的节点提成（步骤 1 解析）与下位置整套提成；整机行留空（走产出工单的计划）。
-            $semiService = app(\App\Services\Erp\BomPositionPerformanceService::class);
-            $matcher = app(\App\Services\Erp\BomMatcher::class);
-            foreach ($lines as $line) {
-                $update = ['line_status' => 'shipped', 'dispatched_at' => now()];
-                $itemType = \Illuminate\Support\Facades\DB::table('erp_items')->where('id', $line->item_id)->value('item_type');
-                if ($itemType === 'semi_finished') {
-                    $match = $matcher->match(null, null, (int) $line->item_id, null);
-                    $bom = ($match['status'] ?? null) === 'matched' ? \App\Models\Erp\Bom::query()->find($match['bom_id']) : null;
-                    // 无默认 BOM 也明确冻结为单独销售缺配置，统计不能回退生产时的旧比例。
-                    $update['performance_plan'] = $bom ? $semiService->freezeAloneSale($bom)
-                        : ['source' => 'alone_sale', 'bom_id' => null, 'bom_no' => null, 'own_nodes' => [], 'positions' => [], 'frozen_at' => now()->toDateTimeString()];
-                }
-                $line->update($update);
-            }
-            // 本次填的快递公司、运单号同时记到这次发出的每个包裹上
-            $shipment->packages()->whereIn('id', $packageIds)->update(array_merge(['package_status' => 'shipped'], array_filter(['carrier_name' => $carrier, 'tracking_no' => $tracking])));
-            $remaining = $shipment->lines()->whereNotIn('line_status', ['shipped', 'replaced', 'cancelled'])->exists();
-            $before = $shipment->shipment_status;
-            $shipment->update(['shipment_status' => $remaining ? 'partially_shipped' : 'shipped', 'delivery_mode' => $mode,
-                'shipped_at' => now(), 'outbound_posted_at' => $shipment->outbound_posted_at ?: now(), 'outbound_posted_by' => $operator]);
-            $this->orderStates->handle(SalesOrderStateCoordinator::SHIPMENT_CHANGED, (int) $shipment->sales_order_id);
-            $this->log($shipment, 'dispatch', $before, $shipment->shipment_status, $operator, ($mode === 'pickup' ? '客户已提货' : '物流已发运').'，批次 '.$dispatch->dispatch_no
-                .'，'.$packages->count().' 个包裹'.($carrier || $tracking ? '，'.trim(($carrier ?? '').' '.($tracking ?? '')) : '').'；正式出库 '.$transaction->transaction_no);
+            $this->postDispatch($shipment, $operator, $payload, $actor);
         });
+    }
+
+    /** 调用方已在工序命令中锁定订单、发货单和当前已审批的申请。 */
+    public function dispatchApproved(SalesShipment $shipment, ShipmentOutboundApplication $application, object $actor): ShipmentDispatch
+    {
+        if ($application->kind !== 'dispatch' || $application->status !== 'approved' || (int) $application->shipment_id !== (int) $shipment->id
+            || (int) $application->applicant_legacy_id !== (int) $actor->legacy_id) {
+            throw ValidationException::withMessages(['shipment' => '只有申请人可以确认本单已经审核通过的发货申请。']);
+        }
+        $dispatch = $this->postDispatch($shipment, $application->applicant_name,
+            $application->only(['package_ids', 'delivery_mode', 'carrier_name', 'tracking_no']), $actor, $application);
+        $this->reservations->refreshSalesOrderExecution((int) $shipment->sales_order_id);
+        $shipment->increment('business_version');
+
+        return $dispatch;
+    }
+
+    public function dispatchSelection(SalesShipment $shipment, array $packageIds, bool $lock = true): array
+    {
+        if (! in_array($shipment->shipment_status, ['prepared', 'partially_shipped', 'outbound_posted'], true)) throw ValidationException::withMessages(['shipment' => '只有待发货的包裹可以申请或确认发货。']);
+        $packages = $shipment->packages()->whereIn('id', $packageIds)->whereNotIn('package_status', ['shipped', 'cancelled'])
+            ->orderBy('id')->when($lock, fn ($query) => $query->lockForUpdate())->get();
+        if ($packageIds === [] || $packages->count() !== count($packageIds)) throw ValidationException::withMessages(['package_ids' => '请选择本单尚未发运的真实包裹。']);
+        $this->packing->assertReady($shipment, $packageIds);
+        $contents = $shipment->packingContents()->current()->whereIn('package_id', $packageIds)->get()->groupBy('shipment_line_id');
+        $lines = $shipment->lines()->whereIn('id', $contents->keys())->orderBy('id')->when($lock, fn ($query) => $query->lockForUpdate())->get();
+        if ($lines->isEmpty()) throw ValidationException::withMessages(['package_ids' => '包裹没有可发运的产品明细。']);
+        foreach ($lines as $line) {
+            $quantity = $contents[$line->id]->reduce(fn (string $sum, $content) => bcadd($sum, (string) $content->base_qty, 8), '0');
+            if (in_array($line->line_status, ['shipped', 'replaced', 'repair', 'cancelled'], true)
+                || bccomp($quantity, (string) $line->base_qty, 8) !== 0) {
+                throw ValidationException::withMessages(['package_ids' => '所选包裹必须完整覆盖对应发货明细，返修、换出或已发设备不能发运。']);
+            }
+        }
+
+        return [$packages, $lines];
+    }
+
+    private function postDispatch(SalesShipment $shipment, string $operator, array $payload, object $actor, ?ShipmentOutboundApplication $application = null): ShipmentDispatch
+    {
+        $this->fundingGates->assertCanShip($shipment->sales_order_id);
+        $packageIds = array_values(array_unique(array_map('intval', $payload['package_ids'] ?? [])));
+        $mode = $payload['delivery_mode'] ?? '';
+        if (! in_array($mode, ['dispatch', 'pickup'], true)) throw ValidationException::withMessages(['delivery_mode' => '请选择发运或客户提货。']);
+        $outbound = app(ShipmentOutboundApplicationService::class);
+        if (array_intersect($packageIds, $outbound->openDispatchPackageIds((int) $shipment->id, $application?->id)) !== []) {
+            throw ValidationException::withMessages(['package_ids' => '所选包裹已有出库申请，请由车间申请人按审核结果确认发货。']);
+        }
+        [$packages, $lines] = $this->dispatchSelection($shipment, $packageIds);
+        if ($application) $outbound->assertDispatchSnapshot($application, $lines);
+        $lineIds = $lines->pluck('id')->map('intval')->all();
+        // 旧单已经扣库的事实只认真实过账，状态本身不是免扣库凭证。
+        $legacy = DB::table('erp_inventory_transactions')->where('source_type', 'sales_shipment')->where('source_id', $shipment->id)
+            ->where('transaction_type', 'sales_shipment_outbound')->where('posting_status', 'posted')->first();
+        if ($shipment->shipment_status === 'outbound_posted' && ! $legacy) throw ValidationException::withMessages(['shipment' => '历史发货单缺少真实销售出库事实，不能跳过库存记账。']);
+        if ($legacy) foreach ($lines as $line) {
+            $proof = DB::table('erp_inventory_transaction_items')->where('transaction_id', $legacy->id)->where('source_type', 'sales_shipment')
+                ->where('source_id', $shipment->id)->where('source_item_id', $line->id)->where('item_id', $line->item_id)
+                ->where('warehouse_id', $line->warehouse_id)->where('location_id', $line->location_id)->where('batch_no', $line->batch_no)
+                ->where('change_qty', bcsub('0', (string) $line->base_qty, 8))->exists();
+            if (! $proof) throw ValidationException::withMessages(['shipment' => '历史销售出库与本次所选明细不符，不能免记库存。']);
+        }
+        // 这次选中的包裹共用一个快递公司和运单号（海运填柜号），填一次即可
+        $carrier = trim((string) ($payload['carrier_name'] ?? '')) ?: null;
+        $tracking = trim((string) ($payload['tracking_no'] ?? '')) ?: null;
+        $dispatch = ShipmentDispatch::create(['dispatch_no' => $this->numbers->next('shipment_dispatch', 'DSP'), 'shipment_id' => $shipment->id,
+            'delivery_mode' => $mode, 'carrier_name' => $carrier, 'tracking_no' => $tracking, 'package_ids' => $packageIds, 'shipment_line_ids' => $lineIds,
+            'operator_legacy_id' => (int) $actor->legacy_id, 'operator_name' => $operator, 'dispatched_at' => now()]);
+        $transaction = $legacy ?: $this->inventory->postSalesShipmentDispatch($dispatch, $shipment, $lineIds, $actor);
+        $dispatch->update(['inventory_transaction_id' => $transaction->id]);
+        // 半成品单独销售：发货冻结其当前默认 BOM 的节点提成（步骤 1 解析）与下位置整套提成；整机行留空（走产出工单的计划）。
+        $semiService = app(\App\Services\Erp\BomPositionPerformanceService::class);
+        $matcher = app(\App\Services\Erp\BomMatcher::class);
+        foreach ($lines as $line) {
+            $update = ['line_status' => 'shipped', 'dispatched_at' => now()];
+            $itemType = \Illuminate\Support\Facades\DB::table('erp_items')->where('id', $line->item_id)->value('item_type');
+            if ($itemType === 'semi_finished') {
+                $match = $matcher->match(null, null, (int) $line->item_id, null);
+                $bom = ($match['status'] ?? null) === 'matched' ? \App\Models\Erp\Bom::query()->find($match['bom_id']) : null;
+                // 无默认 BOM 也明确冻结为单独销售缺配置，统计不能回退生产时的旧比例。
+                $update['performance_plan'] = $bom ? $semiService->freezeAloneSale($bom)
+                    : ['source' => 'alone_sale', 'bom_id' => null, 'bom_no' => null, 'own_nodes' => [], 'positions' => [], 'frozen_at' => now()->toDateTimeString()];
+            }
+            $line->update($update);
+        }
+        // 本次填的快递公司、运单号同时记到这次发出的每个包裹上
+        $shipment->packages()->whereIn('id', $packageIds)->update(array_merge(['package_status' => 'shipped'], array_filter(['carrier_name' => $carrier, 'tracking_no' => $tracking])));
+        $remaining = $shipment->lines()->whereNotIn('line_status', ['shipped', 'replaced', 'cancelled'])->exists();
+        $before = $shipment->shipment_status;
+        $shipment->update(['shipment_status' => $remaining ? 'partially_shipped' : 'shipped', 'delivery_mode' => $mode,
+            'shipped_at' => now(), 'outbound_posted_at' => $shipment->outbound_posted_at ?: now(), 'outbound_posted_by' => $operator]);
+        $this->orderStates->handle(SalesOrderStateCoordinator::SHIPMENT_CHANGED, (int) $shipment->sales_order_id);
+        $this->log($shipment, 'dispatch', $before, $shipment->shipment_status, $operator, ($mode === 'pickup' ? '客户已提货' : '物流已发运').'，批次 '.$dispatch->dispatch_no
+            .'，'.$packages->count().' 个包裹'.($carrier || $tracking ? '，'.trim(($carrier ?? '').' '.($tracking ?? '')) : '').'；正式出库 '.$transaction->transaction_no);
+        return $dispatch;
     }
 
     /** 只同步未发货单的收货信息；调用方已锁订单并校验没有实发事实。 */
@@ -434,6 +469,7 @@ class SalesShipmentApplicationService
             $shipment->lines()->current()->where('line_status', '!=', 'repair')->update(['line_status' => 'cancelled']);
             $shipment->packages()->where('package_status', '!=', 'shipped')->update(['package_status' => 'cancelled']);
             $shipment->packingOperations()->where('status', '!=', 'COMPLETED')->update(['status' => 'CANCELLED']);
+            app(ShipmentOutboundApplicationService::class)->withdrawForShipmentChange($shipment, $actor, $reason);
             $this->log($shipment, 'cancel', $before, 'cancelled', $operator, $reason);
         });
     }
@@ -465,6 +501,7 @@ class SalesShipmentApplicationService
             }
             $shipment->packages()->where('package_status', '!=', 'shipped')->update(['package_status' => 'cancelled']);
             $shipment->packingOperations()->where('status', '!=', 'COMPLETED')->update(['status' => 'CANCELLED']);
+            app(ShipmentOutboundApplicationService::class)->withdrawForShipmentChange($shipment, $actor, $reason);
             $shipment->update(['shipment_status' => 'shipped', 'cancel_reason' => $reason]);
             $this->orderStates->handle(SalesOrderStateCoordinator::SHIPMENT_CHANGED, (int) $shipment->sales_order_id);
             $this->log($shipment, 'cancel_remaining', 'partially_shipped', 'shipped', $operator, "取消剩余未发 {$cancelled} 行：{$reason}");

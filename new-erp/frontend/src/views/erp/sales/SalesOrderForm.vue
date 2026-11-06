@@ -33,169 +33,252 @@ Do not change layout without approval.
     />
     <system-record-picker :visible.sync="productionUnitPicker.visible" :request="loadChangeProductionUnits" :params="productionUnitPicker.params" :columns="productionUnitColumns" :config="productionUnitPicker.config" :multiple="true" :required-count="productionUnitPicker.requiredCount" :max-count="productionUnitPicker.maxCount" :selectable="productionUnitSelectable" :required-selection="productionUnitRequired" :value="productionUnitPicker.value" :label="productionUnitLabel" @confirm="applyProductionUnitSelection" />
 
-    <header class="form-toolbar">
+    <header class="form-toolbar hero-top-bar">
       <div class="toolbar-title">
-        <button type="button" class="back-btn" title="返回列表" @click="$router.push('/sales/orders')"><i class="el-icon-back" /></button>
-        <span class="main-title">{{ isEdit ? '编辑订单' : '新增订单' }}</span>
-        <span v-if="form.sales_order_no" class="order-no-pill">{{ form.sales_order_no }}</span>
+        <button type="button" class="back-btn" :title="platformPaymentOnly ? '返回订单' : '返回列表'" @click="$router.push(returnPath)"><i class="el-icon-back" /></button>
+        <div class="toolbar-title-meta">
+          <div class="toolbar-crumb">销售管理 / 销售订单 / <span>{{ platformPaymentOnly ? '核对平台付款' : (isEdit ? '编辑订单' : '新增订单') }}</span></div>
+          <div class="toolbar-heading-row">
+            <span class="main-title">{{ platformPaymentOnly ? '核对平台付款' : (isEdit ? '编辑销售订单' : '新增销售订单') }}</span>
+            <span v-if="form.sales_order_no" class="order-no-pill"><i class="pill-dot" />{{ form.sales_order_no }}</span>
+            <span class="order-stage-pill" :class="{ 'is-confirmed': isConfirmedEdit }">
+              {{ platformPaymentOnly ? '平台款核对' : (isConfirmedEdit ? `正式变更 · V${editOrderMeta.business_version || 1}` : (isEdit ? '草稿编辑中' : '草稿录制中')) }}
+            </span>
+          </div>
+        </div>
       </div>
-      <div class="toolbar-summary">
-        <span class="summary-item">共 <strong>{{ form.lines.length }}</strong> 行</span>
-        <span class="summary-item">合计 <strong class="summary-amount">¥{{ money(totalAmount) }}</strong></span>
+      <div v-if="!platformPaymentOnly" class="toolbar-kpi-capsule">
+        <div class="kpi-mini-item">
+          <span class="kpi-mini-icon"><i class="el-icon-s-order" /></span>
+          <div class="kpi-mini-body">
+            <span class="kpi-mini-label">订单明细</span>
+            <span class="kpi-mini-val"><strong>{{ form.lines.length }}</strong> 行 · 共 <strong>{{ totalQty }}</strong> 件</span>
+          </div>
+        </div>
+        <span class="kpi-mini-divider" />
+        <div class="kpi-mini-item">
+          <span class="kpi-mini-icon is-emerald"><i class="el-icon-box" /></span>
+          <div class="kpi-mini-body">
+            <span class="kpi-mini-label">备货组成</span>
+            <span class="kpi-mini-val">需生产 <strong>{{ productionLineCount }}</strong> 行 · 外购 <strong>{{ purchaseLineCount }}</strong> 行</span>
+          </div>
+        </div>
+        <span class="kpi-mini-divider" />
+        <div class="kpi-mini-item">
+          <span class="kpi-mini-icon is-emerald">¥</span>
+          <div class="kpi-mini-body">
+            <span class="kpi-mini-label">订单应收总额</span>
+            <span class="kpi-mini-val summary-amount">¥{{ money(totalAmount) }}</span>
+          </div>
+        </div>
       </div>
       <div class="toolbar-actions">
-        <el-button size="small" @click="$router.push('/sales/orders')">返回列表</el-button>
-        <el-button v-if="isEdit ? ($can('sales_order.edit_draft') || $can('sales_order.change') || $can('sales_order.change.submit')) : $can('sales_order.create')" size="small" @click="save(false)">{{ isConfirmedEdit ? '保存修改' : '保存草稿' }}</el-button>
-        <el-button v-if="!isConfirmedEdit && ($can('sales_order.submit_confirmation') || $can('sales_order.formal_confirm'))" size="small" type="primary" class="btn-emerald-primary" @click="save(true)">保存并确认</el-button>
+        <el-button size="small" @click="$router.push(returnPath)">{{ platformPaymentOnly ? '返回订单' : '返回列表' }}</el-button>
+        <el-button v-if="canEditOrder" size="small" class="btn-emerald-plain" :disabled="platformPaymentSaving" @click="save(false)">{{ isConfirmedEdit ? '保存修改' : '保存草稿' }}</el-button>
+        <el-button v-if="canEditOrder && !isConfirmedEdit && ($can('sales_order.submit_confirmation') || $can('sales_order.formal_confirm'))" size="small" type="primary" icon="el-icon-check" class="btn-emerald-primary" :disabled="platformPaymentSaving" @click="save(true)">保存并确认</el-button>
       </div>
     </header>
 
-    <div class="form-body">
+    <div v-if="!isEdit || canEditOrder || platformPaymentOnly" class="form-body">
       <!-- 按受影响主子工单实际工时及财务影响判断审核 -->
-      <div v-if="editStageTip" :class="['stage-tip', `stage-tip--${editStageTip.type}`]">
+      <div v-if="!platformPaymentOnly && editStageTip" :class="['stage-tip', `stage-tip--${editStageTip.type}`]">
         <i :class="editStageTip.icon" />
         <span>{{ editStageTip.text }}</span>
       </div>
 
-      <div class="top-grid">
+      <div :class="{ 'top-grid': !platformPaymentOnly }">
         <section ref="基本信息" class="panel order-basic-card">
-          <div class="panel-header"><h3>订单信息</h3></div>
-          <div class="field-grid">
-            <div class="field">
-              <label>订单号</label>
-              <el-input :value="form.sales_order_no || '保存后系统生成'" size="small" disabled class="erp-system-number" />
+          <div class="panel-header">
+            <div class="panel-title-wrap">
+              <h3>订单核心信息</h3>
             </div>
-            <div class="field">
-              <label>原始单号</label>
-              <el-input v-model="form.origin_order_no" size="small" placeholder="平台订单号（选填）" />
-            </div>
-            <div class="field">
-              <label class="required">下单时间</label>
-              <el-date-picker v-model="form.order_time" type="datetime" size="small" value-format="yyyy-MM-dd HH:mm:ss" placeholder="选择下单时间" />
-            </div>
-            <div class="field">
-              <label class="required">销售人员</label>
-              <el-input :value="selectedSalesUser && (selectedSalesUser.nickname || selectedSalesUser.username)" size="small" readonly placeholder="请选择销售" suffix-icon="el-icon-search" @focus="salesUserPickerVisible = true" @click.native="salesUserPickerVisible = true" />
-            </div>
-            <div class="field">
-              <label class="required">订单来源</label>
-              <el-select v-model="form.order_source" size="small">
-                <el-option label="销售订单" value="manual" />
-                <el-option label="历史迁移" value="legacy_sync" />
-                <el-option label="线索转单" value="crm_clue" />
-              </el-select>
-            </div>
-            <div class="field">
-              <label class="required">付款方式</label>
-              <el-select v-model="form.payment_method_id" size="small" placeholder="请选择付款方式" clearable>
-                <el-option v-for="item in payTypeOptions" :key="item.id" :label="item.name" :value="String(item.id)" />
-              </el-select>
-            </div>
-            <div class="field">
-              <label>付款条件</label>
-              <el-select v-model="form.funding_policy_id" size="small" placeholder="不选按销售渠道默认" clearable>
-                <el-option v-for="item in fundingPolicyOptions" :key="item.id" :label="item.policy_name" :value="item.id" />
-              </el-select>
-            </div>
-            <div v-if="depositSupported" class="field">
-              <label>约定定金</label>
-              <el-input-number :value="depositInput" size="small" :min="0" :precision="2" :controls="false" placeholder="与客户约定的开工定金" @change="changeDeposit" />
-              <span class="deposit-hint">
-                {{ depositEdited ? '已按与客户约定填写' : `按付款条件默认：${defaultDepositText}` }}
-                <el-button v-if="depositEdited" type="text" size="mini" @click="resetDeposit">恢复默认</el-button>
-              </span>
-            </div>
-            <div class="field span-2">
-              <label class="required">成交平台</label>
-              <div class="inline-pair">
-                <el-select v-model="form.platform" size="small" filterable :placeholder="form.trade_type === 'foreign' ? '国外交易平台' : '国内交易平台'" clearable @change="handlePlatformChange">
-                  <el-option v-for="item in platformOptions" :key="item.id" :label="item.name" :value="String(item.id)" />
-                </el-select>
-                <el-select v-if="platformChildrenOptions.length" v-model="form.platform2" size="small" filterable placeholder="请选择子平台（必选）" clearable>
-                  <el-option v-for="item in platformChildrenOptions" :key="item.id" :label="item.name" :value="String(item.id)" />
-                </el-select>
+          </div>
+
+          <div class="basic-layers">
+            <div class="layer-block">
+              <div class="layer-heading">
+                <span class="layer-dot is-emerald" />
+                <span>单据归属与渠道信息</span>
+              </div>
+              <div class="field-grid grid-cols-4">
+                <div class="field">
+                  <label>订单号 <span v-if="form.sales_order_no" class="field-label-tag">已预占</span></label>
+                  <el-input :value="form.sales_order_no || '保存后系统生成'" size="small" disabled class="erp-system-number" />
+                </div>
+                <div class="field">
+                  <label for="sales-original-order-no" :class="{ required: isOnlinePlatform }">原始单号</label>
+                  <el-input id="sales-original-order-no" v-model.trim="form.origin_order_no" size="small" maxlength="120" :placeholder="isOnlinePlatform ? '请填写原始单号' : '原始单号（选填）'" :required="isOnlinePlatform" :disabled="platformPaymentOnly" />
+                </div>
+                <div v-if="!platformPaymentOnly" class="field">
+                  <label class="required">下单时间</label>
+                  <el-date-picker v-model="form.order_time" type="datetime" size="small" value-format="yyyy-MM-dd HH:mm:ss" placeholder="选择下单时间" />
+                </div>
+                <div v-if="!platformPaymentOnly" class="field">
+                  <label class="required">销售人员</label>
+                  <el-input :value="selectedSalesUser && (selectedSalesUser.nickname || selectedSalesUser.username)" size="small" readonly placeholder="请选择销售" suffix-icon="el-icon-search" @focus="salesUserPickerVisible = true" @click.native="salesUserPickerVisible = true" />
+                </div>
+                <div v-if="!platformPaymentOnly" class="field">
+                  <label class="required">订单来源</label>
+                  <el-select v-model="form.order_source" size="small">
+                    <el-option label="销售订单" value="manual" />
+                    <el-option label="历史迁移" value="legacy_sync" />
+                    <el-option label="线索转单" value="crm_clue" />
+                  </el-select>
+                </div>
+                <div v-if="!platformPaymentOnly" class="field">
+                  <label>贸易类型</label>
+                  <el-radio-group v-model="form.trade_type" size="small" class="erp-segmented-radio">
+                    <el-radio-button label="domestic">内贸订单</el-radio-button>
+                    <el-radio-button label="foreign">外贸出口</el-radio-button>
+                  </el-radio-group>
+                </div>
+                <div class="field span-2">
+                  <label class="required">成交平台与子渠道</label>
+                  <div class="platform-inline-row">
+                    <el-input v-if="platformPaymentOnly" :value="editOrderMeta.platform_label" size="small" disabled class="platform-select-item" />
+                    <template v-else>
+                      <el-select v-model="form.platform" size="small" filterable :placeholder="form.trade_type === 'foreign' ? '国外交易平台' : '国内交易平台'" clearable class="platform-select-item" @change="handlePlatformChange">
+                        <el-option v-for="item in platformOptions" :key="item.id" :label="item.name" :value="String(item.id)" />
+                      </el-select>
+                      <el-select v-if="platformChildrenOptions.length" v-model="form.platform2" size="small" filterable placeholder="请选择子平台（必选）" clearable class="platform-select-item" @change="resetPlatformPaymentCheck">
+                        <el-option v-for="item in platformChildrenOptions" :key="item.id" :label="item.name" :value="String(item.id)" />
+                      </el-select>
+                    </template>
+                    <div v-if="isOnlinePlatform || platformPaymentOnly" class="platform-payment-inline">
+                      <el-checkbox v-model="platformPaymentChecked" :disabled="!canCheckPlatformPayment || platformPaymentSaving">已核对买家在平台付清</el-checkbox>
+                      <span v-if="platformPaymentDisabledReason" class="platform-inline-meta" :title="platformPaymentDisabledReason">· {{ platformPaymentDisabledReason }}</span>
+                      <span v-else class="platform-inline-meta">· 应收 <strong class="platform-amount">{{ money(platformPaymentAmount) }}</strong> {{ form.currency || 'CNY' }}</span>
+                      <el-button v-if="standalonePlatformPayment && canCheckPlatformPayment" size="mini" type="success" class="btn-emerald-primary platform-save-btn" :loading="platformPaymentSaving" :disabled="platformPaymentChecked === savedPlatformPayment" @click="savePlatformPayment">保存核对</el-button>
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
-            <div class="field">
-              <label>贸易类型</label>
-              <el-radio-group v-model="form.trade_type" size="small">
-                <el-radio-button label="domestic">内贸</el-radio-button>
-                <el-radio-button label="foreign">外贸</el-radio-button>
-              </el-radio-group>
-            </div>
-            <div class="field">
-              <label>要求交期</label>
-              <el-date-picker v-model="form.required_delivery_date" size="small" value-format="yyyy-MM-dd" placeholder="选择日期" />
-            </div>
-            <div class="field">
-              <label>加急 / 延期</label>
-              <div class="switch-pair">
-                <span class="switch-item">加急 <el-switch v-model="form.is_urgent" /></span>
-                <span class="switch-item">延期 <el-switch v-model="form.is_delay" /></span>
+
+            <div v-if="!platformPaymentOnly" class="layer-block layer-recessed">
+              <div class="layer-heading">
+                <span class="layer-dot is-amber" />
+                <span>收款条款与交期控制</span>
               </div>
-            </div>
-            <div class="field">
-              <label>延期发货日期</label>
-              <el-date-picker v-model="form.delay_date" size="small" value-format="yyyy-MM-dd" :disabled="!form.is_delay" placeholder="开启延期后选择" />
-            </div>
-            <div class="field span-full">
-              <label>订单备注</label>
-              <el-input v-model="form.remark" type="textarea" :rows="2" maxlength="200" show-word-limit placeholder="订单备注（选填）" />
+              <div class="field-grid grid-cols-4">
+                <div class="field">
+                  <label class="required">付款方式</label>
+                  <el-select v-model="form.payment_method_id" size="small" placeholder="请选择付款方式" clearable>
+                    <el-option v-for="item in payTypeOptions" :key="item.id" :label="item.name" :value="String(item.id)" />
+                  </el-select>
+                </div>
+                <div class="field">
+                  <label>付款条件</label>
+                  <el-select v-model="form.funding_policy_id" size="small" placeholder="请选择付款条件">
+                    <el-option v-for="item in fundingPolicyOptions" :key="item.id" :label="item.policy_code === 'FULL_PREPAY' ? '全额付款' : item.policy_name" :value="item.id" />
+                  </el-select>
+                </div>
+                <div class="field">
+                  <label>
+                    <span>约定定金</span>
+                    <span v-if="depositSupported && !depositEdited" class="field-label-tag">默认 {{ defaultDepositText }}</span>
+                    <el-button v-if="depositSupported && depositEdited" type="text" size="mini" class="label-inline-btn" @click="resetDeposit">恢复默认</el-button>
+                  </label>
+                  <div v-if="depositSupported" class="input-addon">
+                    <span class="addon">¥</span>
+                    <el-input-number :value="depositInput" size="small" :min="0" :precision="2" :controls="false" placeholder="与客户约定的定金" @change="changeDeposit" />
+                  </div>
+                  <el-input v-else value="全额付款无需定金" size="small" disabled />
+                </div>
+                <div class="field">
+                  <label>要求交期</label>
+                  <el-date-picker v-model="form.required_delivery_date" size="small" value-format="yyyy-MM-dd" placeholder="选择日期" />
+                </div>
+                <div class="field span-2">
+                  <label>加急 / 延期设置</label>
+                  <div class="switch-card-pair">
+                    <div class="switch-card" :class="{ 'is-urgent-on': form.is_urgent }">
+                      <span class="switch-card-title">加急订单</span>
+                      <el-switch v-model="form.is_urgent" active-color="#ef4444" />
+                    </div>
+                    <div class="switch-card" :class="{ 'is-delay-on': form.is_delay }">
+                      <span class="switch-card-title">客户要求延期</span>
+                      <el-switch v-model="form.is_delay" active-color="#008b4b" />
+                    </div>
+                  </div>
+                </div>
+                <div class="field span-2">
+                  <label>延期发货日期</label>
+                  <el-date-picker v-model="form.delay_date" size="small" value-format="yyyy-MM-dd" :disabled="!form.is_delay" placeholder="开启延期后选择" />
+                </div>
+                <div class="field span-full">
+                  <label>订单备注</label>
+                  <el-input v-model="form.remark" size="small" maxlength="200" show-word-limit placeholder="填写整单生产、包装或商务注意事项（选填）" />
+                </div>
+              </div>
             </div>
           </div>
         </section>
 
-        <section ref="客户与收货" class="panel customer-card">
-          <div class="panel-header"><h3>客户与收货</h3></div>
-          <div class="field-grid">
-            <div class="field span-2">
-              <label class="required">客户</label>
-              <div class="inline-pair">
-                <el-input v-model="form.customer_name" size="small" placeholder="点击右侧按钮选择客户" readonly />
-                <el-button size="small" plain type="success" @click="$refs.customerPicker.open()">选择客户</el-button>
+        <section v-if="!platformPaymentOnly" ref="客户与收货" class="panel customer-card">
+          <div class="panel-header">
+            <div class="panel-title-wrap">
+              <h3>客户与收货档案</h3>
+            </div>
+            <el-button size="mini" plain type="success" icon="el-icon-user" class="btn-emerald-plain" @click="$refs.customerPicker.open()">选择客户</el-button>
+          </div>
+          <div class="customer-body">
+            <div class="smart-parse-cabin">
+              <div class="smart-parse-head">
+                <span class="smart-sparkle">✦</span>
+                <span class="smart-title">智能地址解析粘贴板</span>
               </div>
-            </div>
-            <div class="field">
-              <label>客户类型</label>
-              <el-radio-group v-model="form.customer_kind" size="small">
-                <el-radio-button label="individual">个人</el-radio-button>
-                <el-radio-button label="enterprise">企业</el-radio-button>
-              </el-radio-group>
-            </div>
-            <div class="field">
-              <label>联系人</label>
-              <el-input v-model="form.contact_name" size="small" placeholder="企业客户可填写" />
-            </div>
-            <div class="field">
-              <label>联系电话</label>
-              <el-input v-model="form.customer_phone" size="small" placeholder="联系方式" />
-            </div>
-            <div class="field">
-              <label>平台买家 ID</label>
-              <el-input v-model.trim="form.platform_buyer_id" size="small" placeholder="选填，用于个人客户查重" />
-            </div>
-            <div class="field span-full">
-              <label>收货地址</label>
-              <el-input v-model="form.full_address" type="textarea" :rows="2" placeholder="省 / 市 / 区 / 详细地址" />
-            </div>
-            <div class="field span-full">
-              <label>智能识别</label>
               <el-input v-model="customerRawText" type="textarea" :rows="2" placeholder="粘贴姓名、电话、地址，自动识别并回填" @input="recognizeCustomerInfo" />
+            </div>
+            <div class="field-grid grid-cols-2">
+              <div class="field span-2">
+                <label class="required">客户名称</label>
+                <div class="inline-pair">
+                  <el-input v-model="form.customer_name" size="small" placeholder="点击右侧按钮选择客户" readonly @click.native="$refs.customerPicker.open()" />
+                  <el-button size="small" plain type="success" class="btn-emerald-plain" @click="$refs.customerPicker.open()">选择客户</el-button>
+                </div>
+              </div>
+              <div class="field">
+                <label>客户类型</label>
+                <el-radio-group v-model="form.customer_kind" size="small" class="erp-segmented-radio">
+                  <el-radio-button label="individual">个人买家</el-radio-button>
+                  <el-radio-button label="enterprise">企业单位</el-radio-button>
+                </el-radio-group>
+              </div>
+              <div class="field">
+                <label>平台买家 ID</label>
+                <el-input v-model.trim="form.platform_buyer_id" size="small" placeholder="选填，个人客户查重" />
+              </div>
+              <div class="field">
+                <label>收货联系人</label>
+                <el-input v-model="form.contact_name" size="small" placeholder="企业联系人或收件人" />
+              </div>
+              <div class="field">
+                <label>联系电话</label>
+                <el-input v-model="form.customer_phone" size="small" placeholder="手机或固话" />
+              </div>
+              <div class="field span-full">
+                <label>收货详细地址</label>
+                <el-input v-model="form.full_address" type="textarea" :rows="2" placeholder="省 / 市 / 区 / 详细地址" />
+              </div>
             </div>
           </div>
         </section>
       </div>
 
       <section
+        v-if="!platformPaymentOnly"
         ref="订单行"
         class="panel order-lines"
         :class="{ 'precheck-focus': $route.query.focus === 'lines' || String($route.query.focus || '').startsWith('lines.') }"
       >
         <div class="panel-header">
-          <h3>订单行明细 <span class="count-pill">{{ form.lines.length }} 行</span></h3>
+          <div class="panel-title-wrap">
+            <h3>订单行明细 <span class="count-pill is-emerald">{{ form.lines.length }} 行</span></h3>
+          </div>
           <div class="panel-actions">
-            <el-button size="small" type="primary" class="btn-emerald-primary" icon="el-icon-plus" @click="addLine">添加订单行</el-button>
             <el-button size="small" icon="el-icon-document-copy" @click="copyLine">复制当前行</el-button>
+            <el-button size="small" type="primary" class="btn-emerald-primary" icon="el-icon-plus" @click="addLine">添加订单行</el-button>
           </div>
         </div>
         <el-table
@@ -210,39 +293,53 @@ Do not change layout without approval.
           @current-change="selectLine"
           @expand-change="handleLineExpand"
         >
-          <el-table-column type="expand" width="40" align="center">
+          <el-table-column type="expand" width="42" align="center">
             <template slot-scope="{row, $index}">
               <div class="order-line-detail">
                 <div class="line-detail-head">
-                  <span class="row-badge">行 {{ $index + 1 }}</span>
+                  <span class="row-badge">行 {{ $index + 1 }} 配置工作台</span>
                   <strong class="line-detail-title">{{ row.product_name || '未选产品' }} · {{ row.sku_name || '未选规格' }}</strong>
-                  <span class="line-detail-amount">小计 {{ lineAmountText(row) }}</span>
-                  <el-button type="text" size="mini" icon="el-icon-arrow-up" @click="expandedLineKeys = []">收起</el-button>
+                  <span v-if="lineNeedsItem(row)" class="line-detail-conversion">
+                    （库存换算：1 {{ salesUnitName(row) }} = {{ fulfillmentFactor(row) }} {{ itemBaseUnitName(row) }} · 基本需求量 <strong>{{ itemBaseRequiredQty(row) }}</strong> {{ itemBaseUnitName(row) }}）
+                  </span>
+                  <span class="line-detail-amount">本行小计：{{ lineAmountText(row) }}</span>
+                  <el-button type="text" size="mini" icon="el-icon-arrow-up" class="collapse-up-btn" @click="expandedLineKeys = []">收起面板</el-button>
                 </div>
 
                 <div class="line-detail-grid">
                   <div class="detail-block">
-                    <div class="block-title">产品与物料</div>
+                    <div class="block-title-bar">
+                      <span class="block-title"><i class="block-dot" />产品与物料快照</span>
+                      <span class="code-badge">{{ row.product_code_snapshot || '未分配编码' }}</span>
+                    </div>
                     <div class="product-brief">
                       <div class="product-img">
                         <img v-if="row.product_snapshot && row.product_snapshot.image" :src="legacyMediaUrl(row.product_snapshot.image)" alt="产品图片">
-                        <i v-else class="el-icon-picture-outline" />
+                        <i v-else class="el-icon-box" />
                       </div>
                       <div class="product-brief-meta">
-                        <div><span class="code-badge">{{ row.product_code_snapshot || '未分配编码' }}</span></div>
-                        <div class="meta-line"><span>匹配物料</span>{{ row.item_name || '待系统匹配' }}</div>
-                        <div class="meta-line"><span>规格</span>{{ row.spec_text_snapshot || '—' }}</div>
+                        <div class="meta-line"><span>匹配物料</span><strong>{{ row.item_name || '待系统匹配' }}</strong></div>
+                        <div class="meta-line"><span>规格参数</span>{{ row.spec_text_snapshot || '—' }}</div>
+                        <div class="meta-line">
+                          <span>BOM状态</span>
+                          <em v-if="!lineNeedsItem(row) || row.is_purchase_fulfilled" class="meta-em is-muted">无需生产 BOM</em>
+                          <em v-else-if="row.bom_snapshot && row.bom_snapshot.name" class="meta-em is-ok">标准生产 BOM 已就绪</em>
+                          <em v-else class="meta-em is-info">后续由工单维护</em>
+                        </div>
                       </div>
                     </div>
                     <div class="block-actions">
                       <el-button size="mini" plain icon="el-icon-edit-outline" @click="openProductPicker(row)">更换产品</el-button>
-                      <el-button size="mini" plain icon="el-icon-edit-outline" @click="openSkuPicker(row)">更换规格</el-button>
+                      <el-button size="mini" plain icon="el-icon-edit-outline" @click="openSkuPicker(row)">更换规格 (SKU)</el-button>
                     </div>
                   </div>
 
                   <div class="detail-block">
-                    <div class="block-title">数量与价格</div>
-                    <div class="field-grid compact">
+                    <div class="block-title-bar">
+                      <span class="block-title"><i class="block-dot" />数量、单价与行备注</span>
+                      <span v-if="row.line_type === 'deduction'" class="muted-text">填正数自动减钱</span>
+                    </div>
+                    <div class="field-grid grid-cols-2 compact">
                       <div class="field">
                         <label class="required">销售数量</label>
                         <div class="input-addon">
@@ -251,7 +348,7 @@ Do not change layout without approval.
                         </div>
                       </div>
                       <div class="field">
-                        <label class="required">{{ row.line_type === 'deduction' ? '扣减金额（填正数，自动减钱）' : '销售单价（填 0 即赠送）' }}</label>
+                        <label class="required">{{ row.line_type === 'deduction' ? '扣减金额' : '销售单价' }}</label>
                         <div class="input-addon">
                           <span class="addon">¥</span>
                           <el-input-number v-model="row.unit_price" size="small" :min="0" :precision="2" :controls="false" @change="recalc" />
@@ -263,7 +360,7 @@ Do not change layout without approval.
                       </div>
                       <div class="field">
                         <label>履约类型</label>
-                        <div><el-tag size="small" :type="lineTypeTag(row.line_type)" effect="light">{{ lineTypeText(row) }}</el-tag></div>
+                        <div class="tag-holder"><el-tag size="small" :type="lineTypeTag(row.line_type)" effect="light">{{ lineTypeText(row) }}</el-tag></div>
                       </div>
                       <div class="field span-full">
                         <label>行备注</label>
@@ -273,50 +370,52 @@ Do not change layout without approval.
                   </div>
 
                   <div class="detail-block">
-                    <div class="block-title">定制与电气</div>
-                    <div class="field-grid compact">
-                      <div v-if="lineCapabilities(row).allow_customized" class="field">
-                        <label>普通定制</label>
-                        <el-switch v-model="row.is_customized" active-color="#008b4b" @change="syncHeaderFlags" />
+                    <div class="block-title-bar">
+                      <span class="block-title"><i class="block-dot" />定制、电气与检验配置</span>
+                      <el-tag v-if="lineCapabilities(row).delivery_inspection_required" size="mini" type="warning" effect="plain">需要交付前检验</el-tag>
+                    </div>
+                    <div class="field-grid grid-cols-2 compact">
+                      <div class="field">
+                        <div class="inline-switch-box">
+                          <span>普通定制</span>
+                          <el-switch v-model="row.is_customized" :disabled="!lineCapabilities(row).allow_customized" active-color="#008b4b" @change="syncHeaderFlags" />
+                        </div>
                       </div>
-                      <div v-if="lineCapabilities(row).allow_special_customized" class="field">
-                        <label>特殊定制</label>
-                        <el-switch v-model="row.is_special_customized" active-color="#008b4b" @change="syncHeaderFlags" />
+                      <div class="field">
+                        <div class="inline-switch-box">
+                          <span>特殊定制</span>
+                          <el-switch v-model="row.is_special_customized" :disabled="!lineCapabilities(row).allow_special_customized" active-color="#008b4b" @change="syncHeaderFlags" />
+                        </div>
                       </div>
-                      <div v-if="lineSupportsElectric(row)" class="field">
+                      <div class="field">
                         <label :class="{ required: lineElectricRequired(row) }">工作电压</label>
-                        <el-select v-model="row.electric" size="small" clearable placeholder="请选择电压">
+                        <el-select v-model="row.electric" size="small" clearable :disabled="!lineSupportsElectric(row)" :placeholder="lineSupportsElectric(row) ? '请选择电压' : '无需配置'">
                           <el-option v-for="option in lineElectricOptions(row)" :key="option" :label="option" :value="option" />
                         </el-select>
                       </div>
-                      <div v-if="lineSupportsNeedPump(row)" class="field">
+                      <div class="field">
                         <label :class="{ required: lineNeedPumpRequired(row) }">原水泵控制</label>
-                        <el-select v-model="row.need_pump" size="small" clearable placeholder="请选择">
+                        <el-select v-model="row.need_pump" size="small" clearable :disabled="!lineSupportsNeedPump(row)" :placeholder="lineSupportsNeedPump(row) ? '请选择' : '无需配置'">
                           <el-option label="需要控制水泵" :value="true" />
                           <el-option label="不需要控制水泵" :value="false" />
                         </el-select>
-                      </div>
-                      <div v-if="lineCapabilities(row).delivery_inspection_required" class="field">
-                        <label>交付前检验</label>
-                        <div><el-tag size="small" type="warning">需要交付前检验</el-tag></div>
                       </div>
                       <div v-if="row.is_special_customized && lineCapabilities(row).special_custom_description_required" class="field span-full">
                         <label class="required">特殊定制说明</label>
                         <el-input v-model="row.configuration_snapshot.special_custom_description" size="small" type="textarea" :rows="2" placeholder="请详细填写特殊定制配置说明（必填）" />
                       </div>
-                      <div v-if="!lineCapabilities(row).allow_customized && !lineCapabilities(row).allow_special_customized && !lineSupportsElectric(row) && !lineSupportsNeedPump(row) && !lineCapabilities(row).delivery_inspection_required" class="field span-full">
-                        <span class="muted-text">该规格无需定制或电气配置</span>
-                      </div>
                     </div>
                   </div>
                 </div>
 
-                <el-collapse v-model="detailSections" class="detail-collapse">
-                  <el-collapse-item name="attachments">
-                    <template slot="title">
-                      <span class="collapse-title"><i class="el-icon-folder" /> 设计图纸与技术资料 <span class="count-pill">{{ files(row).length }} 份</span></span>
-                    </template>
-                    <div class="upload-bar">
+                <div class="detail-block drawing-subcard">
+                  <div class="drawing-subcard-head">
+                    <div class="drawing-head-left">
+                      <i class="el-icon-folder-opened drawing-head-icon" />
+                      <span class="block-title">本行设计图纸与技术资料</span>
+                      <span class="count-pill">{{ files(row).length }} 份</span>
+                    </div>
+                    <div class="drawing-head-actions">
                       <el-select v-model="fileCategory" size="small" class="category-select">
                         <el-option label="设计图纸" value="设计图纸" />
                         <el-option label="客户图纸" value="客户图纸" />
@@ -327,42 +426,28 @@ Do not change layout without approval.
                       <el-upload action="#" :auto-upload="false" :show-file-list="false" :on-change="addLineFile">
                         <el-button size="small" type="primary" icon="el-icon-upload2" class="btn-emerald-primary">上传图纸 / 文件</el-button>
                       </el-upload>
-                      <span class="muted-text">支持 PDF、CAD 导出图、图片、技术协议；特殊定制必传技术协议或图纸</span>
                     </div>
-                    <el-table :data="files(row)" size="mini" border class="file-table" empty-text="尚未上传本行图纸或技术附件">
-                      <el-table-column label="文件名称" min-width="200">
-                        <template slot-scope="scope">
-                          <span class="file-name" :title="scope.row.file_name">{{ scope.row.file_name }}</span>
-                          <span v-if="scope.row.is_main" class="main-file-pill">主图纸</span>
-                        </template>
-                      </el-table-column>
-                      <el-table-column label="版本" width="70" align="center">
-                        <template slot-scope="scope">V{{ scope.$index + 1 }}.0</template>
-                      </el-table-column>
-                      <el-table-column prop="file_type" label="分类" width="110" />
-                      <el-table-column label="操作" width="210" align="center">
-                        <template slot-scope="scope">
-                          <el-button v-if="scope.row.can_preview === true" type="text" size="mini" @click.stop="previewAttachment(scope.row)">预览</el-button>
-                          <el-button v-if="scope.row.can_download !== false" type="text" size="mini" @click.stop="downloadAttachment(scope.row)">下载</el-button>
-                          <el-button type="text" size="mini" @click.stop="setMainFile(scope.$index)">设为主图</el-button>
-                          <el-button v-if="scope.row.can_delete === true" type="text" size="mini" class="danger-link" @click.stop="removeLineFile(scope.$index)">删除</el-button>
-                        </template>
-                      </el-table-column>
-                    </el-table>
-                  </el-collapse-item>
-
-                  <el-collapse-item v-if="lineNeedsItem(row)" name="units">
-                    <template slot="title">
-                      <span class="collapse-title"><i class="el-icon-refresh" /> 单位换算</span>
-                    </template>
-                    <div class="conversion-row">
-                      <span><em>库存物料</em>{{ row.item_name || '待系统匹配' }}</span>
-                      <span><em>基本单位</em>{{ itemBaseUnitName(row) }}</span>
-                      <span><em>换算关系</em>1 {{ salesUnitName(row) }} = {{ fulfillmentFactor(row) }} {{ itemBaseUnitName(row) }}</span>
-                      <span><em>基本需求量</em>{{ itemBaseRequiredQty(row) }} {{ itemBaseUnitName(row) }}</span>
+                  </div>
+                  <div v-if="files(row).length" class="drawing-file-grid">
+                    <div v-for="(file, fileIdx) in files(row)" :key="file.uid || fileIdx" class="drawing-file-card">
+                      <div class="drawing-file-info">
+                        <span class="drawing-ext-tag">{{ file.file_type || '图纸' }}</span>
+                        <span class="drawing-file-name" :title="file.file_name">{{ file.file_name }}</span>
+                        <span v-if="file.is_main" class="main-file-pill">主图纸</span>
+                        <span class="drawing-file-ver">V{{ fileIdx + 1 }}.0</span>
+                      </div>
+                      <div class="drawing-file-ops">
+                        <el-button v-if="file.can_preview === true" type="text" size="mini" @click.stop="previewAttachment(file)">预览</el-button>
+                        <el-button v-if="file.can_download !== false" type="text" size="mini" @click.stop="downloadAttachment(file)">下载</el-button>
+                        <el-button v-if="!file.is_main" type="text" size="mini" @click.stop="setMainFile(fileIdx)">设为主图</el-button>
+                        <el-button v-if="file.can_delete === true" type="text" size="mini" class="danger-link" @click.stop="removeLineFile(fileIdx)">删除</el-button>
+                      </div>
                     </div>
-                  </el-collapse-item>
-                </el-collapse>
+                  </div>
+                  <div v-else class="drawing-empty-bar">
+                    <span>暂无本行图纸或技术附件</span>
+                  </div>
+                </div>
               </div>
             </template>
           </el-table-column>
@@ -373,7 +458,7 @@ Do not change layout without approval.
             </template>
           </el-table-column>
 
-          <el-table-column label="产品" min-width="130">
+          <el-table-column label="产品" min-width="150">
             <template slot-scope="{row}">
               <div class="cell-picker" :class="{ 'has-value': !!row.product_name }" title="点击选择或更换产品" @click="openProductPicker(row)">
                 <div class="cell-main">{{ row.product_name || '选择产品' }}</div>
@@ -382,7 +467,7 @@ Do not change layout without approval.
             </template>
           </el-table-column>
 
-          <el-table-column label="规格（SKU）" min-width="130">
+          <el-table-column label="规格（SKU）" min-width="150">
             <template slot-scope="{row}">
               <div class="cell-picker" :class="{ 'has-value': !!row.sku_name }" title="点击选择或更换规格" @click="openSkuPicker(row)">
                 <div class="cell-main">{{ row.sku_name || '选择规格' }}</div>
@@ -391,16 +476,16 @@ Do not change layout without approval.
             </template>
           </el-table-column>
 
-          <el-table-column label="匹配物料" min-width="96">
+          <el-table-column label="匹配物料" min-width="120">
             <template slot-scope="{row}">
-              <div class="match-cell" :title="row.item_name">
+              <div class="match-cell" :class="{ 'is-matched': row.item_match_status === 'matched' }" :title="row.item_name">
                 <span class="match-dot" :class="row.item_match_status === 'matched' ? 'dot-green' : 'dot-gray'" />
                 <span class="match-name">{{ row.item_name || '待系统匹配' }}</span>
               </div>
             </template>
           </el-table-column>
 
-          <el-table-column label="数量" width="108">
+          <el-table-column label="数量" width="114">
             <template slot-scope="{row}">
               <div class="qty-cell">
                 <el-input v-model.number="row.order_qty" size="mini" class="inline-input text-right" @input="recalc" />
@@ -409,22 +494,22 @@ Do not change layout without approval.
             </template>
           </el-table-column>
 
-          <el-table-column label="单价" width="96">
+          <el-table-column label="单价" width="110">
             <template slot-scope="{row}">
               <div class="price-cell">
                 <span class="unit-text">¥</span>
-                <el-input v-model.number="row.unit_price" size="mini" class="inline-input" @input="recalc" />
+                <el-input v-model.number="row.unit_price" size="mini" class="inline-input text-right" @input="recalc" />
               </div>
             </template>
           </el-table-column>
 
-          <el-table-column label="小计" width="96" align="right">
+          <el-table-column label="小计" width="106" align="right">
             <template slot-scope="{row}">
               <span class="amount-cell" :class="{ 'amount-deduction': row.line_type === 'deduction' }">{{ lineAmountText(row) }}</span>
             </template>
           </el-table-column>
 
-          <el-table-column label="配置" width="90">
+          <el-table-column label="配置" width="110">
             <template slot-scope="{row}">
               <div class="chip-list">
                 <span v-if="row.is_customized" class="chip chip-amber">定制</span>
@@ -436,13 +521,13 @@ Do not change layout without approval.
             </template>
           </el-table-column>
 
-          <el-table-column label="履约" width="80" align="center">
+          <el-table-column label="履约" width="84" align="center">
             <template slot-scope="{row}">
               <el-tag size="mini" :type="lineTypeTag(row.line_type)" effect="light">{{ lineTypeText(row) }}</el-tag>
             </template>
           </el-table-column>
 
-          <el-table-column label="BOM" width="78" align="center">
+          <el-table-column label="BOM" width="80" align="center">
             <template slot-scope="{row}">
               <span v-if="!lineNeedsItem(row) || row.is_purchase_fulfilled" class="muted-text">无需</span>
               <el-tag v-else-if="row.bom_snapshot && row.bom_snapshot.name" size="mini" type="success" effect="plain">就绪</el-tag>
@@ -450,15 +535,17 @@ Do not change layout without approval.
             </template>
           </el-table-column>
 
-          <el-table-column label="图纸" width="60" align="center">
+          <el-table-column label="图纸" width="70" align="center">
             <template slot-scope="{row}">
               <el-upload class="line-file-upload" action="#" :auto-upload="false" :show-file-list="false" :on-change="file => addLineFileForRow(file, row)">
-                <el-button size="mini" plain class="btn-file-count"><i class="el-icon-paperclip" /> {{ files(row).length }}</el-button>
+                <el-button size="mini" plain class="btn-file-count" :class="{ 'has-files': files(row).length > 0 }">
+                  <i class="el-icon-paperclip" /> {{ files(row).length }}
+                </el-button>
               </el-upload>
             </template>
           </el-table-column>
 
-          <el-table-column label="操作" width="92" align="center">
+          <el-table-column label="操作" width="96" align="center">
             <template slot-scope="{$index, row}">
               <el-button type="text" size="mini" @click="toggleLineDetail(row)">{{ expandedLineKeys.includes(row.line_uuid) ? '收起' : '配置' }}</el-button>
               <el-button type="text" size="mini" class="danger-link" @click="removeLine($index)">删除</el-button>
@@ -469,35 +556,45 @@ Do not change layout without approval.
         <div class="line-total-bar">
           <div class="total-chips">
             <span class="total-chip">总数量 <strong>{{ totalQty }}</strong></span>
-            <span class="total-chip">需生产 <strong>{{ productionLineCount }}</strong> 行</span>
+            <span class="total-chip">需生产 <strong class="emerald-num">{{ productionLineCount }}</strong> 行</span>
             <span class="total-chip">外购备货 <strong>{{ purchaseLineCount }}</strong> 行</span>
             <span class="total-chip" :class="{ 'is-warning': form.is_customized }">{{ form.is_customized ? '包含定制' : '标准产品' }}</span>
-            <span class="total-chip" :class="{ 'is-warning': missingDataCount }">待补资料 <strong>{{ missingDataCount }}</strong> 行</span>
+            <span class="total-chip" :class="missingDataCount ? 'is-warning' : 'is-ready'">待补资料 <strong>{{ missingDataCount }}</strong> 行</span>
           </div>
           <div class="total-amount">订单总额 <strong>¥{{ money(totalAmount) }}</strong></div>
         </div>
       </section>
 
-      <div class="extra-grid">
+      <div v-if="!platformPaymentOnly" class="extra-grid">
         <section ref="外贸物流" class="panel logistics-card">
-          <div class="panel-header"><h3>物流{{ form.trade_type === 'foreign' ? '与外贸' : '' }}</h3></div>
-          <div class="field-grid compact">
+          <div class="panel-header">
+            <div class="panel-title-wrap">
+              <h3>物流{{ form.trade_type === 'foreign' ? '与外贸船务' : '与发运安排' }}</h3>
+            </div>
+          </div>
+          <div class="field-grid grid-cols-3 compact">
             <div class="field span-2">
               <label>客户指定物流</label>
               <div class="inline-pair">
-                <el-input :value="selectedCarrier && selectedCarrier.name" size="small" readonly placeholder="选填，发货时预填快递公司，可改" suffix-icon="el-icon-search" @focus="carrierPickerVisible = true" @click.native="carrierPickerVisible = true" />
+                <el-input :value="selectedCarrier && selectedCarrier.name" size="small" readonly placeholder="选填，发货时预填快递公司" suffix-icon="el-icon-search" @focus="carrierPickerVisible = true" @click.native="carrierPickerVisible = true" />
                 <el-button v-if="form.carrier_id" size="small" type="text" @click="clearCarrier">清除</el-button>
               </div>
             </div>
             <div class="field">
-              <label>是否自提</label>
-              <el-switch v-model="form.shipping_snapshot.is_self_pickup" />
+              <label>是否客户自提</label>
+              <div class="inline-switch-box">
+                <span>工厂自提</span>
+                <el-switch v-model="form.shipping_snapshot.is_self_pickup" active-color="#008b4b" />
+              </div>
             </div>
             <div class="field span-full">
               <label>客户物流备注</label>
               <el-input v-model="form.shipping_snapshot.customer_logistics_note" size="small" placeholder="客户指定承运方式、运输注意事项" />
             </div>
             <template v-if="form.trade_type === 'foreign'">
+              <div class="field span-full foreign-divider">
+                <span>🌐 外贸船务与关务参数</span>
+              </div>
               <div class="field"><label>件数（PCS）</label><el-input v-model="form.logistics_snapshot.pcs" size="small" placeholder="件数" /></div>
               <div class="field"><label>毛重（KG）</label><el-input v-model="form.logistics_snapshot.gw" size="small" placeholder="毛重" /></div>
               <div class="field"><label>体积（CBM）</label><el-input v-model="form.logistics_snapshot.vol" size="small" placeholder="体积" /></div>
@@ -509,17 +606,21 @@ Do not change layout without approval.
         </section>
 
         <section ref="订单共享" class="panel reminder-card">
-          <div class="panel-header"><h3>订单共享</h3></div>
-          <div class="field-grid compact">
-            <div class="field">
-              <label>共享订单</label>
-              <el-switch v-model="form.is_share" @change="handleShareToggle" />
+          <div class="panel-header">
+            <div class="panel-title-wrap">
+              <h3>订单协同共享</h3>
             </div>
-            <div v-if="form.is_share" class="field span-full">
-              <label>共享人员</label>
+            <el-switch v-model="form.is_share" active-color="#008b4b" @change="handleShareToggle" />
+          </div>
+          <div class="share-card-body">
+            <div class="field">
+              <label>已授权共享人员 ({{ form.share_user.length }} 人)</label>
               <div class="share-line">
-                <el-button size="mini" plain icon="el-icon-plus" @click="openShareDialog">选择人员</el-button>
-                <el-tag v-for="id in form.share_user" :key="id" size="mini" closable @close="removeShareUser(id)">{{ shareUserName(id) }}</el-tag>
+                <el-tag v-for="id in form.share_user" :key="id" size="small" closable class="share-user-pill" @close="removeShareUser(id)">
+                  <span class="share-avatar">{{ String(shareUserName(id) || '销').slice(0, 1) }}</span>
+                  {{ shareUserName(id) }}
+                </el-tag>
+                <el-button size="mini" plain icon="el-icon-plus" class="btn-add-share" :disabled="!form.is_share" @click="openShareDialog">选择人员</el-button>
               </div>
             </div>
           </div>
@@ -527,19 +628,39 @@ Do not change layout without approval.
 
         <section ref="合同附件" class="panel contract-card">
           <div class="panel-header">
-            <h3>合同附件 <span class="count-pill">{{ contractFiles.length }} 个</span></h3>
-            <el-button size="mini" plain icon="el-icon-folder-opened" @click="contractDialogVisible=true">查看清单</el-button>
+            <div class="panel-title-wrap">
+              <h3>合同附件 <span class="count-pill is-emerald">{{ contractFiles.length }} 个</span></h3>
+            </div>
+            <el-button size="mini" plain icon="el-icon-folder-opened" @click="contractDialogVisible=true">查看清单 ({{ contractFiles.length }})</el-button>
           </div>
           <div class="contract-upload-list">
             <el-upload action="#" :auto-upload="false" :show-file-list="false" :on-change="file => addContractFile(file, '合同图片 / PDF')">
-              <button type="button" class="upload-tile"><i class="el-icon-upload2" /><span>合同图片 / PDF</span><small>jpg / png / pdf</small></button>
+              <button type="button" class="upload-tile">
+                <span class="tile-icon"><i class="el-icon-document" /></span>
+                <span>合同图片 / PDF</span>
+                <small>jpg / png / pdf</small>
+              </button>
             </el-upload>
             <el-upload action="#" :auto-upload="false" :show-file-list="false" :on-change="file => addContractFile(file, '客户技术协议')">
-              <button type="button" class="upload-tile"><i class="el-icon-upload2" /><span>客户技术协议</span><small>技术协议文件</small></button>
+              <button type="button" class="upload-tile">
+                <span class="tile-icon"><i class="el-icon-tickets" /></span>
+                <span>客户技术协议</span>
+                <small>技术协议文件</small>
+              </button>
             </el-upload>
             <el-upload action="#" :auto-upload="false" :show-file-list="false" :on-change="file => addContractFile(file, '订单附件')">
-              <button type="button" class="upload-tile"><i class="el-icon-upload2" /><span>订单附件</span><small>报价单 / 沟通凭单</small></button>
+              <button type="button" class="upload-tile">
+                <span class="tile-icon"><i class="el-icon-paperclip" /></span>
+                <span>订单附件</span>
+                <small>报价单 / 沟通凭单</small>
+              </button>
             </el-upload>
+          </div>
+          <div v-if="contractFiles.length" class="contract-inline-list">
+            <div v-for="(file, idx) in contractFiles.slice(0, 2)" :key="idx" class="contract-inline-item">
+              <span class="contract-inline-name" :title="file.file_name"><i class="el-icon-document" /> {{ file.file_name }}</span>
+              <el-button v-if="file.can_preview === true" type="text" size="mini" @click="previewAttachment(file)">预览</el-button>
+            </div>
           </div>
         </section>
       </div>
@@ -586,8 +707,9 @@ import WarehouseManagerPicker from '@/components/master/WarehouseManagerPicker.v
 import SalesCarrierPicker from '@/components/sales/SalesCarrierPicker.vue'
 import SystemRecordPicker from '@/components/system/SystemRecordPicker.vue'
 import { listUsers } from '@/api/erp/rbac'
-import { getSalesOrder, saveSalesOrder, confirmSalesOrder, getSalesOrderOptions, uploadSalesOrderAttachment, deleteSalesOrderAttachment, downloadSalesOrderAttachment, previewSalesOrderEditImpact, submitSalesOrderEditImpact, listSalesOrderChangeProductionUnits, updateSalesOrderAgreedDeposit } from '@/api/erp/sales'
+import { getSalesOrder, saveSalesOrder, confirmSalesOrder, getSalesOrderOptions, uploadSalesOrderAttachment, deleteSalesOrderAttachment, downloadSalesOrderAttachment, previewSalesOrderEditImpact, submitSalesOrderEditImpact, listSalesOrderChangeProductionUnits, updateSalesOrderAgreedDeposit, updateSalesOrderPlatformPayment } from '@/api/erp/sales'
 import { reserveForCreatePage, clearCreatePageReservation } from '@/utils/documentNumberReservation'
+import { salesOrderOriginalNo } from '@/utils/salesOrderOriginalNo'
 
 const withoutInternalFreight = source => {
   const result = { ...(source || {}) }
@@ -672,12 +794,14 @@ export default {
     },
     payTypeOptions: [],
     fundingPolicyOptions: [],
-    salesChannelOptions: [],
     // 约定定金：未手动修改时按付款条件默认值显示和计算；修改后按销售填写的金额保存。
     depositEdited: false,
     agreedDeposit: null,
     loadedAgreedDeposit: null,
     platformRawOptions: [],
+    savedPlatformPaymentBasis: null,
+    checkedPlatformPaymentBasis: null,
+    platformPaymentSaving: false,
     shareUserOptions: [],
     pickerLine: null,
     deletedLineIds: [],
@@ -728,6 +852,16 @@ export default {
     isConfirmedEdit() {
       return this.isEdit && this.editOrderMeta && this.editOrderMeta.order_status === 'confirmed'
     },
+    platformPaymentOnly() {
+      return this.isEdit && this.pageRoute.query.platform_payment === '1' && Boolean(this.editOrderMeta?.allowed_actions?.platform_payment_confirm)
+    },
+    canEditOrder() {
+      if (this.platformPaymentOnly) return false
+      return this.isEdit ? Boolean(this.editOrderMeta?.allowed_actions?.edit) : this.$can('sales_order.create')
+    },
+    returnPath() {
+      return this.platformPaymentOnly ? `/sales/orders/${this.editOrderMeta.id}/detail` : '/sales/orders'
+    },
     editStageTip() {
       if (!this.isConfirmedEdit) return null
       const actions = (this.editOrderMeta && this.editOrderMeta.allowed_actions) || {}
@@ -753,11 +887,80 @@ export default {
     totalAmount() {
       return this.form.lines.reduce((sum, line) => sum + this.lineAmount(line), 0)
     },
+    platformPairChanged() {
+      const order = this.editOrderMeta || {}
+      return this.form.platform !== String(order.platform || '') || this.form.platform2 !== String(order.platform2 || '')
+    },
+    isOnlinePlatform() {
+      if (!this.form.platform) return false
+      const parent = this.platformOptions.find(item => String(item.id) === this.form.platform)
+      const child = this.platformChildrenOptions.find(item => String(item.id) === this.form.platform2)
+      const mode = (!this.platformPairChanged && this.editOrderMeta?.platform_payment_mode) || child?.payment_mode || parent?.payment_mode
+      return mode ? mode === 'online' : !this.platformPairChanged && this.editOrderMeta?.channel_type_snapshot === 'online_platform'
+    },
+    savedPlatformPayment() {
+      return Boolean(this.editOrderMeta?.funding_status?.platform_payment)
+    },
+    standalonePlatformPayment() {
+      return this.isConfirmedEdit || this.platformPaymentOnly
+    },
+    canRecordPlatformPayment() {
+      const actions = this.editOrderMeta?.allowed_actions
+      return !this.isEdit || Boolean(actions?.platform_payment_recorder ?? actions?.platform_payment_confirm)
+    },
+    platformPaymentDisabledReason() {
+      if (!this.canRecordPlatformPayment) return '由录单人核对'
+      if (!this.platformPaymentOnly) {
+        if (!this.isOnlinePlatform) return '先选线上成交平台'
+        if (this.platformChildrenOptions.length && !this.form.platform2) return '先选子平台'
+        if (!this.form.origin_order_no) return '先填原始单号'
+        if (this.isConfirmedEdit && this.platformPaymentBasisChanged) return '订单修改生效后核对'
+      }
+      if (this.standalonePlatformPayment && (!this.editOrderMeta?.allowed_actions?.platform_payment_confirm ||
+        !this.editOrderMeta?.funding_status?.platform_payment_token)) return '当前订单无法核对'
+      return ''
+    },
+    canCheckPlatformPayment() {
+      return !this.platformPaymentDisabledReason
+    },
+    platformPaymentFormAmount() {
+      // 草稿按含税价核对，已保存订单的应收以服务端结算为准。
+      const round = value => Math.sign(value) * Math.round(Math.abs(value) * 10000) / 10000
+      const lines = this.form.lines.reduce((sum, line) => {
+        const amount = round(round(Number(line.order_qty || 0)) * round(Number(line.unit_price || 0)) * Number(line.discount_rate ?? 1))
+        let taxRate = Number(line.tax_rate || 0)
+        if (taxRate > 1) taxRate /= 100
+        const taxed = line.price_tax_mode === 'tax_exclusive' ? amount + round(amount * taxRate) : amount
+        return sum + (line.line_type === 'deduction' ? -Math.abs(taxed) : taxed)
+      }, 0)
+      return round(lines + Number(this.form.freight_amount || 0))
+    },
+    platformPaymentBasis() {
+      return JSON.stringify([this.form.platform, this.form.platform2, this.form.origin_order_no,
+        this.form.customer_id, this.form.currency || 'CNY', this.platformPaymentFormAmount])
+    },
+    platformPaymentBasisChanged() {
+      return this.platformPaymentBasis !== this.savedPlatformPaymentBasis
+    },
+    platformPaymentAmount() {
+      const saved = this.editOrderMeta?.funding_status?.net_receivable_amount
+      return saved == null || (!this.platformPaymentOnly && this.platformPaymentBasisChanged) ? this.platformPaymentFormAmount : saved
+    },
+    platformPaymentChecked: {
+      get() { return Boolean(this.checkedPlatformPaymentBasis) && this.checkedPlatformPaymentBasis === this.platformPaymentSelectionBasis },
+      set(checked) { this.checkedPlatformPaymentBasis = checked ? this.platformPaymentSelectionBasis : null }
+    },
+    platformPaymentSelectionBasis() {
+      return this.platformPaymentOnly ? this.savedPlatformPaymentBasis : this.platformPaymentBasis
+    },
+    defaultFundingPolicy() {
+      const fullPaymentPolicies = this.fundingPolicyOptions.filter(item => item.policy_type === 'full_prepay')
+      return fullPaymentPolicies.find(item => item.policy_code === 'FULL_PREPAY') || fullPaymentPolicies[0] || null
+    },
     effectiveFundingPolicy() {
       const id = this.form.funding_policy_id
       if (id) return this.fundingPolicyOptions.find(item => Number(item.id) === Number(id)) || null
-      const channel = this.salesChannelOptions.find(item => item.is_default) || null
-      return channel ? (this.fundingPolicyOptions.find(item => item.policy_code === channel.default_funding_policy_code) || null) : null
+      return this.defaultFundingPolicy
     },
     depositSupported() {
       const policy = this.effectiveFundingPolicy
@@ -843,16 +1046,24 @@ export default {
   async created() {
     await this.loadOptions()
     if (this.isEdit) await this.load()
-    else await Promise.all([this.reserveSalesOrderNumber(), this.defaultSalesUser()])
+    else {
+      this.form.funding_policy_id = this.defaultFundingPolicy ? this.defaultFundingPolicy.id : null
+      await Promise.all([this.reserveSalesOrderNumber(), this.defaultSalesUser()])
+    }
     if (!this.selectedLine) this.selectedLine = this.form.lines[0]
+    if (!this.isEdit && this.form.lines[0]) this.expandedLineKeys = [this.form.lines[0].line_uuid]
     if (process.env.NODE_ENV !== 'production' && this.pageRoute.query.impact_preview === 'master') this.impactDialogVisible = true
     this.$nextTick(() => window.setTimeout(() => this.focusRequestedField(), 300))
   },
   watch: {
+    platformPaymentBasis(basis) {
+      if (!this.standalonePlatformPayment && this.checkedPlatformPaymentBasis !== basis) this.checkedPlatformPaymentBasis = null
+    },
     'form.trade_type'() {
       if (this.form.platform && !this.platformOptions.some(item => String(item.id) === String(this.form.platform))) {
         this.form.platform = ''
         this.form.platform2 = ''
+        this.resetPlatformPaymentCheck()
       }
     },
     selectedLine(row) {
@@ -867,10 +1078,13 @@ export default {
           await this.load()
         } else {
           this.form = this.emptyForm()
+          this.savedPlatformPaymentBasis = null
+          this.platformPaymentChecked = false
           this.selectedSalesUser = null
           this.resetDeposit()
           this.loadedAgreedDeposit = null
           this.selectedLine = this.form.lines[0]
+          this.expandedLineKeys = this.form.lines[0] ? [this.form.lines[0].line_uuid] : []
           await Promise.all([this.reserveSalesOrderNumber(), this.defaultSalesUser()])
         }
       }
@@ -902,7 +1116,7 @@ export default {
         platform2: '',
         platform_buyer_id: '',
         payment_method_id: '',
-        funding_policy_id: null,
+        funding_policy_id: this.defaultFundingPolicy ? this.defaultFundingPolicy.id : null,
         sales_user_legacy_id: '',
         created_by_legacy_id: '',
         order_time: '',
@@ -938,7 +1152,6 @@ export default {
         const { data } = await getSalesOrderOptions({ include_carriers: 0 })
         this.payTypeOptions = data.pay_types || []
         this.fundingPolicyOptions = data.funding_policies || []
-        this.salesChannelOptions = data.sales_channels || []
         this.platformRawOptions = data.platforms || []
       } catch (error) {
         this.$message.warning('销售订单基础选项加载失败，请检查新系统基础数据配置')
@@ -969,15 +1182,18 @@ export default {
       const { data: responseOrder } = await getSalesOrder(this.pageRoute.params.id)
       const data = withoutInternalFreight(responseOrder)
       this.editOrderMeta = data
-      if (data.read_only) {
+      if (!this.canEditOrder && !this.platformPaymentOnly) {
         this.$message.warning('当前订单仅可查看')
         this.$router.replace(`/sales/orders/${data.id}/detail`)
         return false
       }
       this.shareUserOptions = (data.share_users || []).map(user => ({ id: String(user.user_id), nickname: user.display_name }))
+      const formData = { ...data }
+      delete formData.external_order_no
       this.form = {
         ...withoutInternalFreight(this.form),
-        ...data,
+        ...formData,
+        origin_order_no: salesOrderOriginalNo(data),
         trade_type: data.trade_type || 'domestic',
         platform: data.platform ? String(data.platform) : '',
         platform2: data.platform2 ? String(data.platform2) : '',
@@ -1008,6 +1224,8 @@ export default {
           technical_attachment_snapshot: { files: this.mergeAttachmentFiles((line.technical_attachment_snapshot && line.technical_attachment_snapshot.files) || [], (line.attachments || []).map(this.mapAttachment)) }
         }))
       }
+      this.savedPlatformPaymentBasis = this.platformPaymentBasis
+      this.platformPaymentChecked = this.savedPlatformPayment
       const funding = data.funding_status || {}
       const agreed = funding.agreed_deposit_amount !== undefined && funding.agreed_deposit_amount !== null
         ? funding.agreed_deposit_amount
@@ -1121,6 +1339,10 @@ export default {
       if (!this.platformChildrenOptions.some(item => String(item.id) === String(this.form.platform2))) {
         this.form.platform2 = ''
       }
+      this.resetPlatformPaymentCheck()
+    },
+    resetPlatformPaymentCheck() {
+      this.platformPaymentChecked = !this.platformPaymentBasisChanged && this.savedPlatformPayment
     },
     applySalesUser(user) {
       this.selectedSalesUser = user
@@ -1328,6 +1550,7 @@ export default {
       let selector = '.order-basic-card'
       if (field === 'customer') selector = '.customer-card'
       else if (field === 'default_carrier_id') selector = '.logistics-card'
+      else if (field === 'origin_order_no') selector = '#sales-original-order-no'
       else if (field === 'lines' || field.startsWith('lines.')) selector = '.order-lines'
       const lineMatch = field.match(/^lines\.(\d+)\./)
       if (lineMatch) {
@@ -1337,6 +1560,7 @@ export default {
       const target = this.$el.querySelector(selector)
       if (target) {
         target.scrollIntoView({ behavior: 'smooth', block: 'center' })
+        if (field === 'origin_order_no') target.focus({ preventScroll: true })
         target.classList.add('precheck-focus')
         window.setTimeout(() => target.classList.remove('precheck-focus'), 8000)
       }
@@ -1713,12 +1937,41 @@ export default {
         this.impactSubmitError = error.userMessage || '订单修改提交失败，请检查后重试'
       } finally { this.impactSubmitting = false }
     },
+    async savePlatformPayment() {
+      if (!this.standalonePlatformPayment || !this.canCheckPlatformPayment || this.platformPaymentSaving || this.platformPaymentChecked === this.savedPlatformPayment) return
+      const order = this.editOrderMeta
+      const confirmed = this.platformPaymentChecked
+      this.platformPaymentSaving = true
+      try {
+        const { data } = await updateSalesOrderPlatformPayment(order.id, {
+          confirmed,
+          confirmation_token: order.funding_status.platform_payment_token
+        })
+        if (this.editOrderMeta === order && this.isPageRouteActive) {
+          this.$set(order, 'funding_status', data.funding_status)
+          this.checkedPlatformPaymentBasis = this.savedPlatformPayment ? this.savedPlatformPaymentBasis : null
+          this.$message.success(data.message)
+        }
+      } catch (error) {
+        this.$message.error(error.userMessage || '平台付款核对保存失败')
+      } finally {
+        this.platformPaymentSaving = false
+      }
+    },
     async save(andConfirm) {
-      if (this.impactRechecking || this.impactSubmitting) return
+      if (!this.canEditOrder || this.impactRechecking || this.impactSubmitting || this.platformPaymentSaving) return
       if (!this.form.customer_id) return this.$message.error('请通过客户选择框选择客户')
       if (!this.form.sales_user_legacy_id) return this.$message.error('请选择销售人员')
       if (!this.form.platform) return this.$message.error('请选择成交平台')
       if (this.platformChildrenOptions.length && !this.form.platform2) return this.$message.error('该成交平台下有子平台，请选择子平台')
+      const originalOrderNo = this.form.origin_order_no.trim()
+      if (this.isOnlinePlatform && !originalOrderNo) return this.$message.error('线上成交平台必须填写原始单号')
+      const originalOrderNoTooLong = [...originalOrderNo].length > 120
+      const savedOrder = this.editOrderMeta
+      // 旧平台单号可能超过原始单号的长度限制，原样保留时继续读取历史值。
+      const keepLegacyOriginalOrderNo = originalOrderNoTooLong && this.isEdit && savedOrder && !this.platformPairChanged &&
+        !String(savedOrder.origin_order_no ?? '').trim() && originalOrderNo === salesOrderOriginalNo(savedOrder)
+      if (originalOrderNoTooLong && !keepLegacyOriginalOrderNo) return this.$message.error('原始单号最多 120 个字符')
       if (!this.form.payment_method_id) return this.$message.error('请选择付款方式')
       if (this.form.lines.some(line => !line.sku_id)) return this.$message.error('订单行必须通过全局搜索选择SKU')
       if (this.form.lines.some(line => !line.product_id)) return this.$message.error('所选SKU缺少所属Product，请维护SKU主数据后重试')
@@ -1733,6 +1986,7 @@ export default {
       const carrier = this.selectedCarrier
       const payload = {
         ...withoutInternalFreight(this.form),
+        origin_order_no: originalOrderNo || null,
         deleted_line_ids: this.deletedLineIds,
         funding_policy_id: this.form.funding_policy_id || null,
         agreed_deposit_amount: this.agreedDepositPayload,
@@ -1771,6 +2025,15 @@ export default {
       delete payload.created_by
       delete payload.created_by_legacy_id
       delete payload.creator
+      delete payload.sales_channel_id
+      delete payload.transaction_mode
+      if (keepLegacyOriginalOrderNo) delete payload.origin_order_no
+      const paymentChoiceChanged = this.platformPaymentBasisChanged
+        ? this.platformPaymentChecked
+        : this.platformPaymentChecked !== this.savedPlatformPayment
+      if (!this.isConfirmedEdit && this.isOnlinePlatform && this.canRecordPlatformPayment && (!this.isEdit || paymentChoiceChanged)) {
+        payload.platform_payment_confirmed = this.platformPaymentChecked
+      }
       if (this.isConfirmedEdit) {
         payload.expected_version = this.editOrderMeta.business_version
         // 生产确认后的定金修改和其他字段一起审核，不在预览前先写正式订单。
@@ -1825,10 +2088,12 @@ export default {
           const editPath = `/sales/orders/${id}/edit`
           // 草稿已保存；进入同一单据继续补齐，不能留在新增页再次创建。
           if (this.pageRoute.path !== editPath) this.$router.push({ path: editPath, query: blocked && blocked.field ? { focus: blocked.field } : {} })
-          else if (blocked && blocked.field) {
-            const lineMatch = blocked.field.match(/^lines\.(\d+)\./)
-            const line = lineMatch && this.form.lines[Number(lineMatch[1]) - 1]
-            if (line) this.openLineDetail(line)
+          else if (await this.load()) {
+            const lineMatch = blocked?.field?.match(/^lines\.(\d+)\./)
+            if (lineMatch) {
+              const line = this.form.lines[Number(lineMatch[1]) - 1]
+              if (line) this.openLineDetail(line)
+            }
           }
           return
         }
@@ -1837,9 +2102,8 @@ export default {
       } else {
         this.$message.success('订单草稿已保存')
         const editPath = `/sales/orders/${id}/edit`
-        if (this.pageRoute.path !== editPath) {
-          this.$router.push(editPath)
-        }
+        if (this.pageRoute.path !== editPath) this.$router.push(editPath)
+        else await this.load()
       }
     },
     changeDeposit(value) {
@@ -1881,117 +2145,293 @@ export default {
 <style scoped>
 .amount-cell.amount-deduction { color: #dc2626; }
 /* ==========================================================================
-   销售订单新增 / 编辑：紧凑、自适应、结构清晰
+   销售订单新增 / 编辑：高质感工业森林绿 (#008b4b) 四段式工作台
    ========================================================================== */
 .sales-form-page {
   position: relative;
   z-index: 5;
   min-height: 100vh;
-  background: #f5f7fa;
+  background: #f4f7f9;
   color: #0f172a;
   max-width: 100%;
   overflow-x: hidden;
+  padding: 12px 16px 28px;
+  box-sizing: border-box;
 }
 
-/* 吸顶工具栏 */
-.form-toolbar {
+/* 1. 顶部主控导航与实时 KPI 看板 */
+.form-toolbar.hero-top-bar {
   position: sticky;
   top: 0;
   z-index: 20;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px 16px;
-  min-height: 52px;
-  padding: 8px 20px;
-  background: rgba(255, 255, 255, 0.96);
+  justify-content: space-between;
+  gap: 12px 18px;
+  min-height: 64px;
+  padding: 12px 20px;
+  margin-bottom: 14px;
+  background: rgba(255, 255, 255, 0.98);
   backdrop-filter: blur(8px);
-  border-bottom: 1px solid #e2e8f0;
-  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04), 0 4px 12px rgba(15, 23, 42, 0.02);
+  overflow: hidden;
+}
+.form-toolbar.hero-top-bar::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: linear-gradient(90deg, #008b4b 0%, #10b981 55%, #059669 100%);
 }
 .toolbar-title {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   min-width: 0;
 }
 .back-btn {
-  width: 30px;
-  height: 30px;
+  width: 36px;
+  height: 36px;
   border: 1px solid #e2e8f0;
-  border-radius: 6px;
-  background: #fff;
+  border-radius: 8px;
+  background: #f8fafc;
   color: #475569;
   cursor: pointer;
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  font-size: 15px;
+  transition: all 0.15s ease;
+  flex-shrink: 0;
 }
-.back-btn:hover { color: #008b4b; border-color: #86efac; }
-.main-title { font-size: 16px; font-weight: 700; white-space: nowrap; }
-.order-no-pill {
-  padding: 2px 8px;
-  border-radius: 10px;
+.back-btn:hover {
+  color: #008b4b;
   background: #ecfdf5;
-  color: #00763f;
-  font-size: 12px;
-  font-family: Menlo, Consolas, monospace;
+  border-color: #86efac;
 }
-.toolbar-summary {
+.toolbar-title-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.toolbar-crumb {
+  font-size: 12px;
+  color: #94a3b8;
+  line-height: 1.3;
+}
+.toolbar-crumb span {
+  color: #475569;
+  font-weight: 500;
+}
+.toolbar-heading-row {
   display: flex;
   align-items: center;
-  gap: 14px;
-  margin-left: auto;
-  font-size: 13px;
-  color: #64748b;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.main-title {
+  font-size: 18px;
+  font-weight: 800;
+  color: #0f172a;
+  letter-spacing: -0.01em;
   white-space: nowrap;
 }
-.toolbar-summary strong { color: #0f172a; }
-.summary-amount { color: #008b4b !important; font-size: 15px; }
-.toolbar-actions { display: flex; gap: 8px; flex-wrap: wrap; }
-.toolbar-actions .el-button + .el-button { margin-left: 0; }
-
-/* 主体 */
-.form-body {
-  padding: 14px 20px 24px;
-  display: grid;
-  gap: 12px;
+.order-no-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 10px;
+  border-radius: 6px;
+  background: #ecfdf5;
+  border: 1px solid #bbf7d0;
+  color: #00763f;
+  font-size: 12px;
+  font-weight: 600;
+  font-family: Menlo, Consolas, monospace;
 }
-.stage-tip { display: flex; align-items: flex-start; gap: 8px; padding: 8px 12px; border-radius: 6px; font-size: 13px; line-height: 1.5; background: #f0fdf4; border: 1px solid #bbf7d0; color: #00763f; }
-.stage-tip i { font-size: 15px; color: #008b4b; flex-shrink: 0; margin-top: 2px; }
-.stage-tip--warning { background: #fffbeb; border-color: #fde68a; color: #92400e; }
-.stage-tip--warning i { color: #d97706; }
+.order-no-pill .pill-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #008b4b;
+}
+.order-stage-pill {
+  padding: 2px 8px;
+  border-radius: 5px;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  color: #92400e;
+  font-size: 12px;
+  font-weight: 600;
+}
+.order-stage-pill.is-confirmed {
+  background: #f0fdf4;
+  border-color: #bbf7d0;
+  color: #00763f;
+}
+
+/* 顶部嵌入式 KPI 胶囊条 */
+.toolbar-kpi-capsule {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-left: auto;
+  padding: 6px 14px;
+  border-radius: 8px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+}
+.kpi-mini-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.kpi-mini-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  color: #64748b;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+.kpi-mini-icon.is-emerald {
+  background: #ecfdf5;
+  border-color: #bbf7d0;
+  color: #008b4b;
+}
+.kpi-mini-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.kpi-mini-label {
+  font-size: 11px;
+  color: #94a3b8;
+  line-height: 1;
+}
+.kpi-mini-val {
+  font-size: 12px;
+  color: #334155;
+  font-weight: 600;
+  line-height: 1.2;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.kpi-mini-val strong {
+  color: #0f172a;
+  font-weight: 700;
+}
+.summary-amount {
+  color: #008b4b !important;
+  font-size: 15px !important;
+  font-weight: 800 !important;
+}
+.kpi-mini-divider {
+  width: 1px;
+  height: 24px;
+  background: #e2e8f0;
+}
+.toolbar-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.toolbar-actions .el-button + .el-button {
+  margin-left: 0;
+}
+
+/* 主体布局 */
+.form-body {
+  display: grid;
+  gap: 14px;
+}
+.stage-tip {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.5;
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  color: #00763f;
+}
+.stage-tip i {
+  font-size: 15px;
+  color: #008b4b;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+.stage-tip--warning {
+  background: #fffbeb;
+  border-color: #fde68a;
+  color: #92400e;
+}
+.stage-tip--warning i {
+  color: #d97706;
+}
 
 .top-grid {
   display: grid;
-  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
-  gap: 12px;
-  align-items: start;
+  grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
+  gap: 14px;
+  align-items: stretch;
 }
 .extra-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-  gap: 12px;
-  align-items: start;
+  grid-template-columns: minmax(0, 5fr) minmax(0, 3fr) minmax(0, 4fr);
+  gap: 14px;
+  align-items: stretch;
 }
 
-/* 卡片 */
+/* 卡片容器 */
 .panel {
   min-width: 0;
-  background: #fff;
+  height: 100%;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  background: #ffffff;
   border: 1px solid #e2e8f0;
-  border-radius: 8px;
-  padding: 12px 14px 14px;
+  border-radius: 10px;
+  padding: 0;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.03), 0 4px 10px rgba(15, 23, 42, 0.015);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  overflow: hidden;
+}
+.panel:hover {
+  border-color: #cbd5e1;
+  box-shadow: 0 2px 6px rgba(15, 23, 42, 0.04), 0 8px 18px rgba(15, 23, 42, 0.02);
 }
 .panel-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   flex-wrap: wrap;
-  gap: 8px;
-  margin-bottom: 10px;
-  padding-bottom: 8px;
+  gap: 8px 12px;
+  padding: 12px 18px;
   border-bottom: 1px solid #f1f5f9;
+  background: linear-gradient(180deg, #ffffff 0%, #fafbfc 100%);
+}
+.panel-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  min-width: 0;
 }
 .panel-header h3 {
   margin: 0;
@@ -2004,13 +2444,37 @@ export default {
 }
 .panel-header h3::before {
   content: '';
-  width: 3px;
-  height: 14px;
+  width: 4px;
+  height: 16px;
   border-radius: 2px;
-  background: #008b4b;
+  background: linear-gradient(180deg, #008b4b 0%, #10b981 100%);
+  box-shadow: 0 1px 3px rgba(0, 139, 75, 0.25);
 }
-.panel-actions { display: flex; gap: 8px; flex-wrap: wrap; }
-.panel-actions .el-button + .el-button { margin-left: 0; }
+.panel-subtitle {
+  font-size: 12px;
+  color: #94a3b8;
+  font-weight: 400;
+}
+.panel-rule-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 5px;
+  background: #ecfdf5;
+  border: 1px solid #bbf7d0;
+  color: #00763f;
+  font-size: 12px;
+  font-weight: 500;
+}
+.panel-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.panel-actions .el-button + .el-button {
+  margin-left: 0;
+}
 .count-pill {
   padding: 1px 8px;
   line-height: 18px;
@@ -2018,314 +2482,1204 @@ export default {
   background: #f1f5f9;
   color: #64748b;
   font-size: 12px;
-  font-weight: 500;
+  font-weight: 600;
+}
+.count-pill.is-emerald {
+  background: #ecfdf5;
+  border: 1px solid #bbf7d0;
+  color: #00763f;
 }
 
-/* 字段网格 */
-.field-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
-  gap: 10px 12px;
+/* 订单核心信息：双层语义分区 */
+.basic-layers {
+  flex: 1;
+  padding: 14px 18px 16px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 14px;
 }
-.field-grid.compact {
-  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-  gap: 8px 10px;
+.layer-block {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
-.field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
-.field.span-2 { grid-column: span 2; }
-.field.span-full { grid-column: 1 / -1; }
-.field > label {
+.layer-recessed {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 12px 14px 14px;
+  border-radius: 8px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+}
+.layer-heading {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #475569;
+}
+.layer-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #008b4b;
+}
+.layer-dot.is-emerald {
+  background: #10b981;
+}
+.layer-dot.is-amber {
+  background: #f59e0b;
+}
+.layer-sub-hint {
+  margin-left: auto;
+  font-size: 12px;
+  font-weight: 400;
+  color: #94a3b8;
+}
+
+/* 客户与收货档案：置顶智能解析舱 */
+.customer-body {
+  flex: 1;
+  padding: 14px 18px 16px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 12px;
+}
+.customer-body > .field-grid {
+  flex: 1;
+  align-content: space-between;
+}
+.smart-parse-cabin {
+  padding: 10px 12px 12px;
+  border-radius: 8px;
+  background: linear-gradient(135deg, #f0fdf4 0%, #f8fafc 65%, #ffffff 100%);
+  border: 1px dashed #86efac;
+}
+.smart-parse-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+  flex-wrap: wrap;
+}
+.smart-sparkle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  background: #008b4b;
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 700;
+}
+.smart-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: #00763f;
+}
+.smart-sub {
   font-size: 12px;
   color: #64748b;
-  line-height: 1.4;
+}
+
+/* 字段网格与控件精修 */
+.field-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px 12px;
+}
+.field-grid.grid-cols-4 {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+.field-grid.grid-cols-3 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.field-grid.grid-cols-2 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.field-grid.compact {
+  gap: 8px 10px;
+}
+.logistics-card > .field-grid {
+  padding: 14px 18px 16px;
+}
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+.field.span-2 {
+  grid-column: span 2;
+}
+.field.span-full {
+  grid-column: 1 / -1;
+}
+.field > label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #475569;
+  line-height: 1.35;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.field > label.required::before { content: '*'; color: #ef4444; margin-right: 3px; }
+.field > label.required::before {
+  content: '*';
+  color: #ef4444;
+  font-weight: 700;
+  margin-right: 1px;
+}
+.field-label-tag {
+  margin-left: auto;
+  font-size: 11px;
+  font-weight: 500;
+  color: #008b4b;
+}
+.label-inline-btn {
+  margin-left: auto !important;
+  padding: 0 !important;
+  font-size: 12px !important;
+  color: #008b4b !important;
+}
 .field ::v-deep .el-select,
 .field ::v-deep .el-date-editor.el-input,
-.field ::v-deep .el-input-number { width: 100%; }
-.field ::v-deep .el-input-number .el-input__inner { text-align: left; }
-.inline-pair { display: flex; gap: 8px; min-width: 0; }
-.deposit-hint { color: #909399; font-size: 12px; line-height: 18px; }
-.deposit-hint .el-button { padding: 0; margin-left: 4px; font-size: 12px; }
-.inline-pair > * { flex: 1 1 0; min-width: 0; }
-.inline-pair > .el-button { flex: 0 0 auto; }
-.switch-pair { display: flex; align-items: center; gap: 16px; height: 32px; }
-.switch-item { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: #334155; }
-.input-addon { display: flex; align-items: stretch; min-width: 0; }
-.input-addon ::v-deep .el-input-number { flex: 1; min-width: 0; }
+.field ::v-deep .el-input-number {
+  width: 100%;
+}
+.field ::v-deep .el-input-number .el-input__inner {
+  text-align: left;
+}
+.field ::v-deep .el-input__inner,
+.field ::v-deep .el-textarea__inner {
+  border-radius: 6px;
+  border-color: #cbd5e1;
+  color: #0f172a;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.field ::v-deep .el-input__inner:hover,
+.field ::v-deep .el-textarea__inner:hover {
+  border-color: #94a3b8;
+}
+.field ::v-deep .el-input__inner:focus,
+.field ::v-deep .el-textarea__inner:focus {
+  border-color: #008b4b !important;
+  box-shadow: 0 0 0 3px rgba(0, 139, 75, 0.12);
+}
+.erp-system-number ::v-deep .el-input__inner {
+  font-family: Menlo, Consolas, monospace;
+  font-weight: 600;
+  color: #475569 !important;
+  background: #f8fafc !important;
+}
+
+/* 分段式单选按钮组（内贸/外贸、个人/企业） */
+.erp-segmented-radio {
+  display: inline-flex;
+  width: 100%;
+  padding: 2px;
+  background: #f1f5f9;
+  border: 1px solid #e2e8f0;
+  border-radius: 7px;
+}
+.erp-segmented-radio ::v-deep .el-radio-button {
+  flex: 1;
+}
+.erp-segmented-radio ::v-deep .el-radio-button__inner {
+  width: 100%;
+  border: 0 !important;
+  border-radius: 5px !important;
+  background: transparent;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 8px;
+  box-shadow: none !important;
+}
+.erp-segmented-radio ::v-deep .el-radio-button__orig-radio:checked + .el-radio-button__inner {
+  background: #ffffff !important;
+  color: #008b4b !important;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08) !important;
+}
+
+/* 成交平台与线上担保核对（同行内联，不另起一行） */
+.platform-inline-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.platform-select-item {
+  flex: 1 1 0;
+  min-width: 96px;
+}
+.platform-payment-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 10px;
+  border-radius: 6px;
+  background: #ecfdf5;
+  border: 1px solid #bbf7d0;
+  white-space: nowrap;
+  flex-shrink: 0;
+  max-width: 100%;
+  overflow: hidden;
+}
+.platform-payment-inline .el-checkbox {
+  margin-right: 0;
+}
+.platform-payment-inline ::v-deep .el-checkbox__label {
+  padding-left: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #00763f;
+}
+.platform-payment-inline ::v-deep .el-checkbox.is-disabled .el-checkbox__label {
+  color: #64748b;
+}
+.platform-payment-inline ::v-deep .el-checkbox__input.is-checked .el-checkbox__inner {
+  background-color: #008b4b;
+  border-color: #008b4b;
+}
+.platform-inline-meta {
+  font-size: 12px;
+  color: #475569;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.platform-amount {
+  color: #008b4b;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.platform-save-btn {
+  padding: 4px 8px !important;
+}
+
+/* 加急与延期卡片式开关 */
+.switch-card-pair {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.switch-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  height: 32px;
+  padding: 0 10px;
+  border-radius: 6px;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  transition: border-color 0.15s ease, background 0.15s ease;
+  box-sizing: border-box;
+}
+.switch-card.is-urgent-on {
+  background: #fef2f2;
+  border-color: #fecaca;
+}
+.switch-card.is-delay-on {
+  background: #ecfdf5;
+  border-color: #bbf7d0;
+}
+.switch-card-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: #1e293b;
+  white-space: nowrap;
+}
+
+.inline-pair {
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+}
+.inline-pair > * {
+  flex: 1 1 0;
+  min-width: 0;
+}
+.inline-pair > .el-button {
+  flex: 0 0 auto;
+}
+.deposit-hint {
+  color: #64748b;
+  font-size: 12px;
+  line-height: 18px;
+}
+.deposit-hint .el-button {
+  padding: 0;
+  margin-left: 4px;
+  font-size: 12px;
+}
+.inline-switch-box {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  height: 32px;
+  padding: 0 10px;
+  border-radius: 6px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  font-size: 12px;
+  font-weight: 600;
+  color: #334155;
+}
+.input-addon {
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+}
+.input-addon ::v-deep .el-input-number {
+  flex: 1;
+  min-width: 0;
+}
 .input-addon .addon {
   display: inline-flex;
   align-items: center;
-  padding: 0 8px;
-  background: #f8fafc;
-  border: 1px solid #dcdfe6;
-  color: #64748b;
+  padding: 0 9px;
+  background: #f1f5f9;
+  border: 1px solid #cbd5e1;
+  color: #475569;
   font-size: 12px;
+  font-weight: 600;
   white-space: nowrap;
 }
-.input-addon .addon:first-child { border-right: 0; border-radius: 4px 0 0 4px; }
-.input-addon .addon:last-child { border-left: 0; border-radius: 0 4px 4px 0; }
-.input-addon .addon:first-child + ::v-deep .el-input-number .el-input__inner { border-radius: 0 4px 4px 0; }
-.input-addon ::v-deep .el-input-number:first-child .el-input__inner { border-radius: 4px 0 0 4px; }
-.muted-text { color: #94a3b8; font-size: 12px; }
-.danger-link { color: #ef4444 !important; }
-.danger-link:hover { color: #dc2626 !important; }
+.input-addon .addon:first-child {
+  border-right: 0;
+  border-radius: 6px 0 0 6px;
+}
+.input-addon .addon:last-child {
+  border-left: 0;
+  border-radius: 0 6px 6px 0;
+}
+.input-addon .addon:first-child + ::v-deep .el-input-number .el-input__inner {
+  border-radius: 0 6px 6px 0;
+}
+.input-addon ::v-deep .el-input-number:first-child .el-input__inner {
+  border-radius: 6px 0 0 6px;
+}
+.muted-text {
+  color: #94a3b8;
+  font-size: 12px;
+}
+.danger-link {
+  color: #ef4444 !important;
+}
+.danger-link:hover {
+  color: #dc2626 !important;
+}
 
-/* 按钮 */
+/* 主题绿按钮 */
 .btn-emerald-primary {
-  background: linear-gradient(135deg, #008b4b 0%, #00763f 100%) !important;
+  background: linear-gradient(135deg, #008b4b 0%, #059669 100%) !important;
   border-color: #00763f !important;
-  color: #fff !important;
+  color: #ffffff !important;
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgba(0, 139, 75, 0.2);
+}
+.btn-emerald-primary:hover {
+  background: linear-gradient(135deg, #00763f 0%, #047857 100%) !important;
+}
+.btn-emerald-plain {
+  color: #00763f !important;
+  background: #ecfdf5 !important;
+  border-color: #86efac !important;
   font-weight: 600;
 }
-.btn-emerald-primary:hover { background: linear-gradient(135deg, #009d55 0%, #008b4b 100%) !important; }
+.btn-emerald-plain:hover {
+  background: #d1fae5 !important;
+  border-color: #008b4b !important;
+  color: #006334 !important;
+}
 
-/* 订单行表格 */
-.sales-order-table { width: 100% !important; border-color: #e2e8f0 !important; }
+/* 3. 中区：订单行明细表格 */
+.sales-order-table {
+  width: 100% !important;
+  border-left: 0 !important;
+  border-right: 0 !important;
+  border-color: #e2e8f0 !important;
+}
 .sales-order-table ::v-deep th {
   background: #f8fafc !important;
   color: #475569 !important;
   font-size: 12px !important;
   font-weight: 700 !important;
-  padding: 6px 0 !important;
+  padding: 8px 0 !important;
 }
-.sales-order-table ::v-deep td { padding: 6px 0 !important; font-size: 12px !important; }
-.sales-order-table ::v-deep .cell { padding-left: 8px; padding-right: 8px; }
-.sales-order-table ::v-deep .el-table__row:hover > td { background-color: #f0fdf4 !important; }
-.sales-order-table ::v-deep .current-row > td { background-color: #ecfdf5 !important; }
+.sales-order-table ::v-deep td {
+  padding: 8px 0 !important;
+  font-size: 12px !important;
+}
+.sales-order-table ::v-deep .cell {
+  padding-left: 8px;
+  padding-right: 8px;
+}
+.sales-order-table ::v-deep .el-table__row:hover > td {
+  background-color: #f0fdf4 !important;
+}
+.sales-order-table ::v-deep .current-row > td {
+  background-color: #ecfdf5 !important;
+}
 .sales-order-table ::v-deep .el-table__expanded-cell {
   padding: 0 !important;
   background: #f8fafc !important;
-  border-bottom: 2px solid #d1fae5 !important;
+  border-bottom: 2px solid #bbf7d0 !important;
 }
-.sales-order-table ::v-deep .el-table__expanded-cell:hover { background: #f8fafc !important; }
-.row-index { font-size: 12px; font-weight: 600; color: #64748b; }
+.sales-order-table ::v-deep .el-table__expanded-cell:hover {
+  background: #f8fafc !important;
+}
+.row-index {
+  font-size: 12px;
+  font-weight: 700;
+  color: #64748b;
+}
 .cell-picker {
-  padding: 3px 6px;
+  padding: 5px 8px;
   border: 1px dashed #cbd5e1;
-  border-radius: 4px;
+  border-radius: 6px;
+  background: #f8fafc;
   cursor: pointer;
   min-width: 0;
+  transition: all 0.15s ease;
 }
-.cell-picker:hover { border-color: #008b4b; background: #f0fdf4; }
-.cell-picker.has-value { border-style: solid; border-color: transparent; }
-.cell-picker.has-value:hover { border-color: #86efac; }
-.cell-main { font-weight: 600; color: #0f172a; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.cell-picker:not(.has-value) .cell-main { color: #008b4b; font-weight: 500; }
-.cell-sub { font-size: 11px; color: #94a3b8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.match-cell { display: flex; align-items: center; gap: 6px; min-width: 0; }
-.match-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
-.dot-green { background: #10b981; }
-.dot-gray { background: #cbd5e1; }
-.match-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #475569; }
+.cell-picker:hover {
+  border-color: #008b4b;
+  background: #f0fdf4;
+}
+.cell-picker.has-value {
+  border-style: solid;
+  border-color: transparent;
+  background: #f8fafc;
+}
+.cell-picker.has-value:hover {
+  background: #ffffff;
+  border-color: #86efac;
+  box-shadow: 0 1px 3px rgba(0, 139, 75, 0.08);
+}
+.cell-main {
+  font-weight: 700;
+  color: #0f172a;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cell-picker:not(.has-value) .cell-main {
+  color: #008b4b;
+  font-weight: 600;
+}
+.cell-sub {
+  font-size: 11px;
+  color: #94a3b8;
+  font-family: Menlo, Consolas, monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-top: 1px;
+}
+.match-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 3px 8px;
+  border-radius: 5px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+}
+.match-cell.is-matched {
+  background: #ecfdf5;
+  border-color: #bbf7d0;
+}
+.match-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.dot-green {
+  background: #10b981;
+}
+.dot-gray {
+  background: #cbd5e1;
+}
+.match-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #334155;
+  font-weight: 500;
+}
 .qty-cell,
-.price-cell { display: flex; align-items: center; gap: 4px; }
-.inline-input { flex: 1; min-width: 0; }
-.inline-input ::v-deep .el-input__inner { padding: 0 6px; height: 26px; line-height: 26px; }
-.inline-input.text-right ::v-deep .el-input__inner { text-align: right; }
-.unit-text { font-size: 11px; color: #94a3b8; white-space: nowrap; }
-.amount-cell { font-weight: 700; color: #0f172a; font-variant-numeric: tabular-nums; }
-.chip-list { display: flex; flex-wrap: wrap; gap: 4px; }
-.chip { padding: 0 6px; border-radius: 3px; font-size: 11px; line-height: 18px; white-space: nowrap; }
-.chip-amber { background: #fef3c7; color: #92400e; }
-.chip-blue { background: #dbeafe; color: #1e40af; }
-.chip-green { background: #d1fae5; color: #065f46; }
-.chip-gray { background: #f1f5f9; color: #64748b; }
-.btn-file-count { padding: 4px 8px !important; }
+.price-cell {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.inline-input {
+  flex: 1;
+  min-width: 0;
+}
+.inline-input ::v-deep .el-input__inner {
+  padding: 0 6px;
+  height: 28px;
+  line-height: 28px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  border-radius: 5px;
+}
+.inline-input.text-right ::v-deep .el-input__inner {
+  text-align: right;
+}
+.unit-text {
+  font-size: 12px;
+  color: #64748b;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.amount-cell {
+  font-weight: 800;
+  color: #0f172a;
+  font-variant-numeric: tabular-nums;
+}
+.chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.chip {
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 18px;
+  white-space: nowrap;
+}
+.chip-amber {
+  background: #fef3c7;
+  color: #92400e;
+}
+.chip-blue {
+  background: #e0f2fe;
+  color: #0369a1;
+}
+.chip-green {
+  background: #d1fae5;
+  color: #065f46;
+}
+.chip-gray {
+  background: #f1f5f9;
+  color: #64748b;
+}
+.btn-file-count {
+  padding: 4px 8px !important;
+  border-radius: 999px !important;
+}
+.btn-file-count.has-files {
+  background: #f0f9ff !important;
+  border-color: #bae6fd !important;
+  color: #0369a1 !important;
+  font-weight: 600;
+}
 
-/* 订单行展开区 */
-.order-lines { container-type: inline-size; }
-/* 表格横向滚动时，展开区固定在可视宽度内，不随表格总宽撑开 */
+/* 订单行展开区：嵌入式配置工作台 */
+.order-lines {
+  container-type: inline-size;
+}
 .order-line-detail {
   position: sticky;
   left: 0;
   width: calc(100cqw - 2px);
   box-sizing: border-box;
-  padding: 10px 14px 12px;
+  padding: 14px 18px 16px;
+  background: linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%);
+  border-left: 3px solid #008b4b;
   display: grid;
-  gap: 10px;
+  gap: 12px;
 }
-.line-detail-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.line-detail-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #e2e8f0;
+}
 .row-badge {
-  padding: 1px 8px;
+  padding: 2px 8px;
   border-radius: 4px;
   background: #008b4b;
-  color: #fff;
+  color: #ffffff;
   font-size: 12px;
+  font-weight: 700;
+}
+.line-detail-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: #0f172a;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.line-detail-conversion {
+  font-size: 12px;
+  color: #64748b;
+}
+.line-detail-conversion strong {
+  color: #0f172a;
+}
+.line-detail-amount {
+  margin-left: auto;
+  font-size: 13px;
+  font-weight: 800;
+  color: #008b4b;
+  font-variant-numeric: tabular-nums;
+}
+.collapse-up-btn {
+  color: #64748b !important;
   font-weight: 600;
 }
-.line-detail-title { font-size: 13px; color: #0f172a; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.line-detail-amount { margin-left: auto; font-size: 13px; font-weight: 700; color: #008b4b; }
+.collapse-up-btn:hover {
+  color: #008b4b !important;
+}
 .line-detail-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-  gap: 10px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  align-items: stretch;
 }
 .detail-block {
   min-width: 0;
-  background: #fff;
+  height: 100%;
+  box-sizing: border-box;
+  background: #ffffff;
   border: 1px solid #e2e8f0;
-  border-radius: 6px;
-  padding: 10px 12px;
+  border-radius: 8px;
+  padding: 12px 14px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.02);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
 }
-.block-title { font-size: 13px; font-weight: 700; color: #334155; margin-bottom: 8px; }
-.product-brief { display: flex; gap: 10px; min-width: 0; }
+.detail-block > .field-grid {
+  flex: 1;
+  align-content: space-between;
+}
+.block-title-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid #f1f5f9;
+}
+.block-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #1e293b;
+}
+.block-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #008b4b;
+}
+.product-brief {
+  display: flex;
+  gap: 12px;
+  min-width: 0;
+}
 .product-img {
   width: 64px;
   height: 64px;
   flex-shrink: 0;
-  border-radius: 6px;
+  border-radius: 8px;
   border: 1px solid #e2e8f0;
-  background: #f8fafc;
+  background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
   display: flex;
   align-items: center;
   justify-content: center;
   overflow: hidden;
-  color: #cbd5e1;
-  font-size: 22px;
+  color: #008b4b;
+  font-size: 24px;
 }
-.product-img img { width: 100%; height: 100%; object-fit: cover; }
-.product-brief-meta { min-width: 0; display: grid; gap: 4px; font-size: 12px; color: #334155; }
-.meta-line { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.meta-line span { color: #94a3b8; margin-right: 6px; }
+.product-img img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.product-brief-meta {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+  color: #334155;
+}
+.meta-line {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.meta-line span {
+  color: #94a3b8;
+  margin-right: 6px;
+}
+.meta-em {
+  font-style: normal;
+  font-weight: 600;
+}
+.meta-em.is-ok {
+  color: #00763f;
+}
+.meta-em.is-info {
+  color: #0284c7;
+}
+.meta-em.is-muted {
+  color: #94a3b8;
+}
 .code-badge {
   display: inline-block;
-  padding: 0 6px;
-  border-radius: 3px;
+  padding: 1px 6px;
+  border-radius: 4px;
   background: #f1f5f9;
   color: #475569;
   font-family: Menlo, Consolas, monospace;
   font-size: 11px;
+  font-weight: 600;
 }
-.block-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
-.block-actions .el-button + .el-button { margin-left: 0; }
+.block-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid #f1f5f9;
+}
+.block-actions .el-button {
+  flex: 1;
+}
+.block-actions .el-button + .el-button {
+  margin-left: 0;
+}
+.tag-holder {
+  height: 32px;
+  display: flex;
+  align-items: center;
+}
 
-.detail-collapse { border: 1px solid #e2e8f0; border-radius: 6px; background: #fff; overflow: hidden; }
-.detail-collapse ::v-deep .el-collapse-item__header {
-  height: 38px;
-  line-height: 38px;
-  padding: 0 12px;
-  font-size: 13px;
-  background: #fff;
+/* 工作台底栏：本行设计图纸与技术资料子卡 */
+.drawing-subcard {
+  gap: 10px;
 }
-.detail-collapse ::v-deep .el-collapse-item__wrap { border-bottom: 0; }
-.detail-collapse ::v-deep .el-collapse-item__content { padding: 0 12px 12px; }
-.collapse-title { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; color: #334155; }
-.collapse-title i { color: #008b4b; }
-.upload-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
-.category-select { width: 140px; }
-.file-table { width: 100%; }
-.file-name { display: inline-block; max-width: calc(100% - 56px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: middle; }
+.drawing-subcard-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+}
+.drawing-head-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.drawing-head-icon {
+  color: #008b4b;
+  font-size: 15px;
+}
+.drawing-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.category-select {
+  width: 132px;
+}
+.drawing-file-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.drawing-file-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 12px;
+  border-radius: 6px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  min-width: 0;
+}
+.drawing-file-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+}
+.drawing-ext-tag {
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: #ecfdf5;
+  border: 1px solid #bbf7d0;
+  color: #00763f;
+  font-size: 11px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+.drawing-file-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: #1e293b;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .main-file-pill {
-  margin-left: 6px;
   padding: 0 6px;
-  border-radius: 3px;
+  border-radius: 4px;
   background: #d1fae5;
   color: #065f46;
   font-size: 11px;
-  vertical-align: middle;
+  font-weight: 600;
+  flex-shrink: 0;
 }
-.conversion-row { display: flex; flex-wrap: wrap; gap: 8px 24px; font-size: 12px; color: #0f172a; }
-.conversion-row em { font-style: normal; color: #94a3b8; margin-right: 6px; }
+.drawing-file-ver {
+  font-size: 11px;
+  color: #94a3b8;
+  font-family: Menlo, Consolas, monospace;
+  flex-shrink: 0;
+}
+.drawing-file-ops {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.drawing-file-ops .el-button + .el-button {
+  margin-left: 0;
+}
+.drawing-empty-bar {
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: #f8fafc;
+  border: 1px dashed #cbd5e1;
+  color: #94a3b8;
+  font-size: 12px;
+  text-align: center;
+}
 
-/* 订单行汇总 */
+/* 订单行底部汇总条 */
 .line-total-bar {
   display: flex;
   align-items: center;
   justify-content: space-between;
   flex-wrap: wrap;
   gap: 8px 16px;
-  margin-top: 10px;
-  padding: 8px 12px;
-  border-radius: 6px;
+  padding: 12px 18px;
   background: #f8fafc;
-  border: 1px solid #e2e8f0;
+  border-top: 1px solid #e2e8f0;
 }
-.total-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.total-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
 .total-chip {
-  padding: 2px 10px;
-  border-radius: 12px;
-  background: #fff;
+  padding: 3px 12px;
+  border-radius: 999px;
+  background: #ffffff;
   border: 1px solid #e2e8f0;
   font-size: 12px;
   color: #64748b;
 }
-.total-chip strong { color: #0f172a; }
-.total-chip.is-warning { background: #fffbeb; border-color: #fde68a; color: #92400e; }
-.total-amount { font-size: 13px; color: #475569; }
-.total-amount strong { margin-left: 6px; font-size: 18px; color: #008b4b; font-variant-numeric: tabular-nums; }
+.total-chip strong {
+  color: #0f172a;
+  font-variant-numeric: tabular-nums;
+}
+.total-chip .emerald-num {
+  color: #008b4b;
+}
+.total-chip.is-warning {
+  background: #fffbeb;
+  border-color: #fde68a;
+  color: #92400e;
+  font-weight: 600;
+}
+.total-chip.is-ready {
+  background: #ecfdf5;
+  border-color: #bbf7d0;
+  color: #00763f;
+  font-weight: 600;
+}
+.total-amount {
+  font-size: 13px;
+  font-weight: 600;
+  color: #475569;
+}
+.total-amount strong {
+  margin-left: 6px;
+  font-size: 20px;
+  font-weight: 800;
+  color: #008b4b;
+  font-variant-numeric: tabular-nums;
+}
 
-/* 提醒、共享、合同 */
-.share-line { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
-.share-line .el-tag { margin: 0; }
-.contract-upload-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px; }
-.contract-upload-list ::v-deep .el-upload { display: block; width: 100%; }
+/* 4. 下区：外贸物流、订单协同共享、合同附件 */
+.logistics-card > .field-grid {
+  flex: 1;
+  align-content: space-between;
+}
+.foreign-divider {
+  padding-top: 8px;
+  border-top: 1px dashed #e2e8f0;
+  font-size: 12px;
+  font-weight: 700;
+  color: #00763f;
+}
+.share-card-body {
+  flex: 1;
+  padding: 14px 18px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.share-card-body > .field {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+.share-line {
+  flex: 1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  align-content: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #f8fafc;
+  border: 1px dashed #cbd5e1;
+}
+.share-line .el-tag {
+  margin: 0;
+}
+.share-user-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  line-height: 26px;
+  padding: 0 10px 0 6px;
+  border-radius: 999px;
+  background: #ecfdf5;
+  border-color: #bbf7d0;
+  color: #00763f;
+  font-weight: 600;
+}
+.share-avatar {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #008b4b;
+  color: #ffffff;
+  font-size: 11px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.btn-add-share {
+  border-radius: 999px !important;
+  border-style: dashed !important;
+  border-color: #34d399 !important;
+  color: #008b4b !important;
+}
+.btn-add-share:hover {
+  background: #ecfdf5 !important;
+}
+
+.contract-upload-list {
+  flex: 1;
+  padding: 14px 18px 16px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  align-items: stretch;
+}
+.contract-upload-list ::v-deep .el-upload {
+  display: flex;
+  width: 100%;
+  height: 100%;
+}
 .upload-tile {
   width: 100%;
+  height: 100%;
   padding: 12px 8px;
   border: 1px dashed #cbd5e1;
-  border-radius: 6px;
+  border-radius: 8px;
   background: #f8fafc;
   cursor: pointer;
   display: flex;
   flex-direction: column;
   align-items: center;
+  justify-content: center;
   gap: 4px;
-  color: #334155;
+  color: #1e293b;
+  font-size: 12px;
+  font-weight: 700;
+  transition: all 0.15s ease;
+  box-sizing: border-box;
+}
+.tile-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: #ecfdf5;
+  color: #008b4b;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  margin-bottom: 2px;
+  transition: all 0.15s ease;
+}
+.upload-tile small {
+  color: #94a3b8;
+  font-size: 11px;
+  font-weight: 400;
+}
+.upload-tile:hover {
+  border-color: #008b4b;
+  background: #f0fdf4;
+}
+.upload-tile:hover .tile-icon {
+  background: #008b4b;
+  color: #ffffff;
+}
+.contract-inline-list {
+  padding: 0 18px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.contract-inline-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
   font-size: 12px;
 }
-.upload-tile i { font-size: 20px; color: #008b4b; }
-.upload-tile small { color: #94a3b8; font-size: 11px; }
-.upload-tile:hover { border-color: #008b4b; background: #f0fdf4; }
-
-/* 共享弹窗 */
-.share-dialog-body { display: grid; gap: 12px; }
-.share-user-list {
-  max-height: 320px;
-  overflow: auto;
-  border: 1px solid #e4e9f0;
-  border-radius: 6px;
-  padding: 8px 10px;
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 6px 12px;
+.contract-inline-name {
+  color: #334155;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.share-user-list .el-checkbox { margin: 0; padding: 8px; border-radius: 4px; }
-.share-user-list .el-checkbox:hover { background: #f8fafc; }
-.share-user-list span,
-.share-user-list small { display: block; }
-.share-user-list small { margin-top: 2px; color: #94a3b8; font-size: 11px; }
+.contract-inline-name i {
+  color: #008b4b;
+  margin-right: 4px;
+}
 
 /* 预检焦点高亮 */
-.precheck-focus { outline: 2px solid #f59e0b; outline-offset: 2px; transition: outline-color 0.25s ease; }
-
-/* 响应式 */
-@media (max-width: 1100px) {
-  .top-grid { grid-template-columns: 1fr; }
+.precheck-focus {
+  outline: 2px solid #f59e0b;
+  outline-offset: 2px;
+  transition: outline-color 0.25s ease;
 }
-@media (max-width: 768px) {
-  .form-toolbar { padding: 8px 12px; }
-  .toolbar-summary { margin-left: 0; order: 3; width: 100%; }
-  .toolbar-actions { margin-left: auto; }
-  .form-body { padding: 10px 10px 20px; }
-  .panel { padding: 10px; }
+
+/* 响应式断点 */
+@media (max-width: 1180px) {
+  .top-grid,
+  .extra-grid {
+    grid-template-columns: 1fr;
+  }
+}
+@media (max-width: 780px) {
+  .sales-form-page {
+    padding: 8px 10px 20px;
+  }
+  .form-toolbar.hero-top-bar {
+    padding: 10px 12px;
+  }
+  .toolbar-kpi-capsule {
+    margin-left: 0;
+    order: 3;
+    width: 100%;
+    justify-content: space-between;
+    overflow-x: auto;
+  }
+  .toolbar-actions {
+    margin-left: auto;
+  }
   .field-grid,
-  .field-grid.compact { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .line-detail-grid { grid-template-columns: 1fr; }
-  .extra-grid { grid-template-columns: 1fr; }
-  .order-line-detail { padding: 8px; }
-  .line-detail-amount { margin-left: 0; }
-  .share-user-list { grid-template-columns: 1fr; }
+  .field-grid.grid-cols-4,
+  .field-grid.grid-cols-3,
+  .field-grid.grid-cols-2,
+  .field-grid.compact,
+  .drawing-file-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .platform-inline-row {
+    flex-wrap: wrap;
+  }
+  .line-detail-grid {
+    grid-template-columns: 1fr;
+  }
+  .order-line-detail {
+    padding: 10px;
+  }
+  .line-detail-amount {
+    margin-left: 0;
+  }
 }
 @media (max-width: 480px) {
   .field-grid,
-  .field-grid.compact { grid-template-columns: 1fr; }
-  .field.span-2 { grid-column: 1 / -1; }
-  .toolbar-actions { width: 100%; }
-  .toolbar-actions .el-button { flex: 1; }
-  .total-amount { width: 100%; text-align: right; }
+  .field-grid.grid-cols-4,
+  .field-grid.grid-cols-3,
+  .field-grid.grid-cols-2,
+  .field-grid.compact,
+  .switch-card-pair,
+  .contract-upload-list,
+  .drawing-file-grid {
+    grid-template-columns: 1fr;
+  }
+  .field.span-2 {
+    grid-column: 1 / -1;
+  }
+  .toolbar-actions {
+    width: 100%;
+  }
+  .toolbar-actions .el-button {
+    flex: 1;
+  }
+  .total-amount {
+    width: 100%;
+    text-align: right;
+  }
 }
 </style>

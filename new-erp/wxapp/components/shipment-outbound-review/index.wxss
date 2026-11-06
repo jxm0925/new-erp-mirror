@@ -1,0 +1,63 @@
+@import "../../pages/warehouse/shared.wxss";
+
+.review-dialog {
+  height: 84vh;
+}
+
+.review-scroll {
+  height: 0;
+}
+
+.review-filters {
+  padding: 0 28rpx 12rpx;
+}
+
+.review-row {
+  padding-bottom: 22rpx;
+  margin-bottom: 22rpx;
+  border-bottom: 1rpx solid #e2e8f0;
+}
+
+.review-row-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12rpx;
+}
+
+.review-number {
+  min-width: 0;
+  font-weight: 800;
+  word-break: break-all;
+}
+
+.review-status.approved,
+.review-status.posted {
+  background: #ecfdf5;
+  color: #008b4b;
+}
+
+.review-status.withdrawn {
+  background: #f1f5f9;
+  color: #475569;
+}
+
+.review-line {
+  padding: 16rpx 0;
+  border-top: 1rpx solid #f1f5f9;
+}
+
+.review-decision {
+  padding-top: 12rpx;
+}
+
+.review-error {
+  margin: 0 28rpx 12rpx;
+}
+
+.review-pagination .warehouse-pager {
+  flex: 1;
+  margin: 0;
+  gap: 8rpx;
+  flex-wrap: wrap;
+}

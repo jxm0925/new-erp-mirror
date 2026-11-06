@@ -45,7 +45,7 @@
     <view wx:if="{{!authenticated && !loading}}" class="warehouse-card warehouse-empty">
       <van-icon name="user-circle-o" size="88rpx" color="#d81e06" />
       <view class="wb-empty-title">请先登录仓库账号</view>
-      <view class="warehouse-muted">登录后可办理入库确认、生产配料、出库发运与库存盘点</view>
+      <view class="warehouse-muted">登录后可办理入库确认、生产配料、出库审核与库存盘点</view>
       <button class="warehouse-primary wb-login-btn" bindtap="openLogin">立即登录</button>
     </view>
 
@@ -113,9 +113,10 @@
         <view class="workspace-shortcuts">
           <view
             wx:for="{{shortcuts}}"
-            wx:key="url"
+            wx:key="key"
             class="workspace-shortcut"
             data-url="{{item.url}}"
+            data-action="{{item.action}}"
             bindtap="openShortcut"
           >
             <view class="workspace-icon shortcut-icon-wrap icon-theme-{{item.theme || 'red'}}">
@@ -175,5 +176,6 @@
     </block>
   </view>
 </view>
+<shipment-outbound-review wx:if="{{shipmentReviewOpen}}" bind:close="closeShipmentReview" />
 <LoginPopup class="LoginPopup" default-mode="production"></LoginPopup>
 <van-notify id="van-notify" />

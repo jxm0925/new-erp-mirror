@@ -22,22 +22,6 @@
         </view>
       </view>
 
-      <!-- 多动作切换卡 -->
-      <view wx:if="{{actionChoices.length}}" class="warehouse-card">
-        <view class="phase-heading">本次办理</view>
-        <view class="document-action-switch">
-          <button
-            wx:for="{{actionChoices}}"
-            wx:key="value"
-            class="{{mainAction === item.value ? 'warehouse-primary' : 'warehouse-secondary'}} document-small-button"
-            data-action="{{item.value}}"
-            disabled="{{busy || pendingAction}}"
-            bindtap="chooseAction"
-          >{{item.label}}</button>
-        </view>
-        <view class="warehouse-muted">有新追加的明细还没移至待发区；已就绪的包裹可以先发。</view>
-      </view>
-
       <!-- 销售出库：移至待发区 -->
       <view wx:if="{{mainAction === 'sales_shipment.post'}}" class="warehouse-card">
         <view class="phase-heading">移至待发区</view>
@@ -45,78 +29,6 @@
           <van-icon name="location-o" size="30rpx" />
           <text>{{locator.location_id ? locator.warehouse_name + ' / ' + locator.location_name : '选择待发仓库和库位'}}</text>
         </button>
-      </view>
-
-      <!-- 销售发运 / 提货 -->
-      <view wx:if="{{mainAction === 'sales_shipment.dispatch'}}" class="warehouse-card">
-        <view class="phase-heading">本次发运 / 提货</view>
-        <radio-group class="doc-radio-group" bindchange="chooseDeliveryMode">
-          <label class="doc-radio-pill {{deliveryMode === 'dispatch' ? 'is-checked' : ''}}">
-            <radio value="dispatch" checked="{{deliveryMode === 'dispatch'}}" color="#d81e06" />
-            <text>公司发运</text>
-          </label>
-          <label class="doc-radio-pill {{deliveryMode === 'pickup' ? 'is-checked' : ''}}">
-            <radio value="pickup" checked="{{deliveryMode === 'pickup'}}" color="#d81e06" />
-            <text>客户提货</text>
-          </label>
-        </radio-group>
-
-        <block wx:if="{{deliveryMode === 'dispatch'}}">
-          <view class="warehouse-field">
-            <text class="warehouse-label">快递公司</text>
-            <input
-              class="warehouse-input warehouse-value"
-              value="{{carrierName}}"
-              data-field="carrierName"
-              bindinput="dispatchInput"
-              maxlength="120"
-              placeholder="如：顺丰速运"
-              disabled="{{busy || pendingAction}}"
-            />
-          </view>
-          <view class="warehouse-field">
-            <text class="warehouse-label">运单号</text>
-            <input
-              class="warehouse-input warehouse-value"
-              value="{{trackingNo}}"
-              data-field="trackingNo"
-              bindinput="dispatchInput"
-              maxlength="120"
-              placeholder="选中的包裹共用这个单号"
-              disabled="{{busy || pendingAction}}"
-            />
-          </view>
-        </block>
-
-        <view class="document-section-heading">
-          <text>选择本次发出的包裹（已选 {{selectedPackageIds.length}} 件）</text>
-          <button
-            class="warehouse-secondary document-small-button"
-            disabled="{{busy || pendingAction}}"
-            bindtap="selectAllReady"
-          >全选就绪</button>
-        </view>
-
-        <checkbox-group bindchange="chooseDispatchPackages">
-          <label
-            wx:for="{{dispatchPackages}}"
-            wx:key="id"
-            class="doc-pkg-check {{item.selected ? 'is-selected' : ''}}"
-          >
-            <checkbox
-              value="{{item.id}}"
-              checked="{{item.selected}}"
-              disabled="{{busy || pendingAction || !item.ready}}"
-              color="#d81e06"
-            />
-            <view class="doc-pkg-main">
-              <view class="doc-pkg-no">{{item.package_no}}</view>
-              <view wx:if="{{item.contents_text}}" class="warehouse-muted">{{item.contents_text}}</view>
-              <view class="{{item.ready ? 'doc-pkg-ready' : 'warehouse-danger'}}">{{item.ready ? '✓ 已就绪' : item.blockerText}}</view>
-            </view>
-          </label>
-        </checkbox-group>
-        <view wx:if="{{!dispatchPackages.length}}" class="warehouse-muted">没有待发出的包裹</view>
       </view>
 
       <!-- 已办理凭证 -->
@@ -527,7 +439,6 @@
         </view>
       </block>
 
-      <button wx:if="{{canPacking}}" class="warehouse-secondary document-packing-entry" bindtap="openPacking" disabled="{{busy}}">包装作业</button>
       <view wx:if="{{postingEligibility && !postingEligibility.can_post}}" class="warehouse-error">{{postingEligibility.reason_text}}</view>
       <button wx:if="{{mainAction || pendingAction}}" class="warehouse-primary" loading="{{busy}}" disabled="{{busy}}" bindtap="submit">{{pendingAction ? '查询原操作结果' : mainLabel}}</button>
       <button wx:elif="{{receipt}}" class="warehouse-primary" bindtap="back">返回列表</button>

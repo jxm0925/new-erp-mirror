@@ -426,6 +426,7 @@ final class TaskQueryService
         $reports = MfgUnitReport::query()->orderByDesc('id')->limit(10)->get();
         $reportOps = MfgWorkOrderOperation::query()->whereIn('id', $reports->pluck('work_order_operation_id')->merge(
             MfgUnitReport::query()->where('review_status', 'pending')->pluck('work_order_operation_id')) ?: [0])->pluck('operation_name', 'id');
+        $shipping = app(ShipmentBoardQuery::class)->forBoard($filters);
         return [
             'stats' => [
                 'in_progress_units' => MfgWorkOrderUnit::query()->whereIn('status', ['in_progress', 'rework'])->count(),
@@ -438,6 +439,7 @@ final class TaskQueryService
                 'today_hours' => round($todayMinutes / 60, 1),
             ],
             'columns' => $columns,
+            'shipment_columns' => $shipping['columns'],
             'waiting_receipt' => $waiting,
             'today_receipts' => $receipts->map(fn ($r) => ['id' => $r->id, 'receipt_no' => $r->receipt_no, 'work_order_no' => $receiptWos->get($r->work_order_id)?->work_order_no,
                 'product_name' => ($w = $receiptWos->get($r->work_order_id)) ? ($w->product_name ?: $w->item_name) : null, 'sku_name' => $w?->sku_name,
@@ -458,7 +460,7 @@ final class TaskQueryService
             'pending_scraps' => $this->pendingScraps($reportOps),
             'owner_options' => MfgTaskParticipant::query()->whereIn('work_order_id', MfgWorkOrder::query()->whereIn('status', self::OPEN)->pluck('id') ?: [0])
                 ->where('is_active', true)->select('employee_legacy_id', 'employee_name')->distinct()->get()
-                ->map(fn ($p) => ['id' => (int) $p->employee_legacy_id, 'name' => $p->employee_name])->unique('id')->values()->all(),
+                ->map(fn ($p) => ['id' => (int) $p->employee_legacy_id, 'name' => $p->employee_name])->concat($shipping['owners'])->unique('id')->values()->all(),
             'refreshed_at' => now()->toDateTimeString(),
         ];
     }
@@ -532,12 +534,12 @@ final class TaskQueryService
         }
         if ($keyword = trim((string) ($filters['keyword'] ?? ''))) {
             $like = '%'.$keyword.'%';
-            $query->where(fn ($q) => $q->where('wo.work_order_no', 'like', $like)->orWhere('wo.product_name', 'like', $like)->orWhere('wo.item_name', 'like', $like)
+            $query->where(fn ($q) => $q->where('wo.work_order_no', 'like', $like)->orWhere('wo.sales_order_no', 'like', $like)->orWhere('wo.product_name', 'like', $like)->orWhere('wo.item_name', 'like', $like)
                 ->orWhere('wo.item_code', 'like', $like)->orWhere('wo.sku_name', 'like', $like)->orWhere('wo.customer_name', 'like', $like)
                 ->orWhereExists(fn ($it) => $it->selectRaw('1')->from('erp_items as it')->whereColumn('it.id', 'wo.item_id')->where(fn ($w) => $w->where('it.spec', 'like', $like)->orWhere('it.model', 'like', $like)))
                 ->orWhereExists(fn ($pl) => $pl->selectRaw('1')->from('erp_mfg_work_order_links as wl2')->join('erp_mfg_work_orders as pwo2', 'pwo2.id', '=', 'wl2.parent_work_order_id')
                     ->whereColumn('wl2.child_work_order_id', 'wo.id')
-                    ->where(fn ($w) => $w->where('pwo2.work_order_no', 'like', $like)->orWhere('pwo2.product_name', 'like', $like)->orWhere('pwo2.item_name', 'like', $like)->orWhere('pwo2.customer_name', 'like', $like)))
+                    ->where(fn ($w) => $w->where('pwo2.work_order_no', 'like', $like)->orWhere('pwo2.sales_order_no', 'like', $like)->orWhere('pwo2.product_name', 'like', $like)->orWhere('pwo2.item_name', 'like', $like)->orWhere('pwo2.customer_name', 'like', $like)))
                 ->orWhereExists(fn ($u) => $u->selectRaw('1')->from('erp_mfg_work_order_units as su')->whereColumn('su.work_order_id', 'wo.id')->where('su.serial_no', 'like', $like)));
         }
         return $query;

@@ -29,7 +29,7 @@ function hubAccess() {
   const can = view.permissions();
   return {
     workOrder: can('production.task.execute') || can('production.task.view'),
-    warehouse: ['inventory.post.view', 'sales_return.view', 'sales_order.shipment.view', 'purchase_return.view'].some(can),
+    warehouse: ['inventory.post.view', 'sales_return.view', 'sales_order.shipment.view', 'sales_order.shipment.post', 'purchase_return.view'].some(can),
     shipment: can('sales_order.shipment.packing.execute') || can('sales_order.shipment.packing.quality'),
     stats: can('production.board') || can('production.task.view'),
     scan: can('production.serial.view')
@@ -276,10 +276,7 @@ Page({
 
     // 3. 发货（试水与打包）数据（Packing operations）
     const packingPaged = view.rows(packingRaw);
-    const packingItems = Array.isArray(packingPaged.rows) ? packingPaged.rows : [];
-    const activePackingItems = packingItems.filter(
-      op => op.status !== 'COMPLETED' && op.status !== 'CANCELLED'
-    );
+    const activePackingItems = Array.isArray(packingPaged.rows) ? packingPaged.rows : [];
     const packingSummary = packingRaw.summary || {};
     const waterTestCount = toNum(packingSummary.water_test);
     const packingCount = toNum(packingSummary.packing);
@@ -334,6 +331,7 @@ Page({
     });
 
     activePackingItems.slice(0, 2).forEach(op => {
+      const waitingOutbound = op.status === 'COMPLETED';
       const isWaterTest = op.shipment_operation_type === 'water_test';
       const isPacking = op.shipment_operation_type === 'packing';
       const isLoading = op.shipment_operation_type === 'loading';
@@ -345,11 +343,11 @@ Page({
         id: `pack-${op.id}`,
         type: 'shipment',
         targetId: op.id,
-        tagText: isWaterTest ? '发货 · 待试水' : isPacking ? '发货 · 打包中' : isLoading ? '发货 · 装车中' : '发货 · 待办理',
+        tagText: waitingOutbound ? '发货 · 待出库' : isWaterTest ? '发货 · 待试水' : isPacking ? '发货 · 打包中' : isLoading ? '发货 · 装车中' : '发货 · 待办理',
         tagClass: 'tag-blue',
         code: `${op.package_no || `包裹 #${op.id}`} · ${op.operation_name || '发货作业'}`,
         desc: contentDesc,
-        btnText: isWaterTest ? '去检验' : isPacking ? '去打包' : '去办理',
+        btnText: waitingOutbound ? '查看出库' : isWaterTest ? '去检验' : isPacking ? '去打包' : '去办理',
         btnClass: 'btn-outline-red'
       });
     });

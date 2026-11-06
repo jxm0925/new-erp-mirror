@@ -1,11 +1,11 @@
-// 销售按客户约定修改开工定金：留空恢复付款条件默认值；草稿与已确认订单均立即生效并留痕。
+// 销售按客户约定修改定金，留空恢复付款条件默认值。
 import { updateSalesOrderAgreedDeposit } from '@/api/erp/sales'
 
 export async function promptAgreedDeposit (vm, orderId, funding) {
   const current = funding && funding.production_required_amount !== undefined ? Number(funding.production_required_amount) : ''
   const policyDefault = funding && funding.policy_deposit_amount !== undefined && funding.policy_deposit_amount !== null
     ? `付款条件默认 ¥${Number(funding.policy_deposit_amount).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}，` : ''
-  const { value } = await vm.$prompt(`填写与客户约定的开工定金（元）。${policyDefault}留空则恢复付款条件默认值。`, '修改约定定金', {
+  const { value } = await vm.$prompt(`填写与客户约定的定金（元）。${policyDefault}留空则恢复付款条件默认值。`, '修改约定定金', {
     inputValue: current === '' ? '' : String(current),
     confirmButtonText: '保存',
     cancelButtonText: '取消',

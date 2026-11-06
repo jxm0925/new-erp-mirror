@@ -22,10 +22,18 @@ final class TradePlatformApplicationService
     public static function present(object $row): array
     {
         $data = (array) $row;
-        unset($data['legacy_payload']);
+        unset($data['legacy_payload'], $data['parent_metadata']);
         $data['enabled'] = (bool) $row->enabled;
+        $data['payment_mode'] = self::paymentMode($row->legacy_payload);
+        $data['effective_payment_mode'] = $data['payment_mode'] ?? self::paymentMode($row->parent_metadata ?? null);
         $data['business_version'] = self::version($row);
         return $data;
+    }
+
+    public static function paymentMode(?string $metadata): ?string
+    {
+        $mode = (json_decode($metadata ?? '{}', true) ?: [])['payment_mode'] ?? null;
+        return in_array($mode, ['online', 'offline'], true) ? $mode : null;
     }
 
     public function save(?int $id, array $data, object $operator): array
@@ -57,7 +65,8 @@ final class TradePlatformApplicationService
             } elseif (!in_array($values['trade_type'], ['domestic', 'foreign'], true)) {
                 $this->fail('trade_type', '请选择交易类型：国内交易或国外交易。');
             }
-            $fingerprint = hash('sha256', json_encode($values, JSON_UNESCAPED_UNICODE));
+            $metadata = array_intersect_key($data, ['payment_mode' => true]);
+            $fingerprint = hash('sha256', json_encode($values + array_filter($metadata), JSON_UNESCAPED_UNICODE));
             if (!$id) {
                 $existing = DB::table(self::TABLE)->where('legacy_payload->base_archive_request_id', $data['client_request_id'])->first();
                 if ($existing) {
@@ -71,7 +80,7 @@ final class TradePlatformApplicationService
             if ($id) $duplicate->where('id', '<>', $id);
             if ($duplicate->exists()) $this->fail('name', '同一上级下已存在同名成交平台。');
             if ($old) {
-                DB::table(self::TABLE)->where('id', $id)->update([...$values, 'legacy_payload' => $this->nextMetadata($old), 'updated_at' => now()]);
+                DB::table(self::TABLE)->where('id', $id)->update([...$values, 'legacy_payload' => $this->nextMetadata($old, $metadata), 'updated_at' => now()]);
                 if (!$values['parent_legacy_id'] && $values['trade_type'] !== $old->trade_type) {
                     DB::table(self::TABLE)->where('parent_legacy_id', $old->legacy_id)->update(['trade_type' => $values['trade_type'], 'updated_at' => now()]);
                 }
@@ -81,7 +90,7 @@ final class TradePlatformApplicationService
                 $counter->update(['current_sequence' => $identity, 'updated_at' => now()]);
                 $id = DB::table(self::TABLE)->insertGetId([
                     ...$values, 'legacy_id' => $identity,
-                    'legacy_payload' => json_encode(['source' => 'local_master', 'archive_version' => 1, 'base_archive_request_id' => $data['client_request_id'], 'request_fingerprint' => $fingerprint]),
+                    'legacy_payload' => json_encode($metadata + ['source' => 'local_master', 'archive_version' => 1, 'base_archive_request_id' => $data['client_request_id'], 'request_fingerprint' => $fingerprint]),
                     'created_at' => now(), 'updated_at' => now(),
                 ]);
             }
@@ -107,11 +116,11 @@ final class TradePlatformApplicationService
         }, 5);
     }
 
-    private function nextMetadata(object $row): string
+    private function nextMetadata(object $row, array $updates = []): string
     {
         $metadata = json_decode($row->legacy_payload ?? '{}', true) ?: [];
         $metadata['archive_version'] = (int) ($metadata['archive_version'] ?? 0) + 1;
-        return json_encode($metadata, JSON_UNESCAPED_UNICODE);
+        return json_encode(array_replace($metadata, $updates), JSON_UNESCAPED_UNICODE);
     }
 
     private function lockIdentityCounter(): void
