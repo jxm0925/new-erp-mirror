@@ -127,7 +127,7 @@ class SalesReturnIdentityService
             ->whereRaw("JSON_CONTAINS(JSON_EXTRACT(shipment_line.serial_snapshot, '$.inventory_serial_ids'), CAST(serial.id AS JSON))")
             // The newest sale is authoritative: an old order cannot reclaim a serial that
             // has already returned, been sold again, and now belongs to another shipment.
-            // 外层锁不覆盖子查询；写事务中最新发运和已退身份也必须读取当前事实。
+            // 外层锁不覆盖子查询；写事务中最新发货和已退身份也必须读取当前事实。
             ->whereRaw("event.id = (SELECT newer.id FROM erp_inventory_serial_events newer WHERE newer.inventory_serial_id = serial.id AND newer.event_type = 'sales_shipment_outbound' ORDER BY newer.id DESC LIMIT 1".($current ? ' FOR UPDATE' : '').')')
             ->whereNotExists(function ($query) use ($current): void {
                 $query->selectRaw('1')->from('erp_sales_return_serial_identities as identity')
@@ -331,7 +331,7 @@ class SalesReturnIdentityService
         $this->event($serial, $line, $identity, 'sales_return_inbound', self::STATES['restock'], 'available', $operatorId);
     }
 
-    /** 转残次品入库：与转入库同一条“原发运成本”事实链，序列号结束于维修中状态而非可售。 */
+    /** 转残次品入库：与转入库同一条“原发货成本”事实链，序列号结束于维修中状态而非可售。 */
     public function completeDefective(int $identityId, InventoryTransactionItem $transactionItem, ?int $operatorId): void
     {
         $identity = SalesReturnSerialIdentity::with([

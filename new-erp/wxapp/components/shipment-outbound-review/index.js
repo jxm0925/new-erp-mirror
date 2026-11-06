@@ -14,10 +14,10 @@ const STATUS = {
 
 function describe(row) {
   return Object.assign({}, row, {
-    kindLabel: row.kind === 'materials' ? '包装用料' : '成品发货',
-    statusLabel: STATUS[row.status] || '状态待确认',
+    kindLabel: row.kind === 'materials' ? '包装用料' : (row.kind === 'products' ? '打包缺项领用' : '原发货申请'),
+    statusLabel: row.kind === 'products' && row.status === 'posted' ? '已交付' : (STATUS[row.status] || '状态待确认'),
     createdAt: ui.dateTime(row.created_at),
-    deliveryLabel: { dispatch: '发运', pickup: '自提' }[row.delivery_mode] || '',
+    deliveryLabel: { dispatch: '发货', pickup: '自提' }[row.delivery_mode] || '',
     lines: (row.lines || []).map((line, index) => Object.assign({}, line, {
       key: index,
       quantityText: ui.quantity(line.quantity),

@@ -1,238 +1,549 @@
 <import src="../order-info.wxml" />
-<!-- 发货作业（试水 / 打包 / 装车）：列表和详情均对齐红底工作台极简清爽规范 -->
-<view wx:if="{{!detailOpen}}" class="mt-page">
-  <view class="wo-hero">
-    <view class="wo-hero-top">
-      <text class="wo-hero-title">发货作业（试水 / 打包 / 装车）</text>
-      <text wx:if="{{userName}}" class="wo-hero-pill">{{userName}}</text>
-    </view>
-    <view class="wo-hero-search">
-      <input class="wo-hero-input" value="{{keyword}}" bindinput="keywordInput" placeholder="搜索工序名称 / 发货单号 / 产品" confirm-type="search" bindconfirm="search" />
-      <text wx:if="{{keyword}}" class="wo-hero-clear" bindtap="clearKeyword">×</text>
-      <button class="wo-hero-search-btn" bindtap="search">查询</button>
-    </view>
-  </view>
-
-  <view class="mt-tabs">
-    <view wx:for="{{tabs}}" wx:key="key" class="mt-tab {{scope === item.key ? 'on' : ''}}" data-scope="{{item.key}}" bindtap="pickScope">
-      <text>{{item.label}}</text>
-      <text wx:if="{{item.key !== 'all'}}">({{counts[item.key] || 0}})</text>
-    </view>
-  </view>
-
-  <view wx:if="{{error}}" class="mt-error">{{error}}</view>
-  <view wx:if="{{loading && !rows.length}}" class="mt-empty">正在读取发货作业…</view>
-  <view wx:elif="{{!rows.length}}" class="mt-empty">{{scope === 'mine' ? '当前暂无进行中的发货作业，可切换至「可接作业」查看' : (scope === 'available' ? '当前暂无可接的发货作业' : '暂无发货作业记录')}}</view>
-
-  <view wx:for="{{rows}}" wx:for-item="operation" wx:key="id" class="mt-card" data-id="{{operation.id}}" bindtap="openOperation">
-    <view class="mt-row">
-      <text class="mt-op">{{operation.operation_name}}</text>
-      <view class="mt-tags">
-        <text wx:if="{{operation.repairCount}}" class="mt-tag red">{{operation.repairCount}} 台返修</text>
-        <text wx:if="{{operation.my.timing}}" class="mt-tag amber">计时中</text>
-        <text class="mt-tag {{operation.statusTag}}">{{operation.statusLabel}}</text>
+<!-- 发货作业（试水 / 打包 / 装车）：严格对齐 pages/production/tasks/index 与 pages/production/task/index -->
+<view wx:if="{{!detailOpen}}" class="sp-list-page">
+  <!-- 顶部精简红底人员状态栏（对齐 tasks/index .tasks-context） -->
+  <view class="sp-context">
+    <view class="sp-circle sp-circle-1"></view>
+    <view class="sp-circle sp-circle-2"></view>
+    <view class="sp-ctx-left">
+      <view class="sp-avatar">{{userInitial}}</view>
+      <view class="sp-name-row">
+        <text class="sp-name">{{userName || '发货作业员'}}</text>
+        <text class="sp-badge">发货作业</text>
       </view>
     </view>
-    <view class="mt-product">{{operation.productText}}<text class="mt-muted"> × {{operation.qtyText}}</text></view>
-    <view wx:if="{{operation.specText}}" class="clean-item-spec">规格型号：{{operation.specText}}</view>
-    <view class="mt-muted mt-gap">{{operation.shipment_no}} · {{operation.package_no}}<text wx:if="{{operation.order_info}}"> · {{operation.order_info.customer_name}}</text></view>
-    <view class="mt-row mt-gap">
-      <text class="mt-muted">主责接单：{{operation.ownerName}}</text>
-      <text class="mt-muted">我的工时 {{operation.myMinutesText}} · 本道合计 {{operation.totalMinutesText}}</text>
-    </view>
-    <view wx:if="{{operation.order_info && operation.order_info.changed.length}}" class="mt-note">销售订单已变更：{{operation.changedText}}</view>
-    <button class="mt-btn {{operation.allowed_actions.claim ? '' : 'ghost'}}" data-id="{{operation.id}}" catchtap="openOperation" disabled="{{busy}}">{{operation.allowed_actions.claim ? '去接单' : (operation.my.timing ? '继续作业' : '查看作业')}}</button>
+    <view class="sp-summary">待做 {{counts.mine || 0}} · 可接 {{counts.available || 0}}</view>
   </view>
 
-  <view wx:if="{{lastPage > 1}}" class="mt-pager">
-    <button class="mt-btn ghost mt-btn-mini" disabled="{{page <= 1 || busy}}" data-delta="-1" bindtap="turnPage">上一页</button>
-    <text>{{page}} / {{lastPage}}</text>
-    <button class="mt-btn ghost mt-btn-mini" disabled="{{page >= lastPage || busy}}" data-delta="1" bindtap="turnPage">下一页</button>
+  <view class="sp-list-body">
+    <!-- 白底一体化筛选卡（对齐 tasks/index .tasks-filter-card） -->
+    <view class="sp-filter-card">
+      <view class="sp-tabs">
+        <view wx:for="{{tabs}}" wx:key="key" class="sp-tab {{scope === item.key ? 'on' : ''}}" data-scope="{{item.key}}" bindtap="pickScope">
+          <text>{{item.label}}</text>
+          <text wx:if="{{item.key !== 'all'}}" class="sp-tab-count">({{counts[item.key] || 0}})</text>
+        </view>
+      </view>
+
+      <view class="sp-search">
+        <van-icon name="search" color="#64748b" size="32rpx" />
+        <input
+          class="sp-search-input"
+          value="{{keyword}}"
+          bindinput="keywordInput"
+          placeholder="搜工序名称 / 发货单号 / 订单号 / 产品 / 规格型号"
+          confirm-type="search"
+          bindconfirm="search"
+        />
+        <view wx:if="{{keyword}}" class="sp-search-clear" bindtap="clearKeyword">×</view>
+        <button class="sp-search-btn" bindtap="search">查询</button>
+      </view>
+    </view>
+
+    <!-- 异常与空状态 -->
+    <view wx:if="{{error}}" class="mt-error">{{error}}</view>
+    <view wx:if="{{loading && !rows.length}}" class="sp-empty">
+      <van-loading color="#d81e06" size="44rpx" />
+      <text class="sp-empty-sub">正在读取发货作业…</text>
+    </view>
+    <view wx:elif="{{!rows.length}}" class="sp-empty">
+      <van-icon name="notes-o" size="76rpx" color="#cbd5e1" />
+      <text class="sp-empty-title">{{scope === 'mine' ? '暂无进行中的发货作业' : (scope === 'available' ? '暂无可接的发货作业' : '暂无发货作业记录')}}</text>
+      <text class="sp-empty-sub">{{scope === 'mine' ? '可切换至「可接作业」接单作业' : '可调整搜索关键词查询发货作业'}}</text>
+    </view>
+
+    <!-- 发货作业卡片列表（对齐 tasks/index .wo-group-card.pack-card） -->
+    <view wx:for="{{rows}}" wx:for-item="operation" wx:key="id" class="sp-card" data-id="{{operation.id}}" bindtap="openOperation">
+      <view class="sp-card-head">
+        <view class="sp-head-left">
+          <text class="mt-tag blue">发货作业</text>
+          <text class="sp-no">{{operation.operation_name}} · {{operation.productText}}</text>
+          <text wx:if="{{operation.repairCount}}" class="mt-tag red">{{operation.repairCount}}台返修</text>
+          <text wx:if="{{operation.order_info && operation.order_info.changed.length}}" class="mt-tag red">订单已变更</text>
+          <text wx:if="{{operation.my.timing}}" class="mt-tag amber">计时中</text>
+        </view>
+        <text class="mt-tag {{operation.statusTag}}">{{operation.statusLabel}}</text>
+      </view>
+
+      <view class="sp-card-main">
+        <view class="sp-title-row">
+          <text class="sp-product">{{operation.productText || operation.operation_name}}</text>
+          <text class="sp-qty">× {{operation.qtyText}}</text>
+        </view>
+
+        <!-- 订单号与规格标签行（对齐 tasks/index .wo-meta-row / .wo-order-chip / .wo-spec-chip） -->
+        <view class="sp-meta-chips">
+          <text wx:if="{{operation.salesOrderNo}}" class="sp-order-chip mono">订单号：{{operation.salesOrderNo}}</text>
+          <text class="sp-spec-chip">规格型号：{{operation.specText || '标准规格'}}</text>
+          <text wx:if="{{operation.dueText}}" class="sp-meta-chip">交期 {{operation.dueText}}</text>
+          <text wx:if="{{operation.customerName}}" class="sp-meta-chip">{{operation.customerName}}</text>
+          <text wx:if="{{operation.salespersonName}}" class="sp-meta-chip">销售：{{operation.salespersonName}}</text>
+        </view>
+
+        <view wx:if="{{operation.order_info && operation.order_info.changed.length}}" class="mt-note">销售订单已变更：{{operation.changedText}}</view>
+      </view>
+
+      <view class="sp-task-list">
+        <view class="sp-card-foot">
+          <view class="sp-cf-info">
+            <view class="mono">{{operation.shipment_no}} · {{operation.package_no}}</view>
+            <view>主责接单：{{operation.ownerName}} · 我的工时 {{operation.myMinutesText}} · 本道合计 {{operation.totalMinutesText}}</view>
+          </view>
+          <button
+            class="sp-cf-btn {{operation.allowed_actions.claim ? '' : 'outline'}}"
+            data-id="{{operation.id}}"
+            catchtap="openOperation"
+            disabled="{{busy}}"
+          >{{operation.allowed_actions.claim ? '去接单' : (operation.my.timing ? '继续作业' : '查看作业')}}</button>
+        </view>
+      </view>
+    </view>
+
+    <view wx:if="{{lastPage > 1}}" class="mt-pager">
+      <button class="mt-btn ghost mt-btn-mini" disabled="{{page <= 1 || busy}}" data-delta="-1" bindtap="turnPage">上一页</button>
+      <text>{{page}} / {{lastPage}}</text>
+      <button class="mt-btn ghost mt-btn-mini" disabled="{{page >= lastPage || busy}}" data-delta="1" bindtap="turnPage">下一页</button>
+    </view>
   </view>
 </view>
 
-<view wx:if="{{detailOpen}}" class="mt-page has-footer">
-  <!-- 顶部极简三行红底 Hero 头 -->
-  <view class="wo-hero">
-    <view class="wo-hero-top">
-      <text class="wo-hero-title">{{operation.operation_name || '发货作业'}}<text wx:if="{{operation.productText}}"> · {{operation.productText}}</text><text wx:if="{{operation.qtyText}}"> × {{operation.qtyText}}</text></text>
-      <text class="wo-hero-pill">{{operation.is_public_snapshot ? '公共工序 · ' : ''}}{{operation.statusLabel}}</text>
+<!-- ==================== 发货作业详情工作台（严格对齐 pages/production/task/index） ==================== -->
+<view wx:if="{{detailOpen}}" class="mt-page has-footer tk-v2-page">
+  <!-- 顶部精简红底背景弧线 -->
+  <view class="tk-top-bg"></view>
+
+  <!-- 1. 发货单与销售订单关联主卡（对齐 task/index .tk-main-card + .tk-meta-box 2×2 网格） -->
+  <view class="tk-main-card">
+    <view class="tk-mc-head">
+      <view class="tk-mc-head-left">
+        <text class="mono tk-mc-wo-no">{{operation.shipment_no || '-'}}</text>
+        <text class="tk-mini-tag blue">{{operation.operation_name || '发货作业'}}</text>
+        <text class="tk-mini-tag {{operation.statusTag === 'green' ? 'green' : (operation.statusTag === 'amber' ? 'amber' : '')}}">{{operation.is_public_snapshot ? '公共工序 · ' : ''}}{{operation.statusLabel}}</text>
+        <text wx:if="{{operation.repairCount}}" class="tk-mini-tag red">{{operation.repairCount}}台返修</text>
+      </view>
+      <view style="display:flex;align-items:center;gap:10rpx;flex-shrink:0;">
+        <view class="tk-mc-detail-btn" bindtap="closeDetail">‹ 返回列表</view>
+        <view class="tk-mc-detail-btn" bindtap="refreshDetail">刷新</view>
+      </view>
     </view>
-    <view wx:if="{{operation.specText}}" class="wo-hero-spec">规格型号：{{operation.specText}}</view>
-    <view class="wo-hero-meta">
-      <text class="mono">{{operation.shipment_no}} · {{operation.package_no}}<text wx:if="{{operation.order_info && operation.order_info.work_order_no}}"> · {{operation.order_info.work_order_no}}</text></text>
-      <view style="display:flex; gap:12rpx;">
-        <text class="wo-hero-link" bindtap="closeDetail">‹ 返回列表</text>
-        <text class="wo-hero-link" bindtap="refreshDetail">刷新</text>
+
+    <!-- 产品名称 + 计划数量 + 规格型号 -->
+    <view class="tk-mc-hero">
+      <view class="tk-mc-title-row">
+        <text class="tk-mc-title">{{operation.productText || operation.operation_name || '发货作业'}}</text>
+        <text wx:if="{{operation.qtyText}}" class="tk-mc-qty">× {{operation.qtyText}}</text>
+      </view>
+      <view class="tk-mc-spec">规格型号：{{operation.specText || '标准规格'}}</view>
+    </view>
+
+    <!-- 结构化 2×2 关联信息网格（与 task/index .tk-meta-box 完全一致） -->
+    <view class="tk-meta-box">
+      <view class="tk-meta-grid">
+        <view class="tk-meta-cell">
+          <text class="tk-meta-lbl">销售订单</text>
+          <text class="tk-meta-val mono {{operation.salesOrderNo ? 'is-so' : 'is-muted'}}">{{operation.salesOrderNo || '未关联订单'}}</text>
+        </view>
+        <view class="tk-meta-cell">
+          <text class="tk-meta-lbl">计划交期</text>
+          <text class="tk-meta-val">{{operation.dueText || '-'}}</text>
+        </view>
+        <view class="tk-meta-cell">
+          <text class="tk-meta-lbl">客户名称</text>
+          <text class="tk-meta-val">{{operation.customerName || '-'}}</text>
+        </view>
+        <view class="tk-meta-cell">
+          <text class="tk-meta-lbl">负责销售</text>
+          <text class="tk-meta-val">{{operation.salespersonName || '-'}}</text>
+        </view>
+      </view>
+
+      <!-- 包裹号与所属工单关联行（复用 .tk-meta-parent） -->
+      <view class="tk-meta-parent">
+        <view class="tk-meta-parent-left">
+          <text class="tk-meta-parent-tag">包裹</text>
+          <text class="mono tk-meta-parent-name">{{operation.package_no || operation.shipment_no}}</text>
+          <text wx:if="{{operation.order_info && operation.order_info.work_order_no}}" class="mono tk-meta-parent-no">({{operation.order_info.work_order_no}})</text>
+        </view>
+        <text wx:if="{{operation.outbound.can_dispatch && !pending}}" class="tk-meta-parent-link" bindtap="openDispatch">确认发货 ›</text>
+      </view>
+    </view>
+
+    <!-- 4 列核心进度指标栏（与 task/index .tk-kpi-bar 完全一致） -->
+    <view class="tk-kpi-bar">
+      <view class="tk-kpi-cell">
+        <view class="tk-kpi-val">{{operation.qtyText || 0}}</view>
+        <view class="tk-kpi-lbl">计划数量</view>
+      </view>
+      <view class="tk-kpi-cell">
+        <view class="tk-kpi-val red">{{operation.serialResults.length || operation.qtyText || 0}}</view>
+        <view class="tk-kpi-lbl">本道待做</view>
+      </view>
+      <view class="tk-kpi-cell">
+        <view class="tk-kpi-val">{{operation.totalMinutesText || '0分'}}</view>
+        <view class="tk-kpi-lbl">本道工时</view>
+      </view>
+      <view class="tk-kpi-cell" data-tab="materials" bindtap="switchDetailTab">
+        <view class="tk-kpi-val {{operation.kitting ? (operation.kitting.confirmed ? 'ok' : 'warn') : (operation.materials.length ? 'ok' : '')}}">{{operation.kitting ? (operation.kitting.confirmed ? '已齐套' : '待核对') : (operation.materials.length ? '已登' + operation.materials.length + '项' : '定额' + operation.material_requirements.length + '项')}}</view>
+        <view class="tk-kpi-lbl">{{operation.kitting ? '齐套核对' : '包装用料 ▾'}}</view>
       </view>
     </view>
   </view>
 
-  <view wx:if="{{operationError}}" class="mt-error">{{operationError}}</view>
-  <view wx:if="{{pending}}" class="mt-error">原操作结果待确认，请先点击下方「查询原操作结果」。</view>
-  <view wx:for="{{operation.repairRows}}" wx:for-item="serial" wx:key="inventory_serial_id" class="mt-error">
-    {{serial.serial_no}} 试水不合格：{{serial.repair.label}}<text wx:if="{{serial.repair.reason}}">。原因：{{serial.repair.reason}}</text><text wx:if="{{serial.repair.work_order_no}}">（工单 {{serial.repair.work_order_no}}）</text>
-    <view wx:if="{{serial.can_repair_return}}" class="mt-gap"><text class="tk-link green" data-id="{{serial.shipment_line_id}}" bindtap="openRepairReturn">返修合格返回 ›</text></view>
-  </view>
-  <view wx:if="{{operation.order_info && operation.order_info.changed.length}}" class="mt-error">销售订单已变更（{{operation.changedText}}），请核对下方「订单信息」。</view>
-
-  <!-- 极简清爽单行计时卡片 -->
-  <view class="tk-timer-card {{operation.my.timing ? 'on' : ''}}">
-    <view class="tk-timer-left">
-      <view class="tk-timer-head">
-        <text class="tk-timer-label">我的作业工时</text>
-        <text wx:if="{{operation.my.timing}}" class="mt-tag red">计时中</text>
+  <!-- 2. 作业工时与协同人员控制台（与 task/index .tk-timer-v2 完全一致） -->
+  <view wx:if="{{operation.my.is_participant}}" class="tk-timer-v2 {{operation.my.timing ? 'on' : ''}}">
+    <view class="tk-tv2-main">
+      <view class="tk-tv2-left">
+        <view class="tk-tv2-head">
+          <view class="tk-pulse-dot {{operation.my.timing ? 'on' : 'off'}}"></view>
+          <text class="tk-tv2-label">我的作业工时</text>
+          <text wx:if="{{operation.my.timing}}" class="mt-tag red">计时中</text>
+        </view>
+        <view class="tk-tv2-clock mono">{{clockText}}</view>
       </view>
-      <view class="tk-timer-num mono">{{clockText}}</view>
-      <view class="tk-timer-sub">
-        <text>主责接单：{{operation.ownerName}}</text>
+      <view class="tk-tv2-btns">
+        <button wx:if="{{operation.allowed_actions.pause}}" class="tk-timer-btn ghost" disabled="{{busy}}" data-action="pause" bindtap="runAction">⏸ 暂停</button>
+        <button wx:if="{{operation.allowed_actions.start}}" class="tk-timer-btn primary" disabled="{{busy}}" data-action="start" bindtap="runAction">▶ {{operation.my.closed_minutes > 0 ? '继续计时' : '开始计时'}}</button>
+        <button wx:if="{{operation.allowed_actions.collaborators}}" class="tk-timer-btn collab" disabled="{{busy}}" bindtap="openPeople">协同人员</button>
+      </view>
+    </view>
+    <view class="tk-tv2-foot">
+      <view class="tk-tv2-foot-left">
+        <text>主责：<text class="tk-tv2-owner">{{operation.ownerName}}</text></text>
         <text> · 本道合计 {{operation.totalMinutesText}}</text>
         <text wx:if="{{operation.labor.active_count}}"> · {{operation.labor.active_count}} 人计时中</text>
       </view>
-    </view>
-    <view class="tk-timer-ops">
-      <button wx:if="{{operation.allowed_actions.pause}}" class="tk-timer-btn ghost" data-action="pause" bindtap="runAction">暂停</button>
-      <button wx:if="{{operation.allowed_actions.start}}" class="tk-timer-btn primary" data-action="start" bindtap="runAction">{{operation.my.closed_minutes > 0 ? '继续计时' : '开始计时'}}</button>
-      <button wx:if="{{operation.allowed_actions.collaborators}}" class="tk-timer-btn ghost" bindtap="openPeople">协同人员</button>
+      <view class="tk-tv2-foot-right">
+        <text wx:if="{{operation.allowed_actions.collaborators}}" class="tk-link red" style="font-size: 22rpx;" bindtap="openPeople">协同人员 ›</text>
+      </view>
     </view>
   </view>
 
   <button wx:if="{{operation.allowed_actions.claim}}" class="mt-btn" style="margin-bottom: 18rpx;" disabled="{{busy}}" data-action="claim" bindtap="runAction">立即接单</button>
 
-  <!-- 订单与客户信息（放在我的作业工时下面） -->
-  <workshop-reference reference="{{operation.workshop_reference}}" bind:activity="mediaActivity" />
-  <template is="orderInfo" data="{{info: operation.order_info}}" />
+  <!-- 异常与重要业务横幅提醒 -->
+  <view wx:if="{{operationError}}" class="mt-error">{{operationError}}</view>
+  <view wx:if="{{pending}}" class="mt-error">原操作结果待确认，请先点击下方「查询原操作结果」。</view>
+  <view wx:for="{{operation.repairRows}}" wx:for-item="serial" wx:key="inventory_serial_id" class="mt-error">
+    <view>{{serial.serial_no}} 试水不合格：{{serial.repair.label}}<text wx:if="{{serial.repair.reason}}">。原因：{{serial.repair.reason}}</text><text wx:if="{{serial.repair.work_order_no}}">（工单 {{serial.repair.work_order_no}}）</text></view>
+    <view wx:if="{{serial.can_repair_return}}" class="mt-gap"><text class="tk-link green" data-id="{{serial.shipment_line_id}}" bindtap="openRepairReturn">返修合格返回 ›</text></view>
+  </view>
+  <view wx:if="{{operation.order_info && operation.order_info.changed.length}}" class="mt-error" data-tab="docs" bindtap="switchDetailTab">销售订单已变更（{{operation.changedText}}），点击查看最新订单要求 ›</view>
 
-  <view wx:if="{{operation.serialResults.length}}" class="mt-card">
-    <view class="mt-card-title"><text>本次作业设备序列号 ({{operation.serialResults.length}})</text><text class="mt-muted">勾选后执行下方操作</text></view>
-    <view wx:for="{{operation.serialResults}}" wx:for-item="serial" wx:key="inventory_serial_id" class="tk-unit {{serial.canSelect ? '' : 'off'}}" data-id="{{serial.inventory_serial_id}}" bindtap="toggleSerial">
-      <view class="tk-check {{serial.selected ? 'on' : ''}}">{{serial.selected ? '✓' : ''}}</view>
-      <text class="mono tk-sn">{{serial.serial_no}}</text>
-      <text class="mt-tag {{serial.tag}}">{{serial.statusLabel}}</text>
-      <text class="mt-muted">{{serial.location_name}}</text>
+  <!-- 3. 工作区三栏分段 Tab 切换器（与 task/index .tk-seg-tabs 完全一致） -->
+  <view class="tk-seg-tabs">
+    <view class="tk-seg-item {{detailTab === 'work' ? 'active' : ''}}" data-tab="work" bindtap="switchDetailTab">
+      <text>报工与核对</text>
+      <view class="tk-seg-badge">{{operation.serialResults.length || operation.contents.length || 0}}</view>
+    </view>
+    <view class="tk-seg-item {{detailTab === 'materials' ? 'active' : ''}}" data-tab="materials" bindtap="switchDetailTab">
+      <text>本道用料</text>
+      <view class="tk-seg-badge {{operation.outbound.materials && operation.outbound.materials.status === 'rejected' ? 'warn' : ''}}">{{operation.materialsTabCount || 0}}</view>
+    </view>
+    <view class="tk-seg-item {{detailTab === 'docs' ? 'active' : ''}}" data-tab="docs" bindtap="switchDetailTab">
+      <text>图纸与订单</text>
+      <view class="tk-seg-badge {{operation.order_info && operation.order_info.changed.length ? 'warn' : ''}}">{{operation.docsCount || 0}}</view>
     </view>
   </view>
 
-  <view class="mt-card">
-    <view class="mt-card-title"><text>包裹明细与规格型号</text><text class="mt-muted mono">{{operation.package_no}}</text></view>
-    <view wx:for="{{operation.contents}}" wx:for-item="content" wx:key="id" class="clean-item-row">
-      <view class="clean-item-left">
-        <view class="clean-item-name">{{content.product_name || content.item_name}}</view>
-        <view wx:if="{{content.specText}}" class="clean-item-spec">规格型号：{{content.specText}}</view>
-        <view wx:if="{{content.serialText}}" class="clean-item-spec mono">序列号：{{content.serialText}}</view>
-      </view>
-      <view class="clean-item-right">
-        <view class="clean-item-req">{{content.packaging_scheme_name ? content.packaging_scheme_name + ' · ' : ''}}× {{content.qtyText}}</view>
-      </view>
-    </view>
-  </view>
-
-  <!-- 包装用料与规格型号（默认收起，可点击展开） -->
-  <view wx:if="{{operation.material_requirements.length || operation.materials.length || operation.allowed_actions.materials || operation.outbound.materials}}" class="mt-card">
-    <view class="mt-card-title" bindtap="toggleMaterialsSection">
-      <text>包装用料与规格型号</text>
-      <text wx:if="{{operation.allowed_actions.materials && !pending}}" class="tk-link red" catchtap="openMaterials">申请出库 ›</text>
-    </view>
-    <block wx:if="{{operation.outbound.materials}}">
-      <view class="mt-kv">
-        <text class="k">包装材料出库</text>
-        <text class="mt-tag {{operation.outbound.materials.statusTag}}">{{operation.outbound.materials.statusLabel}}</text>
-      </view>
-      <view wx:if="{{operation.outbound.materials.review_reason}}" class="mt-muted mt-gap">审核说明：{{operation.outbound.materials.review_reason}}</view>
-      <view wx:if="{{operation.outbound.materials.can_withdraw && !pending}}" class="mt-gap">
-        <text class="tk-link red" data-kind="materials" data-action="withdraw_outbound" bindtap="changeOutbound">撤回申请 ›</text>
-      </view>
-    </block>
-    <view class="tk-mat-summary-bar" bindtap="toggleMaterialsSection">
-      <view class="tk-mat-summary-text">
-        定额 <text class="tk-num-bold">{{operation.material_requirements.length}}</text> 项 · 已登记实际耗用 <text class="{{operation.materials.length ? 'tk-num-green' : 'tk-num-red'}}">{{operation.materials.length}}</text> 项
-      </view>
-      <text class="tk-mat-summary-toggle">{{showMaterials ? '收起 ▴' : '点击展开 ▾'}}</text>
-    </view>
-    <block wx:if="{{showMaterials}}">
-      <view wx:for="{{operation.material_requirements}}" wx:for-item="requirement" wx:key="item_id" class="clean-item-row">
-        <view class="clean-item-left">
-          <view class="clean-item-name">{{requirement.item_name}}</view>
-          <view wx:if="{{requirement.specText}}" class="clean-item-spec">规格型号：{{requirement.specText}}</view>
-        </view>
-        <view class="clean-item-right">
-          <view class="clean-item-req">工艺定额 {{requirement.qtyText}}</view>
+  <!-- ==================== TAB 1: 报工与核对 ==================== -->
+  <block wx:if="{{detailTab === 'work'}}">
+    <!-- 本次作业设备序列号（对齐 task/index 单件选择卡片） -->
+    <view wx:if="{{operation.serialResults.length}}" class="mt-card">
+      <view class="mt-card-title">
+        <text>本次作业设备序列号 ({{operation.serialResults.length}})</text>
+        <view class="tk-unit-tools">
+          <text wx:if="{{operation.selectableSerialCount > 1}}" class="tk-tool-pill" bindtap="toggleAllSerials">{{operation.allSerialsSelected ? '取消全选' : '全选'}}</text>
+          <text wx:else class="mt-muted">勾选后执行下方操作</text>
         </view>
       </view>
-      <view wx:if="{{!operation.materials.length}}" class="mt-muted mt-gap">尚未登记实际耗用包装材料</view>
-      <view wx:for="{{operation.materials}}" wx:for-item="material" wx:key="id" class="clean-item-row">
-        <view class="clean-item-left">
-          <view class="clean-item-name">{{material.item_name}}</view>
-          <view wx:if="{{material.specText}}" class="clean-item-spec">规格型号：{{material.specText}}</view>
-          <view wx:if="{{material.usageText}}" class="clean-item-spec">{{material.usageText}}</view>
-          <view wx:if="{{material.usageRemark}}" class="clean-item-spec">备注：{{material.usageRemark}}</view>
+
+      <view
+        wx:for="{{operation.serialResults}}"
+        wx:for-item="serial"
+        wx:key="inventory_serial_id"
+        class="tk-unit-row {{serial.selected ? 'selected' : ''}} {{serial.canSelect ? '' : 'off'}}"
+        data-id="{{serial.inventory_serial_id}}"
+        bindtap="toggleSerial"
+      >
+        <view class="tk-check {{serial.selected ? 'on' : ''}}">{{serial.selected ? '✓' : ''}}</view>
+        <view class="tk-unit-main">
+          <text class="mono tk-sn">{{serial.serial_no}}</text>
+          <text class="tk-unit-sub">{{operation.productText}}{{serial.location_name ? ' · 当前位置：' + serial.location_name : ''}}</text>
         </view>
-        <view class="clean-item-right">
-          <view class="clean-item-req">实际耗用 {{material.base_qty}}</view>
+        <text class="mt-tag {{serial.tag}}">{{serial.statusLabel}}</text>
+      </view>
+
+      <view class="tk-card-foot-bar">
+        <view class="tk-cfb-row">
+          <text>本道待做 <text class="tk-num-bold">{{operation.serialResults.length || operation.qtyText || 0}}</text> 台 · 包裹号 <text class="mono tk-flow-highlight">{{operation.package_no || operation.shipment_no}}</text></text>
         </view>
       </view>
-    </block>
-  </view>
-
-  <view wx:if="{{operation.outbound.can_request_dispatch || operation.outbound.dispatch || operation.outbound.dispatch_block_reason}}" class="mt-card">
-    <view class="mt-card-title">
-      <text>发货出库</text>
-      <text wx:if="{{operation.outbound.can_request_dispatch && !pending}}" class="tk-link red" bindtap="openDispatch">申请出库 ›</text>
     </view>
-    <view wx:if="{{operation.outbound.dispatch_block_reason}}" class="mt-muted mt-gap">{{operation.outbound.dispatch_block_reason}}</view>
-    <block wx:if="{{operation.outbound.dispatch}}">
-      <view class="mt-kv">
-        <text class="k">申请状态</text>
-        <text class="mt-tag {{operation.outbound.dispatch.statusTag}}">{{operation.outbound.dispatch.statusLabel}}</text>
-      </view>
-      <view wx:if="{{operation.outbound.dispatch.packageText}}" class="mt-kv">
-        <text class="k">包裹</text><text class="v mono">{{operation.outbound.dispatch.packageText}}</text>
-      </view>
-      <view wx:if="{{operation.outbound.dispatch.deliveryLabel}}" class="mt-kv">
-        <text class="k">交付方式</text><text class="v">{{operation.outbound.dispatch.deliveryLabel}}</text>
-      </view>
-      <view wx:if="{{operation.outbound.dispatch.carrier_name}}" class="mt-kv">
-        <text class="k">承运商</text><text class="v">{{operation.outbound.dispatch.carrier_name}}</text>
-      </view>
-      <view wx:if="{{operation.outbound.dispatch.tracking_no}}" class="mt-kv">
-        <text class="k">运单号</text><text class="v mono">{{operation.outbound.dispatch.tracking_no}}</text>
-      </view>
-      <view wx:if="{{operation.outbound.dispatch.review_reason}}" class="mt-muted mt-gap">审核说明：{{operation.outbound.dispatch.review_reason}}</view>
-      <view wx:if="{{operation.outbound.dispatch.can_withdraw && !pending}}" class="mt-gap">
-        <text class="tk-link red" data-kind="dispatch" data-action="withdraw_outbound" bindtap="changeOutbound">撤回申请 ›</text>
-      </view>
-      <view wx:if="{{operation.outbound.dispatch.can_confirm && !pending}}" class="mt-gap">
-        <button class="mt-btn" disabled="{{busy}}" data-kind="dispatch" data-action="confirm_dispatch" bindtap="changeOutbound">{{operation.outbound.dispatch.delivery_mode === 'pickup' ? '确认提货' : '确认发运'}}</button>
-      </view>
-    </block>
-  </view>
 
-  <view class="mt-card">
-    <view class="mt-card-title"><text>作业人员与工时</text><text wx:if="{{operation.allowed_actions.collaborators}}" class="tk-link red" bindtap="openPeople">配置协同人员 ›</text></view>
-    <view wx:if="{{!operation.participants.length}}" class="mt-muted">暂无接单人员</view>
-    <view wx:for="{{operation.participants}}" wx:for-item="person" wx:key="employee_legacy_id" class="mt-kv">
-      <text class="k">{{person.name}} <text class="mt-muted">{{person.role === 'OWNER' ? '主责接单人' : '协同人员'}}{{person.is_active ? '' : '（已移除）'}}</text></text>
-      <text class="v">{{person.minutesText}}<text wx:if="{{person.is_timing}}" class="mt-tag amber"> 计时中</text></text>
-    </view>
-  </view>
+    <!-- 打包前核对物品 (kitting) -->
+    <view wx:if="{{operation.kitting}}" class="mt-card">
+      <view class="mt-card-title">
+        <text>打包前核对物品</text>
+        <text class="mt-tag {{operation.kitting.confirmed ? 'green' : 'amber'}}">{{operation.kitting.confirmed ? '已确认齐全' : '请现场核对'}}</text>
+      </view>
 
-  <view wx:if="{{operation.sessionRows.length}}" class="mt-card">
-    <view class="mt-card-title"><text>工时计时明细</text><text class="mt-muted">最近 {{operation.sessionRows.length}} 段</text></view>
-    <view wx:for="{{operation.sessionRows}}" wx:for-item="s" wx:key="id" class="mt-kv">
-      <text class="k">{{s.employee_name}}</text><text class="v mono">{{s.timeText}} · {{s.minutesText}}</text>
+      <view class="tk-mat-summary-bar" style="margin-bottom: 14rpx;">
+        <view class="tk-mat-summary-text">{{operation.kitting.confirmed ? '物品已确认齐全，可继续打包作业。' : '请对照下方清单核对现场整机、配件与包装材料是否已拿齐。'}}</view>
+      </view>
+
+      <!-- 待核对整机与随货物品（对齐 task/index 4列结构化表格） -->
+      <view wx:if="{{operation.kitting.products.length}}" class="tk-mat-table">
+        <view class="tk-mt-tr tk-mt-th">
+          <view class="tk-mt-td col-name">整机 / 随货物品</view>
+          <view class="tk-mt-td col-spec">设备编号与位置</view>
+          <view class="tk-mt-td col-req">应有数量</view>
+          <view class="tk-mt-td col-state">状态</view>
+        </view>
+        <view wx:for="{{operation.kitting.products}}" wx:key="content_id" class="tk-mt-tr">
+          <view class="tk-mt-td col-name">
+            <view class="tk-mt-name">{{item.item_name}}</view>
+          </view>
+          <view class="tk-mt-td col-spec">
+            <view wx:if="{{item.serialText}}" class="mono">{{item.serialText}}</view>
+            <view class="tk-mt-stock">{{item.prepared ? '已备至待发区' : '待仓库交付'}}</view>
+          </view>
+          <view class="tk-mt-td col-req mono">{{item.requiredText}}<text class="tk-mt-unit">{{item.unit_name}}</text></view>
+          <view class="tk-mt-td col-state">
+            <text class="tk-state-pill {{item.prepared ? 'ok' : 'short'}}">{{item.prepared ? '已备齐' : '待交付'}}</text>
+          </view>
+        </view>
+      </view>
+
+      <!-- 待核对包装材料（对齐 task/index 4列结构化表格） -->
+      <view wx:if="{{operation.kitting.materials.length}}" class="tk-mat-table" style="margin-top: 14rpx;">
+        <view class="tk-mt-tr tk-mt-th">
+          <view class="tk-mt-td col-name">包装材料</view>
+          <view class="tk-mt-td col-spec">领用进度</view>
+          <view class="tk-mt-td col-req">需/已领</view>
+          <view class="tk-mt-td col-state">状态</view>
+        </view>
+        <view wx:for="{{operation.kitting.materials}}" wx:key="key" class="tk-mt-tr">
+          <view class="tk-mt-td col-name">
+            <view class="tk-mt-name">{{item.item_name}}</view>
+          </view>
+          <view class="tk-mt-td col-spec">
+            <view>{{item.hasShortage ? '还需领 ' + item.shortageText + item.unit_name : '已领齐'}}</view>
+          </view>
+          <view class="tk-mt-td col-req mono">{{item.requiredText}}/{{item.receivedText}}<text class="tk-mt-unit">{{item.unit_name}}</text></view>
+          <view class="tk-mt-td col-state">
+            <text class="tk-state-pill {{item.hasShortage ? 'short' : 'ok'}}">{{item.hasShortage ? '缺 ' + item.shortageText : '已齐'}}</text>
+          </view>
+        </view>
+      </view>
+
+      <view wx:if="{{operation.kitting.products_pending}}" class="mt-note">已申请领取物品，等待仓库交付后再核对。</view>
+      <view wx:if="{{operation.kitting.materials_pending}}" class="mt-note">包装材料领用申请正在处理中，交付后再核对。</view>
+      <view wx:if="{{operation.outbound.products && operation.outbound.products.status === 'rejected'}}" class="mt-error">产品领用被驳回：{{operation.outbound.products.review_reason}}</view>
+      <view wx:if="{{operation.outbound.products.can_withdraw && !pending}}" class="mt-gap">
+        <text class="tk-link red" data-kind="products" data-action="withdraw_outbound" bindtap="changeOutbound">撤回产品领用申请 ›</text>
+      </view>
+      <view wx:if="{{!operation.kitting.ready}}" class="mt-muted mt-gap">系统的交付或领用记录尚未齐全，请按上方记录处理；现场已拿到的物品不用重复申请。</view>
+
+      <view class="tk-cutting-actions">
+        <button wx:if="{{operation.kitting.can_confirm && !pending && !showKittingShortages}}" class="sp-kitting-btn confirm" disabled="{{busy}}" bindtap="confirmKitting">东西齐了，确认</button>
+        <button wx:if="{{(operation.kitting.can_request_products || operation.allowed_actions.materials) && !pending}}" class="sp-kitting-btn shortage" disabled="{{busy}}" bindtap="toggleKittingShortages">{{showKittingShortages ? '取消填写，返回核对' : '有东西缺少'}}</button>
+      </view>
+
+      <view wx:if="{{showKittingShortages}}" class="packing-check-shortages">
+        <view class="packing-check-name">缺什么，就申请领什么</view>
+        <view class="mt-muted">只填写现场实际缺少的数量，已经拿到的不用填写。</view>
+        <view wx:if="{{operation.kitting.can_request_products}}" wx:for="{{operation.kitting.products}}" wx:key="content_id" class="packing-check-item">
+          <view class="packing-check-name">{{item.item_name}}</view>
+          <view class="packing-check-input-row">
+            <input class="packing-box-input" type="digit" placeholder="缺少数量" value="{{productShortages[item.content_id] || ''}}" data-id="{{item.content_id}}" bindinput="kittingQuantity" disabled="{{busy}}" />
+            <text class="mt-muted">{{item.unit_name}}</text>
+            <button class="packing-check-request" data-id="{{item.content_id}}" bindtap="requestProduct" disabled="{{busy || !productShortages[item.content_id]}}">申请领料</button>
+          </view>
+        </view>
+        <button wx:if="{{operation.allowed_actions.materials}}" class="packing-check-request packing-check-materials" disabled="{{busy}}" bindtap="openMaterials">缺包装材料，去领料</button>
+      </view>
     </view>
-  </view>
+
+    <!-- 确认发货 / 提货 -->
+    <view wx:if="{{operation.outbound.can_dispatch || operation.outbound.dispatch || operation.outbound.dispatch_block_reason}}" class="mt-card">
+      <view class="mt-card-title">
+        <text>确认发货 / 提货</text>
+        <text wx:if="{{operation.outbound.can_dispatch && !pending}}" class="tk-link red" bindtap="openDispatch">确认发货 / 提货 ›</text>
+      </view>
+      <view wx:if="{{operation.outbound.dispatch_block_reason}}" class="mt-muted mt-gap">{{operation.outbound.dispatch_block_reason}}</view>
+      <block wx:if="{{operation.outbound.dispatch}}">
+        <view class="mt-kv">
+          <text class="k">申请状态</text>
+          <text class="mt-tag {{operation.outbound.dispatch.statusTag}}">{{operation.outbound.dispatch.statusLabel}}</text>
+        </view>
+        <view wx:if="{{operation.outbound.dispatch.packageText}}" class="mt-kv">
+          <text class="k">包裹</text><text class="v mono">{{operation.outbound.dispatch.packageText}}</text>
+        </view>
+        <view wx:if="{{operation.outbound.dispatch.deliveryLabel}}" class="mt-kv">
+          <text class="k">交付方式</text><text class="v">{{operation.outbound.dispatch.deliveryLabel}}</text>
+        </view>
+        <view wx:if="{{operation.outbound.dispatch.carrier_name}}" class="mt-kv">
+          <text class="k">承运商</text><text class="v">{{operation.outbound.dispatch.carrier_name}}</text>
+        </view>
+        <view wx:if="{{operation.outbound.dispatch.tracking_no}}" class="mt-kv">
+          <text class="k">运单号</text><text class="v mono">{{operation.outbound.dispatch.tracking_no}}</text>
+        </view>
+        <view wx:if="{{operation.outbound.dispatch.review_reason}}" class="mt-muted mt-gap">审核说明：{{operation.outbound.dispatch.review_reason}}</view>
+        <view wx:if="{{operation.outbound.dispatch.can_withdraw && !pending}}" class="mt-gap">
+          <text class="tk-link red" data-kind="dispatch" data-action="withdraw_outbound" bindtap="changeOutbound">撤回申请 ›</text>
+        </view>
+        <view class="mt-muted mt-gap">旧申请记录保留；本次按打包齐套结果直接确认发货，无需重复审核。</view>
+      </block>
+    </view>
+
+    <!-- 包裹明细与规格型号（对齐 task/index 结构化表格） -->
+    <view class="mt-card">
+      <view class="mt-card-title">
+        <text>包裹明细与规格型号 ({{operation.contents.length || 0}})</text>
+        <text class="mt-muted mono">{{operation.package_no}}</text>
+      </view>
+      <view wx:if="{{!operation.contents.length}}" class="mt-muted">暂无包裹明细</view>
+      <view wx:if="{{operation.contents.length}}" class="tk-mat-table">
+        <view class="tk-mt-tr tk-mt-th">
+          <view class="tk-mt-td col-name">产品名称</view>
+          <view class="tk-mt-td col-spec">规格与序列号</view>
+          <view class="tk-mt-td col-req">数量</view>
+          <view class="tk-mt-td col-state">包装方案</view>
+        </view>
+        <view wx:for="{{operation.contents}}" wx:for-item="content" wx:key="id" class="tk-mt-tr">
+          <view class="tk-mt-td col-name">
+            <view class="tk-mt-name">{{content.product_name || content.item_name}}</view>
+          </view>
+          <view class="tk-mt-td col-spec">
+            <view>{{content.specText || '标准规格'}}</view>
+            <view wx:if="{{content.serialText}}" class="tk-mt-stock mono">SN: {{content.serialText}}</view>
+          </view>
+          <view class="tk-mt-td col-req mono">× {{content.qtyText}}</view>
+          <view class="tk-mt-td col-state">
+            <text class="tk-state-pill ok">{{content.packaging_scheme_name || '标准包装'}}</text>
+          </view>
+        </view>
+      </view>
+    </view>
+  </block>
+
+  <!-- ==================== TAB 2: 本道用料 ==================== -->
+  <block wx:if="{{detailTab === 'materials'}}">
+    <view class="mt-card">
+      <view class="mt-card-title">
+        <text>包装用料明细表</text>
+        <view class="mt-tags">
+          <text wx:if="{{operation.allowed_actions.materials && !pending}}" class="tk-link red" bindtap="openMaterials">+ 申请出库 ›</text>
+        </view>
+      </view>
+
+      <block wx:if="{{operation.outbound.materials}}">
+        <view class="mt-kv">
+          <text class="k">包装材料出库状态</text>
+          <text class="mt-tag {{operation.outbound.materials.statusTag}}">{{operation.outbound.materials.statusLabel}}</text>
+        </view>
+        <view wx:if="{{operation.outbound.materials.review_reason}}" class="mt-muted mt-gap">审核说明：{{operation.outbound.materials.review_reason}}</view>
+        <view wx:if="{{operation.outbound.materials.can_withdraw && !pending}}" class="mt-gap" style="margin-bottom: 12rpx;">
+          <text class="tk-link red" data-kind="materials" data-action="withdraw_outbound" bindtap="changeOutbound">撤回申请 ›</text>
+        </view>
+      </block>
+
+      <view class="tk-mat-summary-bar" style="margin-bottom: 14rpx;">
+        <view class="tk-mat-summary-text">
+          <text>工艺定额 <text class="tk-num-bold">{{operation.material_requirements.length}}</text> 项</text>
+          <text> · 已登记实际耗用 <text class="{{operation.materials.length ? 'tk-num-green' : 'tk-num-red'}}">{{operation.materials.length}}</text> 项</text>
+        </view>
+      </view>
+
+      <block wx:if="{{operation.material_requirements.length}}">
+        <view class="tk-sec-label">工艺定额用料 ({{operation.material_requirements.length}})</view>
+        <view class="tk-mat-table" style="margin-bottom: 20rpx;">
+          <view class="tk-mt-tr tk-mt-th">
+            <view class="tk-mt-td col-name">物料名称</view>
+            <view class="tk-mt-td col-spec">规格型号</view>
+            <view class="tk-mt-td col-req">工艺定额</view>
+            <view class="tk-mt-td col-state">类型</view>
+          </view>
+          <view wx:for="{{operation.material_requirements}}" wx:for-item="requirement" wx:key="item_id" class="tk-mt-tr">
+            <view class="tk-mt-td col-name">
+              <view class="tk-mt-name">{{requirement.item_name}}</view>
+            </view>
+            <view class="tk-mt-td col-spec">{{requirement.specText || '标准规格'}}</view>
+            <view class="tk-mt-td col-req mono">{{requirement.qtyText}}</view>
+            <view class="tk-mt-td col-state">
+              <text class="tk-mini-tag">定额</text>
+            </view>
+          </view>
+        </view>
+      </block>
+
+      <view class="tk-sec-label">已登记实际耗用 ({{operation.materials.length}})</view>
+      <view wx:if="{{!operation.materials.length}}" class="mt-muted">尚未登记实际耗用包装材料</view>
+      <view wx:if="{{operation.materials.length}}" class="tk-mat-table">
+        <view class="tk-mt-tr tk-mt-th">
+          <view class="tk-mt-td col-name">物料名称</view>
+          <view class="tk-mt-td col-spec">规格与裁切尺寸</view>
+          <view class="tk-mt-td col-req">实际耗用</view>
+          <view class="tk-mt-td col-state">状态</view>
+        </view>
+        <view wx:for="{{operation.materials}}" wx:for-item="material" wx:key="id" class="tk-mt-tr">
+          <view class="tk-mt-td col-name">
+            <view class="tk-mt-name">{{material.item_name}}</view>
+          </view>
+          <view class="tk-mt-td col-spec">
+            <view wx:if="{{material.specText}}">{{material.specText}}</view>
+            <view wx:if="{{material.usageText}}" class="tk-mt-stock" style="color:#059669;">{{material.usageText}}</view>
+            <view wx:if="{{material.usageRemark}}" class="tk-mt-code">备注：{{material.usageRemark}}</view>
+          </view>
+          <view class="tk-mt-td col-req mono">{{material.base_qty}}</view>
+          <view class="tk-mt-td col-state">
+            <text class="tk-state-pill ok">已登记</text>
+          </view>
+        </view>
+      </view>
+    </view>
+  </block>
+
+  <!-- ==================== TAB 3: 图纸与订单 ==================== -->
+  <block wx:if="{{detailTab === 'docs'}}">
+    <workshop-reference reference="{{operation.workshop_reference}}" bind:activity="mediaActivity" />
+    <template is="orderInfo" data="{{info: operation.order_info}}" />
+
+    <view class="mt-card">
+      <view class="mt-card-title">
+        <text>作业人员与工时</text>
+        <text wx:if="{{operation.allowed_actions.collaborators}}" class="tk-link red" bindtap="openPeople">配置协同人员 ›</text>
+      </view>
+      <view wx:if="{{!operation.participants.length}}" class="mt-muted">暂无接单人员</view>
+      <view wx:for="{{operation.participants}}" wx:for-item="person" wx:key="employee_legacy_id" class="mt-kv">
+        <text class="k">{{person.name}} <text class="mt-muted">{{person.role === 'OWNER' ? '主责接单人' : '协同人员'}}{{person.is_active ? '' : '（已移除）'}}</text></text>
+        <text class="v">{{person.minutesText}}<text wx:if="{{person.is_timing}}" class="mt-tag amber"> 计时中</text></text>
+      </view>
+    </view>
+
+    <view wx:if="{{operation.sessionRows.length}}" class="mt-card">
+      <view class="mt-card-title">
+        <text>工时计时明细</text>
+        <text class="mt-muted">最近 {{operation.sessionRows.length}} 段</text>
+      </view>
+      <view wx:for="{{operation.sessionRows}}" wx:for-item="s" wx:key="id" class="mt-kv">
+        <text class="k">{{s.employee_name}}</text>
+        <text class="v mono">{{s.timeText}} · {{s.minutesText}}</text>
+      </view>
+    </view>
+  </block>
 </view>
 
+<!-- 底部固定操作栏（严格对齐 task/index .mt-footer） -->
 <view wx:if="{{detailOpen}}" class="mt-footer">
   <button wx:if="{{pending}}" class="mt-btn" loading="{{busy}}" bindtap="recover">查询原操作结果</button>
   <block wx:else>
-    <button wx:if="{{operation.allowed_actions.inspect && operation.shipment_operation_type === 'water_test'}}" class="mt-btn danger-ghost side" disabled="{{busy}}" data-result="failed" bindtap="openInspection">试水不合格</button>
-    <button wx:if="{{operation.allowed_actions.inspect}}" class="mt-btn" disabled="{{busy}}" data-result="passed" bindtap="openInspection">{{operation.shipment_operation_type === 'water_test' ? '试水检验' : '作业质检'}}</button>
-    <button wx:if="{{operation.allowed_actions.complete}}" class="mt-btn" disabled="{{busy}}" data-action="complete" bindtap="runAction">{{operation.serialResults.length ? (operationSerialIds.length ? '确认完工 (' + operationSerialIds.length + '台)' : '请先选择设备') : '确认完成工序'}}</button>
+    <button wx:if="{{operation.allowed_actions.inspect || operation.waterInspection}}" class="mt-btn danger-ghost side" disabled="{{busy || (operation.serialResults.length && !operationSerialIds.length)}}" data-result="failed" bindtap="openInspection">登记不合格</button>
+    <button wx:if="{{operation.allowed_actions.inspect || operation.waterInspection}}" class="mt-btn" disabled="{{busy || (operation.serialResults.length && !operationSerialIds.length)}}" data-result="passed" bindtap="openInspection">{{operation.shipment_operation_type === 'water_test' ? '试水检验并完工' : '作业质检'}}</button>
+    <button wx:if="{{operation.allowed_actions.complete && !operation.waterInspection}}" class="mt-btn" disabled="{{busy}}" data-action="complete" bindtap="runAction">{{operation.serialResults.length ? (operationSerialIds.length ? '确认完工 (' + operationSerialIds.length + '台)' : '请先选择设备') : '确认完成工序'}}</button>
     <button wx:elif="{{operation.allowed_actions.claim}}" class="mt-btn" disabled="{{busy}}" data-action="claim" bindtap="runAction">立即接单</button>
     <button wx:elif="{{operation.allowed_actions.start}}" class="mt-btn" disabled="{{busy}}" data-action="start" bindtap="runAction">开始计时</button>
-    <button wx:elif="{{!operation.allowed_actions.inspect}}" class="mt-btn ghost" bindtap="closeDetail">返回</button>
+    <button wx:elif="{{!operation.allowed_actions.inspect && !operation.waterInspection}}" class="mt-btn ghost" bindtap="closeDetail">返回</button>
   </block>
 </view>
 
@@ -270,16 +581,17 @@
 
 <!-- 配置协同人员弹窗（组件化重构） -->
 <view wx:if="{{peopleOpen}}" class="packing-overlay packing-selector-overlay" catchtouchmove="stop">
-  <view class="packing-dialog">
+  <view class="packing-dialog packing-people-dialog">
     <view class="packing-dialog-accent"></view>
     <view class="packing-dialog-head">
       <view class="packing-dialog-head-left">
         <view class="packing-dialog-title">配置协同人员</view>
-        <view class="packing-dialog-sub">选择参与本工序的协同人员并配置计件分摊比例</view>
+        <view class="packing-dialog-sub">选择本工序协同人员，已记录工时保留</view>
       </view>
       <view class="packing-close-btn" bindtap="closePeople"><van-icon name="cross" size="30rpx" color="#64748b" /></view>
     </view>
     <scroll-view scroll-y class="packing-dialog-body">
+      <view class="packing-people-body-inner">
       <!-- 自定义部门下拉组件（替代微信原生 picker） -->
       <production-select
         options="{{departments}}"
@@ -357,8 +669,9 @@
             <van-icon name="cross" size="22rpx" color="#d81e06" />
           </view>
         </view>
-        <view wx:else class="collab-empty-hint">暂未勾选协同人员，由主责接单人独立完成（100%）</view>
+        <view wx:else class="collab-empty-hint">暂未勾选协同人员，由主责接单人独立完成</view>
 
+        <block wx:if="{{showCollaborationShares}}">
         <view class="collab-divider"></view>
 
         <view class="collab-card-head">
@@ -382,12 +695,14 @@
             <text class="collab-pct-unit">%</text>
           </view>
         </view>
+        </block>
       </view>
       <view wx:if="{{peopleError}}" class="packing-error">{{peopleError}}</view>
+      </view>
     </scroll-view>
     <view class="packing-dialog-footer">
       <view class="packing-btn-cancel" bindtap="closePeople">取消</view>
-      <view class="packing-btn-confirm {{busy || (!pending && !shareRows.length) ? 'disabled' : ''}}" bindtap="savePeople">{{pending ? '重试原操作' : '确认协同与分摊'}}</view>
+      <view class="packing-btn-confirm {{busy ? 'disabled' : ''}}" bindtap="savePeople">{{pending ? '重试原操作' : '确认协同人员'}}</view>
     </view>
   </view>
 </view>
@@ -501,20 +816,51 @@
 </view>
 
 <view wx:if="{{dispatchOpen}}" class="packing-overlay packing-selector-overlay" catchtouchmove="stop">
-  <view class="packing-dialog">
+  <view class="packing-dialog packing-dispatch-dialog">
     <view class="packing-dialog-accent"></view>
     <view class="packing-dialog-head">
       <view class="packing-dialog-head-left">
-        <view class="packing-dialog-title">申请发货出库</view>
-        <view class="packing-dialog-sub">包裹 {{operation.outbound.dispatchPackageText}} · 提交库管审核</view>
+        <view class="packing-dialog-title">确认发货 / 提货</view>
+        <view class="packing-dialog-sub">{{dispatchShipmentNo}} · 选择本次一起发走的设备</view>
       </view>
       <view class="packing-close-btn" bindtap="closeDispatch"><van-icon name="cross" size="30rpx" color="#64748b" /></view>
     </view>
     <scroll-view scroll-y class="packing-dialog-body">
+      <view class="packing-dispatch-body">
+      <view class="packing-section-title">本次发出的设备 / 包裹</view>
+      <view class="mt-muted">只显示这张发货单的待发物品。未完成作业或不由你负责发货的物品不可选。</view>
+      <view class="packing-dispatch-toolbar">
+        <text>已选 {{dispatchPackageCount}} 个包裹</text>
+        <button size="mini" disabled="{{busy || pending || dispatchLoading}}" bindtap="selectDispatchPage">选中本页可发</button>
+      </view>
+      <view wx:if="{{dispatchLoading}}" class="mt-muted">正在读取设备清单…</view>
+      <view wx:elif="{{!dispatchRows.length}}" class="mt-muted">当前没有可显示的待发包裹。</view>
+      <view wx:for="{{dispatchRows}}" wx:key="id" class="packing-dispatch-choice {{dispatchSelected[item.id] ? 'selected' : ''}} {{!item.ready ? 'unavailable' : ''}}" data-id="{{item.id}}" bindtap="toggleDispatchPackage">
+        <view class="packing-dispatch-check">{{dispatchSelected[item.id] ? '✓' : ''}}</view>
+        <view class="packing-dispatch-description">
+          <view class="packing-check-name">{{item.contents_text || '包裹物品'}}</view>
+          <view class="mono mt-muted">{{item.package_nos}}</view>
+          <view wx:if="{{item.package_ids.length > 1}}" class="mt-muted">这些包裹装有同一笔发货明细，需要一起发出。</view>
+          <view class="packing-dispatch-state {{item.ready ? 'ready' : ''}}">{{item.ready ? '可以发货' : item.blocked_reason}}</view>
+        </view>
+      </view>
+      <view class="packing-dispatch-pages">
+        <button size="mini" data-delta="-1" disabled="{{busy || pending || dispatchLoading || dispatchPage <= 1}}" bindtap="turnDispatchPage">上一页</button>
+        <text>{{dispatchPage}} / {{dispatchLast}}</text>
+        <button size="mini" data-delta="1" disabled="{{busy || pending || dispatchLoading || dispatchPage >= dispatchLast}}" bindtap="turnDispatchPage">下一页</button>
+      </view>
+      <view wx:if="{{dispatchSelectedRows.length}}" class="packing-dispatch-summary">
+        <view class="packing-check-name">本次已选（含其他页）</view>
+        <view wx:for="{{dispatchSelectedRows}}" wx:key="id" class="packing-dispatch-summary-row">
+          <text>{{item.contents_text || item.package_nos}}</text>
+          <button size="mini" data-id="{{item.id}}" disabled="{{busy || pending || dispatchLoading}}" bindtap="removeDispatchPackage">移除</button>
+        </view>
+      </view>
+      <view class="mt-muted mt-gap">本次选中的包裹共用下面的运输信息。尚未进入发货单的设备，需要先完成生产交接。</view>
       <radio-group bindchange="chooseDispatchMode" class="packing-radio-group">
         <label class="packing-radio-card {{dispatchMode === 'dispatch' ? 'active-pass' : ''}}">
           <radio value="dispatch" checked="{{dispatchMode === 'dispatch'}}" disabled="{{busy || pending}}" color="#059669"/>
-          <text class="packing-radio-title">物流发运</text>
+          <text class="packing-radio-title">物流发货</text>
         </label>
         <label class="packing-radio-card {{dispatchMode === 'pickup' ? 'active-pass' : ''}}">
           <radio value="pickup" checked="{{dispatchMode === 'pickup'}}" disabled="{{busy || pending}}" color="#059669"/>
@@ -532,10 +878,11 @@
         </view>
       </block>
       <view wx:if="{{dispatchError}}" class="packing-error">{{dispatchError}}</view>
+      </view>
     </scroll-view>
     <view class="packing-dialog-footer">
       <view class="packing-btn-cancel" bindtap="closeDispatch">取消</view>
-      <view class="packing-btn-confirm {{busy ? 'disabled' : ''}}" bindtap="saveDispatch">{{pending ? '查询原操作结果' : '提交出库申请'}}</view>
+      <view class="packing-btn-confirm {{busy || dispatchLoading || (!pending && !dispatchPackageCount) ? 'disabled' : ''}}" bindtap="saveDispatch">{{pending ? '查询原操作结果' : (dispatchMode === 'pickup' ? '确认已提货' : '确认已发货')}}</view>
     </view>
   </view>
 </view>
@@ -604,7 +951,7 @@
     <view class="packing-dialog-accent"></view>
     <view class="packing-dialog-head">
       <view class="packing-dialog-head-left">
-        <view class="packing-dialog-title">{{operation.shipment_operation_type === 'water_test' ? '试水检验' : '作业质检'}}</view>
+        <view class="packing-dialog-title">{{operation.shipment_operation_type === 'water_test' ? '试水检验并完工' : '作业质检'}}</view>
         <view class="packing-dialog-sub">{{operationSerialIds.length ? '本次检验设备：' + operationSerialIds.length + ' 台' : '请确认本次质检结论'}}</view>
       </view>
       <view class="packing-close-btn" bindtap="closeInspection"><van-icon name="cross" size="30rpx" color="#64748b" /></view>
@@ -648,7 +995,7 @@
     </scroll-view>
     <view class="packing-dialog-footer">
       <view class="packing-btn-cancel" bindtap="closeInspection">取消</view>
-      <view class="packing-btn-confirm {{busy || pending ? 'disabled' : ''}}" bindtap="saveInspection">确认检验结果</view>
+      <view class="packing-btn-confirm {{busy || pending || mediaBusy ? 'disabled' : ''}}" bindtap="saveInspection">{{operation.shipment_operation_type === 'water_test' ? (inspectionResult === 'passed' ? '合格并完工' : '不合格，转返修') : '确认检验结果'}}</view>
     </view>
   </view>
 </view>

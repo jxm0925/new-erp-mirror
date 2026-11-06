@@ -47,6 +47,7 @@ module.exports = {
   pending, action,
   operations: query => get(`${base}/operations`, query),
   operation: id => get(`${base}/operations/${Number(id)}`),
+  dispatchChoices: (id, query) => get(`${base}/operations/${Number(id)}/dispatch-choices`, query),
   people: (id, query) => get(`${base}/operations/${Number(id)}/people`, query),
   materials: (id, query) => get(`${base}/operations/${Number(id)}/material-sources`, query),
   identities: (id, query) => get(`${base}/operations/${Number(id)}/material-identities`, query),

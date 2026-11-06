@@ -16,7 +16,7 @@ final class SalesOrderFulfillmentPolicy
 {
     public const TYPES = ['inventory', 'production', 'purchase', 'service', 'no_delivery'];
 
-    /** 待发移位和包装作业不是销售出库；历史已过账和实际发运都不能被订单变更覆盖。 */
+    /** 待发移位和包装作业不是销售出库；历史已过账和实际发货都不能被订单变更覆盖。 */
     public static function hasShipmentFacts(SalesOrder $order): bool
     {
         if (! in_array($order->shipment_status, ['not_shipped', 'not_required'], true) || $order->lines->sum('shipped_qty') > 0) return true;
@@ -28,7 +28,7 @@ final class SalesOrderFulfillmentPolicy
                 ->where('transaction_type', 'sales_shipment_outbound')->where('posting_status', 'posted')->select('source_id')))->exists();
     }
 
-    /** 按发货明细认定已发事实；部分发运单上的其他未发明细不随整单状态被冻结。 */
+    /** 按发货明细认定已发事实；部分发货单上的其他未发明细不随整单状态被冻结。 */
     public static function shippedLines()
     {
         return SalesShipmentLine::query()->where(function ($query) {

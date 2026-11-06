@@ -57,7 +57,7 @@ class SalesOrderEditImpactService
         'funding_policy_snapshot', 'payment_terms_snapshot', 'customer_phone', 'pay_type',
     ];
 
-    /** 快照里允许销售编辑的子字段：只合并这些键，发运事实等其余键沿用正式订单。 */
+    /** 快照里允许销售编辑的子字段：只合并这些键，发货事实等其余键沿用正式订单。 */
     private const SNAPSHOT_EDIT_FIELDS = [
         'shipping_snapshot' => ['is_self_pickup' => '是否自提', 'customer_logistics_note' => null],
         'logistics_snapshot' => [
@@ -973,7 +973,7 @@ class SalesOrderEditImpactService
             'freight_amount', 'carrier_fee', 'currency', 'transaction_mode' => ['FINANCIAL'],
             'required_delivery_date', 'is_delay', 'delay_date' => $facts['has_fulfillment_facts']
                 ? ['FULFILLMENT'] : ['INFO'],
-            // 客户指定物流只是发货时快递公司的预填值，实际快递在每次发运时填写，不影响任何交付事实。
+            // 客户指定物流只是发货时快递公司的预填值，实际快递在每次发货时填写，不影响任何交付事实。
             'carrier_id', 'default_carrier_id' => ['INFO'],
             'trade_type' => ['COMMERCIAL', 'FULFILLMENT'],
             'customer_id', 'customer_name', 'platform', 'sales_channel_id', 'channel_type_snapshot' => ['COMMERCIAL'],

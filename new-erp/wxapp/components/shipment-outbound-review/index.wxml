@@ -79,6 +79,7 @@
         </view>
         <view class="warehouse-title">出库明细</view>
         <view wx:for="{{detail.lines}}" wx:key="key" class="review-line">
+          <view wx:if="{{item.preparation_note}}" class="warehouse-error">{{item.preparation_note}}</view>
           <view class="phase-line-title">
             <text>{{item.name}}</text>
             <text>{{item.quantityText}} {{item.unit_name}}</text>
@@ -110,7 +111,7 @@
             上次{{pendingDecision === 'approve' ? '通过' : '驳回'}}操作的结果待确认。
           </view>
           <view wx:elif="{{decision === 'approve'}}" class="warehouse-note">
-            {{detail.kind === 'materials' ? '通过后按本次申请扣减包装用料库存。' : '通过后由车间确认' + (detail.deliveryLabel || '交付') + '，确认时扣减成品库存。'}}
+            {{detail.kind === 'materials' ? '核对实际交付数量，通过后扣减本次包装用料库存。' : (detail.kind === 'products' ? '确认缺项实物已交付打包人员。已交接的整机不重复扣库，正式销售出库在实际发货时记账。' : '旧版发货申请；当前改为打包前核对齐套，最终直接确认发货。')}}
           </view>
           <block wx:elif="{{decision === 'reject'}}">
             <view class="warehouse-title">驳回原因</view>

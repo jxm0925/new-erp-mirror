@@ -116,7 +116,7 @@
         </view>
         <view class="module-main">
           <text class="module-name">发货</text>
-          <text class="module-desc">试水检验 · 扫码打包 · 发运</text>
+          <text class="module-desc">试水检验 · 扫码打包 · 发货</text>
         </view>
         <view class="module-stats">
           <view class="module-stat">

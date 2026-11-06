@@ -1,6 +1,6 @@
 # ERP 项目指令入口
 
-开始任何前端或后端工作前，必须完整读取并遵循：
+开始任何前端或后端工作前，必须完整读取并遵循：1
 
 - `D:\codex-introduce\new_erp\agent.md`
 - `D:\codex-introduce\new_erp\DEVELOPMENT_PROGRESS.md`

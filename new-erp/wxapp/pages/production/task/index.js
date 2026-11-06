@@ -26,8 +26,9 @@ Page({
     workTab: 'report',
     shareText: '', panel: '', rejectCurrent: false, runPick: 0, selectedHasStock: false,
     reject: { mode: 'return', returnId: 0, tags: {}, reason: '', media: [] }, uploading: false,
-    peopleKeyword: '', peopleRows: [], picked: [], shareMode: 'labor', ownerPercent: '', showMaterials: false, showSemiMaterials: false,
+    peopleKeyword: '', peopleRows: [], peoplePage: 1, peopleLast: 1, picked: [], shareMode: 'labor', ownerPercent: '', showCollaborationShares: false, showMaterials: false, showSemiMaterials: false,
     completionLocatorOpen: false,
+    repairReturn: null, repairReturnReason: '', repairReturnError: '', repairReturnLocator: {}, repairLocatorOpen: false,
     returnForm: { types: [], type: 'surplus', rows: [], picked: {}, qty: {}, reason: '', hint: '',
       planActions: [], planNeedsReview: false, planReviewers: '', planAction: '', planMaterial: 0, planStart: 0, planMedia: [], hasMade: false },
   },
@@ -40,6 +41,30 @@ Page({
   planMediaChanged(event) { this.setData({ 'returnForm.planMedia': event.detail.value }); },
   onUnload() { this.completionJob = null; this.stopClock(); this.sequence = (this.sequence || 0) + 1; },
   onPullDownRefresh() { this.load().finally(() => wx.stopPullDownRefresh()); },
+  openRepairReturn(event) {
+    if (this.data.busy) return;
+    const repair = (this.data.task.pending_repair_returns || []).find(row => Number(row.id) === Number(event.currentTarget.dataset.id));
+    if (repair) this.setData({ repairReturn: repair, repairReturnReason: '', repairReturnError: '', repairReturnLocator: {} });
+  },
+  closeRepairReturn() { if (!this.data.busy) this.setData({ repairReturn: null, repairLocatorOpen: false }); },
+  repairReturnInput(event) { this.setData({ repairReturnReason: event.detail.value }); },
+  openRepairLocator() { if (!this.data.busy) this.setData({ repairLocatorOpen: true }); },
+  closeRepairLocator() { this.setData({ repairLocatorOpen: false }); },
+  repairLocationChosen(event) { this.setData({ repairReturnLocator: event.detail, repairLocatorOpen: false }); },
+  submitRepairReturn() {
+    const repair = this.data.repairReturn;
+    if (!repair || this.data.busy) return;
+    if (!this.data.repairReturnLocator.location_id) return this.setData({ repairReturnError: '请选择返修合格的成品库位' });
+    const reason = String(this.data.repairReturnReason || '').trim();
+    if (!reason) return this.setData({ repairReturnError: '请填写返修合格说明' });
+    this.setData({ busy: true, repairReturnError: '' });
+    return production.action(this.data.id, { action: 'repair_return', lane: 'rework', repair_id: repair.id,
+      expected_version: repair.expected_version, finished_location_id: this.data.repairReturnLocator.location_id, reason }).then(response => {
+      this.setData({ repairReturn: null });
+      this.apply(response.data, false);
+      wx.showModal({ title: '已返回待发区', content: '原设备已交回发货作业，由试水接单人重新开始试水，不需要再次申请仓库领料。', showCancel: false });
+    }).catch(error => this.setData({ repairReturnError: view.errorText(error) })).finally(() => this.setData({ busy: false }));
+  },
   switchWorkTab(event) {
     const tab = event && event.currentTarget && event.currentTarget.dataset && event.currentTarget.dataset.tab;
     if (tab && tab !== this.data.workTab) this.setData({ workTab: tab });
@@ -66,6 +91,13 @@ Page({
     const me = Number((wx.getStorageSync('erp_user') || {}).legacy_id || 0);
     const owner = (task.participants || []).find(p => p.role === 'owner');
     const others = (task.participants || []).filter(p => p.role !== 'owner');
+    // 只控制当前车间界面的入口，保留接口能力，后续可按需开放。
+    task.allowed = Object.assign({}, task.allowed, {
+      report: Boolean(task.allowed.report && task.my?.role === 'owner'),
+      prepare: Boolean(task.allowed.prepare && task.my?.role === 'owner'),
+      start: Boolean(task.allowed.start && task.my?.is_participant),
+      delivery_sign: Boolean(task.allowed.delivery_sign && task.my?.is_participant),
+    });
     const shareText = (task.participants || []).length > 1
       ? task.participants.map(p => p.employee_name + (task.share_mode === 'fixed' ? ` ${view.quantity(p.share_percent)}%` : ` ${minutesText(p.labor_minutes)}`)).join(' · ')
       : '';
@@ -381,9 +413,10 @@ Page({
       tableFilters,
       tableRows,
       content: tableRows.length ? '' : rawMsg,
-      confirmText: '立即领料',
+      confirmText: t.my?.is_participant ? '立即领料' : '我知道了',
+      showCancel: Boolean(t.my?.is_participant),
       cancelText: '暂不领料',
-      success: res => { if (res.confirm) this.receiveMaterials(); },
+      success: res => { if (res.confirm && t.my?.is_participant) this.receiveMaterials(); },
     };
   },
 
@@ -437,7 +470,7 @@ Page({
   },
   receiveMaterials() {
     const task = this.data.task;
-    if (!task || !task.work_order || this.data.busy) return;
+    if (!task || !task.work_order || !task.my?.is_participant || this.data.busy) return;
     const ids = this.selectedIds();
     if (!ids.length) { this.setData({ workTab: 'report' }); return wx.showToast({ title: '请先勾选本次领料的编号', icon: 'none' }); }
     this.setData({ busy: true });
@@ -645,7 +678,7 @@ Page({
     const task = this.data.task;
     if (task.completion && this.data.selectedCompletionCount) return this.chooseCompletion({ action: 'pass', unit_ids: ids });
     const next = task.completion ? null : task.progress.next_operation_name;
-    const done = task.rework_of_work_order_no ? '返工完成并解冻回可用库存' : (task.shipment_repair ? '返修完成，待仓管返回成品位重新试水' : '工序完工待入库');
+    const done = task.rework_of_work_order_no ? '返工完成并解冻回可用库存' : (task.shipment_repair ? '返修完成，请在本页确认返回试水' : '工序完工待入库');
     view.modal(this, {
       mediaEnabled: true,
       title: task.isRework ? '确认返工合格' : '确认完工报工',
@@ -884,14 +917,15 @@ Page({
       avatarText: String(u.name || u.username || '工')[0],
     }));
   },
-  searchPeople() {
+  searchPeople(event, keepPage = false) {
+    if (!keepPage) this.setData({ peoplePage: 1 });
     const me = Number((wx.getStorageSync('erp_user') || {}).legacy_id || 0);
     const sequence = this.peopleSequence = (this.peopleSequence || 0) + 1;
-    return production.people(this.data.id, { keyword: this.data.peopleKeyword }).then(response => {
+    return production.people(this.data.id, { keyword: this.data.peopleKeyword, page: this.data.peoplePage }).then(response => {
       if (sequence !== this.peopleSequence) return;
       const rows = (response.data || []).filter(u => this.data.panel === 'assign' || u.id !== me);
       this.rawPeopleRows = rows;
-      this.setData({ peopleRows: this.decoratePeopleRows(rows) });
+      this.setData({ peopleRows: this.decoratePeopleRows(rows), peoplePage: response.current_page || 1, peopleLast: response.last_page || 1 });
     }).catch(error => wx.showToast({ title: view.errorText(error), icon: 'none' }));
   },
   togglePerson(event) {
@@ -904,6 +938,12 @@ Page({
       picked,
       peopleRows: this.decoratePeopleRows(this.rawPeopleRows || this.data.peopleRows, picked),
     });
+  },
+  turnPeople(event) {
+    const page = this.data.peoplePage + Number(event.currentTarget.dataset.delta);
+    if (page < 1 || page > this.data.peopleLast || this.data.busy) return;
+    this.setData({ peoplePage: page });
+    return this.searchPeople(null, true);
   },
   equalTaskShares() {
     const n = this.data.picked.length + 1;
@@ -923,6 +963,7 @@ Page({
   ownerPercentInput(event) { this.setData({ ownerPercent: event.detail.value }); },
   percentInput(event) { this.setData({ [`picked[${Number(event.currentTarget.dataset.index)}].percent`]: event.detail.value }); },
   savePeople() {
+    if (!this.data.showCollaborationShares) return this.run({ action: 'collaborators', collaborators: this.data.picked.map(p => ({ employee_legacy_id: p.id })) }, '协同人员配置已保存');
     const fixed = this.data.shareMode === 'fixed' && this.data.picked.length > 0;
     if (fixed) {
       const total = Number(this.data.ownerPercent || 0) + this.data.picked.reduce((s, p) => s + Number(p.percent || 0), 0);

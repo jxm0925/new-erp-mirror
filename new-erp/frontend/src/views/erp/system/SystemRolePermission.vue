@@ -272,16 +272,20 @@
             <el-tree
               ref="permTree"
               :data="permissionTree"
-              show-checkbox
-              check-strictly
               node-key="id"
               :filter-node-method="filterPermissionNode"
               :default-expand-all="false"
               :props="{ label: 'name', children: 'children', disabled: () => !canSavePermissions || currentRole.code === 'admin' }"
               class="rbac-perm-tree"
-              @check="syncChecked"
             >
               <div class="tree-node-row" slot-scope="{ data }">
+                <el-checkbox
+                  :value="permissionSelection[data.id].checked"
+                  :indeterminate="permissionSelection[data.id].indeterminate"
+                  :disabled="!canSavePermissions || currentRole.code === 'admin'"
+                  @click.native.stop
+                  @change="checked => syncChecked(data, checked)"
+                ><span class="permission-checkbox-label">{{ data.name }}</span></el-checkbox>
                 <span class="node-main" :class="`level-${nodeLevel(data)}`">
                   <i :class="iconFor(data)" class="node-icon" />
                   <span class="node-label">{{ data.name }}</span>
@@ -290,6 +294,9 @@
                 <span v-else-if="data.type === 'menu'" class="badge-tag badge-green">菜单</span>
                 <span v-else-if="data.type === 'button'" class="badge-tag badge-teal">按钮</span>
                 <span v-else class="badge-tag badge-amber">接口</span>
+                <span v-if="data.children.length" class="permission-selection-count" :class="{ selected: permissionSelection[data.id].selected > 0 }">
+                  {{ permissionSelection[data.id].selected ? '已选 ' + permissionSelection[data.id].selected + '/' + permissionSelection[data.id].total + ' 项' : '未选择' }}
+                </span>
                 <code class="perm-code-tag">{{ data.code }}</code>
               </div>
             </el-tree>
@@ -613,6 +620,24 @@ export default {
       })
       return roots
     },
+    permissionSelection() {
+      const selectedIds = new Set(this.checkedPermissionIds.map(String))
+      const states = {}
+      const visit = node => {
+        let total = 1
+        let selected = selectedIds.has(String(node.id)) ? 1 : 0
+        ;(node.children || []).forEach(child => {
+          const state = visit(child)
+          total += state.total
+          selected += state.selected
+        })
+        const state = { total, selected, checked: selected === total, indeterminate: selected > 0 && selected < total }
+        states[node.id] = state
+        return state
+      }
+      this.permissionTree.forEach(visit)
+      return states
+    },
     scopePreview() {
       if (!this.currentRole) return ''
       if (this.currentRole.data_scope === 'all') return '可查看和操作全部业务数据，以及所授权的全部按钮动作。'
@@ -673,11 +698,6 @@ export default {
       this.currentRole = row ? { ...row } : null
       this.checkedPermissionIds = row ? [...(row.permission_ids || [])] : []
       this.permissionCommand = newSystemCommand()
-      this.$nextTick(() => {
-        if (this.$refs.permTree) {
-          this.$refs.permTree.setCheckedKeys(this.checkedPermissionIds)
-        }
-      })
     },
     filterStatus(status) {
       this.roleStatusFilter = status
@@ -690,16 +710,15 @@ export default {
       this.rolePage = page
       this.load()
     },
-    syncChecked(data) {
-      const tree = this.$refs.permTree
-      if (!tree) return
-      // 权限树按 check-strictly 独立勾选；勾选/取消模块或菜单时一并处理其下全部按钮和接口，避免逐个勾选。
-      if (data && (data.children || []).length) {
-        const checked = tree.getCheckedKeys().includes(data.id)
-        const walk = node => (node.children || []).forEach(child => { tree.setChecked(child.id, checked, false); walk(child) })
-        walk(data)
-      }
-      this.checkedPermissionIds = tree.getCheckedKeys()
+    syncChecked(data, checked) {
+      if (!data || !this.canSavePermissions || this.currentRole?.code === 'admin') return
+      // 父节点状态只反映所选范围，不把半选状态写成授权；只有用户点击才修改权限集合。
+      const ids = new Map(this.checkedPermissionIds.map(id => [String(id), id]))
+      this.walkTree(data, node => {
+        if (checked) ids.set(String(node.id), node.id)
+        else ids.delete(String(node.id))
+      })
+      this.checkedPermissionIds = Array.from(ids.values())
     },
     filterPermissionNode(value, data) {
       if (!value) return true
@@ -724,23 +743,14 @@ export default {
       if (this.currentRole?.code === 'admin') return
       const allIds = this.permissions.map(p => p.id)
       this.checkedPermissionIds = allIds
-      if (this.$refs.permTree) {
-        this.$refs.permTree.setCheckedKeys(allIds)
-      }
     },
     uncheckAllPermissions() {
       if (this.currentRole?.code === 'admin') return
       this.checkedPermissionIds = []
-      if (this.$refs.permTree) {
-        this.$refs.permTree.setCheckedKeys([])
-      }
     },
     resetPermissionSelection() {
       if (!this.currentRole) return
       this.checkedPermissionIds = [...(this.currentRole.permission_ids || [])]
-      if (this.$refs.permTree) {
-        this.$refs.permTree.setCheckedKeys(this.checkedPermissionIds)
-      }
     },
     walkTree(node, cb) {
       cb(node)
@@ -748,7 +758,6 @@ export default {
     },
     async save() {
       if (this.saving || !this.currentRole) return
-      this.syncChecked()
       this.saving = true
       try {
         await saveRole({
@@ -1634,6 +1643,40 @@ export default {
   font-size: 13px;
   width: 100%;
   min-width: 440px;
+}
+
+.tree-node-row > .el-checkbox {
+  margin: 0;
+  flex-shrink: 0;
+}
+
+.tree-node-row ::v-deep .el-checkbox__label {
+  padding: 0;
+}
+
+.permission-checkbox-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+}
+
+.permission-selection-count {
+  flex-shrink: 0;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  line-height: 18px;
+  color: #64748b;
+  background: #f1f5f9;
+}
+
+.permission-selection-count.selected {
+  color: #008b4b;
+  background: #ecfdf5;
 }
 
 .node-main {

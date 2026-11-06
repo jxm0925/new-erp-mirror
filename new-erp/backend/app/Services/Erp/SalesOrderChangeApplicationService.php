@@ -141,7 +141,7 @@ class SalesOrderChangeApplicationService
             throw ValidationException::withMessages(['order_status' => '只有已正式确认的销售订单可走订单变更；草稿请直接编辑。']);
         }
         if (SalesOrderFulfillmentPolicy::hasShipmentFacts($order)) {
-            throw ValidationException::withMessages(['shipment_status' => '订单已实际发运、提货或正式销售出库，不能原地修改，请走售后流程。']);
+            throw ValidationException::withMessages(['shipment_status' => '订单已实际发货、提货或正式销售出库，不能原地修改，请走售后流程。']);
         }
         if ($order->salesReturns->whereNotIn('return_status', ['cancelled'])->isNotEmpty()) {
             throw ValidationException::withMessages(['sales_return' => '订单已进入销售退货流程，禁止直接订单变更。']);

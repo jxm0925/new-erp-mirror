@@ -1,6 +1,6 @@
 const { quantity, money } = require('./warehouse-page');
 const labels = { pending: '待入库', posted: '已入库', not_required: '无须库存入库', draft: '草稿', confirmed: '已确认', pending_outbound: '已确认 · 待出库',
-  outbound_posted: '已出库待发运', prepared: '待发作业', partially_shipped: '部分已发运', shipped: '已发运', completed: '已完成', pending_receipt: '退货已确认', partial_received: '部分收货', received: '已收货',
+  outbound_posted: '已出库待发货', prepared: '待发作业', partially_shipped: '部分已发货', shipped: '已发货', completed: '已完成', pending_receipt: '退货已确认', partial_received: '部分收货', received: '已收货',
   SUBMITTED: '待接收', WAIT_QUALITY: '待检验', RECEIVED: '已接收', COMPLETED: '已完成', WAIT_WAREHOUSE: '待入库', PART_WAREHOUSED: '部分入库', WAREHOUSED: '已入库', CREATED: '待办理' };
 const titles = { purchase_receipt: '采购入库', sales_return: '销售退货入库', sales_shipment: '销售发货', purchase_return: '采购退货出库' };
 const actionLabels = { 'purchase.post': '确认入库',

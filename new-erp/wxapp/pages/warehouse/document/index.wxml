@@ -414,7 +414,7 @@
           <button disabled="{{packagesPage >= packagesLast}}" data-delta="1" bindtap="turnPackages">下一页</button>
         </view>
         <view class="warehouse-card">
-          <view class="phase-heading">发运进度</view>
+          <view class="phase-heading">发货进度</view>
           <view wx:if="{{header.confirmed_at}}" class="document-timeline">
             <text class="doc-timeline-title">已确认</text>
             <view class="warehouse-muted">{{header.confirmed_at}}　{{header.confirmed_by}}</view>
@@ -424,7 +424,7 @@
             <view class="warehouse-muted">{{header.outbound_posted_at}}　{{header.outbound_posted_by}}</view>
           </view>
           <view wx:if="{{header.shipped_at}}" class="document-timeline">
-            <text class="doc-timeline-title">已发运</text>
+            <text class="doc-timeline-title">已发货</text>
             <view class="warehouse-muted">{{header.shipped_at}}　{{header.shipped_by}}</view>
           </view>
         </view>

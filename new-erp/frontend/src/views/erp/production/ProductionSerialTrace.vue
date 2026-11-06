@@ -199,7 +199,7 @@
               <i class="el-icon-time" />
               <h2>生产与流转全生命周期履历</h2>
             </div>
-            <span class="header-desc-hint">涵盖制令下达、工序报工、返修检验至仓配发运全节点事实</span>
+            <span class="header-desc-hint">涵盖制令下达、工序报工、返修检验至仓配发货全节点事实</span>
           </div>
 
           <div class="timeline-box">
@@ -248,7 +248,7 @@
               </div>
             </div>
 
-            <!-- 待执行仓配与发运 -->
+            <!-- 待执行仓配与发货 -->
             <div v-if="shipOps.length" class="timeline-node node-future">
               <div class="node-axis">
                 <span class="node-dot dot-future" />
@@ -257,8 +257,8 @@
               <div class="node-card card-future">
                 <div class="future-head">
                   <i class="el-icon-truck text-primary" />
-                  <strong>待执行仓配与发运</strong>
-                  <span class="future-tip">（包装、发运及出库交接）</span>
+                  <strong>待执行仓配与发货</strong>
+                  <span class="future-tip">（包装、发货及出库交接）</span>
                 </div>
                 <div class="op-step-chips">
                   <span v-for="(op, idx) in shipOps" :key="idx" class="op-chip chip-ship">

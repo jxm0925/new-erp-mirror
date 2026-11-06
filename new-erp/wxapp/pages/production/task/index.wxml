@@ -94,7 +94,7 @@
     <production-dispositions id="dispositions" work-order-id="{{task.work_order.id}}" operation-id="{{task.id}}" bind:materialreturn="openCancellationReturn" bind:changed="load" bind:activity="mediaActivity" />
 
     <!-- 2. 作业工时与协同人员控制台（内聚计时编号，不再外挂黄条） -->
-    <view class="tk-timer-v2 {{task.my.timing ? 'on' : ''}}">
+    <view wx:if="{{task.my.is_participant}}" class="tk-timer-v2 {{task.my.timing ? 'on' : ''}}">
       <view class="tk-tv2-main">
         <view class="tk-tv2-left">
           <view class="tk-tv2-head">
@@ -118,10 +118,10 @@
       <view class="tk-tv2-foot">
         <view class="tk-tv2-foot-left">
           <text>主责：<text class="tk-tv2-owner">{{task.ownerName || '待接单'}}</text></text>
-          <text wx:if="{{shareText}}"> · {{task.share_mode === 'fixed' ? '固定比例' : '按工时分摊'}}：{{shareText}}</text>
+          <text wx:if="{{showCollaborationShares && shareText}}"> · {{task.share_mode === 'fixed' ? '固定比例' : '按工时分摊'}}：{{shareText}}</text>
         </view>
         <view class="tk-tv2-foot-right">
-          <text wx:if="{{task.allowed.collaborators}}" class="tk-link red" style="font-size: 22rpx;" bindtap="openPeople">计件分摊设置 ›</text>
+          <text wx:if="{{task.allowed.collaborators}}" class="tk-link red" style="font-size: 22rpx;" bindtap="openPeople">协同人员 ›</text>
           <text wx:if="{{task.allowed.assign}}" class="tk-link red" style="font-size: 22rpx;" bindtap="openAssign">主管派工 ›</text>
         </view>
       </view>
@@ -132,7 +132,12 @@
     <!-- 异常与重要业务横幅提醒 -->
     <view wx:if="{{task.other_lane && task.other_lane.count}}" class="mt-note" bindtap="switchLane">本工序另有「{{task.other_lane.title}}」{{task.other_lane.count}} {{task.unitShort}}，点击切换 ›</view>
     <view wx:if="{{task.isRework}}" class="mt-note">返工任务独立计时统计，不计入计件提成。<text wx:if="{{task.rework_note}}">{{task.rework_note}}</text></view>
-    <view wx:if="{{task.shipment_repair}}" class="mt-error">发货试水不合格返修：{{task.shipment_repair.serial_no}} · {{task.shipment_repair.reason}}（{{task.shipment_repair.shipment_no}}）。本工序返修合格并完成末道工序后，由仓管执行「返修合格返回」重新试水。</view>
+    <view wx:if="{{task.shipment_repair}}" class="mt-error">发货试水不合格返修：{{task.shipment_repair.serial_no}} · {{task.shipment_repair.reason}}（{{task.shipment_repair.shipment_no}}）。完成末道返修后，接单人可在本页确认返回试水。</view>
+    <view wx:for="{{task.pending_repair_returns}}" wx:key="id" class="mt-card mt-gap">
+      <view class="mt-title">返修已合格 · 待返回试水</view>
+      <view class="mt-muted mt-gap">{{item.serial_no}} · {{item.shipment_no}}</view>
+      <button class="mt-btn mt-gap" data-id="{{item.id}}" disabled="{{busy}}" bindtap="openRepairReturn">返修合格，返回试水</button>
+    </view>
     <view wx:if="{{task.order_info && task.order_info.changed.length}}" class="mt-error" bindtap="scrollOrder">销售订单已变更（{{task.orderChangedText}}），点击查看最新订单要求 ›</view>
     <view wx:if="{{task.work_order.status === 'paused'}}" class="mt-error">工单已暂停{{task.work_order.pause_reason ? '：' + task.work_order.pause_reason : ''}}，暂停期间不可执行报工。</view>
     <view wx:if="{{task.drawings_updated_at}}" class="mt-error" data-tab="docs" bindtap="switchWorkTab">工艺图纸已更新（{{task.drawings_updated_at}}），点击核对最新图纸后作业 ›</view>
@@ -304,7 +309,7 @@
         <view class="mt-card-title">
           <text>本道用料明细表 ({{task.materialSummary.total}})</text>
           <view class="mt-tags">
-            <text wx:if="{{task.totalShortCount > 0}}" class="tk-link red" bindtap="receiveMaterials">{{selectedCount ? '领所选' + selectedCount + '个的材料' : '先选编号再领料'}}</text>
+            <text wx:if="{{task.my.is_participant && task.totalShortCount > 0}}" class="tk-link red" bindtap="receiveMaterials">{{selectedCount ? '领所选' + selectedCount + '个的材料' : '先选编号再领料'}}</text>
             <text wx:if="{{task.allowed.material_return}}" class="tk-link" catchtap="openMaterialReturn">申请退料 ›</text>
           </view>
         </view>
@@ -371,7 +376,12 @@
         <view wx:if="{{!task.participants.length}}" class="mt-muted">暂无接单人员</view>
         <view wx:for="{{task.participants}}" wx:key="employee_legacy_id" class="mt-kv">
           <text class="k">{{item.employee_name}} <text class="mt-muted">{{item.role_label}}</text></text>
-          <text class="v">{{item.share_percent !== null ? item.share_percent + '% · ' : ''}}{{item.labor_minutes}} 分钟<text wx:if="{{item.timing}}" class="mt-tag amber"> 计时中</text><text wx:if="{{task.allowed.stop && item.timing && !item.is_me}}" class="tk-link red" data-id="{{item.employee_legacy_id}}" data-name="{{item.employee_name}}" bindtap="stopTiming"> 停止计时</text></text>
+          <text class="v">{{showCollaborationShares && item.share_percent !== null ? item.share_percent + '% · ' : ''}}{{item.labor_minutes}} 分钟<text wx:if="{{item.timing}}" class="mt-tag amber"> 计时中</text><text wx:if="{{task.allowed.stop && item.timing && !item.is_me}}" class="tk-link red" data-id="{{item.employee_legacy_id}}" data-name="{{item.employee_name}}" bindtap="stopTiming"> 停止计时</text></text>
+        </view>
+        <view wx:if="{{task.participant_history.length}}" class="mt-card-title mt-gap">历史参与人员</view>
+        <view wx:for="{{task.participant_history}}" wx:key="employee_legacy_id" class="mt-kv">
+          <text class="k">{{item.employee_name}}（{{item.role === 'owner' ? '原接单人' : '原协同人'}} · 已退出）</text>
+          <text class="v">{{item.labor_minutes}} 分钟</text>
         </view>
       </view>
 
@@ -381,13 +391,13 @@
 </view>
 
 <!-- 底部固定操作栏（完整保留 4 种作业模式） -->
-<view wx:if="{{task && task.cutting && task.prepMode && !task.cutting.reportable_units}}" class="mt-footer">
+<view wx:if="{{task && task.my.role === 'owner' && task.cutting && task.prepMode && !task.cutting.reportable_units}}" class="mt-footer">
   <button class="mt-btn" disabled="{{busy || !selectedCount}}" bindtap="prepareCut">{{selectedCount ? selectedCount + ' 套已备料，' + (task.completion ? (task.completion.next_operation_name ? '选择去向' : '完工入库') : (task.progress.next_operation_name ? '交接至' + task.progress.next_operation_name : '确认完工')) : '请先选择本次备料编号'}}</button>
 </view>
 <view wx:elif="{{task && task.allowed.report && task.cutting}}" class="mt-footer">
   <button class="mt-btn" disabled="{{busy || !task.cutting.reportable_units || !selectedCount}}" bindtap="passCut">{{task.cutting.reportable_units ? (selectedCount ? '下料完工 ' + selectedCount + ' 套' + (task.completion ? (task.completion.next_operation_name ? '，选择去向' : '，完工入库') : (task.progress.next_operation_name ? '，交接至' + task.progress.next_operation_name : '')) : '请先选择本次完工编号') : '请先登记开料产出'}}</button>
 </view>
-<view wx:if="{{task && !task.cutting && task.prepMode}}" class="mt-footer">
+<view wx:if="{{task && task.my.role === 'owner' && !task.cutting && task.prepMode}}" class="mt-footer">
   <button wx:if="{{task.allowed.report}}" class="mt-btn danger-ghost side" disabled="{{busy || !selectedCount}}" bindtap="openReject">登记不合格</button>
   <button class="mt-btn" disabled="{{busy || !selectedCount}}" bindtap="prepare">{{selectedCount ? selectedCount + ' ' + task.unitShort + '已备料，' + (task.completion && selectedCompletionCount ? (task.completion.next_operation_name ? '选择去向' : '完工入库') : (task.progress.next_operation_name ? '交接至' + task.progress.next_operation_name : '确认完工')) : '请先选择' + task.noun}}</button>
 </view>
@@ -397,6 +407,24 @@
 </view>
 
 <warehouse-locator open="{{completionLocatorOpen}}" location-purpose="{{task.completion.location_purpose}}" bind:confirm="completionLocationChosen" bind:cancel="closeCompletionLocator" />
+<warehouse-locator open="{{repairLocatorOpen}}" location-purpose="finished" bind:confirm="repairLocationChosen" bind:cancel="closeRepairLocator" />
+
+<view wx:if="{{repairReturn && !repairLocatorOpen}}" class="tk-mask" catchtouchmove="stop">
+  <view class="tk-sheet">
+    <view class="tk-sheet-head mt-title">返修合格，返回试水</view>
+    <scroll-view scroll-y class="tk-sheet-body">
+      <view>{{repairReturn.serial_no}} · {{repairReturn.shipment_no}}</view>
+      <view class="mt-muted mt-gap">确认后原设备返回待发区，重新试水，无需重复领料。</view>
+      <button class="mt-btn ghost mt-gap" disabled="{{busy}}" bindtap="openRepairLocator">{{repairReturnLocator.location_name || '选择返修合格的成品库位'}}</button>
+      <textarea class="tk-textarea mt-gap" placeholder="填写返修合格说明" maxlength="500" value="{{repairReturnReason}}" bindinput="repairReturnInput" />
+      <view wx:if="{{repairReturnError}}" class="mt-error">{{repairReturnError}}</view>
+    </scroll-view>
+    <view class="tk-sheet-foot mt-row">
+      <button class="mt-btn ghost side" disabled="{{busy}}" bindtap="closeRepairReturn">取消</button>
+      <button class="mt-btn" loading="{{busy}}" disabled="{{busy}}" bindtap="submitRepairReturn">确认返回试水</button>
+    </view>
+  </view>
+</view>
 
 <!-- 1. 不合格/报废登记弹窗 -->
 <view wx:if="{{panel === 'reject'}}" class="tk-mask" catchtouchmove="stop">
@@ -429,11 +457,11 @@
 
 <!-- 2. 协同人员配置 / 主管派工弹窗 -->
 <view wx:if="{{panel === 'people' || panel === 'assign'}}" class="tk-mask" catchtouchmove="stop">
-  <view class="tk-sheet">
+  <view class="tk-sheet tk-people-sheet">
     <view class="tk-sheet-head-bar">
       <view>
         <view class="tk-sheet-title">{{panel === 'assign' ? '选择派工人员' : '配置协同人员'}}</view>
-        <view class="tk-sheet-sub">{{panel === 'assign' ? '指派具备本工序作业权限的主责人员' : '勾选参与本道工序的协同人员并设置计件分摊方式'}}</view>
+        <view class="tk-sheet-sub">{{panel === 'assign' ? '指派具备本工序作业权限的主责人员' : '选择本工序协同人员；移出后保留已记录工时'}}</view>
       </view>
       <view class="tk-sheet-close" bindtap="closePanel"><van-icon name="cross" size="30rpx" color="#64748b" /></view>
     </view>
@@ -448,18 +476,19 @@
       <view class="tk-search-btn" bindtap="searchPeople">查询</view>
     </view>
 
-    <scroll-view scroll-y class="tk-sheet-body">
+    <scroll-view scroll-y class="tk-sheet-body tk-people-body">
+      <view class="tk-people-body-inner">
       <block wx:if="{{panel === 'people'}}">
         <!-- 已选协同与计件分摊设置卡 -->
         <view class="tk-collab-card">
-          <view class="tk-collab-head">
+          <view wx:if="{{showCollaborationShares}}" class="tk-collab-head">
             <text class="tk-collab-title">计件分摊模式</text>
             <view wx:if="{{shareMode === 'fixed' && picked.length}}" class="tk-equal-btn" bindtap="equalTaskShares">
               <van-icon name="balance-list-o" size="26rpx" color="#d81e06" />
               <text>平均分配</text>
             </view>
           </view>
-          <view class="tk-mode-switch">
+          <view wx:if="{{showCollaborationShares}}" class="tk-mode-switch">
             <view class="tk-mode-pill {{shareMode === 'labor' ? 'on' : ''}}" data-mode="labor" bindtap="pickShareMode">
               <van-icon name="{{shareMode === 'labor' ? 'checked' : 'circle'}}" size="28rpx" color="{{shareMode === 'labor' ? '#d81e06' : '#94a3b8'}}" />
               <text>按实际工时分摊（默认）</text>
@@ -470,7 +499,7 @@
             </view>
           </view>
 
-          <view class="tk-collab-divider"></view>
+          <view wx:if="{{showCollaborationShares}}" class="tk-collab-divider"></view>
 
           <view class="tk-collab-head">
             <view style="display:flex;align-items:center;gap:10rpx;">
@@ -480,7 +509,7 @@
             <text wx:if="{{picked.length}}" class="mt-muted" style="font-size:22rpx;">点击右侧可移除</text>
           </view>
 
-          <view wx:if="{{shareMode === 'fixed'}}" class="tk-share-row">
+          <view wx:if="{{showCollaborationShares && shareMode === 'fixed'}}" class="tk-share-row">
             <view class="tk-share-left">
               <text class="tk-share-name">{{task.ownerName || '本人'}}</text>
               <van-tag color="#fff1f0" text-color="#d81e06" round>主责接单人</van-tag>
@@ -491,7 +520,7 @@
             </view>
           </view>
 
-          <view wx:if="{{!picked.length && shareMode !== 'fixed'}}" class="mt-muted" style="font-size:24rpx;padding:4rpx 0;">暂未选择协同人员，请点击下方员工卡片勾选添加</view>
+          <view wx:if="{{!picked.length}}" class="mt-muted" style="font-size:24rpx;padding:4rpx 0;">暂未选择协同人员，请点击下方员工卡片勾选添加</view>
 
           <view wx:for="{{picked}}" wx:key="id" class="tk-share-row">
             <view class="tk-share-left">
@@ -499,7 +528,7 @@
               <van-tag color="#f1f5f9" text-color="#475569" round>协同人员</van-tag>
             </view>
             <view class="tk-share-right">
-              <view wx:if="{{shareMode === 'fixed'}}" class="tk-pct-box">
+              <view wx:if="{{showCollaborationShares && shareMode === 'fixed'}}" class="tk-pct-box">
                 <input class="tk-pct-input" type="digit" value="{{item.percent}}" data-index="{{index}}" bindinput="percentInput" />
                 <text class="tk-pct-unit">%</text>
               </view>
@@ -538,6 +567,8 @@
           <van-tag wx:elif="{{item.selected}}" color="#fff1f0" text-color="#d81e06" round size="medium">已选协同</van-tag>
           <van-tag wx:else plain color="#94a3b8" round size="medium">+ 添加</van-tag>
         </view>
+      </view>
+      <view class="tk-people-pager"><button size="mini" disabled="{{peoplePage <= 1}}" data-delta="-1" bindtap="turnPeople">上一页</button><text>{{peoplePage}} / {{peopleLast}}</text><button size="mini" disabled="{{peoplePage >= peopleLast}}" data-delta="1" bindtap="turnPeople">下一页</button></view>
       </view>
     </scroll-view>
 

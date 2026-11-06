@@ -70,7 +70,7 @@ class SalesReturnInventoryPosting
             ]);
 
             foreach ($receipt->items as $line) {
-                // 转残次品行按 defective_base_qty 走同一条原发运成本入库链；数量同时计为不良，可售不增加。
+                // 转残次品行按 defective_base_qty 走同一条原发货成本入库链；数量同时计为不良，可售不增加。
                 $isDefective = ($line->stock_quality ?? 'normal') === 'defective';
                 $restock = (float) $line->restock_base_qty;
                 if ($restock <= 0 && $isDefective) $restock = (float) $line->defective_base_qty;
@@ -95,7 +95,7 @@ class SalesReturnInventoryPosting
                         'source_type' => 'sales_return_receipt',
                         'source_id' => $receipt->id,
                         'source_item_id' => $line->id,
-                        'remark' => '销售退货按原发运成本重新入库；原发运单行 #'.$segment['shipment_line_id'],
+                        'remark' => '销售退货按原发货成本重新入库；原发货单行 #'.$segment['shipment_line_id'],
                     ]);
                     if (isset($segment['return_serial_identity_id'])) {
                         if ($isDefective) {
@@ -183,7 +183,7 @@ class SalesReturnInventoryPosting
         }
         if ($remaining > 0.00000001) {
             throw ValidationException::withMessages([
-                'items' => '销售退货缺少可用的原发运成本分摊，不能按当前库存成本重新入库。',
+                'items' => '销售退货缺少可用的原发货成本分摊，不能按当前库存成本重新入库。',
             ]);
         }
 

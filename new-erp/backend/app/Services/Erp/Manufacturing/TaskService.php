@@ -95,9 +95,9 @@ final class TaskService
      * 接单人设协同人。份额全不填 = 按实际工时分；填了就要连接单人一起合计 100%。
      * @param array<int, array{employee_legacy_id:int, share_percent:?float}> $rows
      */
-    public function collaborators(int $opId, array $rows, ?float $ownerShare, object $actor, string $lane = 'normal'): void
+    public function collaborators(int $opId, array $rows, ?float $ownerShare, object $actor, string $lane = 'normal', bool $updateShares = true): void
     {
-        DB::transaction(function () use ($opId, $rows, $ownerShare, $actor, $lane) {
+        DB::transaction(function () use ($opId, $rows, $ownerShare, $actor, $lane, $updateShares) {
             [$wo, $op] = $this->lockTask($opId);
             $this->assertRunnable($wo, $op);
             $me = (int) $this->actorId($actor);
@@ -112,10 +112,22 @@ final class TaskService
             $users = $ids ? DB::table('erp_legacy_admin_users')->whereIn('legacy_id', $ids)->whereNull('deleted_at')
                 ->whereIn(DB::raw('LOWER(TRIM(status))'), ['normal', 'active'])->orderBy('legacy_id')->lockForUpdate()->get() : collect();
             if ($users->count() !== count($ids)) $this->fail('user_invalid', '协同人必须是在职的账号。');
-            foreach ($users as $user) $this->assertExecutor($user);
+            foreach ($users as $user) {
+                $this->assertExecutor($user);
+                if (! $this->canDo($op, (int) $user->legacy_id)) $this->fail('not_worker', $this->userName($user).'不在本工序指定人员中，请先在工序管理中维护。');
+            }
             // 已在本工序协同的人保留；新增协同人须是有效的生产工人档案。
             $current = MfgTaskParticipant::query()->where('work_order_operation_id', $op->id)->where('lane', $lane)->where('is_active', true)->pluck('employee_legacy_id')->map(fn ($v) => (int) $v)->all();
             foreach ($users as $user) if (! in_array((int) $user->legacy_id, $current, true)) $this->assertWorkerStaff($user);
+            if (! $updateShares) {
+                $existing = MfgTaskParticipant::query()->where('work_order_operation_id', $op->id)->where('lane', $lane)->where('is_active', true)->lockForUpdate()->get();
+                if ($existing->contains(fn ($person) => $person->share_percent !== null)
+                    && (array_diff($current, array_merge([$me], $ids)) || array_diff(array_merge([$me], $ids), $current))) {
+                    $this->fail('share_confirmation_required', '本任务保留旧固定分摊比例，换人会改变提成归属；请先由管理员处理旧比例，不能在隐藏比例的界面自动重分。');
+                }
+                $ownerShare = $owner->share_percent === null ? null : (float) $owner->share_percent;
+                foreach ($ids as $id) $shares[$id] = $existing->firstWhere('employee_legacy_id', $id)?->share_percent;
+            }
             $fixed = $ownerShare !== null || in_array(true, array_map(fn ($v) => $v !== null, $shares), true);
             if ($fixed) {
                 if ($ownerShare === null || in_array(null, $shares, true)) $this->fail('share_invalid', '要固定份额就每个人都填，不填就按实际工时分。');
@@ -726,10 +738,13 @@ final class TaskService
         // 同批报工和完成计时共用这一时刻，快照包含尚未结束的真实工时段。
         $minutes = $sessions->groupBy('employee_legacy_id')->map(fn ($rows) => $rows->sum(fn ($s) => $s->status === 'active'
             ? round(max(0, $s->started_at->diffInSeconds($reportedAt->lessThan(self::sessionDeadline($s)) ? $reportedAt : self::sessionDeadline($s), false)) / 60, 2) : (float) $s->labor_minutes));
+        $participants = $participants->concat(MfgTaskParticipant::query()->where('work_order_operation_id', $op->id)->where('lane', $lane)
+            ->where('is_active', false)->whereIn('employee_legacy_id', $minutes->keys())->orderBy('id')->lockForUpdate()->get());
         return $participants->map(function ($p) use ($sessions, $reportedAt, $minutes) {
             $started = $p->joined_at ? $sessions->filter(fn ($s) => (int) $s->employee_legacy_id === (int) $p->employee_legacy_id
                 && $s->started_at->gte($p->joined_at) && $s->started_at->lte($reportedAt))->sortBy('started_at')->first()?->started_at : null;
             return ['employee_legacy_id' => (int) $p->employee_legacy_id, 'employee_name' => $p->employee_name, 'role' => $p->role,
+                'is_active' => (bool) $p->is_active,
                 'joined_at' => $p->joined_at?->toDateTimeString(), 'started_at' => $started?->toDateTimeString(),
                 'share_percent' => $p->share_percent === null ? null : (float) $p->share_percent,
                 'labor_scope' => 'operation_cumulative',
@@ -755,9 +770,10 @@ final class TaskService
 
     private function setParticipant(MfgWorkOrderOperation $op, int $employeeId, string $name, string $role, object $actor, ?float $share = null, string $lane = 'normal'): void
     {
+        $existing = MfgTaskParticipant::query()->where('work_order_operation_id', $op->id)->where('employee_legacy_id', $employeeId)->where('lane', $lane)->lockForUpdate()->first();
         MfgTaskParticipant::query()->lockForUpdate()->updateOrCreate(['work_order_operation_id' => $op->id, 'employee_legacy_id' => $employeeId, 'lane' => $lane], [
             'work_order_id' => $op->work_order_id, 'employee_name' => $name, 'role' => $role, 'is_active' => true, 'share_percent' => $share,
-            'assigned_by_legacy_id' => $this->actorId($actor), 'assigned_by_name' => $this->actorName($actor), 'joined_at' => now(),
+            'assigned_by_legacy_id' => $this->actorId($actor), 'assigned_by_name' => $this->actorName($actor), 'joined_at' => $existing?->joined_at ?: now(),
         ]);
     }
 

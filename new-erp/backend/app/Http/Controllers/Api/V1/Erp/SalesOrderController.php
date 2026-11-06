@@ -756,7 +756,7 @@ class SalesOrderController extends Controller
             $order->setAttribute('aftersales_open_count', (int) \App\Models\Erp\AftersalesCase::query()
                 ->where('sales_order_id', $order->id)->whereIn('status', ['pending', 'processing', 'ready_to_close'])->count());
         }
-        // 实际快递公司和运单号在每次发运时填写，一张订单可分多次、多个快递；订单上的“客户指定物流”只是预填值。
+        // 实际快递公司和运单号在每次发货时填写，一张订单可分多次、多个快递；订单上的“客户指定物流”只是预填值。
         $shipmentNos = $order->shipments->pluck('shipment_no', 'id');
         $order->setAttribute('dispatch_records', ShipmentDispatch::query()->whereIn('shipment_id', $shipmentNos->keys())
             ->orderByDesc('dispatched_at')->orderByDesc('id')->get()

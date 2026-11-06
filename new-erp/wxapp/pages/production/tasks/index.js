@@ -55,7 +55,10 @@ function decorate(row, tab, canExecute) {
   const specText = buildSpecText(row);
   let opStatusLabel = row.work_status_label || '';
   let opStatusTheme = 'gray';
-  if (row.timing) {
+  if (Number(row.pending_repair_return_count || 0) > 0) {
+    opStatusLabel = '待返回试水';
+    opStatusTheme = 'amber';
+  } else if (row.timing) {
     opStatusLabel = '计时中';
     opStatusTheme = 'amber';
   } else if (row.paused) {

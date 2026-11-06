@@ -26,7 +26,7 @@ final class ShipmentOutboundApplicationService
 
     public function requestMaterials(SalesShipment $shipment, ShipmentPackingOperation $op, array $rows, object $actor): ShipmentOutboundApplication
     {
-        if (! in_array($op->status, ['READY', 'IN_PROGRESS'], true)) $this->fail('包装工序接单后、完成前可以申请包装材料出库。');
+        if (! app(ShipmentPackingKittingService::class)->canReceive($op)) $this->fail('请在本工序备料或执行期间申请包装材料。');
         $this->assertNoPendingMaterials($op);
         if ($rows === []) $this->fail('请至少选择一项实际用料及其库存来源。');
         $usage = app(ShipmentPackingMaterialUsagePolicy::class);
@@ -76,18 +76,134 @@ final class ShipmentOutboundApplicationService
 
     public function requestDispatch(SalesShipment $shipment, ShipmentPackingOperation $op, array $payload, object $actor): ShipmentOutboundApplication
     {
-        if (! $this->terminalOperation($op, (int) $actor->legacy_id)) $this->fail('请由已完成末道工序的接单人申请发货。');
-        $packageIds = $this->linkedPackageIds($shipment, (int) $op->package_id);
-        if (array_intersect($packageIds, $this->openDispatchPackageIds((int) $shipment->id))) $this->fail('这些包裹已有发货出库申请。');
-        [$packages, $lines] = app(SalesShipmentApplicationService::class)->dispatchSelection($shipment, $packageIds);
-        $mode = $payload['delivery_mode'] ?? '';
-        if (! in_array($mode, ['dispatch', 'pickup'], true)) $this->fail('请选择发运或客户提货。');
+        $this->fail('发货前不再提交仓库审核，请更新页面，在打包前完成齐套核对，货物交付后直接确认发货。');
+    }
 
-        return $this->create($shipment, $op, $actor, 'dispatch', $packageIds, $packages->pluck('package_no')->all(), $this->dispatchLines($lines), [
-            'delivery_mode' => $mode,
-            'carrier_name' => $mode === 'dispatch' ? (trim((string) ($payload['carrier_name'] ?? '')) ?: null) : null,
-            'tracking_no' => $mode === 'dispatch' ? (trim((string) ($payload['tracking_no'] ?? '')) ?: null) : null,
-        ]);
+    public function dispatchNow(SalesShipment $shipment, ShipmentPackingOperation $op, array $payload, object $actor): void
+    {
+        if (! $this->terminalOperation($op, (int) $actor->legacy_id)) $this->fail('请由已完成末道工序的接单人确认发货。');
+        $packageIds = array_key_exists('package_ids', $payload)
+            ? array_values(array_unique(array_map('intval', $payload['package_ids'])))
+            : $this->linkedPackageIds($shipment, (int) $op->package_id);
+        if (array_key_exists('package_ids', $payload) && (int) ($payload['expected_shipment_version'] ?? 0) !== (int) $shipment->business_version)
+            $this->fail('发货单已变化，请重新打开设备清单后选择。');
+        $this->assertDispatchPackagesOwned($shipment, $packageIds, (int) $actor->legacy_id);
+        app(ShipmentPackingKittingService::class)->assertDispatchReady($shipment, $packageIds);
+        app(SalesShipmentApplicationService::class)->dispatchFromPacking($shipment, array_replace($payload, ['package_ids' => $packageIds]), $actor);
+    }
+
+    /** 仅提供当前发货单的物品和就绪状态，不暴露订单金额等销售资料。 */
+    public function dispatchChoices(ShipmentPackingOperation $op, object $actor, int $page): array
+    {
+        if (! $this->terminalOperation($op, (int) $actor->legacy_id)) $this->fail('请由已完成末道工序的接单人选择本次发货设备。');
+        $shipment = $op->shipment;
+        $packages = collect(app(ShipmentPackingApplicationService::class)->dispatchablePackages($shipment))
+            ->where('package_status', '!=', 'shipped')->keyBy('id');
+        $seen = []; $rows = [];
+        foreach ($packages as $package) {
+            if (isset($seen[$package['id']])) continue;
+            // 同一发货明细分装的包裹必须一起选，避免只发一部分却扣整行库存。
+            $ids = $this->linkedPackageIds($shipment, (int) $package['id']);
+            foreach ($ids as $id) $seen[$id] = true;
+            $members = $packages->only($ids);
+            $reason = null;
+            try {
+                app(SalesShipmentApplicationService::class)->dispatchSelection($shipment, $ids, false);
+                $this->assertDispatchPackagesOwned($shipment, $ids, (int) $actor->legacy_id);
+            } catch (ValidationException $exception) { $reason = collect($exception->errors())->flatten()->first(); }
+            $rows[] = ['id' => implode('-', $ids), 'package_ids' => $ids, 'package_nos' => $members->pluck('package_no')->values()->all(),
+                'contents_text' => $members->pluck('contents_text')->filter()->implode('；'), 'ready' => $reason === null,
+                'blocked_reason' => $reason, 'is_current' => in_array((int) $op->package_id, $ids, true)];
+        }
+        $page = max(1, $page);
+        return ['data' => array_slice($rows, ($page - 1) * 10, 10), 'current_page' => $page,
+            'last_page' => max(1, (int) ceil(count($rows) / 10)), 'total' => count($rows),
+            'shipment_no' => $shipment->shipment_no, 'shipment_version' => (int) $shipment->business_version];
+    }
+
+    private function assertDispatchPackagesOwned(SalesShipment $shipment, array $packageIds, int $actorId): void
+    {
+        $ids = array_values(array_unique(array_map('intval', $packageIds)));
+        if ($ids === [] || $shipment->packages()->whereIn('id', $ids)->whereNotIn('package_status', ['shipped', 'cancelled'])->count() !== count($ids))
+            $this->fail('请选择本发货单尚未发出的设备包裹。');
+        $owned = ShipmentPackingOperation::query()->where('shipment_id', $shipment->id)->whereIn('package_id', $ids);
+        $this->includeOutboundWork($owned, $actorId);
+        if (array_diff($ids, $owned->pluck('package_id')->map('intval')->unique()->all()) !== [])
+            $this->fail('只能确认本人已完成末道作业的包裹，请由对应接单人办理发货。');
+    }
+
+    public function requestProducts(SalesShipment $shipment, ShipmentPackingOperation $op, array $rows, object $actor): ShipmentOutboundApplication
+    {
+        if (! app(ShipmentPackingKittingService::class)->applies($op)
+            || ! app(ShipmentPackingKittingService::class)->canReceive($op)) $this->fail('请在打包齐套核对时申请缺少的整机或随货配件。');
+        if (ShipmentOutboundApplication::query()->where('shipment_id', $shipment->id)->where('kind', 'products')
+            ->whereJsonContains('package_ids', (int) $op->package_id)->open()->exists()) $this->fail('本包裹已有待处理的产品领用申请。');
+        $contents = $shipment->packingContents()->current()->where('package_id', $op->package_id)->with('shipmentLine')->get()->keyBy('id');
+        $lines = [];
+        $seen = [];
+        foreach ($rows as $row) {
+            $content = $contents->get((int) $row['content_id']);
+            $line = $content?->shipmentLine;
+            if (! $line || isset($seen[$content->id]) || ! in_array($line->line_status, ['pending_outbound', 'prepared'], true)) $this->fail('请选择当前包裹尚未发出的产品。');
+            $qty = CuttingDecimal::value($row['base_qty'], 8, true);
+            if (bccomp($qty, (string) $content->base_qty, 8) > 0) $this->fail('缺少数量不能超过本包裹需要的数量。');
+            $unit = app(UnitConversionDomainService::class)->canonicalUnit(Unit::find($line->unit_id));
+            if (! $unit || $unit->status !== 'enabled' || ! is_numeric($unit->decimal_places)) $this->fail('产品库存单位或计量精度未维护。');
+            $places = $unit->allow_decimal ? (int) $unit->decimal_places : 0;
+            if ($places < 0 || $places > 8 || bccomp($qty, bcadd($qty, '0', $places), 8) !== 0) $this->fail('缺少数量不符合产品库存单位的计量精度。');
+            if (! empty($content->serial_snapshot['inventory_serial_ids']) && bccomp($qty, (string) (int) $qty, 8) !== 0) $this->fail('带设备编号的产品只能按整台领用。');
+            $seen[$content->id] = true;
+            $detail = $this->dispatchLines(collect([$line]))[0];
+            $lines[] = array_merge($detail, ['content_id' => (int) $content->id, 'content_qty' => (string) $content->base_qty,
+                'was_prepared' => $line->line_status === 'prepared', 'quantity' => $qty,
+                'preparation_note' => $line->line_status === 'pending_outbound' && bccomp($qty, (string) $line->base_qty, 8) !== 0
+                    ? '本次仅领缺项；该发货明细尚未整体备货，请先按原发货安排移至待发区，再确认本次缺项已交付。' : null]);
+        }
+        if ($lines === []) $this->fail('请选择缺少的产品及数量。');
+
+        return $this->create($shipment, $op, $actor, 'products', [(int) $op->package_id], [$op->package->package_no], $lines);
+    }
+
+    private function approveProducts(ShipmentOutboundApplication $application, ShipmentPackingOperation $op, object $actor): array
+    {
+        if (! app(ShipmentPackingKittingService::class)->canReceive($op) || (int) $op->owner_legacy_id !== (int) $application->applicant_legacy_id) $this->fail('打包任务或接单人已变化，请驳回申请。');
+        $shipment = $op->shipment;
+        $lines = [];
+        $warehouses = InventoryTransferService::warehouseIds($actor);
+        foreach ($application->lines_snapshot as $row) {
+            $content = $shipment->packingContents()->current()->where('package_id', $op->package_id)->find($row['content_id']);
+            $line = $content ? $shipment->lines()->lockForUpdate()->find($content->shipment_line_id) : null;
+            if (! $line || ! in_array($line->line_status, ['pending_outbound', 'prepared'], true)) $this->fail('领用产品已变化，请驳回后重新申请。');
+            $expected = $row['source_identity'];
+            ksort($expected);
+            $current = $this->dispatchIdentity($line);
+            // 允许仓库先按原安排备货，数量、编号、批次和预留仍须完全一致。
+            if (! $row['was_prepared'] && $line->line_status === 'prepared'
+                && (int) ($line->preparation_snapshot['staging_location_id'] ?? 0) === (int) $line->location_id) {
+                $current['warehouse_id'] = (int) ($line->preparation_snapshot['warehouse_id'] ?? 0);
+                $current['location_id'] = (int) ($line->preparation_snapshot['location_id'] ?? 0);
+            }
+            if ($expected !== $current || (string) $row['content_qty'] !== (string) $content->base_qty) $this->fail('产品来源、数量或设备编号已变化，请重新核对。');
+            if ($warehouses !== null && ! in_array((int) $line->warehouse_id, array_map('intval', $warehouses), true)) $this->fail('当前产品仓库不在你的管理范围内。');
+            if ($line->line_status === 'pending_outbound' && bccomp((string) $row['quantity'], (string) $line->base_qty, 8) !== 0) $this->fail('本次只申请了部分缺项；请先按原发货安排将该明细移至待发区，再确认缺项交付，不能把部分领用记成整行移库。');
+            $lines[$line->id] = $line;
+        }
+        // 全部来源校验通过再移动，避免同一发货明细在多个清单行中重复移库。
+        foreach ($lines as $line) {
+            if ($line->line_status === 'pending_outbound') {
+                $location = \App\Models\Erp\Location::query()->where('warehouse_id', $line->warehouse_id)
+                    ->where('location_purpose', 'shipping_staging')->whereIn('status', ['enabled', 'active'])->orderBy('id')->first();
+                if (! $location) $this->fail('产品来源仓库没有启用的待发库位，请先维护。');
+                $this->inventory->moveSalesShipmentLine($line, (int) $location->id, 'stage', $actor);
+                $line->update(['line_status' => 'prepared', 'prepared_at' => now()]);
+                app(ShipmentPackingApplicationService::class)->resetSerialRound($line);
+            }
+            // 已直接交接到待发区的产品只确认实物交付，不重复入库、领用或扣减。
+        }
+        $shipment->update(['shipment_status' => $shipment->lines()->where('line_status', 'shipped')->exists() ? 'partially_shipped' : 'prepared',
+            'staged_at' => $shipment->staged_at ?: now(), 'business_version' => (int) $shipment->business_version + 1]);
+
+        return ['status' => 'posted', 'posted_at' => now()];
     }
 
     public function confirmDispatch(SalesShipment $shipment, ShipmentPackingOperation $op, int $id, object $actor): void
@@ -127,6 +243,15 @@ final class ShipmentOutboundApplicationService
             ->flatMap(fn ($application) => $application->package_ids)->unique()->values()->all();
     }
 
+    public function withdrawLegacyDispatch(SalesShipment $shipment, array $packageIds, object $actor): void
+    {
+        foreach (ShipmentOutboundApplication::query()->where('shipment_id', $shipment->id)->where('kind', 'dispatch')->open()->get() as $application) {
+            if (array_intersect($packageIds, $application->package_ids) !== []) {
+                $application->update($this->withdrawal((int) $actor->legacy_id, '打包齐套已确认，直接办理实际发货，不再重复仓库审核。'));
+            }
+        }
+    }
+
     public function includeOutboundWork($query, int $actorId): void
     {
         $table = 'erp_shipment_packing_operations';
@@ -143,12 +268,13 @@ final class ShipmentOutboundApplicationService
     {
         $query = ShipmentOutboundApplication::query()->where('shipment_id', $op->shipment_id);
         $materials = (clone $query)->where('operation_id', $op->id)->where('kind', 'materials')->latest('id')->first();
+        $products = (clone $query)->where('kind', 'products')->whereJsonContains('package_ids', (int) $op->package_id)->latest('id')->first();
         $dispatch = $query->where('kind', 'dispatch')->whereJsonContains('package_ids', (int) $op->package_id)->latest('id')->first();
         $terminal = $this->terminalOperation($op, $actorId);
         $blocked = null;
         $canRequest = false;
         $packageNos = [];
-        if ($terminal && ! in_array($dispatch?->status, ShipmentOutboundApplication::OPEN, true)) {
+        if ($terminal) {
             try {
                 $packageIds = $this->linkedPackageIds($op->shipment, (int) $op->package_id);
                 [$packages] = app(SalesShipmentApplicationService::class)->dispatchSelection($op->shipment, $packageIds, false);
@@ -160,8 +286,9 @@ final class ShipmentOutboundApplicationService
         }
 
         return ['materials' => $this->operationApplication($materials, $op, $actorId, false),
+            'products' => $this->operationApplication($products, $op, $actorId, false),
             'dispatch' => $this->operationApplication($dispatch, $op, $actorId, $terminal),
-            'can_request_dispatch' => $canRequest, 'dispatch_block_reason' => $blocked, 'dispatch_package_nos' => $packageNos];
+            'can_request_dispatch' => false, 'can_dispatch' => $canRequest, 'dispatch_block_reason' => $blocked, 'dispatch_package_nos' => $packageNos];
     }
 
     public function reviewList(array $filters, object $actor): array
@@ -206,9 +333,13 @@ final class ShipmentOutboundApplicationService
                 if ($decision === 'reject') {
                     $attributes['status'] = 'rejected';
                 } else {
+                    if (! in_array($shipment->shipment_status, ['pending_outbound', 'prepared', 'partially_shipped', 'outbound_posted'], true)
+                        || $shipment->order?->order_status === 'cancelled') $this->fail('订单或发货单已结束，不能继续领用，请驳回申请。');
                     $op = $shipment->packingOperations()->lockForUpdate()->findOrFail($application->operation_id);
                     if ($application->kind === 'materials') {
                         $attributes += $this->approveMaterials($application, $op, $actor);
+                    } elseif ($application->kind === 'products') {
+                        $attributes += $this->approveProducts($application, $op, $actor);
                     } else {
                         if (! $this->terminalOperation($op, (int) $application->applicant_legacy_id)) $this->fail('发货工序或接单人已变化，请驳回后重新申请。');
                         [, $lines] = app(SalesShipmentApplicationService::class)->dispatchSelection($shipment, $application->package_ids);
@@ -238,7 +369,7 @@ final class ShipmentOutboundApplicationService
 
     private function approveMaterials(ShipmentOutboundApplication $application, ShipmentPackingOperation $op, object $actor): array
     {
-        if (! in_array($op->status, ['READY', 'IN_PROGRESS'], true) || (int) $op->owner_legacy_id !== (int) $application->applicant_legacy_id) {
+        if (! app(ShipmentPackingKittingService::class)->canReceive($op) || (int) $op->owner_legacy_id !== (int) $application->applicant_legacy_id) {
             $this->fail('包装工序或接单人已变化，请驳回后重新申请。');
         }
         $rows = $application->lines_snapshot;
@@ -391,7 +522,7 @@ final class ShipmentOutboundApplicationService
             'created_at' => $application->created_at?->toDateTimeString(), 'reviewed_at' => $application->reviewed_at?->toDateTimeString(),
             'can_review' => $application->status === 'pending'];
         if ($includeLines) {
-            $data['lines'] = array_map(fn ($line) => collect($line)->only(['name', 'quantity', 'unit_name', 'warehouse_name', 'location_name', 'batch_no', 'serial_nos', 'physical_nos'])
+            $data['lines'] = array_map(fn ($line) => collect($line)->only(['name', 'quantity', 'unit_name', 'warehouse_name', 'location_name', 'batch_no', 'serial_nos', 'physical_nos', 'preparation_note'])
                 ->all() + ['serial_nos' => [], 'physical_nos' => []], $application->lines_snapshot);
         }
 

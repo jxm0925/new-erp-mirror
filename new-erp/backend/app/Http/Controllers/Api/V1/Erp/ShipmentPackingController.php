@@ -117,7 +117,8 @@ class ShipmentPackingController extends Controller
                     $work->where(fn ($active) => $mine($active)->whereNotIn('status', ['COMPLETED', 'CANCELLED']));
                     if ($execute) $work->orWhere(fn ($pending) => $outbound->includeOutboundWork($pending, $me));
                 }),
-                'available' => $q->where('status', 'READY')->whereNull('owner_legacy_id'),
+                'available' => ShipmentPackingApplicationService::forConfiguredWorker(
+                    app(\App\Services\Erp\ShipmentPackingKittingService::class)->preparationCandidates($q)->whereNull('owner_legacy_id'), $me),
                 'done' => $q->whereHas('participants', fn ($p) => $p->where('employee_legacy_id', $me))->where('status', 'COMPLETED'),
                 default => $q,
             };
@@ -155,15 +156,28 @@ class ShipmentPackingController extends Controller
             + ['outbound' => $outbound->operationStatus($operation, $me)]]);
     }
 
+    public function dispatchChoices(Request $request, int $id, ShipmentOutboundApplicationService $outbound)
+    {
+        $actor = $this->authorize($request, 'sales_order.shipment.packing.execute');
+        $request->validate(['page' => 'nullable|integer|min:1']);
+        return response()->json($outbound->dispatchChoices($this->visibleOperation($id, $actor), $actor, $request->integer('page', 1)));
+    }
+
     public function action(Request $request, int $id, ShipmentPackingApplicationService $service)
     {
         $actor = $this->authorize($request, $request->input('action') === 'inspect'
             ? 'sales_order.shipment.packing.quality' : 'sales_order.shipment.packing.execute');
         $this->visibleOperation($id, $actor);
-        $data = $request->validate(['action' => 'required|in:claim,collaborators,start,pause,materials,complete,inspect,request_dispatch,confirm_dispatch,withdraw_outbound',
+        $data = $request->validate(['action' => 'required|in:claim,collaborators,start,pause,materials,complete,inspect,request_dispatch,confirm_dispatch,dispatch_now,confirm_kitting,request_products,withdraw_outbound',
             'expected_version' => 'required|integer|min:1', 'client_command_id' => 'required|string|max:100',
             'application_id' => 'required_if:action,confirm_dispatch,withdraw_outbound|integer|min:1',
-            'delivery_mode' => 'required_if:action,request_dispatch|in:dispatch,pickup',
+            'delivery_mode' => 'required_if:action,request_dispatch,dispatch_now|in:dispatch,pickup',
+            'package_ids' => 'sometimes|array|min:1|max:1000', 'package_ids.*' => 'required|integer|min:1|distinct',
+            'expected_shipment_version' => 'required_with:package_ids|integer|min:1',
+            'kitting_fingerprint' => 'required_if:action,confirm_kitting|string|size:64',
+            'products' => 'required_if:action,request_products|array|min:1|max:1000',
+            'products.*.content_id' => 'required|integer|min:1|distinct',
+            'products.*.base_qty' => 'required|numeric|min:0.00000001',
             'carrier_name' => 'nullable|string|max:120', 'tracking_no' => 'nullable|string|max:120',
             'employee_legacy_ids' => 'nullable|array|max:100', 'employee_legacy_ids.*' => 'integer|distinct',
             'shares' => 'nullable|array|max:200',
@@ -189,7 +203,8 @@ class ShipmentPackingController extends Controller
             'materials.*.area_usage.pieces.*.width_mm' => 'required|numeric|min:1|max:999999',
             'materials.*.area_usage.pieces.*.qty' => 'required|integer|min:1|max:10000',
             'materials.*.physical_material_ids' => 'nullable|array', 'materials.*.physical_material_ids.*' => 'integer|distinct'] + ProductionMediaService::rules());
-        if ($data['action'] === 'inspect') $data += $request->validate(['result' => 'required|in:passed,failed', 'reason' => 'nullable|string|max:500']);
+        if ($data['action'] === 'inspect') $data += $request->validate(['result' => 'required|in:passed,failed', 'reason' => 'nullable|string|max:500',
+            'complete_before_inspect' => 'sometimes|boolean']);
         return response()->json(['message' => '包装工序已更新', 'data' => $service->action($id, $data['action'], $data, $actor)]);
     }
 
@@ -210,6 +225,8 @@ class ShipmentPackingController extends Controller
             ->join('erp_rbac_permissions as p', 'p.id', '=', 'rp.permission_id')->join('erp_rbac_roles as r', 'r.id', '=', 'ur.role_id')
             ->where('r.enabled', true)->where('p.enabled', true)->where('p.code', 'sales_order.shipment.packing.execute')->select('ur.user_legacy_id');
         $query->where(fn ($q) => $q->whereIn('legacy_id', $ids)->orWhere('username', 'admin'));
+        $workers = \App\Models\Erp\ProductionOperationWorker::query()->where('operation_id', $op->operation_id)->pluck('employee_legacy_id');
+        if ($op->operation_id && $workers->isNotEmpty()) $query->whereIn('legacy_id', $workers);
         // 协同人须同时是业务员档案中有效的生产工人。
         $staff = app(\App\Services\Erp\BusinessStaffService::class);
         $staff->ensureBackfilled();
@@ -290,10 +307,19 @@ class ShipmentPackingController extends Controller
     private function applyExecutionScope($query, object $actor): void
     {
         $auth = app(AuthContextService::class);
-        if ($auth->isSuperAdmin($actor) || $auth->dataScope($actor) === 'all') return;
+        if ($auth->isSuperAdmin($actor)) return;
+        // 数据范围为 all 也不能让普通员工绕过工序人员配置；参与过的作业仍可回看。
+        $query->where(fn ($visible) => $visible
+            ->where(fn ($eligible) => ShipmentPackingApplicationService::forConfiguredWorker($eligible, (int) $actor->legacy_id))
+            ->orWhereHas('participants', fn ($p) => $p->where('employee_legacy_id', $actor->legacy_id))
+            ->orWhere('inspected_by_legacy_id', $actor->legacy_id)
+            ->orWhereExists(fn ($inspected) => $inspected->selectRaw('1')->from('erp_shipment_serial_results as historical_result')
+                ->whereColumn('historical_result.operation_id', 'erp_shipment_packing_operations.id')
+                ->where('historical_result.inspected_by_legacy_id', $actor->legacy_id)));
+        if ($auth->dataScope($actor) === 'all') return;
         // Public ready work is claimable by an authorized worker. Claimed work and its
         // collaboration details are visible only to selected participants in self scope.
-        $query->where(fn ($q) => $q->where(fn ($ready) => $ready->where('status', 'READY')->whereNull('owner_legacy_id'))
+        $query->where(fn ($q) => $q->where(fn ($ready) => app(\App\Services\Erp\ShipmentPackingKittingService::class)->preparationCandidates($ready)->whereNull('owner_legacy_id'))
             ->orWhereHas('participants', fn ($p) => $p->where('employee_legacy_id', $actor->legacy_id))
             ->orWhere('inspected_by_legacy_id', $actor->legacy_id)
             // 按台试水的判定人记在逐台结果上；工序完成后质检员仍可回看自己判定过的工序。

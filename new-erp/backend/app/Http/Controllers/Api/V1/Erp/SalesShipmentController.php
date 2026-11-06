@@ -113,7 +113,7 @@ class SalesShipmentController extends Controller
     {
         $actor = $this->authorizePermission($request, 'sales_order.shipment.confirm');
         $shipment = $service->confirm($this->visibleShipment($request, $id), $this->operator($request), $this->command($request), $actor);
-        return $this->costSafeJson(['message' => '销售发货单已确认，等待移至待发区', 'data' => $shipment]);
+        return $this->costSafeJson(['message' => '发货安排已确认，等待移至待发区，尚未正式发货', 'data' => $shipment]);
     }
 
     public function postOutbound(Request $request, int $id, SalesShipmentApplicationService $service)
@@ -196,12 +196,17 @@ class SalesShipmentController extends Controller
 
     public function reworkOperations(Request $request, int $id, int $lineId, \App\Services\Erp\ShipmentSerialApplicationService $service)
     {
-        $this->authorizePermission($request, 'sales_order.shipment.packing.quality');
+        $actor = $this->authorizePermission($request, 'sales_order.shipment.packing.quality');
         // 质检执行端沿作业范围看本台返工选项，不要求同时成为该订单的销售负责人。
         $shipment = SalesShipment::query()->whereKey($id)->whereHas('lines', fn ($line) => $line->whereKey($lineId))->firstOrFail();
         $pending = DB::table('erp_shipment_serial_results as result')->join('erp_sales_shipment_lines as line', 'line.id', '=', 'result.shipment_line_id')
             ->where('line.shipment_id', $id)->where('line.id', $lineId)->where('line.line_status', 'prepared')
-            ->whereColumn('result.round', 'line.quality_round')->where('result.status', 'wait_quality')->exists();
+            ->whereColumn('result.round', 'line.quality_round')
+            ->where(fn ($state) => $state->where('result.status', 'wait_quality')
+                ->orWhere(fn ($waiting) => $waiting->where('result.status', 'waiting')
+                    ->whereExists(fn ($op) => $op->selectRaw('1')->from('erp_shipment_packing_operations as operation')
+                        ->whereColumn('operation.id', 'result.operation_id')->where('operation.status', 'IN_PROGRESS')
+                        ->where('operation.shipment_operation_type_snapshot', 'water_test')->where('operation.owner_legacy_id', $actor->legacy_id))))->exists();
         abort_unless($pending, 403, '当前设备不在可办理的发货质检作业中。');
         return response()->json(['data' => $service->reworkOperations($shipment, $lineId, $request->all())]);
     }
@@ -245,7 +250,7 @@ class SalesShipmentController extends Controller
         $user = app(AuthContextService::class)->currentUser($request);
         abort_unless($user, 401, '未登录或登录已过期。');
         app(\App\Services\Erp\SalesOrderVisibilityService::class)->apply($query, $user);
-        abort_unless($query->exists(), 403, '无权操作该销售订单的发运单。');
+        abort_unless($query->exists(), 403, '无权操作该销售订单的发货单。');
     }
 
     /**

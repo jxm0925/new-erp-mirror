@@ -20,7 +20,7 @@ use Illuminate\Validation\ValidationException;
 /**
  * 售后补发：补发单只做"要发什么"，出库时才选库存来源/序列号并过账成一条
  * aftersales_reship_outbound 库存事务（负向出库、按余额当前移动平均成本），
- * 与销售发运完全隔离——不动订单 shipped_qty、不进 erp_sales_shipments。
+ * 与销售发货完全隔离——不动订单 shipped_qty、不进 erp_sales_shipments。
  * 换货补发固定为换回商品；独立补发可任选物料。先退后发在退货单收齐前禁止出库。
  */
 final class AftersalesReshipApplicationService

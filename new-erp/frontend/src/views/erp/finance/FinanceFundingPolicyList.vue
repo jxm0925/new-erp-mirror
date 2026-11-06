@@ -1,7 +1,7 @@
 <template>
   <div class="funding-page">
     <div class="page-title">
-      <div><h1>付款条件</h1><p>维护销售订单的付款条款。收齐款项后可确认发运或提货。</p></div>
+      <div><h1>付款条件</h1><p>维护销售订单的付款条款。收齐款项后可确认发货或提货。</p></div>
       <el-button v-if="canManage" class="primary" type="success" icon="el-icon-plus" @click="openCreate">新增付款条件</el-button>
     </div>
     <section class="filter-card">

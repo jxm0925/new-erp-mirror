@@ -6,9 +6,9 @@ use App\Models\Erp\SalesOrder;
 use App\Models\Erp\SalesShipmentLine;
 
 /**
- * 销售订单状态唯一协调入口。下游业务（发运、退货、收款核销、订单改价、生产确认）
+ * 销售订单状态唯一协调入口。下游业务（发货、退货、收款核销、订单改价、生产确认）
  * 只上报“发生了什么”，由这里按固定顺序重算订单投影：
- *   发运数量与交付状态 → 实际成本 → 资金放行 → 完成状态。
+ *   发货数量与交付状态 → 实际成本 → 资金放行 → 完成状态。
  * 各步骤幂等，必须在调用方的业务事务内同步执行。
  */
 final class SalesOrderStateCoordinator
@@ -66,11 +66,11 @@ final class SalesOrderStateCoordinator
         return $funding;
     }
 
-    /** 实际发运后才累计销售已发货数量，并据此计算订单交付状态。 */
+    /** 实际发货后才累计销售已发货数量，并据此计算订单交付状态。 */
     private function refreshShipment(SalesOrder $order): void
     {
         $order->setRelation('lines', $order->lines()->orderBy('id')->lockForUpdate()->get());
-        // 调用方可能已建立 RR 快照；发运单状态与数量必须在同一次当前读中取得。
+        // 调用方可能已建立 RR 快照；发货单状态与数量必须在同一次当前读中取得。
         $shipments = SalesShipmentLine::query()
             ->join('erp_sales_shipments', 'erp_sales_shipments.id', '=', 'erp_sales_shipment_lines.shipment_id')
             ->where('erp_sales_shipment_lines.line_status', 'shipped')

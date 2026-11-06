@@ -70,12 +70,56 @@ final class ShipmentSerialApplicationService
         $result->update(['media' => array_merge($result->media ?? [], $media)]);
     }
 
-    public function repairReturn(SalesShipment $shipment, int $lineId, array $payload, object $actor): array
+    /** 仅本轮末道返修的合格记录可交回仍有效的发货任务。 */
+    public static function pendingTaskReturns(?int $operationId = null): \Illuminate\Database\Query\Builder
     {
-        return $this->command('return_shipment_repair', $shipment, $payload, $actor, function ($locked) use ($lineId, $payload, $actor): array {
+        return DB::table('erp_shipment_reworks as repair')
+            ->join('erp_sales_shipments as shipment', 'shipment.id', '=', 'repair.shipment_id')
+            ->join('erp_sales_shipment_lines as line', 'line.id', '=', 'repair.shipment_line_id')
+            ->join('erp_mfg_work_order_units as unit', 'unit.id', '=', 'repair.unit_id')
+            ->where('repair.status', 'completed')->whereNull('repair.returned_at')
+            ->whereNotIn('shipment.shipment_status', ['cancelled', 'shipped', 'completed'])
+            ->where('line.line_status', 'repair')
+            ->whereExists(function ($report) use ($operationId) {
+                $report->selectRaw('1')->from('erp_mfg_unit_reports as passed')
+                    ->whereColumn('passed.unit_id', 'repair.unit_id')->where('passed.result', 'passed')->where('passed.is_rework', true)
+                    ->whereColumn('passed.created_at', 'repair.completed_at')
+                    ->where('passed.id', fn ($last) => $last->from('erp_mfg_unit_reports as last_pass')->selectRaw('MAX(last_pass.id)')
+                        ->whereColumn('last_pass.unit_id', 'repair.unit_id')->where('last_pass.result', 'passed')
+                        ->whereColumn('last_pass.created_at', '<=', 'repair.completed_at'));
+                if ($operationId !== null) $report->where('passed.work_order_operation_id', $operationId);
+                else $report->whereColumn('passed.work_order_operation_id', 'op.id');
+            });
+    }
+
+    public static function ownsRepairTask(int $operationId, object $actor): bool
+    {
+        return \App\Models\Erp\MfgTaskParticipant::query()->where('work_order_operation_id', $operationId)
+            ->where('lane', 'rework')->where('role', 'owner')->where('is_active', true)
+            ->where('employee_legacy_id', $actor->legacy_id)->exists();
+    }
+
+    public function returnFromTask(int $operationId, array $payload, object $actor): array
+    {
+        abort_unless(self::ownsRepairTask($operationId, $actor), 403, '只有本工序的返修接单人可以确认返回。');
+        // 保留已完成记录供相同命令重放；实际待返回状态在发货命令锁内核对。
+        $operation = MfgWorkOrderOperation::query()->findOrFail($operationId);
+        $repair = ShipmentRework::query()->where('work_order_id', $operation->work_order_id)->findOrFail($payload['repair_id']);
+        return $this->repairReturn(SalesShipment::query()->findOrFail($repair->shipment_id), (int) $repair->shipment_line_id,
+            $payload, $actor, $operationId);
+    }
+
+    public function repairReturn(SalesShipment $shipment, int $lineId, array $payload, object $actor, ?int $taskOperationId = null): array
+    {
+        return $this->command('return_shipment_repair', $shipment, $payload, $actor, function ($locked) use ($lineId, $payload, $actor, $taskOperationId): array {
             $line = $locked->lines()->lockForUpdate()->findOrFail($lineId);
             $repair = ShipmentRework::query()->where('shipment_line_id', $line->id)->where('status', 'completed')->whereNull('returned_at')->orderByDesc('id')->lockForUpdate()->first();
             if (! $repair || ! $repair->unit_id) $this->fail('原设备的制造返工尚未全部合格，不能返回成品位。');
+            if ($taskOperationId !== null) {
+                abort_unless(self::ownsRepairTask($taskOperationId, $actor), 403, '只有本工序的返修接单人可以确认返回。');
+                if ((int) $repair->id !== (int) $payload['repair_id'] || ! self::pendingTaskReturns($taskOperationId)->where('repair.id', $repair->id)->exists())
+                    $this->fail('本次返修或发货状态已变化，请刷新任务；已取消或换机的设备由仓库办理返回。');
+            }
             $this->locator((int) $payload['finished_location_id'], 'finished');
             $this->inventory->moveSalesShipmentLine($line, (int) $payload['finished_location_id'], 'repair_return', $actor);
             $ids = $line->serial_snapshot['inventory_serial_ids'] ?? [];

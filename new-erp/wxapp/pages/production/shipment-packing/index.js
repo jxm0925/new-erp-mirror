@@ -33,9 +33,9 @@ function buildSpecText(obj) {
 function describeOutbound(application) {
   if (!application) return null;
   const { status, delivery_mode } = application;
-  const deliveryLabel = ({ dispatch: '物流发运', pickup: '客户自提' })[delivery_mode] || '';
+  const deliveryLabel = ({ dispatch: '物流发货', pickup: '客户自提' })[delivery_mode] || '';
   const statusLabel = status === 'posted' && deliveryLabel
-    ? (delivery_mode === 'pickup' ? '已提货' : '已发运')
+    ? (delivery_mode === 'pickup' ? '已提货' : '已发货')
     : (outboundLabels[status] || '出库申请');
   return Object.assign({}, application, {
     statusLabel, deliveryLabel, statusTag: outboundTags[status] || 'gray',
@@ -44,19 +44,21 @@ function describeOutbound(application) {
 }
 Page({
   data: { shipmentId: 0, page: 1, lastPage: 1, total: 0, rows: [], loading: true, busy: false, error: '', keyword: '',
-    tabs: TABS, scope: 'mine', counts: { mine: 0, available: 0 }, userName: '', clockText: '00:00:00',
+    tabs: TABS, scope: 'mine', counts: { mine: 0, available: 0 }, userName: '', userInitial: '工', clockText: '00:00:00', detailTab: 'work',
     repairReturnOpen: false, repairReturnSerial: {}, repairReturnReason: '', repairReturnError: '', finishedLocatorOpen: false, finishedLocator: {},
     detailOpen: false, showMaterials: false, operation: {}, pending: false, operationError: '', peopleOpen: false, peopleRows: [], selectedPeople: [], peopleKeyword: '',
-    peoplePage: 1, peopleLast: 1, departments: [{ id: 0, name: '全部部门' }], departmentIndex: 0, shareRows: [], peopleError: '',
-    materialsOpen: false, materialRows: [], materialDrafts: [], materialKeyword: '', materialPage: 1, materialLast: 1, materialError: '',
+    peoplePage: 1, peopleLast: 1, departments: [{ id: 0, name: '全部部门' }], departmentIndex: 0, shareRows: [], peopleError: '', showCollaborationShares: false,
+    materialsOpen: false, materialRows: [], materialDrafts: [], materialKeyword: '', materialPage: 1, materialLast: 1, materialError: '', productShortages: {}, showKittingShortages: false,
     dispatchOpen: false, dispatchMode: 'dispatch', carrierName: '', trackingNo: '', dispatchError: '',
+    dispatchRows: [], dispatchSelected: {}, dispatchSelectedRows: [], dispatchPackageCount: 0,
+    dispatchPage: 1, dispatchLast: 1, dispatchLoading: false, dispatchVersion: 0, dispatchShipmentNo: '',
     categories: [{ id: 0, category_name: '全部分类' }], categoryIndex: 0,
     identityOpen: false, identityRows: [], selectedIdentities: [], identityMaterial: {}, identityPage: 1, identityLast: 1, identityKeyword: '',
     operationSerialIds: [], inspectionOpen: false, inspectionResult: 'passed', inspectionReason: '', inspectionMedia: [], mediaBusy: false, inspectionError: '', inspectionNeedsReturn: false,
     repairLocatorOpen: false, repairLocator: {}, reworkOpen: false, reworkRows: [], reworkPage: 1, reworkLast: 1, reworkKeyword: '', reworkError: '', returnOperation: null },
   onLoad(options = {}) { this.peopleSelected = {}; this.materialSelected = {}; this.identitySelected = {}; const user = wx.getStorageSync('erp_user') || {};
     this.fromOutside = Boolean(options.operation_id);
-    this.setData({ shipmentId: Number(options.shipment_id || 0), userName: user.nickname || user.display_name || user.username || '',
+    this.setData({ shipmentId: Number(options.shipment_id || 0), userName: user.nickname || user.display_name || user.username || '', userInitial: String(user.nickname || user.display_name || user.username || '工')[0],
       scope: TABS.some(t => t.key === options.scope) ? options.scope : (options.shipment_id ? 'all' : 'mine') }); this.load(); if (options.operation_id) { this.showOperation(Number(options.operation_id)); } },
   onHide() { this.stopClock(); },
   onShow() { if (this.data.detailOpen && this.data.operation.id) this.startClock(); },
@@ -74,6 +76,10 @@ Page({
     const info = row.order_info || null;
     const contents = row.contents || [];
     const my = row.my || { closed_minutes: 0, timing: false };
+    const ownerOnly = Boolean(my.is_participant && my.role === 'OWNER');
+    actions.inspect = Boolean(actions.inspect && ownerOnly);
+    const waterInspection = Boolean(row.shipment_operation_type === 'water_test' && ownerOnly
+      && can('sales_order.shipment.packing.quality') && (actions.complete || actions.inspect));
     const repairRows = (row.serial_results || []).filter(serial => serial.repair && serial.repair.state !== 'returned');
     const specText = contents.map(c => buildSpecText(c)).filter(Boolean).filter((v, i, a) => a.indexOf(v) === i).join('、');
     const outbound = row.outbound || {};
@@ -82,9 +88,20 @@ Page({
     return Object.assign({}, row, { statusLabel: statusLabels[row.status] || row.status, statusTag: statusTags[row.status] || 'gray', ownerName: owner ? owner.name : '待接单',
       my, productText: contents.map(c => c.product_name || c.item_name).filter(Boolean).filter((v, i, a) => a.indexOf(v) === i).join('、'),
       specText,
+      kitting: row.kitting ? Object.assign({}, row.kitting, {
+        products: (row.kitting.products || []).map(item => Object.assign({}, item, { requiredText: view.quantity(item.required_qty), serialText: (item.serial_nos || []).join('、') })),
+        materials: (row.kitting.materials || []).map(item => Object.assign({}, item, {
+          requiredText: view.quantity(item.required_qty), receivedText: view.quantity(item.received_qty),
+          shortageText: view.quantity(item.shortage_qty), hasShortage: Number(item.shortage_qty) > 0,
+        })),
+        can_confirm: row.kitting.can_confirm && can('sales_order.shipment.packing.execute'),
+        can_request_products: row.kitting.can_request_products && can('sales_order.shipment.packing.execute'),
+      }) : null,
       outbound: {
         materials: outboundMaterials, dispatch: describeOutbound(outbound.dispatch),
-        can_request_dispatch: Boolean(outbound.can_request_dispatch),
+        can_request_dispatch: false,
+        can_dispatch: Boolean(outbound.can_dispatch && can('sales_order.shipment.packing.execute')),
+        products: describeOutbound(outbound.products),
         dispatch_block_reason: outbound.dispatch_block_reason || '',
         dispatchPackageText: (outbound.dispatch_package_nos || []).join('、') || row.package_no || '',
       },
@@ -100,10 +117,20 @@ Page({
         qtyText: view.quantity(req.required_base_qty),
       })),
       is_public_snapshot: row.is_public_snapshot === true || row.is_public_snapshot === 1 || row.is_public_snapshot === '1',
-      qtyText: view.quantity(row.planned_base_qty), allowed_actions: actions,
+      qtyText: view.quantity(row.planned_base_qty), allowed_actions: actions, waterInspection,
+      salesOrderNo: (info && info.sales_order_no) || row.sales_order_no || '',
+      salespersonName: (info && info.salesperson_name) || row.salesperson_name || '',
+      customerName: (info && info.customer_name) || row.customer_name || '',
+      dueText: info && info.required_delivery_date ? String(info.required_delivery_date).slice(5, 10) : '',
+      docsCount: ((row.workshop_reference && ((row.workshop_reference.drawings || []).length + (row.workshop_reference.notes || []).length)) || 0) + (info ? 1 : 0),
+      materialsTabCount: (row.material_requirements || []).length || (row.materials || []).length,
+      selectableSerialCount: (row.serial_results || []).filter(serial => Boolean(serial.allowed_actions && (serial.allowed_actions.complete || (serial.allowed_actions.inspect && ownerOnly)))).length,
+      allSerialsSelected: (row.serial_results || []).some(serial => Boolean(serial.allowed_actions && (serial.allowed_actions.complete || (serial.allowed_actions.inspect && ownerOnly))))
+        && (row.serial_results || []).filter(serial => Boolean(serial.allowed_actions && (serial.allowed_actions.complete || (serial.allowed_actions.inspect && ownerOnly)))).every(serial => this.data.operationSerialIds.includes(serial.inventory_serial_id)),
       serialResults: (row.serial_results || []).map(serial => Object.assign({}, serial, {
+        allowed_actions: Object.assign({}, serial.allowed_actions, { inspect: Boolean(serial.allowed_actions?.inspect && ownerOnly) }),
         selected: this.data.operationSerialIds.includes(serial.inventory_serial_id),
-        canSelect: Boolean(serial.allowed_actions && (serial.allowed_actions.complete || serial.allowed_actions.inspect)),
+        canSelect: Boolean(serial.allowed_actions && (serial.allowed_actions.complete || (serial.allowed_actions.inspect && ownerOnly))),
         statusLabel: serial.line_status === 'repair' ? '返修中' : (({ waiting: '等待前序', ready: '待作业', completed: '已完成', wait_quality: '待检验', failed: '不合格' })[serial.status] || serial.status),
         tag: serial.line_status === 'repair' ? 'red' : (({ ready: 'blue', completed: 'green', wait_quality: 'purple', failed: 'red' })[serial.status] || 'gray'),
       })),
@@ -148,13 +175,24 @@ Page({
   },
   stopClock() { if (this.timer) { clearInterval(this.timer); this.timer = null; } },
   toggleMaterialsSection() { this.setData({ showMaterials: !this.data.showMaterials }); },
+  switchDetailTab(event) { const tab = event.currentTarget.dataset.tab; if (tab && tab !== this.data.detailTab) this.setData({ detailTab: tab }); },
+  toggleAllSerials() {
+    if (this.data.busy) return;
+    const rows = this.data.operation.serialResults || [];
+    const selectable = rows.filter(row => row.canSelect);
+    if (!selectable.length) return;
+    const allSelected = selectable.every(row => this.data.operationSerialIds.includes(row.inventory_serial_id));
+    const ids = allSelected ? [] : selectable.map(row => row.inventory_serial_id);
+    this.setData({ operationSerialIds: ids, 'operation.allSerialsSelected': !allSelected, 'operation.serialResults': rows.map(row => Object.assign({}, row, { selected: ids.includes(row.inventory_serial_id) })) });
+  },
   refreshDetail() { if (!this.data.busy && this.detailOperationId) return this.showOperation(this.detailOperationId); },
   toggleSerial(event) {
     const id = Number(event.currentTarget.dataset.id);
     const serial = (this.data.operation.serialResults || []).find(row => row.inventory_serial_id === id);
     if (!serial || !serial.canSelect || this.data.busy) return;
     const ids = this.data.operationSerialIds.includes(id) ? this.data.operationSerialIds.filter(x => x !== id) : this.data.operationSerialIds.concat([id]);
-    this.setData({ operationSerialIds: ids, 'operation.serialResults': this.data.operation.serialResults.map(row => Object.assign({}, row, { selected: ids.includes(row.inventory_serial_id) })) });
+    const selectable = (this.data.operation.serialResults || []).filter(row => row.canSelect);
+    this.setData({ operationSerialIds: ids, 'operation.allSerialsSelected': selectable.length > 0 && selectable.every(row => ids.includes(row.inventory_serial_id)), 'operation.serialResults': this.data.operation.serialResults.map(row => Object.assign({}, row, { selected: ids.includes(row.inventory_serial_id) })) });
   },
   openRepairReturn(event) {
     const lineId = Number(event.currentTarget.dataset.id);
@@ -186,8 +224,9 @@ Page({
   showOperation(id) {
     this.detailOperationId = id;
     const sequence = this.detailSequence = (this.detailSequence || 0) + 1;
-    this.setData({ detailOpen: true, operation: Number(this.data.operation.id) === Number(id) ? this.data.operation : {}, operationError: '', pending: Boolean(packing.pending(id)) });
-    return packing.operation(id).then(response => { if (sequence === this.detailSequence) { this.setData({ operation: this.decorate(response.data || response) }); this.startClock(); } })
+    const isSame = Number(this.data.operation.id) === Number(id);
+    this.setData({ detailOpen: true, detailTab: isSame ? this.data.detailTab : 'work', operation: isSame ? this.data.operation : {}, operationError: '', pending: Boolean(packing.pending(id)) });
+    return packing.operation(id).then(response => { if (sequence === this.detailSequence) { this.setData({ operation: this.decorate(response.data || response), productShortages: {}, showKittingShortages: false }); this.startClock(); } })
       .catch(error => { if (sequence === this.detailSequence) this.setData({ operationError: view.errorText(error) }); });
   },
   closeDetail() {
@@ -215,28 +254,112 @@ Page({
     }).finally(() => this.setData({ busy: false }));
   },
   recover() { return this.execute('recover'); },
+  toggleKittingShortages() {
+    if (this.data.busy || this.data.pending) return;
+    this.setData({ showKittingShortages: !this.data.showKittingShortages, productShortages: {} });
+  },
+  kittingQuantity(event) {
+    this.setData({ productShortages: Object.assign({}, this.data.productShortages, { [event.currentTarget.dataset.id]: event.detail.value }) });
+  },
+  requestProduct(event) {
+    const op = this.data.operation;
+    const id = Number(event.currentTarget.dataset.id);
+    const row = (op.kitting?.products || []).find(item => item.content_id === id);
+    const qty = Number(this.data.productShortages[id]);
+    if (this.data.busy || this.data.pending || !op.kitting?.can_request_products || !row) return;
+    if (!Number.isFinite(qty) || qty <= 0 || qty > Number(row.required_qty)) return wx.showToast({ title: '请填写实际缺少数量', icon: 'none' });
+    view.modal(this, { title: '申请补齐产品', content: `${row.item_name} 缺少 ${qty} ${row.unit_name || ''}，提交仓库核对并交付。已到位的产品不要重复申请。`, confirmText: '提交申请',
+      success: result => { if (result.confirm && this.data.operation.id === op.id) this.execute('request_products', { products: [{ content_id: id, base_qty: qty }] }); } });
+  },
+  confirmKitting() {
+    const op = this.data.operation;
+    if (this.data.busy || this.data.pending || this.data.showKittingShortages || !op.kitting?.can_confirm) return;
+    view.modal(this, { title: '东西都齐了吗？', content: '请确认清单中的整机、随货配件和包装材料已经全部拿齐，设备编号与现场一致。', confirmText: '确认已拿齐',
+      success: result => { if (result.confirm && this.data.operation.id === op.id) this.execute('confirm_kitting', { kitting_fingerprint: op.kitting.fingerprint }); } });
+  },
   openDispatch() {
     const op = this.data.operation;
-    if (this.data.busy || this.data.pending || !op.outbound?.can_request_dispatch) return;
+    if (this.data.busy || this.data.pending || !op.outbound?.can_dispatch) return;
     const previous = op.outbound.dispatch || {};
     this.setData({
       dispatchOpen: true, dispatchMode: previous.delivery_mode === 'pickup' ? 'pickup' : 'dispatch',
       carrierName: previous.carrier_name || op.order_info?.carrier_name || '', trackingNo: previous.tracking_no || '', dispatchError: '',
+      dispatchRows: [], dispatchSelected: {}, dispatchSelectedRows: [], dispatchPackageCount: 0,
+      dispatchPage: 1, dispatchLast: 1, dispatchVersion: 0, dispatchShipmentNo: '',
     });
+    return this.loadDispatchChoices();
   },
-  closeDispatch() { if (!this.data.busy) this.setData({ dispatchOpen: false }); },
+  closeDispatch() { if (!this.data.busy) { this.dispatchSequence = (this.dispatchSequence || 0) + 1; this.setData({ dispatchOpen: false, dispatchLoading: false }); } },
+  loadDispatchChoices() {
+    const sequence = this.dispatchSequence = (this.dispatchSequence || 0) + 1;
+    const id = this.data.operation.id;
+    this.setData({ dispatchLoading: true, dispatchError: '' });
+    return packing.dispatchChoices(id, { page: this.data.dispatchPage }).then(response => {
+      if (sequence !== this.dispatchSequence || !this.data.dispatchOpen || id !== this.data.operation.id) return;
+      const result = view.rows(response);
+      const changed = this.data.dispatchVersion && Number(this.data.dispatchVersion) !== Number(response.shipment_version);
+      const selected = changed ? {} : Object.assign({}, this.data.dispatchSelected);
+      result.rows.forEach(row => { if (!row.ready) delete selected[row.id]; else if (selected[row.id]) selected[row.id] = row; });
+      this.setData({ dispatchRows: result.rows, dispatchPage: result.page, dispatchLast: result.lastPage,
+        dispatchVersion: response.shipment_version, dispatchShipmentNo: response.shipment_no,
+        dispatchError: changed ? '发货单已更新，已清空原选择，请重新勾选本次设备。' : '' });
+      this.setDispatchSelection(selected);
+    }).catch(error => {
+      if (sequence === this.dispatchSequence) this.setData({ dispatchRows: [], dispatchError: view.errorText(error) });
+    }).finally(() => { if (sequence === this.dispatchSequence) this.setData({ dispatchLoading: false }); });
+  },
+  setDispatchSelection(selected) {
+    const rows = Object.values(selected);
+    this.setData({ dispatchSelected: selected, dispatchSelectedRows: rows,
+      dispatchPackageCount: new Set(rows.flatMap(row => row.package_ids)).size });
+  },
+  toggleDispatchPackage(event) {
+    if (this.data.busy || this.data.pending || this.data.dispatchLoading) return;
+    const key = String(event.currentTarget.dataset.id);
+    const row = this.data.dispatchRows.find(item => String(item.id) === key);
+    if (!row || !row.ready) return;
+    const selected = Object.assign({}, this.data.dispatchSelected);
+    if (selected[key]) delete selected[key]; else selected[key] = row;
+    this.setDispatchSelection(selected);
+  },
+  removeDispatchPackage(event) {
+    if (this.data.busy || this.data.pending || this.data.dispatchLoading) return;
+    const selected = Object.assign({}, this.data.dispatchSelected);
+    delete selected[String(event.currentTarget.dataset.id)];
+    this.setDispatchSelection(selected);
+  },
+  selectDispatchPage() {
+    if (this.data.busy || this.data.pending || this.data.dispatchLoading) return;
+    const selected = Object.assign({}, this.data.dispatchSelected);
+    this.data.dispatchRows.filter(row => row.ready).forEach(row => { selected[row.id] = row; });
+    this.setDispatchSelection(selected);
+  },
+  turnDispatchPage(event) {
+    if (this.data.busy || this.data.pending || this.data.dispatchLoading) return;
+    const page = this.data.dispatchPage + Number(event.currentTarget.dataset.delta);
+    if (page < 1 || page > this.data.dispatchLast) return;
+    this.setData({ dispatchPage: page });
+    return this.loadDispatchChoices();
+  },
   chooseDispatchMode(event) { this.setData({ dispatchMode: event.detail.value }); },
   dispatchInput(event) {
     const field = event.currentTarget.dataset.field;
     if (field === 'carrierName' || field === 'trackingNo') this.setData({ [field]: event.detail.value });
   },
   saveDispatch() {
-    if (this.data.busy) return;
+    if (this.data.busy || this.data.dispatchLoading) return;
     if (this.data.pending) return this.recover();
     const { dispatchMode, carrierName, trackingNo } = this.data;
-    const payload = { delivery_mode: dispatchMode };
+    const packageIds = Array.from(new Set(this.data.dispatchSelectedRows.flatMap(row => row.package_ids)));
+    if (!packageIds.length) return this.setData({ dispatchError: '请勾选本次实际发出的设备包裹。' });
+    const payload = { delivery_mode: dispatchMode, package_ids: packageIds, expected_shipment_version: this.data.dispatchVersion };
     if (dispatchMode === 'dispatch') Object.assign(payload, { carrier_name: carrierName.trim(), tracking_no: trackingNo.trim() });
-    return this.execute('request_dispatch', payload);
+    const opId = this.data.operation.id;
+    return view.modal(this, { title: dispatchMode === 'pickup' ? '确认本次提货' : '确认本次发货',
+      content: `本次共 ${packageIds.length} 个包裹：\n${this.data.dispatchSelectedRows.map(row => row.contents_text || row.package_nos.join('、')).join('\n')}\n请确认以上物品已实际交付。`,
+      confirmText: '确认已交付', success: result => {
+        if (result.confirm && this.data.dispatchOpen && this.data.operation.id === opId) this.execute('dispatch_now', payload);
+      } });
   },
   changeOutbound(event) {
     const { kind, action } = event.currentTarget.dataset;
@@ -244,7 +367,7 @@ Page({
     const application = op.outbound?.[kind];
     const confirming = action === 'confirm_dispatch';
     if (this.data.busy || this.data.pending || !(confirming ? application?.can_confirm : application?.can_withdraw)) return;
-    const title = confirming ? (application.delivery_mode === 'pickup' ? '确认提货' : '确认发运') : '撤回出库申请';
+    const title = confirming ? (application.delivery_mode === 'pickup' ? '确认提货' : '确认发货') : '撤回出库申请';
     view.modal(this, {
       title, confirmText: title,
       subtitle: confirming ? '请在货物实际交付后确认' : '',
@@ -306,7 +429,7 @@ Page({
   },
   peopleShareInput(event) { if (this.data.busy || this.data.pending) return; const id = Number(event.currentTarget.dataset.id); const rows = this.data.shareRows; const person = rows.find(row => Number(row.employee_legacy_id) === id); if (person) person.percent = event.detail.value; this.setData({ shareRows: rows, peopleError: '' }); },
   equalPeopleShares() { if (this.data.busy || this.data.pending || !this.data.shareRows.length) return; const equal = personalShares.defaultShares(this.data.shareRows); this.data.shareRows.forEach(person => { person.percent = personalShares.ratioToPercent(equal.find(share => share.employee_legacy_id === Number(person.employee_legacy_id)).share_ratio); }); this.setData({ shareRows: this.data.shareRows, peopleError: '' }); },
-  savePeople() { if (this.data.busy || (!this.data.pending && !this.data.shareRows.length)) return; if (this.data.pending) return this.execute('recover'); let shares; try { shares = personalShares.buildShares(this.data.shareRows); } catch (error) { return this.setData({ peopleError: error.message }); } return this.execute('collaborators', { employee_legacy_ids: Object.keys(this.peopleSelected).map(Number), shares }); },
+  savePeople() { if (this.data.busy) return; if (this.data.pending) return this.execute('recover'); const payload = { employee_legacy_ids: Object.keys(this.peopleSelected).map(Number) }; if (this.data.showCollaborationShares) { try { payload.shares = personalShares.buildShares(this.data.shareRows); } catch (error) { return this.setData({ peopleError: error.message }); } } return this.execute('collaborators', payload); },
   closePeople() { if (!this.data.busy) { this.peopleSequence = (this.peopleSequence || 0) + 1; this.setData({ peopleOpen: false }); } },
   openMaterials() { if (this.data.busy || this.data.pending || !this.data.operation.allowed_actions?.materials) return; this.materialSelected = {}; this.setData({ materialsOpen: true, materialRows: [], materialDrafts: [], materialError: '', materialKeyword: '', materialPage: 1, materialLast: 1, categoryIndex: 0 }); return this.loadMaterials(true); },
   loadMaterials(include) {
@@ -353,7 +476,9 @@ Page({
     const rows = this.data.operation.serial_results || [];
     if (!rows.length) return null;
     const ids = this.data.operationSerialIds;
-    if (!ids.length || ids.some(id => !rows.some(row => row.inventory_serial_id === id && row.allowed_actions && row.allowed_actions[action]))) { this.setData({ operationError: '请选择满足本次操作条件的设备序列号' }); return false; }
+    const combined = action === 'inspect' && this.data.operation.waterInspection;
+    if (!ids.length || ids.some(id => !rows.some(row => row.inventory_serial_id === id && row.allowed_actions
+      && (row.allowed_actions[action] || (combined && row.allowed_actions.complete))))) { this.setData({ operationError: '请选择满足本次操作条件的设备序列号' }); return false; }
     return ids.slice();
   },
   needsReturnOperation() { return (this.data.operation.serial_results || []).some(row => this.data.operationSerialIds.includes(row.inventory_serial_id) && row.requires_return_operation); },
@@ -381,9 +506,11 @@ Page({
   chooseReworkOperation(event) { const row = this.data.reworkRows.find(row => Number(row.id) === Number(event.currentTarget.dataset.id)); if (row) this.setData({ returnOperation: row, reworkOpen: false }); },
   closeReworkOperations() { this.reworkSequence = (this.reworkSequence || 0) + 1; this.setData({ reworkOpen: false }); },
   saveInspection() {
-    if (this.data.mediaBusy) return;
+    if (this.data.mediaBusy || this.data.busy) return;
     const ids = this.actionSerials('inspect'); if (ids === false) return;
     const payload = { result: this.data.inspectionResult, reason: this.data.inspectionReason, media: this.data.inspectionMedia };
+    if (this.data.operation.waterInspection) payload.complete_before_inspect = true;
+    if (payload.result === 'failed' && !String(payload.reason || '').trim()) return this.setData({ inspectionError: '请填写不合格原因' });
     if (ids) payload.inventory_serial_ids = ids;
     if (ids && payload.result === 'failed') {
       const needsReturn = this.needsReturnOperation();

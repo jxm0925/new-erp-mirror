@@ -14,7 +14,7 @@ use Illuminate\Support\Facades\DB;
  * - 报废单独列：工时按“合格 + 报废”件数平摊，报废那部分在报废审批当月记为“报废工时”，不摊给合格品、不进订单。
  * - 月度滚动：上月结转（月初未结）+ 本月新做 − 本月出库结算 − 本月报废 = 结转下月。没结算的不会重复累加，只是往后结转，等出库那个月再结。
  * - 提成只在出库时产生：订单折后金额 × 出库占比 × 工序提成比例，按工序参与人份额分。
- * - 发货包装作业：随发货单发运结算。
+ * - 发货包装作业：随发货单发货结算。
  * - 集中开料记录：一批只开一个 BOM，按实际计时；工单下料「已备料」按件数领走，这批的工时按 领走件数 ÷ 总件数 跟着那张工单的产品出库结算，
  *   没领完的件留在这批里（结余）一直往后结转。提成：那张工单下料工序的提成池按工时占比分给这批开料的人（和在工单上计时的人一起按工时分）。
  * - 客户退货：只记录（哪个月、哪张订单、退了几件、对应哪些工单），不扣工时和提成——退货一般伴随售后，
@@ -566,7 +566,7 @@ final class PerformanceLedgerService
             return ['key' => $unit['key'], 'kind' => 'packing', 'work_order_id' => null, 'work_order_no' => $unit['shipment_no'], 'source_label' => '发货包装',
                 'item_name' => $unit['name'], 'sales_order_no' => $unit['order_no'], 'unit_name' => '', 'output_qty' => 1,
                 'shipped_qty' => $shipped ? 1 : 0, 'consumed_pending_qty' => 0, 'in_stock_qty' => 0, 'other_qty' => 0, 'pending_qty' => $shipped ? 0 : 1, 'scrapped_qty' => 0,
-                'status_label' => $shipped ? '已发运' : '未发运'];
+                'status_label' => $shipped ? '已发货' : '未发货'];
         }
         if ($unit['kind'] === 'cut') {
             $r = $unit['run'];
@@ -660,7 +660,7 @@ final class PerformanceLedgerService
             $this->lines[(int) $l->id] = ['amount' => $rate === null || $l->amount_incl_tax === null ? null : bcmul((string) $l->amount_incl_tax, $rate, 4),
                 'qty' => $q, 'order_no' => $o->sales_order_no, 'item_name' => $l->product_name ?: $l->item_name];
         }
-        // 出库（发运）事实
+        // 出库（发货）事实
         $shipDates = [];
         $ships = DB::table('erp_sales_shipment_lines as l')->join('erp_sales_shipments as s', 's.id', '=', 'l.shipment_id')
             ->whereNotIn('l.line_status', ['cancelled', 'replaced'])
@@ -831,7 +831,7 @@ final class PerformanceLedgerService
         foreach ($shipped as $woId => $q) $this->returnsByWo[$woId][] = ['date' => $date, 'qty' => -$qty * $q / $total, 'no' => $no, 'order_no' => $line['order_no']];
     }
 
-    /** 发货包装作业：一道包装作业是一个结算单元，随发货单发运结算，提成按包裹里各订单行数量占比。 */
+    /** 发货包装作业：一道包装作业是一个结算单元，随发货单发货结算，提成按包裹里各订单行数量占比。 */
     private function loadPacking(array $shipDates): void
     {
         $ops = DB::table('erp_shipment_packing_operations as op')->join('erp_sales_shipments as s', 's.id', '=', 'op.shipment_id')->leftJoin('erp_sales_orders as o', 'o.id', '=', 's.sales_order_id')
@@ -851,7 +851,7 @@ final class PerformanceLedgerService
             $date = $shipDates[(int) $op->shipment_id] ?? null;
             if ($date) {
                 $ids = array_map('intval', json_decode((string) $op->packing_content_ids, true) ?: []);
-                // 历史成员不改写；提成事件只接本行实际发运，不能借同包裹其他商品发运生效。
+                // 历史成员不改写；提成事件只接本行实际发货，不能借同包裹其他商品发货生效。
                 $contents = DB::table('erp_shipment_packing_contents as c')->join('erp_sales_shipment_lines as sl', 'sl.id', '=', 'c.shipment_line_id')
                     ->join('erp_sales_shipments as s', 's.id', '=', 'c.shipment_id')->whereIn('c.id', $ids ?: [0])
                     ->whereNotIn('sl.line_status', ['cancelled', 'replaced'])

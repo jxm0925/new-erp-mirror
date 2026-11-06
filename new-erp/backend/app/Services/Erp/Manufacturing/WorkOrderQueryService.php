@@ -213,12 +213,16 @@ final class WorkOrderQueryService
         $here = $eligible->whereIn('status', ['waiting', 'in_progress', 'rework'])->groupBy('current_operation_id')->map->count();
         $rework = $eligible->where('status', 'rework')->groupBy('current_operation_id')->map->count();
         $owners = MfgTaskParticipant::query()->where('work_order_id', $wo->id)->where('role', 'owner')->where('is_active', true)->get()->groupBy('work_order_operation_id');
+        $people = MfgTaskParticipant::query()->where('work_order_id', $wo->id)->orderBy('id')->get()->groupBy('work_order_operation_id');
+        $personMinutes = MfgLaborSession::query()->where('work_order_id', $wo->id)->where('status', '!=', 'active')
+            ->selectRaw('work_order_operation_id, employee_legacy_id, lane, SUM(labor_minutes) AS minutes')->groupBy('work_order_operation_id', 'employee_legacy_id', 'lane')->get()
+            ->keyBy(fn ($row) => $row->work_order_operation_id.':'.$row->employee_legacy_id.':'.$row->lane);
         $timing = MfgLaborSession::query()->where('work_order_id', $wo->id)->where('status', 'active')->get()->groupBy('work_order_operation_id');
         // 正常 / 返工工时分开：返工单独计时、不算提成；返工工单整张都是返工工时。
         $minutes = MfgLaborSession::query()->where('work_order_id', $wo->id)->selectRaw('work_order_operation_id, is_rework, SUM(labor_minutes) AS m')
             ->groupBy('work_order_operation_id', 'is_rework')->get()->groupBy('work_order_operation_id');
         $ops = $wo->operations->keyBy('id');
-        return array_map(function ($op) use ($ops, $here, $rework, $owners, $timing, $minutes) {
+        return array_map(function ($op) use ($ops, $here, $rework, $owners, $timing, $minutes, $people, $personMinutes) {
             $m = $minutes->get($op['id']) ?? collect();
             $normal = (float) $m->where('is_rework', false)->sum('m');
             $redo = (float) $m->where('is_rework', true)->sum('m');
@@ -228,6 +232,11 @@ final class WorkOrderQueryService
                 'status' => $ops->get($op['id'])?->status ?? 'pending', 'work_status' => $workStatus, 'work_status_label' => TaskService::WORK_STATUS_LABELS[$workStatus] ?? $workStatus,
                 'here_qty' => (int) ($here[$op['id']] ?? 0), 'rework_qty' => (int) ($rework[$op['id']] ?? 0),
                 'owner_name' => $o->firstWhere('lane', 'normal')?->employee_name, 'rework_owner_name' => $o->firstWhere('lane', 'rework')?->employee_name,
+                'collaborator_names' => ($people->get($op['id']) ?? collect())->where('is_active', true)->where('role', 'collaborator')
+                    ->map(fn ($p) => $p->employee_name.($p->lane === 'rework' ? '（返工）' : ''))->values()->all(),
+                'participant_history' => ($people->get($op['id']) ?? collect())->where('is_active', false)->map(fn ($p) => [
+                    'name' => $p->employee_name, 'role' => $p->role, 'lane' => $p->lane,
+                    'labor_minutes' => round((float) ($personMinutes->get($op['id'].':'.$p->employee_legacy_id.':'.$p->lane)?->minutes ?? 0), 1)])->values()->all(),
                 'timing_names' => ($timing->get($op['id']) ?? collect())->map(fn ($s) => $s->employee_name.($s->lane === 'rework' ? '（返工）' : ''))->values()->all(),
                 'labor_minutes' => round($normal + $redo, 1), 'normal_minutes' => round($normal, 1), 'rework_minutes' => round($redo, 1),
             ];
@@ -546,7 +555,7 @@ final class WorkOrderQueryService
                 'serial_no' => $unit?->serial_no, 'reason' => $r->reason, 'state' => $state,
                 'state_label' => match ($state) {
                     'repairing' => '返修中'.($at ? '（在'.$at.'）' : ''),
-                    'wait_return' => '返修已合格，等仓库点「返修合格返回」后重新试水',
+                    'wait_return' => '返修已合格，末道返修接单人可在小程序确认返回试水，或由仓库办理返回',
                     default => '已返回发货，重新试水',
                 },
                 'return_operation_name' => $r->return_operation_id ? ($ops[$r->return_operation_id] ?? null) : null,

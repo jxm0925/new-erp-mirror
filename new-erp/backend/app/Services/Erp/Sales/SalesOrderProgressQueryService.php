@@ -90,14 +90,14 @@ final class SalesOrderProgressQueryService
             $ready = min($planned, (float) ($reserved[$line->id] ?? 0) / $factor + $shippedQty);
             $unfinished = collect($nested)->first(fn ($node) => $node['status'] !== 'cancelled' && $node['status'] !== 'completed');
             $cancelled = $line->line_status === 'removed' || $planned <= 0;
-            $label = $cancelled ? '已取消' : ($shippedQty + 0.00001 >= $planned ? '已发运'
+            $label = $cancelled ? '已取消' : ($shippedQty + 0.00001 >= $planned ? '已发货'
                 : ($unfinished ? ($unfinished['current_node_label'] ?: '待生产') : ($shippingStates[$line->id] ?? ($active->isNotEmpty() ? '已入库' : ($ready > 0 ? '备货 '.$this->number($ready).'/'.$this->number($planned) : '待备货')))));
             if (in_array($line->line_type, ['service', 'deduction', 'no_delivery'], true) || in_array($line->fulfillment_type, ['service', 'no_delivery'], true)) $label = '无需发货';
             $nodes[] = ['key' => 'line:'.$line->id, 'id' => (int) $line->id, 'type' => 'line', 'line_id' => (int) $line->id, 'work_order_id' => null,
                 'name' => $line->sku_name ?: $line->product_name ?: $line->item_name, 'subtitle' => '第 '.$line->line_no.' 行 · '.$this->number($line->order_qty).($line->unit_name_snapshot ?: ''),
                 'image_url' => $line->image ?: null, 'document_no' => null, 'quantity' => (float) $line->order_qty, 'unit_name' => $line->unit_name_snapshot,
                 'completed_qty' => $currentDone, 'planned_qty' => $planned,
-                'status' => $cancelled ? 'cancelled' : ($label === '已发运' || $label === '无需发货' ? 'completed' : ($ready > 0 || collect($nested)->contains('status', 'in_progress') ? 'in_progress' : 'pending')),
+                'status' => $cancelled ? 'cancelled' : ($label === '已发货' || $label === '无需发货' ? 'completed' : ($ready > 0 || collect($nested)->contains('status', 'in_progress') ? 'in_progress' : 'pending')),
                 'status_label' => $label, 'children' => $nested];
         }
         return ['data' => $nodes, 'meta' => ['order_id' => (int) $order->id, 'order_no' => $order->sales_order_no, 'permissions' => ['work_order_links' => $workOrderLinks]]];
@@ -120,7 +120,7 @@ final class SalesOrderProgressQueryService
             $expected = (float) ($orderLine?->item_base_required_qty ?: max(0, (float) $orderLine?->order_qty - (float) $orderLine?->cancelled_qty));
             if ((float) $shipments->sum('base_qty') + 0.00001 < $expected) $states[] = ['rank' => 0, 'label' => '待发准备'];
             foreach ($shipments as $line) {
-                if ($line->line_status === 'shipped') { $states[] = ['rank' => 100000, 'label' => '已发运']; continue; }
+                if ($line->line_status === 'shipped') { $states[] = ['rank' => 100000, 'label' => '已发货']; continue; }
                 if ($line->line_status === 'repair') { $states[] = ['rank' => -1, 'label' => '返工']; continue; }
                 if (! $line->prepared_at) { $states[] = ['rank' => 0, 'label' => '待发准备']; continue; }
                 $ids = $contents->where('shipment_line_id', $line->id)->pluck('id')->all();
@@ -132,7 +132,7 @@ final class SalesOrderProgressQueryService
                     $pending = ['rank' => 10 + $index, 'label' => $op->operation_name_snapshot];
                     break;
                 }
-                $states[] = $pending ?: ['rank' => $related->isEmpty() ? 0 : 10000, 'label' => $related->isEmpty() ? '待发准备' : '待发运'];
+                $states[] = $pending ?: ['rank' => $related->isEmpty() ? 0 : 10000, 'label' => $related->isEmpty() ? '待发准备' : '待发货'];
             }
             $labels[$lineId] = collect($states)->sortBy('rank')->first()['label'] ?? '待发准备';
         }
@@ -698,7 +698,7 @@ final class SalesOrderProgressQueryService
         $reservations = DB::table('erp_inventory_reservations')->where('source_type', 'sales_order')->where('source_order_id', $order->id)
             ->where('source_order_line_id', $line->id)->where('item_id', $line->item_id)->whereIn('reservation_status', ['active', 'converted_to_shipment', 'consumed', 'released'])->get();
         foreach ($reservations as $reservation) $records[] = $this->record('reservation:'.$reservation->id, $key, '库存备货', [
-            'status' => 'completed', 'status_label' => match ($reservation->reservation_status) {'consumed' => '原预留已发运', 'released' => '原预留已释放', default => '已预留'},
+            'status' => 'completed', 'status_label' => match ($reservation->reservation_status) {'consumed' => '原预留已发货', 'released' => '原预留已释放', default => '已预留'},
             'quantity' => (float) $reservation->reserved_qty, 'is_cancelled' => $reservation->reservation_status === 'released',
             'description' => '批次 '.($links ? $reservation->batch_no : '已登记'), 'completed_at' => $reservation->reserved_at,
             'scope' => 'line', 'scope_label' => '订单行数量记录']);
@@ -729,7 +729,7 @@ final class SalesOrderProgressQueryService
         $status = $this->quantityStatus($done, $planned);
         return ['nodes' => [$this->node($key, '库存 / 采购备货', $status, $done, $planned,
             ['status_label' => match ($status) {'completed' => '已备货', 'in_progress' => '部分备货', default => '待备货'},
-                'progress_label' => '已备货 '.$this->number($done).'/'.$this->number($planned).'；当前占用 '.$this->number($occupied).'；已发运 '.$this->number($consumed)])], 'records' => $records];
+                'progress_label' => '已备货 '.$this->number($done).'/'.$this->number($planned).'；当前占用 '.$this->number($occupied).'；已发货 '.$this->number($consumed)])], 'records' => $records];
     }
 
     /** 只装载所选 SN（或当前页 SN）的发货事实；null 表示明确的订单行数量视图。 */
@@ -924,8 +924,8 @@ final class SalesOrderProgressQueryService
             if ($included->isEmpty()) continue;
             $qty = $quantity ? (float) $included->sum('base_qty') : 1.0;
             $dispatched += $qty;
-            $records[] = $this->record('dispatch:'.$dispatch->id, 'shipment:dispatch', $dispatch->delivery_mode === 'pickup' ? '提货' : '发运', [
-                'status' => 'completed', 'status_label' => $dispatch->delivery_mode === 'pickup' ? '已提货' : '已发运', 'person' => $dispatch->operator_name,
+            $records[] = $this->record('dispatch:'.$dispatch->id, 'shipment:dispatch', $dispatch->delivery_mode === 'pickup' ? '提货' : '发货', [
+                'status' => 'completed', 'status_label' => $dispatch->delivery_mode === 'pickup' ? '已提货' : '已发货', 'person' => $dispatch->operator_name,
                 'completed_at' => $dispatch->dispatched_at?->toDateTimeString(), 'quantity' => $qty,
                 'description' => implode(' · ', array_filter([$dispatch->dispatch_no, $dispatch->carrier_name, $dispatch->tracking_no])),
                 'scope' => $quantity ? 'line' : 'unit', 'is_cancelled' => $included->every(fn ($l) => $this->cancelledShipmentLine($l))]);
@@ -934,8 +934,8 @@ final class SalesOrderProgressQueryService
         $lastDispatch = $relatedDispatches->last();
         $deliveryModes = $relatedDispatches->pluck('delivery_mode')->unique();
         $dispatchStatus = $this->quantityStatus($dispatched, $planned);
-        $nodes['shipment:dispatch'] = $this->node('shipment:dispatch', '发运', $dispatchStatus, $dispatched, $planned,
-            ['status_label' => $dispatchStatus === 'completed' ? ($deliveryModes->count() > 1 ? '已发出' : ($deliveryModes->first() === 'pickup' ? '已提货' : '已发运')) : '待发运',
+        $nodes['shipment:dispatch'] = $this->node('shipment:dispatch', '发货', $dispatchStatus, $dispatched, $planned,
+            ['status_label' => $dispatchStatus === 'completed' ? ($deliveryModes->count() > 1 ? '已发出' : ($deliveryModes->first() === 'pickup' ? '已提货' : '已发货')) : '待发货',
                 'time' => $dispatched + 0.00001 >= $planned ? $lastDispatch?->dispatched_at?->toDateTimeString() : null]);
         if ($lines->isNotEmpty() && $activeLines->isEmpty()) {
             $nodes['shipment:prepare']['status'] = 'cancelled';
@@ -972,10 +972,10 @@ final class SalesOrderProgressQueryService
             if ($latest) {
                 $view = $this->shipment($shipment, $line, $serialId, false);
                 $firstOpen = collect($view['nodes'])->first(fn ($node) => ! in_array($node['status'], ['completed', 'cancelled'], true));
-                if ($latest->line_status === 'shipped') { $key = 'shipment:dispatch'; $label = '已发运'; $status = 'completed'; }
+                if ($latest->line_status === 'shipped') { $key = 'shipment:dispatch'; $label = '已发货'; $status = 'completed'; }
                 elseif ($latest->line_status === 'prepared') {
                     $key = $firstOpen['key'] ?? 'shipment:dispatch';
-                    $label = $firstOpen['label'] ?? '待发运';
+                    $label = $firstOpen['label'] ?? '待发货';
                     $status = $firstOpen['status'] ?? 'pending';
                 }
             }
