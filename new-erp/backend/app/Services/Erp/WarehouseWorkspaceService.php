@@ -365,7 +365,7 @@ final class WarehouseWorkspaceService
         $data['status_label'] = $row->kind === 'mfg_receipt' ? match ($row->status) {
             'pending' => '待仓库确认', 'confirmed' => '已确认入库', 'rejected' => '已驳回', 'cancelled' => '已撤回', default => $row->status,
         } : ($row->kind === 'sales_shipment' ? match ($row->status) {
-            'pending_outbound' => '待移至待发区', 'prepared' => '待发运', 'partially_shipped' => '部分已发运', 'outbound_posted' => '待发运', 'shipped' => '已发运', default => '已出库',
+            'pending_outbound' => '待移至待发区', 'prepared' => '待发货', 'partially_shipped' => '部分已发货', 'outbound_posted' => '待发货', 'shipped' => '已发货', default => '已出库',
         } : ($row->status_group === 'completed' ? '已完成' : match ($row->kind) {
             'material_preparation' => $data['waiting_units'] > 0 ? '车间等料' : '待配料',
             'material_delivery' => MaterialDeliveryService::STATUS_LABELS[$row->status] ?? '待处理',

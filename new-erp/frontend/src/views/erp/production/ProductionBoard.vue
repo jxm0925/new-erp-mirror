@@ -180,6 +180,10 @@
                     <a class="action-link-theme" @click="openWo(c.work_order_id)">详情</a>
                   </div>
                 </div>
+                <div v-if="c.collaborator_names && c.collaborator_names.length" class="text-secondary">协同：{{ c.collaborator_names.join('、') }}</div>
+                <div v-if="c.participant_history && c.participant_history.length" class="text-muted">
+                  <div v-for="(person, index) in c.participant_history" :key="index">已退出：{{ person.name }}（{{ person.role === 'owner' ? '原接单人' : '原协同人' }}{{ person.lane === 'rework' ? ' · 返工' : '' }}），已做 {{ minutesText(person.labor_minutes) }}</div>
+                </div>
               </div>
               <div v-if="!col.cards.length" class="empty-lane">暂无在制任务</div>
             </div>
@@ -269,6 +273,7 @@
                 <div class="card-footer-row">
                   <span class="text-secondary">
                     {{ c.owner_name || (c.state === 'ready' ? '未接单' : '') }}<template v-if="c.timing_count">{{ c.owner_name ? ' · ' : '' }}{{ c.timing_count }} 人计时中</template>
+                    <span v-if="c.collaborator_names && c.collaborator_names.length" style="display: block">协同：{{ c.collaborator_names.join('、') }}</span>
                   </span>
                   <router-link v-if="$can('sales_order.shipment.view')" class="action-link-theme" :to="{ path: '/sales/shipments', query: { shipment_id: c.shipment_id } }">详情</router-link>
                 </div>

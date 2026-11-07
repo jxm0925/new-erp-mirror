@@ -342,19 +342,19 @@ Progress design: 用户确认的订单产品树、单台整链路与工单聚合
         </div>
         <div class="dispatch-records">
           <div class="dispatch-records-head">
-            <b>发运记录</b>
+            <b>发货记录</b>
             <el-button v-if="$can('sales_order.shipment.view') && dispatchRecords.length" type="text" size="mini" @click="$router.push({ path: '/sales/shipments', query: { sales_order_id: order.id } })">查看发货单</el-button>
           </div>
           <el-table v-if="dispatchRecords.length" :data="dispatchRecords" size="mini" border>
-            <el-table-column label="发运单" min-width="140"><template slot-scope="{row}"><span class="font-mono">{{ row.dispatch_no }}</span></template></el-table-column>
-            <el-table-column label="方式" width="60"><template slot-scope="{row}">{{ row.delivery_mode === 'pickup' ? '提货' : '发运' }}</template></el-table-column>
+            <el-table-column label="发货单" min-width="140"><template slot-scope="{row}"><span class="font-mono">{{ row.dispatch_no }}</span></template></el-table-column>
+            <el-table-column label="方式" width="60"><template slot-scope="{row}">{{ row.delivery_mode === 'pickup' ? '提货' : '发货' }}</template></el-table-column>
             <el-table-column label="快递公司" min-width="100"><template slot-scope="{row}"><span :class="{ 'text-muted': !row.carrier_name }">{{ row.carrier_name || (row.delivery_mode === 'pickup' ? '-' : '未填写') }}</span></template></el-table-column>
             <el-table-column label="运单号" min-width="130"><template slot-scope="{row}"><span :class="row.tracking_no ? 'font-mono' : 'text-muted'">{{ row.tracking_no || (row.delivery_mode === 'pickup' ? '-' : '未填写') }}</span></template></el-table-column>
             <el-table-column label="包裹" width="60" align="right"><template slot-scope="{row}">{{ row.package_count }} 个</template></el-table-column>
-            <el-table-column label="发运时间" min-width="140"><template slot-scope="{row}">{{ date(row.dispatched_at) }}<span v-if="row.operator_name" class="text-muted"> · {{ row.operator_name }}</span></template></el-table-column>
+            <el-table-column label="发货时间" min-width="140"><template slot-scope="{row}">{{ date(row.dispatched_at) }}<span v-if="row.operator_name" class="text-muted"> · {{ row.operator_name }}</span></template></el-table-column>
           </el-table>
-          <div v-else class="dispatch-empty text-muted">未发运。实际快递公司和运单号在每次发运时填写。</div>
-          <div v-if="dispatchRecords.length > 1" class="dispatch-empty text-muted">共 {{ dispatchRecords.length }} 次发运 · {{ dispatchPackageCount }} 个包裹</div>
+          <div v-else class="dispatch-empty text-muted">未发货。实际快递公司和运单号在每次发货时填写。</div>
+          <div v-if="dispatchRecords.length > 1" class="dispatch-empty text-muted">共 {{ dispatchRecords.length }} 次发货 · {{ dispatchPackageCount }} 个包裹</div>
         </div>
       </section>
     </div>

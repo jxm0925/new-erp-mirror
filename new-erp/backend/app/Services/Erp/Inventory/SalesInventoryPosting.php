@@ -19,7 +19,7 @@ use App\Services\Erp\MaterialPhysicalService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
-/** 销售库存过账：发运出库、发货待发/返修内部移位、包装用料出库。业务只组装过账行，数量/成本/余额一律经 InventoryPostingKernel。 */
+/** 销售库存过账：发货出库、发货待发/返修内部移位、包装用料出库。业务只组装过账行，数量/成本/余额一律经 InventoryPostingKernel。 */
 class SalesInventoryPosting
 {
     public function __construct(
@@ -30,13 +30,13 @@ class SalesInventoryPosting
     {
     }
 
-    /** 兼容旧调用：只回读已发生的销售出库；新增扣库必须走正式发运批次。 */
+    /** 兼容旧调用：只回读已发生的销售出库；新增扣库必须走正式发货批次。 */
     public function postSalesShipment(SalesShipment $shipment, string $operator): InventoryTransaction
     {
         $existing = InventoryTransaction::query()->where('source_type', 'sales_shipment')->where('source_id', $shipment->id)
             ->where('transaction_type', 'sales_shipment_outbound')->where('posting_status', 'posted')->first();
         if ($existing) return $existing->fresh(['items.item', 'items.warehouse', 'items.location']);
-        throw ValidationException::withMessages(['shipment' => '请通过确认发运或确认提货办理正式销售出库。']);
+        throw ValidationException::withMessages(['shipment' => '请通过确认发货或确认提货办理正式销售出库。']);
     }
 
     /** 待发/返修是内部移位：成对库存流水和同一预留同时迁移，销售数量及成本不结转。 */
@@ -127,13 +127,13 @@ class SalesInventoryPosting
         }
     }
 
-    /** 一次发运批次是唯一过账来源；明细仍归原发货行，退货和成本沿用原正式依据。 */
+    /** 一次发货批次是唯一过账来源；明细仍归原发货行，退货和成本沿用原正式依据。 */
     public function postSalesShipmentDispatch(\App\Models\Erp\ShipmentDispatch $dispatch, SalesShipment $shipment, array $lineIds, object $actor): InventoryTransaction
     {
         $existing = InventoryTransaction::query()->where('source_type', 'sales_shipment_dispatch')->where('source_id', $dispatch->id)->where('transaction_type', 'sales_shipment_outbound')->first();
         if ($existing) return $existing;
         $lines = $shipment->lines()->whereIn('id', $lineIds)->with('orderLine.item')->orderBy('id')->lockForUpdate()->get();
-        if ($lines->count() !== count($lineIds) || $lines->isEmpty()) throw ValidationException::withMessages(['shipment' => '本次发运明细不完整。']);
+        if ($lines->count() !== count($lineIds) || $lines->isEmpty()) throw ValidationException::withMessages(['shipment' => '本次发货明细不完整。']);
         $first = $lines->first();
         $transaction = $this->kernel->begin(['transaction_type' => 'sales_shipment_outbound',
             'source_type' => 'sales_shipment_dispatch', 'source_id' => $dispatch->id, 'source_no' => $shipment->shipment_no,
@@ -154,7 +154,7 @@ class SalesInventoryPosting
                 throw ValidationException::withMessages(['stock' => '待发仓库、库位、批次或设备质量可用条件已变化，不能正式发出。']);
             $serialIds = array_values(array_unique(array_map('intval', $line->serial_snapshot['inventory_serial_ids'] ?? [])));
             $mode = $line->orderLine?->item?->serialTrackingMode() ?? 'none';
-            if (($mode === 'required' && count($serialIds) !== (int) $qty) || ($mode === 'none' && $serialIds !== [])) throw ValidationException::withMessages(['serial_ids' => '本次发运设备身份与物料管理方式不符。']);
+            if (($mode === 'required' && count($serialIds) !== (int) $qty) || ($mode === 'none' && $serialIds !== [])) throw ValidationException::withMessages(['serial_ids' => '本次发货设备身份与物料管理方式不符。']);
             $serials = InventorySerial::query()->whereIn('id', $serialIds)->where('inventory_balance_id', $balance->id)->where('serial_status', 'staged')->lockForUpdate()->get();
             if ($serials->count() !== count($serialIds)) throw ValidationException::withMessages(['serial_ids' => '所选设备已不在本次待发库存中。']);
             $balance->update(['quantity_locked' => (float) $balance->quantity_locked - $qty]);
@@ -167,7 +167,7 @@ class SalesInventoryPosting
                 'unit_cost' => $balance->average_unit_cost, 'cost_amount' => bcsub('0', $cost, 4), 'cost_source_type' => 'sales_shipment_frozen_fact',
                 'source_type' => 'sales_shipment', 'source_id' => $shipment->id, 'source_item_id' => $line->id]);
             $line->update(['unit_cost_snapshot' => $balance->average_unit_cost, 'cost_amount_snapshot' => bcsub('0', (string) $posted->cost_amount, 4)]);
-            $reservation->update(['reservation_status' => 'consumed', 'released_at' => now(), 'release_reason' => '确认发运或提货，正式销售出库']);
+            $reservation->update(['reservation_status' => 'consumed', 'released_at' => now(), 'release_reason' => '确认发货或提货，正式销售出库']);
             foreach ($serials as $serial) {
                 $serial->update(['serial_status' => 'shipped', 'outbound_at' => now()]);
                 InventorySerialEvent::create(['inventory_serial_id' => $serial->id, 'event_type' => 'sales_shipment_outbound', 'document_type' => 'sales_shipment',
@@ -180,7 +180,7 @@ class SalesInventoryPosting
             ->reduce(fn (string $sum, $line): string => Money::add($sum, (string) $line->cost_amount_snapshot), '0.0000');
         $shipment->update(['actual_cost_amount' => $cost]);
         InventoryPostingLog::create(['source_type' => 'sales_shipment_dispatch', 'source_id' => $dispatch->id, 'source_no' => $dispatch->dispatch_no,
-            'transaction_type' => 'sales_shipment_outbound', 'transaction_id' => $transaction->id, 'posting_status' => 'posted', 'posted_at' => now(), 'message' => '发运批次正式销售出库成功']);
+            'transaction_type' => 'sales_shipment_outbound', 'transaction_id' => $transaction->id, 'posting_status' => 'posted', 'posted_at' => now(), 'message' => '发货批次正式销售出库成功']);
         return $transaction->fresh('items');
     }
 

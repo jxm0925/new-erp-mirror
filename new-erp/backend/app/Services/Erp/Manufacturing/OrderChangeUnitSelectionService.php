@@ -223,7 +223,7 @@ final class OrderChangeUnitSelectionService
 
     private function unitRow(MfgWorkOrderUnit $unit, MfgWorkOrder $wo): array
     {
-        $disabled = $this->hasShippedIdentity($unit) ? '该编号或其装配主机已有正式发运记录，原发货与退货事实保留'
+        $disabled = $this->hasShippedIdentity($unit) ? '该编号或其装配主机已有正式发货记录，原发货与退货事实保留'
             : ($this->hasAnonymousShippedSource($unit) ? '该历史已入库编号的来源有按数量发货记录，尚无凭据区分已发与未发，请先核对原发货的具体设备'
                 : ($unit->status === 'pending_receipt' ? '已有待入库申请，请先撤回或办结' : null));
         return ['id' => (int) $unit->id, 'unit_no' => (int) $unit->unit_no, 'serial_no' => $unit->serial_no,

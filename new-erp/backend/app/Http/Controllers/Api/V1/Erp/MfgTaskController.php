@@ -39,7 +39,7 @@ class MfgTaskController extends Controller
 
     public function action(Request $request, int $id, TaskService $tasks, TaskQueryService $query)
     {
-        $input = $request->validate(['action' => 'required|in:claim,start,pause,stop,pass,prepare,reject,collaborators,assign,semi_order',
+        $input = $request->validate(['action' => 'required|in:claim,start,pause,stop,pass,prepare,reject,collaborators,assign,semi_order,repair_return',
             'lane' => 'nullable|in:normal,rework']);
         $action = $input['action'];
         $lane = TaskService::lane($input['lane'] ?? null);
@@ -62,6 +62,10 @@ class MfgTaskController extends Controller
             'prepare' => $this->prepare($request, $id, $user),
             'reject' => $this->reject($request, $id, $tasks, $user, $lane),
             'semi_order' => $this->semiOrder($request, $id, $user, $lane),
+            'repair_return' => $this->run(fn () => app(\App\Services\Erp\ShipmentSerialApplicationService::class)->returnFromTask($id,
+                $request->validate(['repair_id' => 'required|integer|min:1', 'expected_version' => 'required|integer|min:1',
+                    'client_command_id' => 'required|string|max:100', 'finished_location_id' => 'required|integer|min:1',
+                    'reason' => 'required|string|max:500']), $user), '返修合格已返回待发区，请在发货作业中重新试水。'),
         };
         return response()->json(['message' => $message, 'reminders' => $reminders, 'data' => $query->task($id, $user, $codes, $lane)]);
     }
@@ -89,7 +93,8 @@ class MfgTaskController extends Controller
     public function people(Request $request, int $id, TaskQueryService $query)
     {
         $this->user($request, ['production.task.execute', 'production.task.assign']);
-        return response()->json(['data' => $query->people($id, $request->query('keyword'))]);
+        $request->validate(['page' => 'nullable|integer|min:1', 'keyword' => 'nullable|string|max:120']);
+        return response()->json($query->people($id, $request->query('keyword'), $request->integer('page', 1)));
     }
 
     public function photo(Request $request)
@@ -218,7 +223,8 @@ class MfgTaskController extends Controller
     {
         $data = $request->validate(['collaborators' => 'present|array|max:20', 'collaborators.*.employee_legacy_id' => 'required|integer|min:1',
             'collaborators.*.share_percent' => 'nullable|numeric|min:0|max:100', 'owner_share_percent' => 'nullable|numeric|min:0|max:100']);
-        $tasks->collaborators($id, $data['collaborators'], isset($data['owner_share_percent']) ? (float) $data['owner_share_percent'] : null, $user, $lane);
+        $updateShares = array_key_exists('owner_share_percent', $data) || collect($data['collaborators'])->contains(fn ($row) => array_key_exists('share_percent', $row));
+        $tasks->collaborators($id, $data['collaborators'], isset($data['owner_share_percent']) ? (float) $data['owner_share_percent'] : null, $user, $lane, $updateShares);
         return '协同人已保存。';
     }
 

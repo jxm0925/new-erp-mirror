@@ -248,7 +248,7 @@
                   <tr class="table-group-header">
                     <th class="col-sn">产品序列号 (SN)</th>
                     <th :colspan="prodOps.length || 1" class="col-grp-prod">车间制造工序（本制令工单）</th>
-                    <th v-if="shipOps.length" :colspan="shipOps.length" class="col-grp-ship">仓配与发运工序（销售交付阶段）</th>
+                    <th v-if="shipOps.length" :colspan="shipOps.length" class="col-grp-ship">仓配与发货工序（销售交付阶段）</th>
                   </tr>
                   <tr class="table-col-header">
                     <th class="col-sn-sub">序列号 / 状态 / 绑定部件</th>
@@ -362,12 +362,14 @@
                     <div v-if="row.rework_owner_name" class="text-danger op-rework-owner">返工：{{ row.rework_owner_name }}</div>
                   </template>
                 </el-table-column>
-                <el-table-column label="实时作业人员" min-width="140" show-overflow-tooltip>
+                  <el-table-column label="作业人员 / 历史" min-width="220" show-overflow-tooltip>
                   <template slot-scope="{ row }">
                     <span v-if="row.timing_names && row.timing_names.length" class="text-primary font-medium">
                       <i class="el-icon-user" /> {{ row.timing_names.join('、') }}
                     </span>
                     <span v-else class="text-muted">—</span>
+                      <div v-if="row.collaborator_names && row.collaborator_names.length">协同：{{ row.collaborator_names.join('、') }}</div>
+                      <div v-for="(person, index) in (row.participant_history || [])" :key="index" class="text-muted">已退出：{{ person.name }}（{{ person.role === 'owner' ? '原接单人' : '原协同人' }}{{ person.lane === 'rework' ? ' · 返工' : '' }}），{{ person.labor_minutes }} 分钟</div>
                   </template>
                 </el-table-column>
                 <el-table-column label="累计投入工时" width="130" align="center">

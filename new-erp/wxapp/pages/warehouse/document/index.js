@@ -48,7 +48,7 @@ Page({
         loading: false, pendingAction, receipt: result.receipt, readonly: !actions.length, item: header.item || {},
         quantity: this.data.quantity || page.quantity(header.remaining_qty), postingEligibility: result.posting_eligibility || null,
         shippedPackages: (result.dispatchable_packages || []).filter(row => row.package_status === 'shipped'),
-        dispatches: (result.dispatches || []).map(row => Object.assign({}, row, { modeText: row.delivery_mode === 'pickup' ? '客户提货' : '公司发运', packageCount: (row.package_ids || []).length })),
+        dispatches: (result.dispatches || []).map(row => Object.assign({}, row, { modeText: row.delivery_mode === 'pickup' ? '客户提货' : '公司发货', packageCount: (row.package_ids || []).length })),
         packages: ((result.packages && result.packages.data) || []).map(row => { const sent = (result.dispatchable_packages || []).find(p => Number(p.id) === Number(row.id)) || {}; return Object.assign({}, row, { carrier_name: row.carrier_name || sent.carrier_name, tracking_no: row.tracking_no || sent.tracking_no, contents_text: sent.contents_text }); }), packagesTotal: (result.packages && result.packages.total) || 0, packagesLast: (result.packages && result.packages.last_page) || 1 });
       wx.setNavigationBarTitle({ title: this.data.kind === 'sales_return' && this.data.stage === 'receive' ? '销售退货收货' : view.titles[this.data.kind] || '仓库单据' });
     }).catch(error => { if (sequence === this.sequence) this.setData({ loading: false, error: page.errorText(error) }); });

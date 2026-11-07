@@ -300,21 +300,35 @@ class ShipmentPackingApplicationService
                 return $parcel;
     }
 
+    /** 工序未指定人员时开放；指定后仅配置的员工可接。 */
+    public static function forConfiguredWorker($query, int $employeeId)
+    {
+        return $query->where(fn ($eligible) => $eligible
+            ->whereNotExists(fn ($workers) => $workers->selectRaw('1')->from('erp_production_operation_workers as configured_worker')
+                ->whereColumn('configured_worker.operation_id', 'erp_shipment_packing_operations.operation_id'))
+            ->orWhereExists(fn ($worker) => $worker->selectRaw('1')->from('erp_production_operation_workers as matching_worker')
+                ->whereColumn('matching_worker.operation_id', 'erp_shipment_packing_operations.operation_id')
+                ->where('matching_worker.employee_legacy_id', $employeeId)));
+    }
+
     public function action(int $operationId, string $action, array $payload, object $actor): array
     {
         $shipmentId = (int) ShipmentPackingOperation::query()->whereKey($operationId)->value('shipment_id');
         return $this->command($action, $shipmentId, $payload + ['operation_id' => $operationId], $actor, function (SalesShipment $shipment) use ($operationId, $action, $payload, $actor): array {
             $this->assertEditable($shipment);
             $op = ShipmentPackingOperation::query()->where('shipment_id', $shipment->id)->lockForUpdate()->findOrFail($operationId);
-            if (! in_array($shipment->shipment_status, ['prepared', 'partially_shipped', 'outbound_posted'], true)) $this->fail('设备移至待发区后才能开始发货作业。');
+            $preparation = in_array($action, ['claim', 'materials', 'request_products', 'confirm_kitting', 'withdraw_outbound'], true);
+            if (! in_array($shipment->shipment_status, $preparation ? ['pending_outbound', 'prepared', 'partially_shipped', 'outbound_posted'] : ['prepared', 'partially_shipped', 'outbound_posted'], true)) $this->fail('设备移至待发区后才能开始发货作业。');
             if ((int) $op->business_version !== (int) ($payload['expected_version'] ?? 0)) $this->fail('包装工序已变化，请刷新后重试。');
             $actorId = (int) $actor->legacy_id;
-            $outboundActions = ['request_dispatch', 'confirm_dispatch', 'withdraw_outbound'];
+            $outboundActions = ['request_dispatch', 'confirm_dispatch', 'dispatch_now', 'withdraw_outbound', 'confirm_kitting', 'request_products', 'materials'];
             if ($op->status === 'CANCELLED' || ($op->status === 'COMPLETED' && ! in_array($action, $outboundActions, true))) {
                 $this->fail('已完成或取消的包装工序不能再次操作。');
             }
             if ($action === 'claim') {
-                if ($op->status !== 'READY' || $op->owner_legacy_id) $this->fail('该工序尚未就绪或已被他人接单。');
+                if (! self::forConfiguredWorker(ShipmentPackingOperation::query()->whereKey($op->id), $actorId)->exists())
+                    $this->fail('你不在该工序配置的作业人员中，不能接单。');
+                if (! app(ShipmentPackingKittingService::class)->canPrepare($op) || $op->owner_legacy_id) $this->fail('该工序尚未就绪或已被他人接单。');
                 $op->fill(['owner_legacy_id' => $actorId, 'claimed_at' => now()]);
                 $this->participant($op, $actor, 'OWNER', $actorId);
             } elseif ($action === 'collaborators') {
@@ -327,6 +341,8 @@ class ShipmentPackingApplicationService
                 foreach ($users as $user) {
                     if (! $auth->isSuperAdmin($user) && ! in_array('sales_order.shipment.packing.execute', $auth->permissionCodes($user), true)) $this->fail('所选协同人没有包装执行权限。');
                 }
+                $workers = \App\Models\Erp\ProductionOperationWorker::query()->where('operation_id', $op->operation_id)->lockForUpdate()->pluck('employee_legacy_id')->map(fn ($id) => (int) $id);
+                if ($op->operation_id && $workers->isNotEmpty() && array_diff($ids, $workers->all())) $this->fail('协同人必须选择本工序指定的人员；未指定人员的工序才可选全部作业人员。');
                 // 已在协同的人保留；新增协同人须是有效的生产工人档案。
                 $current = $op->participants()->where('role', 'COLLABORATOR')->where('is_active', true)->pluck('employee_legacy_id')->map(fn ($v) => (int) $v)->all();
                 foreach ($users as $user) {
@@ -340,6 +356,7 @@ class ShipmentPackingApplicationService
             } elseif (in_array($action, ['start', 'pause'], true)) {
                 if (! $op->participants()->where('employee_legacy_id', $actorId)->where('is_active', true)->exists()) $this->fail('只有接单人选择的参与人员可以记录本人工时。');
                 if ($action === 'start') {
+                    app(ShipmentPackingKittingService::class)->assertConfirmed($op);
                     // The same employee row also serializes ordinary production starts, so
                     // simultaneous commands in separate tasks cannot both open a timer.
                     DB::table('erp_legacy_admin_users')->where('legacy_id', $actorId)->lockForUpdate()->first();
@@ -365,6 +382,15 @@ class ShipmentPackingApplicationService
                     if (! $session) $this->fail('本人没有正在计时的作业。');
                     $this->closeSession($session, 'PAUSED');
                 }
+            } elseif ($action === 'confirm_kitting') {
+                $this->assertOwner($op, $actorId);
+                app(ShipmentPackingKittingService::class)->confirm($op, $payload, $actor);
+            } elseif ($action === 'request_products') {
+                $this->assertOwner($op, $actorId);
+                $payload['application_id'] = (int) $this->outbound->requestProducts($shipment, $op, $payload['products'] ?? [], $actor)->id;
+            } elseif ($action === 'dispatch_now') {
+                $this->assertOwner($op, $actorId);
+                $this->outbound->dispatchNow($shipment, $op, $payload, $actor);
             } elseif ($action === 'materials') {
                 $this->assertOwner($op, $actorId);
                 $payload['application_id'] = (int) $this->outbound->requestMaterials($shipment, $op, array_values($payload['materials'] ?? []), $actor)->id;
@@ -378,30 +404,25 @@ class ShipmentPackingApplicationService
                 $this->assertOwner($op, $actorId);
                 $this->outbound->withdraw($op, (int) ($payload['application_id'] ?? 0), $actor);
             } elseif ($action === 'complete') {
-                $this->assertOwner($op, $actorId);
-                if ($op->status !== 'IN_PROGRESS') $this->fail('只有加工中的包装工序可以完成。');
-                $this->outbound->assertNoPendingMaterials($op);
-                $media = app(ProductionMediaService::class)->normalize($payload['media'] ?? [], $actor, 'complete');
-                $payload['media'] = $media;
-                $op->media = array_merge($op->media ?? [], $media);
-                if ($this->serialLines($op)->isNotEmpty()) {
-                    $this->completeSerials($op, $payload, $actor, $media);
-                } else {
-                $currentQuantity = (string) $op->contents()->current()->sum('base_qty');
-                if (bccomp(CuttingDecimal::value($payload['completed_base_qty'] ?? '', 8, true), $currentQuantity, 8) !== 0) $this->fail('完成数量必须等于本工序仍有效的包裹产品数量；不足的产品不能随包裹发运。');
-                foreach ($op->packaging_materials_snapshot ?? [] as $required) {
-                    if (! $op->materials()->where('item_id', $required['component_item_id'])->whereNotNull('posted_at')->exists()) $this->fail('本工序配置的包装材料尚未登记正式库存耗用。');
-                }
-                // A responsible person cannot stop another person's timer. Each collaborator
-                // pauses their own work before the owner confirms this package's good quantity.
-                if ($op->laborSessions()->where('status', 'ACTIVE')->where('employee_legacy_id', '!=', $actorId)->exists()) $this->fail('协同人须先暂停本人的计时，再由接单人完成工序。');
-                foreach ($op->laborSessions()->where('status', 'ACTIVE')->lockForUpdate()->get() as $session) $this->closeSession($session, 'COMPLETED');
-                if (! $op->laborSessions()->where('employee_legacy_id', $actorId)->exists()) $this->fail('接单人必须记录实际作业工时。');
-                $qualityRequired = $op->quality_mode_snapshot !== 'none' || $op->shipment_operation_type_snapshot === 'water_test';
-                $op->fill(['status' => $qualityRequired ? 'WAIT_QUALITY' : 'COMPLETED',
-                    'completed_base_qty' => $currentQuantity, 'completed_at' => $qualityRequired ? null : now()]);
-                }
+                $payload = $this->completeOperation($op, $payload, $actor);
             } elseif ($action === 'inspect') {
+                if (! empty($payload['complete_before_inspect'])) {
+                    $this->assertOwner($op, $actorId);
+                    if ($op->shipment_operation_type_snapshot !== 'water_test') $this->fail('仅试水工序支持检验并完工。');
+                    if (($payload['result'] ?? '') === 'failed' && trim((string) ($payload['reason'] ?? '')) === '') $this->fail('请填写试水不合格原因。');
+                    $auth = app(AuthContextService::class);
+                    if (! $auth->isSuperAdmin($actor) && ! in_array('sales_order.shipment.packing.quality', $auth->permissionCodes($actor), true)) $this->fail('没有发货质检权限。');
+                    $lines = $this->serialLines($op);
+                    $waitingIds = $lines->isEmpty() ? [] : $this->selectedSerialLines($op, $payload)->filter(fn ($line) =>
+                        ShipmentSerialResult::query()->where('operation_id', $op->id)->where('shipment_line_id', $line->id)
+                            ->where('round', $line->quality_round)->where('status', 'waiting')->exists())
+                        ->flatMap(fn ($line) => $line->serial_snapshot['inventory_serial_ids'] ?? [])->all();
+                    if ($waitingIds !== [] || ($lines->isEmpty() && $op->status === 'IN_PROGRESS')) {
+                        if (! $auth->isSuperAdmin($actor) && ! in_array('sales_order.shipment.packing.execute', $auth->permissionCodes($actor), true)) $this->fail('没有发货作业权限。');
+                        $this->completeOperation($op, ['inventory_serial_ids' => $waitingIds,
+                            'completed_base_qty' => $lines->isEmpty() ? (string) $op->contents()->current()->sum('base_qty') : count($waitingIds)], $actor);
+                    }
+                }
                 $media = app(ProductionMediaService::class)->normalize($payload['media'] ?? [], $actor, 'inspect');
                 $payload['media'] = $media;
                 $op->media = array_merge($op->media ?? [], $media);
@@ -473,8 +494,10 @@ class ShipmentPackingApplicationService
             $blockers = [];
             $dispatchPending = in_array((int) $package->id, $requested, true);
             if ($package->package_status === 'shipped') $blockers[] = '该包裹已经发出。';
-            elseif ($dispatchPending) $blockers[] = '该包裹已有出库申请，由车间申请人按审核结果确认发货。';
-            else try { $this->assertReady($shipment, [(int) $package->id]); }
+            else try {
+                $this->assertReady($shipment, [(int) $package->id]);
+                app(ShipmentPackingKittingService::class)->assertDispatchReady($shipment, [(int) $package->id]);
+            }
             catch (ValidationException $exception) { $blockers = array_values(array_unique(collect($exception->errors())->flatten()->all())); }
             $contents = $package->packingContents()->current()->with('shipmentLine.orderLine')->get()->map(function ($c) use ($serialNos): string {
                 $order = $c->shipmentLine?->orderLine;
@@ -550,8 +573,9 @@ class ShipmentPackingApplicationService
             'end_reason' => $row->ended_at ? $row->status : null, 'actual_labor_minutes' => $row->actual_labor_minutes]));
         $me = collect($participants)->firstWhere('employee_legacy_id', $actorId);
         $active = ! in_array($op->status, ['COMPLETED', 'CANCELLED'], true);
-        $ownerCanApply = (int) $op->owner_legacy_id === $actorId && in_array($op->status, ['READY', 'IN_PROGRESS'], true);
+        $ownerCanApply = (int) $op->owner_legacy_id === $actorId && app(ShipmentPackingKittingService::class)->canReceive($op);
         $pendingMaterials = $ownerCanApply && ! empty($op->packaging_materials_snapshot) && $this->outbound->hasPendingMaterials($op);
+        $kitting = app(ShipmentPackingKittingService::class)->projection($op, $actorId);
         $myOpen = (clone $labor)->where('employee_legacy_id', $actorId)->where('status', 'ACTIVE')->orderByDesc('id')->first();
         $sharePlan = null;
         $contents = $op->contents()->when($op->status !== 'CANCELLED', fn ($query) => $query->current())->with('shipmentLine.orderLine')->get();
@@ -569,7 +593,7 @@ class ShipmentPackingApplicationService
             'stage_name' => $op->stage_name_snapshot, 'sequence' => (int) $op->sequence, 'status' => $op->status,
             'quality_result' => $op->quality_result, 'media' => $op->media ?? [],
             'shipment_operation_type' => $op->shipment_operation_type_snapshot,
-            'serial_results' => $serialResults,
+            'serial_results' => $serialResults, 'kitting' => $kitting,
             'owner_legacy_id' => $op->owner_legacy_id ? (int) $op->owner_legacy_id : null,
             'planned_base_qty' => $currentQuantity, 'completed_base_qty' => $completedQuantity,
             'business_version' => (int) $op->business_version, 'participants' => $participants,
@@ -596,12 +620,13 @@ class ShipmentPackingApplicationService
             'materials' => $op->materials->map(fn ($row) => ['id' => $row->id, 'item_name' => $row->item?->item_name,
                 'inventory_balance_id' => $row->inventory_balance_id, 'base_qty' => $row->base_qty, 'usage_snapshot' => $row->usage_snapshot, 'posted_at' => $row->posted_at])->all(),
             'allowed_actions' => [
-                'claim' => $active && $op->status === 'READY' && ! $op->owner_legacy_id,
+                'claim' => $active && ! $op->owner_legacy_id && app(ShipmentPackingKittingService::class)->canPrepare($op)
+                    && self::forConfiguredWorker(ShipmentPackingOperation::query()->whereKey($op->id), $actorId)->exists(),
                 'collaborators' => $active && (int) $op->owner_legacy_id === $actorId,
-                'start' => $active && $me && $me['is_active'] && ! $me['is_timing'] && ($op->status === 'IN_PROGRESS' || ((int) $op->owner_legacy_id === $actorId && $op->status === 'READY')),
+                'start' => $active && (! $kitting || $kitting['confirmed']) && $me && $me['is_active'] && ! $me['is_timing'] && ($op->status === 'IN_PROGRESS' || ((int) $op->owner_legacy_id === $actorId && $op->status === 'READY')),
                 'pause' => $active && $me && $me['is_timing'],
                 'materials' => $ownerCanApply && ! $pendingMaterials && ! empty($op->packaging_materials_snapshot),
-                'complete' => $ownerCanApply && $op->status === 'IN_PROGRESS' && ! $pendingMaterials,
+                'complete' => $ownerCanApply && $op->status === 'IN_PROGRESS' && ! $pendingMaterials && (! $kitting || $kitting['confirmed']),
                 'inspect' => $active && ($op->status === 'WAIT_QUALITY' || collect($serialResults)->contains(fn ($row) => $row['allowed_actions']['inspect'])),
             ]];
     }
@@ -649,6 +674,36 @@ class ShipmentPackingApplicationService
         $lines = $this->serialLines($op)->filter(fn ($line) => in_array((int) ($line->serial_snapshot['inventory_serial_ids'][0] ?? 0), $ids, true));
         if ($ids === [] || $lines->count() !== count($ids) || $lines->contains(fn ($line) => $line->line_status !== 'prepared')) $this->fail('请选择本作业中仍在待发区的对应设备。');
         return $lines;
+    }
+
+    private function completeOperation(ShipmentPackingOperation $op, array $payload, object $actor): array
+    {
+        $actorId = (int) $actor->legacy_id;
+        $this->assertOwner($op, $actorId);
+        if ($op->status !== 'IN_PROGRESS') $this->fail('只有加工中的包装工序可以完成。');
+        $this->outbound->assertNoPendingMaterials($op);
+        app(ShipmentPackingKittingService::class)->assertConfirmed($op);
+        $media = app(ProductionMediaService::class)->normalize($payload['media'] ?? [], $actor, 'complete');
+        $payload['media'] = $media;
+        $op->media = array_merge($op->media ?? [], $media);
+        if ($this->serialLines($op)->isNotEmpty()) {
+            $this->completeSerials($op, $payload, $actor, $media);
+        } else {
+        $currentQuantity = (string) $op->contents()->current()->sum('base_qty');
+        if (bccomp(CuttingDecimal::value($payload['completed_base_qty'] ?? '', 8, true), $currentQuantity, 8) !== 0) $this->fail('完成数量必须等于本工序仍有效的包裹产品数量；不足的产品不能随包裹发货。');
+        foreach ($op->packaging_materials_snapshot ?? [] as $required) {
+            if (! $op->materials()->where('item_id', $required['component_item_id'])->whereNotNull('posted_at')->exists()) $this->fail('本工序配置的包装材料尚未登记正式库存耗用。');
+        }
+        // A responsible person cannot stop another person's timer. Each collaborator
+        // pauses their own work before the owner confirms this package's good quantity.
+        if ($op->laborSessions()->where('status', 'ACTIVE')->where('employee_legacy_id', '!=', $actorId)->exists()) $this->fail('协同人须先暂停本人的计时，再由接单人完成工序。');
+        foreach ($op->laborSessions()->where('status', 'ACTIVE')->lockForUpdate()->get() as $session) $this->closeSession($session, 'COMPLETED');
+        if (! $op->laborSessions()->where('employee_legacy_id', $actorId)->exists()) $this->fail('接单人必须记录实际作业工时。');
+        $qualityRequired = $op->quality_mode_snapshot !== 'none' || $op->shipment_operation_type_snapshot === 'water_test';
+        $op->fill(['status' => $qualityRequired ? 'WAIT_QUALITY' : 'COMPLETED',
+            'completed_base_qty' => $currentQuantity, 'completed_at' => $qualityRequired ? null : now()]);
+        }
+        return $payload;
     }
 
     private function completeSerials(ShipmentPackingOperation $op, array $payload, object $actor, array $media): void
@@ -893,7 +948,7 @@ class ShipmentPackingApplicationService
 
     private function assertEditable(SalesShipment $shipment): void
     {
-        if (! in_array($shipment->shipment_status, ['draft', 'pending_outbound', 'prepared', 'partially_shipped', 'outbound_posted'], true)) $this->fail('已发运或取消的单据不能修改包装作业。');
+        if (! in_array($shipment->shipment_status, ['draft', 'pending_outbound', 'prepared', 'partially_shipped', 'outbound_posted'], true)) $this->fail('已发货或取消的单据不能修改包装作业。');
     }
 
     private function assertOwner(ShipmentPackingOperation $op, int $actorId): void

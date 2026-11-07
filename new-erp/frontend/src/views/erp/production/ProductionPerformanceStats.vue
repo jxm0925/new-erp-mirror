@@ -620,7 +620,7 @@
             <div class="perf-kpi-card is-green" :class="{ 'is-active-filter': orderStatusFilter === 'settleable' }" @click="orderStatusFilter = orderStatusFilter === 'settleable' ? '' : 'settleable'">
               <div class="kpi-title">本页已发货可结算</div>
               <div class="kpi-value">{{ orderPageSummary.settleableCount }} <small>单</small></div>
-              <div class="kpi-desc">订单商品已全部发运完成</div>
+              <div class="kpi-desc">订单商品已全部发货完成</div>
             </div>
             <div class="perf-kpi-card is-amber" :class="{ 'is-active-filter': orderStatusFilter === 'estimated' }" @click="orderStatusFilter = orderStatusFilter === 'estimated' ? '' : 'estimated'">
               <div class="kpi-title">本页待出库预估</div>
@@ -1319,7 +1319,7 @@ export default {
       this.batch = null
     },
     statusType(label) {
-      return label === '已全部出库' || label === '已出库' || label === '已发运'
+      return label === '已全部出库' || label === '已出库' || label === '已发货'
         ? 'success'
         : label === '部分出库'
           ? 'warning'

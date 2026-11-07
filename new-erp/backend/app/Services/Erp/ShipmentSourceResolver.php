@@ -211,7 +211,7 @@ class ShipmentSourceResolver
         $operations = DB::table('erp_shipment_packing_operations')->where('shipment_id', $line->shipment_id)->get()->map(fn ($op) => (array) $op)->all();
         $currentContents = ShipmentPackingContent::query()->current()->where('shipment_id', $line->shipment_id)->get();
         foreach ($operations as &$operation) {
-            // 冻结计划保留原分摊口径；发运证明只核对仍在本次包裹中的有效商品。
+            // 冻结计划保留原分摊口径；发货证明只核对仍在本次包裹中的有效商品。
             $ids = json_decode((string) $operation['packing_content_ids'], true) ?: [];
             $currentQuantity = $currentContents->whereIn('id', $ids)->reduce(fn ($quantity, $content) => bcadd($quantity, (string) $content->base_qty, 8), '0');
             $operation['planned_base_qty'] = $currentQuantity;

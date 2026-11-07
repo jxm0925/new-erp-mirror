@@ -97,7 +97,7 @@
                   <span class="text-muted">虚拟服务项目，不占用车间产能与发货包装</span>
                 </template>
                 <template v-else-if="isNoDelivery(row)">
-                  <span class="text-muted">无需物理发运，不产生制造作业</span>
+                  <span class="text-muted">无需物理发货，不产生制造作业</span>
                 </template>
                 <template v-else>
                   <div v-if="row.production_qty > 0 && row.routing_summary && row.routing_summary.production_operations.length" class="route-flow">
@@ -132,7 +132,7 @@
                     <span v-if="row.data_readiness && row.data_readiness.drawing === 'missing'" class="chip chip-warning">缺少定制图纸</span>
                   </div>
                   <div v-if="!row.routing_summary" class="text-muted small route-tip">
-                    {{ row.production_qty > 0 ? '缺少工艺路线的工单将保持计划状态，待路线补齐后由生产主管下达' : '无独立发货作业，交付时随主机打包发运' }}
+                    {{ row.production_qty > 0 ? '缺少工艺路线的工单将保持计划状态，待路线补齐后由生产主管下达' : '无独立发货作业，交付时随主机打包发货' }}
                   </div>
                 </template>
               </div>
@@ -291,7 +291,7 @@
               <li>生产工单确认后自动下达并生成唯一产品序列号（SN）</li>
               <li>仓储部门依据工艺工序齐套发料，车间班组核实签收</li>
               <li>生产主管可在工单管理中调整负责人、完工交期与优先级</li>
-              <li>尾款未结清，暂不发运</li>
+              <li>尾款未结清，暂不发货</li>
             </ul>
           </div>
 
@@ -375,7 +375,7 @@ export default {
       const f = this.funding
       if (f.platform_payment) return '平台已付，满足发货款项要求'
       if (f.platform_payment_required) return f.platform_payment_eligible ? '待录单人核对平台付款' : '待补齐平台订单信息'
-      if (f.shipment_funds_satisfied) return '已结清满足发运'
+      if (f.shipment_funds_satisfied) return '已结清满足发货'
       if (f.outstanding_amount === undefined) return '尾款未结清'
       // 未收金额包含尚未到账的定金时拆开显示，避免把全部未收款当成尾款。
       if (Number(f.deposit_outstanding_amount || 0) > 0 && f.balance_outstanding_amount !== undefined) {
@@ -459,7 +459,7 @@ export default {
       if (!this.confirmed && row.plan_locked) return '→ 已确认备货，保留原生产和交付安排，本次不重复生成'
       if (this.confirmed && this.isPhysical(row)) return '→ 已确认备货，沿用既有生产和交付安排'
       if (this.isService(row)) return row.service_completed !== false ? '→ 确认服务已履约完成' : '→ 服务待完成'
-      if (this.isNoDelivery(row)) return '→ 无需物理发运交付'
+      if (this.isNoDelivery(row)) return '→ 无需物理发货交付'
       const parts = []
       if (row.production_qty > 0) {
         parts.push(row.routing_summary && row.bom_summary ? '安排生产工单 1 张（自动下达）' : '安排生产工单 1 张（资料待补齐）')

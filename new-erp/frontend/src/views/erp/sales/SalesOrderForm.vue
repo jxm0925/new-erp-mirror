@@ -569,7 +569,7 @@ Do not change layout without approval.
         <section ref="外贸物流" class="panel logistics-card">
           <div class="panel-header">
             <div class="panel-title-wrap">
-              <h3>物流{{ form.trade_type === 'foreign' ? '与外贸船务' : '与发运安排' }}</h3>
+              <h3>物流{{ form.trade_type === 'foreign' ? '与外贸船务' : '与发货安排' }}</h3>
             </div>
           </div>
           <div class="field-grid grid-cols-3 compact">

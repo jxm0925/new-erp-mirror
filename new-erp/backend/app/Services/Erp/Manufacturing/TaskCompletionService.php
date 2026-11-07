@@ -247,7 +247,7 @@ final class TaskCompletionService
         if ($ready->isEmpty() || $ready->contains(fn ($next) => (int) $next->routing_operation_id !== $target['routing_operation_id']))
             $this->fail('handoff_task_changed', '实际接收工序与所选去向不一致，请先入库并核对冻结发货路线。');
         app(WorkOrderService::class)->log($wo, 'handoff_shipment', $wo->status, $wo->fresh()->status,
-            '完工直接交接发货作业（'.$shipment->shipment_no.'，'.count($lineIds).' 个包裹），未确认发运', $actor, ['receipt_id' => $receipt->id, 'shipment_id' => $shipment->id]);
+            '完工直接交接发货作业（'.$shipment->shipment_no.'，'.count($lineIds).' 个包裹），未确认发货', $actor, ['receipt_id' => $receipt->id, 'shipment_id' => $shipment->id]);
         return $shipment->shipment_no;
     }
 }

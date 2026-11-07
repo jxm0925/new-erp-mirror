@@ -112,6 +112,7 @@ final class ShipmentBoardQuery
                     'is_custom' => $order?->is_customized || $order?->is_special_customized
                         || $rows->contains(fn ($row) => $row->shipmentLine->orderLine?->is_customized || $row->shipmentLine->orderLine?->is_special_customized),
                     'owner_name' => $op->participants->firstWhere('employee_legacy_id', $op->owner_legacy_id)?->employee_name_snapshot,
+                    'collaborator_names' => $op->participants->where('is_active', true)->where('role', 'COLLABORATOR')->pluck('employee_name_snapshot')->values()->all(),
                     'timing_count' => $op->laborSessions->count()];
             })->filter()->sortBy('priority')->values();
             if ($cards->isEmpty()) continue;

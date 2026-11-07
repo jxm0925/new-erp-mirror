@@ -22,12 +22,12 @@
     <el-dialog title="发货单详情" :visible.sync="detailOpen" append-to-body width="min(1180px, calc(100vw - 32px))" top="5vh" custom-class="sales-shipment-dialog" :close-on-click-modal="false">
       <div v-loading="detailLoading">
         <div class="shipment-detail-head"><div><h2>{{ detail.shipment_no }}</h2><div>{{ detail.order && detail.order.sales_order_no }} / {{ detail.order && detail.order.customer_name }}</div></div><el-tag>{{ statusText(detail.shipment_status) }}</el-tag></div>
-        <div class="shipment-kv"><div>承运商：{{ detail.carrier_name_snapshot || '—' }}</div><div>运单号：{{ trackingText(detail) }}</div><div>确认时间：{{ time(detail.confirmed_at) }}</div><div>移入待发：{{ time(detail.staged_at) }}</div><div>正式出库：{{ time(detail.outbound_posted_at) }}</div><div>发运时间：{{ time(detail.shipped_at) }}</div></div>
+        <div class="shipment-kv"><div>承运商：{{ detail.carrier_name_snapshot || '—' }}</div><div>运单号：{{ trackingText(detail) }}</div><div>确认时间：{{ time(detail.confirmed_at) }}</div><div>移入待发：{{ time(detail.staged_at) }}</div><div>正式出库：{{ time(detail.outbound_posted_at) }}</div><div>发货时间：{{ time(detail.shipped_at) }}</div></div>
         <el-table :data="currentShipmentLines(detail.lines)" border size="small"><el-table-column label="产品" min-width="160"><template slot-scope="{ row }">{{ row.order_line && (row.order_line.product_name || row.order_line.item_name) }}</template></el-table-column><el-table-column prop="batch_no" label="来源批次" min-width="160" /><el-table-column prop="base_qty" label="本次发货基础数量" min-width="135" /><el-table-column prop="sales_qty" label="销售数量" min-width="100" /><el-table-column label="状态" min-width="100"><template slot-scope="{ row }">{{ lineStatusText(row.line_status) }}</template></el-table-column></el-table>
-        <h4 v-if="(detail.dispatches || []).length">发运记录</h4>
+        <h4 v-if="(detail.dispatches || []).length">发货记录</h4>
         <el-table v-if="(detail.dispatches || []).length" :data="detail.dispatches" border size="small">
           <el-table-column label="次序" width="70"><template slot-scope="{ $index }">第 {{ $index + 1 }} 次</template></el-table-column>
-          <el-table-column label="方式" width="95"><template slot-scope="{ row }">{{ row.delivery_mode === 'pickup' ? '客户提货' : '公司发运' }}</template></el-table-column>
+          <el-table-column label="方式" width="95"><template slot-scope="{ row }">{{ row.delivery_mode === 'pickup' ? '客户提货' : '公司发货' }}</template></el-table-column>
           <el-table-column label="快递公司" min-width="120"><template slot-scope="{ row }">{{ row.carrier_name || '—' }}</template></el-table-column>
           <el-table-column label="运单号" min-width="150"><template slot-scope="{ row }">{{ row.tracking_no || '—' }}</template></el-table-column>
           <el-table-column label="包裹" min-width="160"><template slot-scope="{ row }">{{ packageNos(row.package_ids) }}</template></el-table-column>
@@ -49,9 +49,9 @@
         <el-button size="small" :disabled="busy" @click="detailOpen = false">关闭</el-button>
         <el-button v-if="pendingAction" type="success" size="small" :loading="busy" @click="shipmentAction(pendingAction, {}, true)">重试原发货操作</el-button>
         <template v-else>
-          <el-button v-if="detail.shipment_status === 'draft' && $can('sales_order.shipment.confirm')" size="small" type="success" :loading="busy" @click="shipmentAction('confirm')">确认发货单</el-button>
+          <el-button v-if="detail.shipment_status === 'draft' && $can('sales_order.shipment.confirm')" size="small" type="success" :loading="busy" @click="shipmentAction('confirm')">确认发货安排</el-button>
           <el-button v-if="canPrepare && $can('sales_order.shipment.post')" size="small" type="success" :loading="busy" @click="openPrepare">移至待发区</el-button>
-          <el-button v-if="['prepared', 'partially_shipped', 'outbound_posted'].includes(detail.shipment_status) && $can('sales_order.shipment.dispatch')" size="small" type="success" :loading="busy" @click="openDispatch">确认发运 / 提货</el-button>
+          <el-button v-if="['prepared', 'partially_shipped', 'outbound_posted'].includes(detail.shipment_status) && $can('sales_order.shipment.dispatch')" size="small" type="success" :loading="busy" @click="openDispatch">确认发货 / 提货</el-button>
           <el-button v-if="['draft', 'pending_outbound', 'prepared'].includes(detail.shipment_status) && $can('sales_order.shipment.cancel')" size="small" :loading="busy" @click="cancelShipment">取消发货单</el-button>
           <el-button v-if="detail.shipment_status === 'partially_shipped' && $can('sales_order.shipment.cancel')" size="small" :loading="busy" @click="cancelRemaining">取消剩余未发</el-button>
         </template>
@@ -67,18 +67,18 @@
       <span slot="footer"><el-button size="small" :disabled="busy" @click="prepare.visible = false">取消</el-button><el-button type="success" size="small" :loading="busy" :disabled="!prepare.location_id" @click="shipmentAction('post-outbound', { staging_location_id: prepare.location_id })">确认移至待发区</el-button></span>
     </el-dialog>
 
-    <el-dialog title="确认发运 / 提货" :visible.sync="dispatchForm.visible" append-to-body top="8vh" width="min(780px, calc(100vw - 32px))" custom-class="sales-shipment-dialog" :close-on-click-modal="false">
-      <el-radio-group v-model="dispatchForm.delivery_mode" size="small" :disabled="busy"><el-radio label="dispatch">公司发运</el-radio><el-radio label="pickup">客户提货</el-radio></el-radio-group>
+    <el-dialog title="确认发货 / 提货" :visible.sync="dispatchForm.visible" append-to-body top="8vh" width="min(780px, calc(100vw - 32px))" custom-class="sales-shipment-dialog" :close-on-click-modal="false">
+      <el-radio-group v-model="dispatchForm.delivery_mode" size="small" :disabled="busy"><el-radio label="dispatch">公司发货</el-radio><el-radio label="pickup">客户提货</el-radio></el-radio-group>
       <div v-if="dispatchForm.delivery_mode === 'dispatch'" class="shipment-form-grid"><label>快递公司<el-input v-model.trim="dispatchForm.carrier_name" size="small" maxlength="120" placeholder="如：顺丰速运" :disabled="busy" /></label><label>运单号<el-input v-model.trim="dispatchForm.tracking_no" size="small" maxlength="120" placeholder="选中的包裹共用这个单号" :disabled="busy" /></label></div>
       <h4>本次发出的包裹（已选 {{ dispatchForm.package_ids.length }} 件）<el-button type="text" :disabled="busy" @click="selectAllReady">全选就绪</el-button></h4>
       <el-table :data="openPackages" border size="small">
         <el-table-column width="55"><template slot-scope="{ row }"><el-checkbox :value="dispatchForm.package_ids.includes(row.id)" :disabled="busy || !row.ready" @change="togglePackage(row, $event)" /></template></el-table-column>
         <el-table-column prop="package_no" label="包裹编号" min-width="120" />
         <el-table-column label="包裹内容" min-width="220"><template slot-scope="{ row }">{{ row.contents_text || '—' }}</template></el-table-column>
-        <el-table-column label="发运条件" min-width="200"><template slot-scope="{ row }">{{ row.ready ? '已就绪' : (row.blockers || []).join('；') }}</template></el-table-column>
+        <el-table-column label="发货条件" min-width="200"><template slot-scope="{ row }">{{ row.ready ? '已就绪' : (row.blockers || []).join('；') }}</template></el-table-column>
       </el-table>
       <el-alert v-if="detailError" :title="detailError" type="error" :closable="false" />
-      <span slot="footer"><el-button size="small" :disabled="busy" @click="dispatchForm.visible = false">取消</el-button><el-button type="success" size="small" :loading="busy" :disabled="!dispatchForm.package_ids.length" @click="shipmentAction('dispatch', dispatchPayload())">{{ dispatchForm.delivery_mode === 'pickup' ? '确认提货并出库' : '确认发运并出库' }}</el-button></span>
+      <span slot="footer"><el-button size="small" :disabled="busy" @click="dispatchForm.visible = false">取消</el-button><el-button type="success" size="small" :loading="busy" :disabled="!dispatchForm.package_ids.length" @click="shipmentAction('dispatch', dispatchPayload())">{{ dispatchForm.delivery_mode === 'pickup' ? '确认提货并出库' : '确认发货并出库' }}</el-button></span>
     </el-dialog>
 
     <el-dialog :title="serialAction.type === 'replace' ? '更换发货设备' : '返修合格返回'" :visible.sync="serialAction.visible" append-to-body top="8vh" width="min(850px, calc(100vw - 32px))" custom-class="sales-shipment-dialog" :close-on-click-modal="false">
@@ -147,7 +147,7 @@ export default {
   name: 'SalesShipmentBoard',
   components: { ShipmentPackingPanel, SystemRecordPicker, StocktakeFreezeAlert },
   data: () => ({ loading: false, busy: false, error: '', rows: [], total: 0, query: { keyword: '', shipment_status: '', sales_order_id: '', page: 1, per_page: 10 },
-    states: [{ value: 'draft', label: '草稿' }, { value: 'pending_outbound', label: '待移待发区' }, { value: 'prepared', label: '待发作业' }, { value: 'partially_shipped', label: '部分已发运' }, { value: 'outbound_posted', label: '已出库待发运' }, { value: 'shipped', label: '已发运' }, { value: 'cancelled', label: '已取消' }],
+    states: [{ value: 'draft', label: '草稿' }, { value: 'pending_outbound', label: '待移待发区' }, { value: 'prepared', label: '待发作业' }, { value: 'partially_shipped', label: '部分已发货' }, { value: 'outbound_posted', label: '已出库待发货' }, { value: 'shipped', label: '已发货' }, { value: 'cancelled', label: '已取消' }],
     detailOpen: false, detailLoading: false, detail: {}, detailError: '', createOpen: false, createError: '', pendingCreate: false, selectedOrder: {}, createForm: { carrier_name: '', tracking_no: '', remark: '' },
     sourceLoading: false, sourceRows: [], sourceSelected: {}, sourcePage: 1, sourceTotal: 0,
     orderPickerOpen: false, orderRows: [], orderTotal: 0, orderQuery: { keyword: '', page: 1, per_page: 10 },
@@ -186,7 +186,7 @@ export default {
     currentShipmentLines (lines) { return (lines || []).filter(line => !['replaced', 'cancelled'].includes(line.line_status)) },
     time (value) { return value ? erpDateTime(value, 19) : '—' },
     statusText (value) { const status = this.states.find(row => row.value === value); return status ? status.label : value || '—' },
-    serialStatus (value) { return ({ allocated: '已选设备', prepared: '待发区', repair: '返修中', shipped: '已发运', replaced: '已换机', cancelled: '已取消' })[value] || value || '—' },
+    serialStatus (value) { return ({ allocated: '已选设备', prepared: '待发区', repair: '返修中', shipped: '已发货', replaced: '已换机', cancelled: '已取消' })[value] || value || '—' },
     qualityText (value) { return ({ passed: '合格', failed: '不合格' })[value] || '待试水' },
     replacementSerialNo (row) { const replacement = (this.detail.serial_results || []).find(serial => serial.inventory_serial_id === row.replaced_by_serial_id); return replacement ? replacement.serial_no : '—' },
     async load () { if (this.executionOnly) return; const sequence = ++this.loadSequence; this.loading = true; this.error = ''; try { const { data } = await listShipments(this.query); if (sequence !== this.loadSequence) return; this.rows = data.data.data; this.total = data.data.total } catch (e) { this.error = e.userMessage || '发货单读取失败' } finally { if (sequence === this.loadSequence) this.loading = false } },
@@ -207,7 +207,7 @@ export default {
     dispatchPayload () { const form = this.dispatchForm; return { package_ids: form.package_ids, delivery_mode: form.delivery_mode, ...(form.delivery_mode === 'dispatch' ? { carrier_name: form.carrier_name, tracking_no: form.tracking_no } : {}) } },
     trackingText (row) { const list = [row.tracking_no, ...(row.dispatches || []).map(d => d.tracking_no)].filter(Boolean); return [...new Set(list)].join('、') || '—' },
     packageNos (ids) { const map = Object.fromEntries((this.detail.dispatchable_packages || []).map(row => [row.id, row.package_no])); return (ids || []).map(id => map[id] || ('#' + id)).join('、') },
-    lineStatusText (value) { return ({ draft: '草稿', pending_outbound: '待移待发区', prepared: '待发区', shipped: '已发运' })[value] || value || '—' },
+    lineStatusText (value) { return ({ draft: '草稿', pending_outbound: '待移待发区', prepared: '待发区', shipped: '已发货' })[value] || value || '—' },
     togglePackage (row, selected) { if (selected) this.dispatchForm.package_ids.push(row.id); else this.dispatchForm.package_ids = this.dispatchForm.package_ids.filter(id => id !== row.id) },
     openLocator (row, type, purpose) { this.locator = { visible: true, row, type, purpose } },
     selectLocator (rows) {
@@ -237,7 +237,7 @@ export default {
     },
     async shipmentAction (action, payload = {}, retry = false) {
       if (this.busy || this.pendingAction && !retry) return
-      const label = { confirm: '确认发货单', 'post-outbound': '移至待发区', dispatch: payload.delivery_mode === 'pickup' ? '确认提货并出库' : '确认发运并出库', cancel: '取消发货单', 'cancel-remaining': '取消剩余未发' }[action] || (action.endsWith('/replace') ? '更换发货设备' : '返修合格返回')
+      const label = { confirm: '确认发货安排', 'post-outbound': '移至待发区', dispatch: payload.delivery_mode === 'pickup' ? '确认提货并出库' : '确认发货并出库', cancel: '取消发货单', 'cancel-remaining': '取消剩余未发' }[action] || (action.endsWith('/replace') ? '更换发货设备' : '返修合格返回')
       try {
         if (!retry) await this.$confirm('确认执行“' + label + '”？', label, { type: 'warning' })
         this.busy = true; this.detailError = ''
@@ -248,7 +248,7 @@ export default {
       finally { this.busy = false }
     },
     async cancelShipment () { try { const result = await this.$prompt('请填写取消原因', '取消发货单', { inputValidator: value => Boolean(value && value.trim()) || '请填写取消原因', inputType: 'textarea' }); await this.shipmentAction('cancel', { reason: result.value }) } catch (_) { /* User cancelled. */ } },
-    // 部分发运后不再发剩余部分：未发设备退回原库位并恢复订单占用，发货单收口为已发运。
+    // 部分发货后不再发剩余部分：未发设备退回原库位并恢复订单占用，发货单收口为已发货。
     async cancelRemaining () { try { const result = await this.$prompt('剩余未发的明细将取消，设备退回原库位并恢复订单库存锁定。请填写原因', '取消剩余未发', { inputValidator: value => Boolean(value && value.trim()) || '请填写取消原因', inputType: 'textarea' }); await this.shipmentAction('cancel-remaining', { reason: result.value }, false) } catch (_) { /* User cancelled. */ } },
     async openCreate () { this.createOpen = true; this.createError = ''; this.pendingCreate = false; this.selectedOrder = {}; this.sourceRows = []; this.sourceSelected = {}; this.sourcePage = 1; this.sourceTotal = 0; this.createForm = { carrier_name: '', tracking_no: '', remark: '' }; if (this.query.sales_order_id) { try { const { data } = await getSalesOrder(this.query.sales_order_id); await this.chooseOrder(data) } catch (e) { this.createError = e.userMessage || '订单读取失败' } } },
     openOrderPicker () { this.orderQuery = { keyword: '', page: 1, per_page: 10 }; this.orderPickerOpen = true; this.loadOrders() },

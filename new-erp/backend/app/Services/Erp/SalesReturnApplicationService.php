@@ -260,7 +260,7 @@ class SalesReturnApplicationService
     }
 
     /**
-     * 待处理数量处置：restock 生成处置到货单（待入库过账，按原发运成本入库）；scrap 报废；rejected 退回客户（不冲减应收）。
+     * 待处理数量处置：restock 生成处置到货单（待入库过账，按原发货成本入库）；scrap 报废；rejected 退回客户（不冲减应收）。
      * 原到货行的待处理数量转出，序列身份随之迁移，处置记录留痕。
      */
     public function disposePending(int $returnId, array $payload, ?int $operatorId, ?string $operatorName): SalesReturn
@@ -485,7 +485,7 @@ class SalesReturnApplicationService
                 ->orderBy('erp_sales_return_cost_allocations.id')->lockForUpdate()->get(['erp_sales_return_cost_allocations.allocated_base_qty'])
                 ->sum('allocated_base_qty');
             $available = max(0, abs((float) $outbound->change_qty) - $alreadyAllocated);
-            // 售后已确定退回设备，预留其实际原发运成本，不能先按 FIFO 占用另一台设备的来源。
+            // 售后已确定退回设备，预留其实际原发货成本，不能先按 FIFO 占用另一台设备的来源。
             if ($aftersalesSerials) {
                 $snapshotIds = json_decode((string) $outbound->shipment_serial_snapshot, true)['inventory_serial_ids'] ?? [];
                 $available = min($available, count(array_intersect($aftersalesSerials, $snapshotIds)));
@@ -516,7 +516,7 @@ class SalesReturnApplicationService
 
         if ($remaining > 0.00000001) {
             throw ValidationException::withMessages([
-                'items' => '该销售订单行缺少足额的原发运出库成本事实，不能按当前库存成本办理退货；请先补齐历史发运数据。',
+                'items' => '该销售订单行缺少足额的原发货出库成本事实，不能按当前库存成本办理退货；请先补齐历史发货数据。',
             ]);
         }
     }

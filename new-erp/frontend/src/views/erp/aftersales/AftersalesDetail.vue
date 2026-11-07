@@ -236,7 +236,7 @@
           <paged-record-select v-else-if="claimForm.target_type === 'supplier'" v-model="claimForm.supplier_id" entity="suppliers" :params="{ status: 'enabled' }" title="选择供应商" placeholder="请选择供应商" :selected-rows.sync="supplierRows" />
           <el-input v-else v-model="claimForm.target_name" size="small" placeholder="手填名称" :disabled="!!claimForm.id" />
         </div>
-        <div class="fi"><label>关联单据号</label><el-input v-model="claimForm.related_doc_no" size="small" placeholder="如原发运单号" /></div>
+        <div class="fi"><label>关联单据号</label><el-input v-model="claimForm.related_doc_no" size="small" placeholder="如原发货单号" /></div>
         <div v-if="canViewAmount" class="fi"><label>索赔金额<b>*</b></label><el-input v-model="claimForm.claim_amount" size="small" /></div>
         <div class="fi"><label>提出日期<b>*</b></label><el-date-picker v-model="claimForm.claimed_on" size="small" type="date" value-format="yyyy-MM-dd" style="width:100%" :disabled="!!claimForm.id" /></div>
         <div class="fi full"><label>索赔理由<b>*</b></label><el-input v-model="claimForm.reason" type="textarea" :rows="2" /></div>

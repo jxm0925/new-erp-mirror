@@ -608,6 +608,7 @@ Route::prefix('v1/erp/production')->group(function () {
     Route::get('shipment-packing/commands/result', [ShipmentPackingController::class, 'commandResult']);
     Route::get('shipment-packing/operations', [ShipmentPackingController::class, 'operations']);
     Route::get('shipment-packing/operations/{id}', [ShipmentPackingController::class, 'operation'])->whereNumber('id');
+    Route::get('shipment-packing/operations/{id}/dispatch-choices', [ShipmentPackingController::class, 'dispatchChoices'])->whereNumber('id');
     Route::post('shipment-packing/operations/{id}/actions', [ShipmentPackingController::class, 'action'])->whereNumber('id');
     Route::get('shipment-packing/operations/{id}/people', [ShipmentPackingController::class, 'people'])->whereNumber('id');
     Route::get('shipment-packing/operations/{id}/material-sources', [ShipmentPackingController::class, 'materialSources'])->whereNumber('id');

@@ -96,6 +96,24 @@
       <h4>参与人员及实际工时</h4>
       <el-table :data="activeOperation.participants || []" border size="small"><el-table-column prop="name" label="人员" /><el-table-column label="身份"><template slot-scope="{ row }">{{ row.role === 'OWNER' ? '接单人' : '协同人' }}{{ row.is_active ? '' : '（已移除）' }}</template></el-table-column><el-table-column prop="actual_labor_minutes" label="实际工时（分钟）" /><el-table-column label="计时状态"><template slot-scope="{ row }">{{ row.is_timing ? '计时中' : '已暂停' }}</template></el-table-column></el-table>
       <PackingLaborPanel v-if="activeOperation.labor" :labor="activeOperation.labor" :busy="busy || laborLoading || pendingOperation" @page="loadPackingLabor" />
+      <template v-if="activeOperation.kitting">
+        <h4>打包前齐套核对</h4>
+        <el-alert :title="activeOperation.kitting.confirmed ? '已核对齐全' : '请现场核对整机、随货配件和包装材料；已交接到位的不用再领，只申请缺项'" :type="activeOperation.kitting.confirmed ? 'success' : 'warning'" :closable="false" />
+        <el-table :data="activeOperation.kitting.products" border size="small">
+          <el-table-column prop="item_name" label="整机 / 随货配件" min-width="150" />
+          <el-table-column label="需要数量" width="130"><template slot-scope="{row}">{{ row.required_qty }} {{ row.unit_name }}</template></el-table-column>
+          <el-table-column label="设备编号" min-width="150"><template slot-scope="{row}">{{ (row.serial_nos || []).join('、') || '—' }}</template></el-table-column>
+          <el-table-column label="备货状态" width="130"><template slot-scope="{row}">{{ row.prepared ? '已备至待发区' : '待仓库交付' }}</template></el-table-column>
+          <el-table-column label="缺项领用" width="110"><template slot-scope="{row}"><el-button v-if="activeOperation.kitting.can_request_products && $can('sales_order.shipment.packing.execute')" type="text" :disabled="busy || pendingOperation" @click="requestProduct(row)">填写缺少数量</el-button></template></el-table-column>
+        </el-table>
+        <el-table v-if="activeOperation.kitting.materials.length" :data="activeOperation.kitting.materials" border size="small">
+          <el-table-column prop="item_name" label="包装材料" /><el-table-column prop="unit_name" label="单位" width="75" /><el-table-column prop="required_qty" label="需要数量" /><el-table-column prop="received_qty" label="已领数量" /><el-table-column prop="shortage_qty" label="缺少数量" />
+        </el-table>
+        <el-alert v-if="activeOperation.kitting.products_pending" title="产品缺项申请待仓库处理，交付后再核对齐套" type="warning" :closable="false" />
+        <el-alert v-if="activeOperation.outbound && activeOperation.outbound.products && activeOperation.outbound.products.status === 'rejected'" :title="'产品领用被驳回：' + (activeOperation.outbound.products.review_reason || '')" type="warning" :closable="false" />
+        <el-button v-if="activeOperation.outbound && activeOperation.outbound.products && activeOperation.outbound.products.can_withdraw" size="small" :disabled="busy || pendingOperation" @click="execute(activeOperation, 'withdraw_outbound', {application_id: activeOperation.outbound.products.id})">撤回产品领用申请</el-button>
+        <el-button v-if="activeOperation.kitting.can_confirm && $can('sales_order.shipment.packing.execute')" size="small" type="success" :disabled="busy || pendingOperation" @click="confirmKitting">已核对，确认齐套</el-button>
+      </template>
       <h4>实际用料</h4>
       <el-alert v-if="materialApplication && materialApplication.status === 'pending'" title="包装用料出库申请待库管审核" type="warning" :closable="false" />
       <el-alert v-if="materialApplication && materialApplication.status === 'rejected'" :title="'包装用料出库申请已驳回' + (materialApplication.review_reason ? '：' + materialApplication.review_reason : '')" type="warning" :closable="false" />
@@ -124,11 +142,13 @@
         <el-pagination background :current-page="peopleQuery.page" :page-size="10" :total="peopleTotal" layout="total, prev, pager, next" @current-change="peoplePage" />
       </main></div>
       <div class="packing-selected"><el-tag v-for="person in Object.values(peopleSelected)" :key="person.legacy_id" :closable="!busy && !pendingOperation" @close="togglePerson(person, false)">{{ person.nickname || person.username }}</el-tag></div>
+      <template v-if="showCollaborationShares">
       <div class="packing-share-head"><h4>个人份额</h4><el-button size="mini" :disabled="busy || pendingOperation" @click="rebalancePeopleShares">平分份额</el-button></div>
       <el-table :data="peopleShareRows" border size="small"><el-table-column label="参与人员" min-width="150"><template slot-scope="{ row }">{{ row.name }}<el-tag size="mini">{{ row.owner ? '接单人' : (row.pastParticipant ? '已参与' : '协同人') }}</el-tag></template></el-table-column><el-table-column prop="actual_labor_minutes" label="实际工时（分钟）" width="145" /><el-table-column label="个人份额（%）" min-width="150"><template slot-scope="{ row }"><el-input v-if="peopleShares[row.employee_legacy_id]" v-model="peopleShares[row.employee_legacy_id].percent" size="small" inputmode="decimal" :disabled="busy || pendingOperation" /></template></el-table-column></el-table>
       <div class="packing-balance">个人份额合计 {{ peopleShareTotal }}% / 100%。已登记的参与工时保留。</div>
+      </template>
       <el-alert v-if="peopleShareError" :title="peopleShareError" type="error" :closable="false" />
-      <div slot="footer"><el-button size="small" :disabled="busy" @click="peopleOpen = false">取消</el-button><el-button size="small" type="success" :loading="busy" @click="savePeople">{{ pendingOperation ? '查询原操作结果' : '确认协同人及份额' }}</el-button></div>
+      <div slot="footer"><el-button size="small" :disabled="busy" @click="peopleOpen = false">取消</el-button><el-button size="small" type="success" :loading="busy" @click="savePeople">{{ pendingOperation ? '查询原操作结果' : '确认协同人员' }}</el-button></div>
     </el-dialog>
 
     <el-dialog title="申请用料出库" :visible.sync="materialsOpen" append-to-body width="min(1050px, calc(100vw - 32px))" top="5vh" custom-class="shipment-packing-dialog" :close-on-click-modal="false">
@@ -211,6 +231,7 @@ export default {
   components: { PackingLaborPanel, SystemRecordPicker },
   props: { shipmentId: { type: Number, default: 0 }, shipmentStatus: String, executionOnly: { type: Boolean, default: false } },
   data: () => ({ loading: false, busy: false, error: '', page: 1, total: 0, operations: [], requirements: [], packingVersion: 1, loadSequence: 0,
+    showCollaborationShares: false,
     planOpen: false, planReady: false, planPackages: [], lockedPackages: [], planError: '', pendingPlan: false, routeSelections: {}, routeSequence: 0, routePicker: { visible: false, line: null, keyword: '', page: 1, rows: [], total: 0, current: null, loading: false, error: '' }, operationOpen: false, activeOperation: {}, operationError: '', pendingOperation: false, laborLoading: false, laborSequence: 0,
     peopleOpen: false, peopleRows: [], peopleSelected: {}, peopleShares: {}, peopleShareError: '', peopleTree: [], peopleTotal: 0, peopleQuery: { keyword: '', department_id: 0, page: 1 },
     materialsOpen: false, materialRows: [], materialTree: [], materialTotal: 0, materialDrafts: {}, materialError: '', materialQuery: { keyword: '', category_id: 0, page: 1 },
@@ -399,9 +420,28 @@ export default {
     peoplePage (page) { this.peopleQuery.page = page; this.loadPeople() },
     savePeople () {
       if (this.pendingOperation) return this.execute(this.activeOperation, 'recover')
+      if (!this.showCollaborationShares) return this.execute(this.activeOperation, 'collaborators', { employee_legacy_ids: Object.keys(this.peopleSelected).map(Number) })
       let shares
       try { shares = buildPerformanceShares(this.peopleShareRows.map(person => this.peopleShares[person.employee_legacy_id] || { employee_legacy_id: person.employee_legacy_id })) } catch (error) { this.peopleShareError = error.message; return }
       return this.execute(this.activeOperation, 'collaborators', { employee_legacy_ids: Object.keys(this.peopleSelected).map(Number), shares })
+    },
+    async confirmKitting () {
+      const op = this.activeOperation
+      if (this.busy || this.pendingOperation || !op.kitting || !op.kitting.can_confirm) return
+      try {
+        await this.$confirm('请确认整机编号、随货配件和包装材料均已现场核对，数量齐全。', '打包齐套确认', { confirmButtonText: '已核对齐全', type: 'warning' })
+        if (this.activeOperation.id === op.id) await this.execute(op, 'confirm_kitting', { kitting_fingerprint: op.kitting.fingerprint })
+      } catch (e) { if (e !== 'cancel' && e !== 'close') this.operationError = e.userMessage || e.message }
+    },
+    async requestProduct (row) {
+      const op = this.activeOperation
+      if (this.busy || this.pendingOperation || !op.kitting.can_request_products) return
+      try {
+        const { value } = await this.$prompt(row.item_name + '：只填写现场缺少数量，已到位的不要重复申请。', '申请补齐产品', {
+          inputValidator: value => (Number.isFinite(Number(value)) && Number(value) > 0 && Number(value) <= Number(row.required_qty)) || '缺少数量须大于0且不超过需要数量'
+        })
+        if (this.activeOperation.id === op.id) await this.execute(op, 'request_products', { products: [{ content_id: row.content_id, base_qty: value }] })
+      } catch (e) { if (e !== 'cancel' && e !== 'close') this.operationError = e.userMessage || e.message }
     },
     async openMaterials () { this.materialDrafts = {}; this.materialRows = []; this.materialTotal = 0; this.materialError = ''; this.materialQuery = { keyword: '', category_id: 0, page: 1 }; this.materialsOpen = true; await this.loadMaterials(true) },
     async loadMaterials (include = false) { const sequence = this.materialSequence = (this.materialSequence || 0) + 1; const operationId = this.activeOperation.id; try { const { data } = await listPackingMaterials(operationId, { ...this.materialQuery, category_id: this.materialQuery.category_id || undefined, per_page: 10, include_categories: include ? 1 : undefined }); if (sequence !== this.materialSequence || !this.materialsOpen || operationId !== this.activeOperation.id) return; this.materialRows = data.data.data; this.materialTotal = data.data.total; if (data.categories) this.materialTree = tree(data.categories, 'category_name') } catch (e) { if (sequence === this.materialSequence && this.materialsOpen) this.materialError = e.userMessage || '库存来源读取失败' } },

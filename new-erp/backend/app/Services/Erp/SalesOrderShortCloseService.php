@@ -108,7 +108,7 @@ class SalesOrderShortCloseService
             && (float) $line->order_qty - (float) $line->cancelled_qty - (float) $line->shipped_qty > 0.00000001);
         if ($order->lines->sum('shipped_qty') > 0 && $openLines->isEmpty()) $reasons[] = '订单没有剩余未发数量，无需短交关闭';
         if ($order->shipments()->whereIn('shipment_status', self::OPEN_SHIPMENT_STATUSES)->exists()) {
-            $reasons[] = '还有未完成的发货单，请先取消发货单或对部分发运的发货单“取消剩余未发”';
+            $reasons[] = '还有未完成的发货单，请先取消发货单或对部分发货的发货单“取消剩余未发”';
         }
         if ($order->change_status === 'processing') $reasons[] = '订单有进行中的变更';
         if (SalesReturn::query()->where('sales_order_id', $order->id)->whereIn('return_status', self::OPEN_RETURN_STATUSES)->exists()) {
