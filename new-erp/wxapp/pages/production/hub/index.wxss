@@ -780,3 +780,112 @@ page {
 .scan-val-highlight {
   color: #d81e06;
 }
+
+.module-grid + .order-progress-entry {
+  margin-top: 20rpx;
+}
+
+.order-progress-mask {
+  align-items: center;
+  padding: 28rpx;
+}
+
+.order-progress-sheet {
+  height: 80vh;
+  max-width: 694rpx;
+  border-radius: 32rpx;
+  overflow: hidden;
+}
+
+.order-progress-search {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+  padding: 16rpx 0 4rpx;
+}
+
+.order-progress-input {
+  flex: 1;
+  min-width: 0;
+  height: 64rpx;
+  padding: 0 20rpx;
+  border: 1rpx solid #e2e8f0;
+  border-radius: 999rpx;
+  font-size: 24rpx;
+}
+
+.order-progress-button {
+  margin: 0;
+  line-height: 1.35;
+}
+
+.order-progress-button::after {
+  border: 0;
+}
+
+.order-progress-button.sheet-close {
+  padding: 0;
+  border: 0;
+}
+
+.order-progress-button[disabled] {
+  color: #64748b;
+  background: #f8fafc;
+  border-color: #e2e8f0;
+}
+
+.order-progress-scroll {
+  flex: 1;
+  height: 0;
+  max-height: none;
+  min-height: 0;
+  box-sizing: border-box;
+  overflow-wrap: anywhere;
+}
+
+.order-progress-row {
+  border-bottom: 1rpx solid #e2e8f0;
+}
+
+.order-progress-detail {
+  padding: 0 0 16rpx;
+}
+
+.order-progress-work-order {
+  margin-top: 10rpx;
+}
+
+.order-progress-operation,
+.order-progress-materials {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6rpx;
+}
+
+.order-progress-material {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12rpx;
+}
+
+.order-progress-material .sheet-list-sub {
+  min-width: 0;
+}
+
+.order-progress-material .sheet-list-title {
+  flex-shrink: 0;
+  text-align: right;
+}
+
+.order-progress-open-task {
+  align-self: flex-start;
+  margin-top: 4rpx;
+}
+
+.order-progress-pager {
+  justify-content: space-between;
+  gap: 8rpx;
+  text-align: center;
+}

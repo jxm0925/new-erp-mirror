@@ -36,6 +36,31 @@ function hubAccess() {
   };
 }
 
+function orderProgressSession() {
+  const token = wx.getStorageSync('erp_token');
+  const user = wx.getStorageSync('erp_user') || {};
+  return token ? `${token}:${user.legacy_id || ''}` : '';
+}
+
+function orderProgressWorkOrders(workOrders, parentNo = '', rows = []) {
+  workOrders.forEach(({ id, work_order_no, name, status_label, operations, children }) => {
+    rows.push({
+      id, work_order_no, name, status_label, parentNo,
+      operations: operations.map(operation => Object.assign({}, operation, {
+        key: `${operation.id}-${operation.lane}`,
+        timingText: operation.timing_names.join('、'),
+        materials: operation.materials.map((material, index) => ({
+          key: index,
+          name: material.name,
+          quantityText: `${view.quantity(material.received_qty)} / ${view.quantity(material.required_qty)} ${material.unit_name || ''}`
+        }))
+      }))
+    });
+    orderProgressWorkOrders(children, work_order_no, rows);
+  });
+  return rows;
+}
+
 Page({
   data: {
     hasToken: false,
@@ -94,7 +119,8 @@ Page({
       recentReports: [],
       recentReceipts: []
     },
-    serialScanResult: null
+    serialScanResult: null,
+    orderProgress: null
   },
 
   onLoad(options = {}) {
@@ -105,6 +131,17 @@ Page({
   onShow() {
     this._unloaded = false;
     this.syncSessionAndLoad();
+    this.refreshOrderProgress();
+  },
+
+  onHide() {
+    if (!this.data.orderProgress) return;
+    this._progressListRequest = null;
+    this._progressDetailRequest = null;
+    this.setData({
+      'orderProgress.rows': [], 'orderProgress.loading': true, 'orderProgress.error': '',
+      'orderProgress.detail': null, 'orderProgress.detailError': ''
+    });
   },
 
   onUnload() {
@@ -115,12 +152,14 @@ Page({
 
   onPullDownRefresh() {
     this.syncSessionAndLoad();
+    this.refreshOrderProgress();
   },
 
   syncSessionAndLoad(refreshSession = true) {
     const token = wx.getStorageSync('erp_token');
     const erpUser = wx.getStorageSync('erp_user') || {};
     const hasToken = Boolean(token);
+    if (this.data.orderProgress && this._progressSession !== orderProgressSession()) this.closeOrderProgress();
     const permissionSnapshot = JSON.stringify(wx.getStorageSync('erp_permissions') || []);
     const displayName =
       erpUser.nickname || erpUser.display_name || erpUser.realname || erpUser.name || erpUser.username || '生产账号';
@@ -489,6 +528,133 @@ Page({
 
   closeStatsModal() {
     this.setData({ showStatsModal: false });
+  },
+
+  openOrderProgress() {
+    const session = orderProgressSession();
+    if (!session) {
+      this.syncSessionAndLoad();
+      this.openLogin();
+      return;
+    }
+    this._progressSession = session;
+    this.setData({ orderProgress: { input: '', keyword: '', rows: [], page: 1, lastPage: 1, total: 0 } });
+    return this.loadOrderProgress(1, '');
+  },
+
+  closeOrderProgress() {
+    this._progressSession = null;
+    this._progressListRequest = null;
+    this._progressDetailRequest = null;
+    this.setData({ orderProgress: null });
+  },
+
+  currentOrderProgress() {
+    if (this._unloaded || !this.data.orderProgress) return null;
+    if (this._progressSession === orderProgressSession()) return this.data.orderProgress;
+    this.closeOrderProgress();
+    this.syncSessionAndLoad();
+    return null;
+  },
+
+  orderProgressInput(e) {
+    if (this.currentOrderProgress()) this.setData({ 'orderProgress.input': e.detail.value });
+  },
+
+  searchOrderProgress() {
+    const state = this.currentOrderProgress();
+    if (state) return this.loadOrderProgress(1, state.input.trim());
+  },
+
+  clearOrderProgressSearch() {
+    if (!this.currentOrderProgress()) return;
+    this.setData({ 'orderProgress.input': '' });
+    return this.loadOrderProgress(1, '');
+  },
+
+  refreshOrderProgress() {
+    const state = this.currentOrderProgress();
+    if (state) return this.loadOrderProgress(state.page, state.keyword, state.expandedId);
+  },
+
+  turnOrderProgressPage(e) {
+    const state = this.currentOrderProgress();
+    if (!state || state.loading) return;
+    const page = state.page + Number(e.currentTarget.dataset.delta);
+    if (page >= 1 && page <= state.lastPage) return this.loadOrderProgress(page, state.keyword);
+  },
+
+  loadOrderProgress(page, keyword, expandedId = 0) {
+    if (!this.currentOrderProgress()) return;
+    // 新查询或切换账号后，旧请求不能覆盖当前列表或工序入口。
+    const request = this._progressListRequest = {};
+    this._progressDetailRequest = null;
+    this.setData({
+      'orderProgress.page': page, 'orderProgress.keyword': keyword, 'orderProgress.rows': [],
+      'orderProgress.expandedId': expandedId, 'orderProgress.detail': null, 'orderProgress.detailError': '',
+      'orderProgress.loading': true, 'orderProgress.error': ''
+    });
+    return production.orderProgress({ keyword, page, per_page: 10 })
+      .then(response => {
+        if (request !== this._progressListRequest || !this.currentOrderProgress()) return;
+        const result = view.rows(response);
+        if (page > result.lastPage) return this.loadOrderProgress(result.lastPage, keyword);
+        this.setData({
+          'orderProgress.rows': result.rows, 'orderProgress.page': result.page,
+          'orderProgress.lastPage': result.lastPage, 'orderProgress.total': result.total,
+          'orderProgress.loading': false
+        });
+        if (expandedId && result.rows.some(row => row.id === expandedId)) return this.loadOrderProgressDetail(expandedId);
+        this.setData({ 'orderProgress.expandedId': 0 });
+      })
+      .catch(error => {
+        if (request !== this._progressListRequest || !this.currentOrderProgress()) return;
+        this.setData({ 'orderProgress.loading': false, 'orderProgress.error': view.errorText(error) });
+      });
+  },
+
+  toggleOrderProgress(e) {
+    const state = this.currentOrderProgress();
+    if (!state) return;
+    const id = Number(e.currentTarget.dataset.id);
+    if (state.expandedId !== id) return this.loadOrderProgressDetail(id);
+    this._progressDetailRequest = null;
+    this.setData({ 'orderProgress.expandedId': 0, 'orderProgress.detail': null, 'orderProgress.detailError': '' });
+  },
+
+  retryOrderProgressDetail() {
+    const state = this.currentOrderProgress();
+    if (state) return this.loadOrderProgressDetail(state.expandedId);
+  },
+
+  loadOrderProgressDetail(id) {
+    const state = this.currentOrderProgress();
+    if (!state || !state.rows.some(row => row.id === id)) return;
+    const request = this._progressDetailRequest = {};
+    this.setData({ 'orderProgress.expandedId': id, 'orderProgress.detail': null, 'orderProgress.detailError': '' });
+    return production.orderProgressDetail(id)
+      .then(response => {
+        if (request !== this._progressDetailRequest || !this.currentOrderProgress()) return;
+        const lines = response.data.lines.map(line => ({
+          id: line.id, name: line.name, workOrders: orderProgressWorkOrders(line.work_orders)
+        }));
+        this.setData({ 'orderProgress.detail': { lines } });
+      })
+      .catch(error => {
+        if (request !== this._progressDetailRequest || !this.currentOrderProgress()) return;
+        this.setData({ 'orderProgress.detailError': view.errorText(error) });
+      });
+  },
+
+  openOrderProgressOperation(e) {
+    const state = this.currentOrderProgress();
+    const { id, lane } = e.currentTarget.dataset;
+    const operationId = Number(id);
+    if (!state || !state.detail || !operationId || !['normal', 'rework'].includes(lane)) return;
+    const canOpen = state.detail.lines.some(line => line.workOrders.some(order =>
+      order.operations.some(operation => operation.id === operationId && operation.lane === lane && operation.can_open === true)
+    ));
+    if (canOpen) wx.navigateTo({ url: `/pages/production/task/index?id=${operationId}&lane=${lane}` });
   },
 
   openWorkItem(e) {

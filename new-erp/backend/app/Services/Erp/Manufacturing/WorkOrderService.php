@@ -121,6 +121,12 @@ final class WorkOrderService
         return $user ? ($user->nickname ?: $user->username) : null;
     }
 
+    public static function isChildOrderItem(Item $item): bool
+    {
+        return in_array($item->item_type, ['semi_finished', 'finished_product'], true)
+            && $item->manufacturing_strategy !== 'purchase' && ! $item->isPurchaseFulfilledItem() && ! $item->isPhantom();
+    }
+
     public function createForParent(int $parentId, int $componentItemId, ?float $qty, object $actor, ?int $operationId = null): MfgWorkOrder
     {
         return DB::transaction(function () use ($parentId, $componentItemId, $qty, $actor, $operationId) {
@@ -139,7 +145,7 @@ final class WorkOrderService
             $item = Item::query()->with('unit')->where('status', 'enabled')->find($componentItemId);
             if (! $item) $this->fail('component_invalid', '这个物料不存在或已停用。');
             if ($item->isPhantom()) $this->fail('phantom_item', $item->item_name.' 是虚拟件，用料已展开在本工单里，不单独开工单。');
-            if ($item->isPurchaseFulfilledItem() || ! in_array($item->item_type, ['semi_finished', 'finished_product'], true))
+            if (! self::isChildOrderItem($item))
                 $this->fail('purchase_item', $item->item_name.' 不是自制半成品（外购件、原料请找采购），不能开生产工单。');
             $gap = $this->semiGap($parent, $componentItemId);
             if ($gap <= 0.00001) $this->fail('no_gap', $item->item_name.' 仓库可用库存加已开的半成品工单（含返工、待处置的不良件）已经够用，不用再开。');
@@ -188,8 +194,7 @@ final class WorkOrderService
         $mats = $parent->materials->where('work_order_operation_id', $operationId)->filter(fn ($m) => (float) $m->required_qty > 0);
         if ($mats->isEmpty()) return [];
         $items = Item::query()->with('unit')->whereIn('id', $mats->pluck('component_item_id')->unique())->get()->keyBy('id');
-        $made = $mats->filter(fn ($m) => ($i = $items->get($m->component_item_id)) && in_array($i->item_type, ['semi_finished', 'finished_product'], true)
-            && ! $i->isPurchaseFulfilledItem() && ! $i->isPhantom());
+        $made = $mats->filter(fn ($m) => ($i = $items->get($m->component_item_id)) && self::isChildOrderItem($i));
         if ($made->isEmpty()) return [];
         $operations = $parent->operations->map(fn ($op) => ['key' => 'o'.$op->id, 'operation_name' => $op->operation_name, 'sequence' => (int) $op->sequence,
             'execution_context' => $op->execution_context ?: 'production'])->values()->all();

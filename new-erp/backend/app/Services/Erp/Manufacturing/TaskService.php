@@ -2,11 +2,13 @@
 
 namespace App\Services\Erp\Manufacturing;
 
+use App\Models\Erp\Item;
 use App\Models\Erp\MfgLaborSession;
 use App\Models\Erp\MfgTaskParticipant;
 use App\Models\Erp\MfgUnitReport;
 use App\Models\Erp\MfgWorkOrder;
 use App\Models\Erp\MfgWorkOrderLink;
+use App\Models\Erp\MfgWorkOrderMaterial;
 use App\Models\Erp\MfgWorkOrderOperation;
 use App\Models\Erp\MfgWorkOrderUnit;
 use App\Models\Erp\ProductionOperationWorker;
@@ -169,7 +171,7 @@ final class TaskService
             if (ShipmentPackingLaborSession::query()->where('employee_legacy_id', $me)->where('status', 'ACTIVE')->lockForUpdate()->first(['id']))
                 $this->fail('already_timing', '你有打包作业正在计时，请先暂停。');
             if ($no = CuttingRunService::activeFor($me)) $this->fail('already_timing', "你在集中开料 {$no} 还在计时，请先暂停那一批。");
-            // 本道的料（总装的半成品、外购件）收到才能开工；板材／管材在本道开工后开料，报合格时再查。返工用原来的料，不再查。
+            // 自制半成品和下料留到完成时校验。返工沿用原来的料。
             if ($lane === 'normal') $this->materials->assertReceivedForStart($wo, $op, $units);
             $this->markStarted($wo, $op, $actor);
             if ($op->status !== 'in_progress') $op->update(['status' => 'in_progress']);
@@ -181,6 +183,36 @@ final class TaskService
             ]);
             self::syncWorkStatus([(int) $wo->id]);
         }, 5);
+    }
+
+    /**
+     * 开始计时后的提醒：自制子件不挡开工，但若仓库可用库存加已开子工单仍不够，
+     * 说明还没人去做这批子件，到报合格时才会被收料校验拦住。这里只提示、不拦截，
+     * 只读计算，放在开工事务之外，失败也不能影响已经成功的开工。
+     * @return string[]
+     */
+    public function childOrderReminders(int $opId): array
+    {
+        $op = MfgWorkOrderOperation::query()->find($opId);
+        $wo = $op ? MfgWorkOrder::query()->find($op->work_order_id) : null;
+        if (! $wo) return [];
+        $materials = MfgWorkOrderMaterial::query()->where('work_order_operation_id', $op->id)->where('participates_in_kitting', true)
+            ->where('required_qty', '>', 0)->get(['component_item_id', 'component_item_name', 'unit_name', 'required_qty', 'issued_qty']);
+        if ($materials->isEmpty()) return [];
+        $items = Item::query()->whereIn('id', $materials->pluck('component_item_id')->unique())->where('status', 'enabled')->get()
+            ->filter(fn (Item $item) => WorkOrderService::isChildOrderItem($item))->keyBy('id');
+        $orders = app(WorkOrderService::class);
+        $reminders = [];
+        foreach ($materials->groupBy('component_item_id') as $itemId => $rows) {
+            if (! $items->has($itemId) || (float) $rows->sum('issued_qty') + 0.00001 >= (float) $rows->sum('required_qty')) continue;
+            $gap = $orders->semiGap($wo, (int) $itemId);
+            if ($gap <= 0.00001) continue;
+            $first = $rows->first();
+            $reminders[] = ($first->component_item_name ?: $items[$itemId]->item_name).' 还差 '.rtrim(rtrim(number_format($gap, 4, '.', ''), '0'), '.')
+                .($first->unit_name ?: '').'（仓库可用库存不够，也还没开子工单）';
+        }
+
+        return $reminders;
     }
 
     public function pause(int $opId, object $actor): void
@@ -264,7 +296,7 @@ final class TaskService
                     $this->fail('unit_not_started', $unit->serial_no.' 在本道还没有开始计时记录，请先选择该编号开始作业。');
             }
             if ($lane === 'normal') {
-                $this->materials->assertReceivedForStart($wo, $op, $units);
+                $this->materials->assertReceivedForCompletion($wo, $op, $units);
                 // 下料按套数报：本次首次完成的套数加上已完成的，不能超过开料已登记的套数。
                 $firstTime = $units->filter(fn ($u) => ! MfgUnitReport::query()->where('unit_id', $u->id)->where('work_order_operation_id', $op->id)->where('result', 'passed')->exists())->count();
                 $this->materials->assertCutForPass($wo, $op, $firstTime);
@@ -312,7 +344,7 @@ final class TaskService
             // 按数量管理的板材／管材同时带走这批切完时已扣的料和成本，记为本道已收，剩下不够的再按定额从仓库收。
             app(CuttingRunService::class)->allocate($wo, $op, $firstTime, $upTo, $actor, $cuttingRunId, $firstUnitIds);
             $this->materials->receiveUpTo($wo, $op, $upTo, $remark ? '已备料：'.$remark : '已备料', $actor, $firstUnitIds);
-            $this->materials->assertReceivedForStart($wo, $op, $units, $upTo);
+            $this->materials->assertReceivedForCompletion($wo, $op, $units);
             // 逐张板材：集中开料切好的件，按定额从开料池扣量计成本。
             if ($sheet) app(SharedCuttingService::class)->allocate($wo, $op, $upTo, $firstTime, $actor, $firstUnitIds);
             $this->materials->assertCutForPass($wo, $op, $firstTime);

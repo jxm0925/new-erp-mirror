@@ -49,7 +49,7 @@
   <!-- 主体内容区 -->
   <view class="hub-body">
     <!-- 四大核心板块 -->
-    <view wx:if="{{access.workOrder || access.warehouse || access.shipment || access.stats}}" class="section-head">
+    <view wx:if="{{hasToken}}" class="section-head">
       <view class="section-title-group">
         <view class="section-dot"></view>
         <text class="section-title">业务中心</text>
@@ -155,6 +155,13 @@
       </view>
     </view>
 
+    <view wx:if="{{hasToken}}" class="recent-card order-progress-entry">
+      <view class="recent-row">
+        <text class="recent-code">订单生产进度</text>
+        <button class="recent-btn btn-outline-red order-progress-button" bindtap="openOrderProgress">查看进度</button>
+      </view>
+    </view>
+
     <!-- 我的当前作业（直达待办） -->
     <view wx:if="{{access.workOrder || access.warehouse || access.shipment}}" class="section-head section-head-recent">
       <view class="section-title-group">
@@ -201,12 +208,98 @@
     </view>
 
     <!-- 已登录但暂无待办 -->
-    <view wx:elif="{{!loadErrors.length}}" class="empty-card">
-      <text class="empty-title">{{access.workOrder || access.warehouse || access.shipment || access.stats || access.scan ? '当前暂无紧急待办作业' : '当前账号暂无可用业务'}}</text>
-      <text class="empty-desc">{{access.workOrder || access.warehouse || access.shipment || access.stats ? '您可以点击上方已开放的业务板块查看全部记录' : (access.scan ? '点击上方【扫码作业】查看设备信息' : '请联系管理员开通所需业务权限')}}</text>
+    <view wx:elif="{{!loadErrors.length && (access.workOrder || access.warehouse || access.shipment || access.stats || access.scan)}}" class="empty-card">
+      <text class="empty-title">当前暂无紧急待办作业</text>
+      <text class="empty-desc">{{access.workOrder || access.warehouse || access.shipment || access.stats ? '您可以点击上方已开放的业务板块查看全部记录' : '点击上方【扫码作业】查看设备信息'}}</text>
       <view wx:if="{{access.workOrder || access.warehouse}}" class="empty-actions">
         <view wx:if="{{access.workOrder}}" class="ghost-red-btn" data-module="workOrder" bindtap="openModule">进入工单列表</view>
         <view wx:if="{{access.warehouse}}" class="ghost-red-btn" data-module="warehouse" bindtap="openModule">进入仓库工作台</view>
+      </view>
+    </view>
+  </view>
+
+  <view wx:if="{{hasToken && orderProgress}}" class="modal-mask order-progress-mask" bindtap="closeOrderProgress" catchtouchmove="noop">
+    <view class="stats-sheet order-progress-sheet" catchtap="noop">
+      <view class="sheet-header">
+        <text class="sheet-title">订单生产进度</text>
+        <button class="sheet-close order-progress-button" aria-label="关闭订单生产进度" bindtap="closeOrderProgress">✕</button>
+      </view>
+      <view class="order-progress-search">
+        <input class="order-progress-input" value="{{orderProgress.input}}" maxlength="120" placeholder="搜索订单号" confirm-type="search" bindinput="orderProgressInput" bindconfirm="searchOrderProgress" />
+        <button wx:if="{{orderProgress.input}}" class="sheet-close order-progress-button" aria-label="清空订单号搜索" bindtap="clearOrderProgressSearch">✕</button>
+        <button class="recent-btn btn-solid-red order-progress-button" bindtap="searchOrderProgress">搜索</button>
+      </view>
+
+      <scroll-view scroll-y class="sheet-scroll order-progress-scroll">
+        <text wx:if="{{orderProgress.loading}}" class="empty-desc">正在加载订单</text>
+        <view wx:elif="{{orderProgress.error}}" class="load-error-card">
+          <text class="load-error-text">{{orderProgress.error}}</text>
+          <button class="recent-btn btn-outline-red order-progress-button" bindtap="refreshOrderProgress">重新加载</button>
+        </view>
+        <text wx:elif="{{!orderProgress.rows.length}}" class="empty-desc">未找到生产订单</text>
+        <view wx:for="{{orderProgress.rows}}" wx:for-item="order" wx:key="id" class="order-progress-row">
+          <view class="sheet-list-row">
+            <view class="sheet-list-main">
+              <view class="recent-title-line">
+                <text class="sheet-list-title">{{order.order_no}}</text>
+                <text class="sheet-list-badge">{{order.status_label}}</text>
+              </view>
+              <text wx:if="{{order.products}}" class="sheet-list-sub">{{order.products}}</text>
+              <text wx:if="{{order.summary}}" class="sheet-list-sub">{{order.summary}}</text>
+              <text wx:if="{{order.unit_text}}" class="sheet-list-sub">{{order.unit_text}}</text>
+              <text wx:if="{{order.current_text}}" class="sheet-list-sub">当前：{{order.current_text}}</text>
+            </view>
+            <button class="recent-btn btn-outline-red order-progress-button" data-id="{{order.id}}" bindtap="toggleOrderProgress">{{orderProgress.expandedId === order.id ? '收起' : '展开'}}</button>
+          </view>
+
+          <view wx:if="{{orderProgress.expandedId === order.id}}" class="order-progress-detail">
+            <view wx:if="{{orderProgress.detailError}}" class="load-error-card">
+              <text class="load-error-text">{{orderProgress.detailError}}</text>
+              <button class="recent-btn btn-outline-red order-progress-button" bindtap="retryOrderProgressDetail">重新加载</button>
+            </view>
+            <text wx:elif="{{!orderProgress.detail}}" class="sheet-list-sub">正在加载生产明细</text>
+            <text wx:elif="{{!orderProgress.detail.lines.length}}" class="sheet-list-sub">暂无订单明细</text>
+            <block wx:else>
+              <view wx:for="{{orderProgress.detail.lines}}" wx:for-item="line" wx:key="id" class="sheet-block">
+                <text class="sheet-block-title">{{line.name}}</text>
+                <text wx:if="{{!line.workOrders.length}}" class="sheet-sub">暂无关联工单</text>
+                <view wx:for="{{line.workOrders}}" wx:for-item="workOrder" wx:key="id" class="sheet-list order-progress-work-order">
+                  <view class="sheet-list-row">
+                    <view class="sheet-list-main">
+                      <text class="sheet-list-title">{{workOrder.parentNo ? '子工单' : '主工单'}} · {{workOrder.work_order_no}}</text>
+                      <text wx:if="{{workOrder.name}}" class="sheet-list-sub">{{workOrder.name}}</text>
+                      <text wx:if="{{workOrder.parentNo}}" class="sheet-list-sub">上级工单 {{workOrder.parentNo}}</text>
+                    </view>
+                    <text class="sheet-list-badge">{{workOrder.status_label}}</text>
+                  </view>
+                  <view wx:for="{{workOrder.operations}}" wx:for-item="operation" wx:key="key" class="sheet-list-row order-progress-operation">
+                    <view class="recent-title-line">
+                      <text class="sheet-list-title">{{operation.name}}</text>
+                      <text wx:if="{{operation.is_current}}" class="sheet-block-tag">当前</text>
+                      <text class="sheet-list-sub">{{operation.status_label}}</text>
+                    </view>
+                    <text class="sheet-list-sub">实际接单人 {{operation.owner_name || '暂无'}}</text>
+                    <text class="sheet-list-sub">正在计时 {{operation.timingText || '暂无'}}</text>
+                    <view wx:if="{{operation.materials.length}}" class="order-progress-materials">
+                      <text class="sheet-list-sub">收料进度（已收 / 应收）</text>
+                      <view wx:for="{{operation.materials}}" wx:for-item="material" wx:key="key" class="order-progress-material">
+                        <text class="sheet-list-sub">{{material.name}}</text>
+                        <text class="sheet-list-title">{{material.quantityText}}</text>
+                      </view>
+                    </view>
+                    <button wx:if="{{operation.can_open === true}}" class="recent-btn btn-outline-red order-progress-button order-progress-open-task" data-id="{{operation.id}}" data-lane="{{operation.lane}}" bindtap="openOrderProgressOperation">进入工序</button>
+                  </view>
+                </view>
+              </view>
+            </block>
+          </view>
+        </view>
+      </scroll-view>
+
+      <view wx:if="{{!orderProgress.loading && !orderProgress.error}}" class="sheet-footer order-progress-pager">
+        <button class="recent-btn btn-outline-red order-progress-button" disabled="{{orderProgress.page <= 1}}" data-delta="-1" bindtap="turnOrderProgressPage">上一页</button>
+        <text class="sheet-list-sub">{{orderProgress.page}} / {{orderProgress.lastPage}} · 共 {{orderProgress.total}} 单</text>
+        <button class="recent-btn btn-outline-red order-progress-button" disabled="{{orderProgress.page >= orderProgress.lastPage}}" data-delta="1" bindtap="turnOrderProgressPage">下一页</button>
       </view>
     </view>
   </view>

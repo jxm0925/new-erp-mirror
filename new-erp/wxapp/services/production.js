@@ -25,6 +25,8 @@ function uploadPhoto(filePath, media = false) {
 module.exports = {
   tasks: query => get('tasks', query),
   task: (id, lane) => get(`tasks/${Number(id)}`, lane ? { lane } : undefined),
+  orderProgress: query => get('order-progress', query),
+  orderProgressDetail: (id, scope) => get(`order-progress/${Number(id)}`, scope ? { scope } : undefined),
   // 待我审核：报废申请、不良处置（工单生产负责人）
   reviews: () => get('reviews'),
   reviewScrap: (id, payload) => request.write(`${base}/scrap-reports/${Number(id)}/review`, payload, { loading: true, commandPrefix: 'review' }),

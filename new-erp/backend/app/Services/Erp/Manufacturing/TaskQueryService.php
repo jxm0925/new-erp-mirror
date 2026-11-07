@@ -557,15 +557,17 @@ final class TaskQueryService
         $parentBrief = $parentWo ? $this->workOrderBrief($parentWo) : null;
         $isSubWorkOrder = $parentBrief !== null || $wo->source_type === 'work_order' || (bool) $wo->rework_of_work_order_id;
         $childIds = MfgWorkOrderLink::query()->where('parent_work_order_id', $wo->id)->orderBy('id')->pluck('child_work_order_id');
+        $childProgress = $childIds->isEmpty() ? [] : $this->childProgress($childIds);
         $semiSummary = $childIds->isEmpty() ? [] : MfgWorkOrder::query()->with('item:id,item_type,spec,model,material_grade')
             ->whereIn('id', $childIds)->where('status', '!=', 'cancelled')->orderBy('id')->get()
-            ->map(function ($c) {
+            ->map(function ($c) use ($childProgress) {
                 $cs = WorkOrderQueryService::itemSpecInfo($c->item, $c);
                 return [
                     'id' => $c->id, 'work_order_no' => $c->work_order_no, 'item_id' => $c->item_id, 'item_name' => $c->item_name,
                     'item_spec' => $cs['item_spec'], 'material_grade' => $cs['material_grade'], 'specification' => $cs['specification'],
                     'planned_qty' => (float) $c->planned_qty, 'stored_qty' => (float) $c->stored_qty, 'completed_qty' => (float) $c->completed_qty,
                     'unit_name' => $c->unit_name, 'status' => $c->status, 'status_label' => WorkOrderQueryService::STATUS_LABELS[$c->status] ?? $c->status,
+                    'progress' => $childProgress[$c->id] ?? [],
                 ];
             })->values()->all();
         $units = $this->tasks->selectableUnits($op, $lane);
@@ -616,6 +618,16 @@ final class TaskQueryService
             'allowed' => ['claim' => $canExecute && $this->tasks->isRunnable($wo) && $op->status !== 'done'
                 && ! $owner && $units->isNotEmpty() && $this->tasks->canDo($op, $me)],
         ];
+    }
+
+    /**
+     * 子工单当前做到哪道、谁接单、谁在计时。上级工序可以先开工等子件，
+     * 上级接单人在自己的卡片上直接看到子件进度；口径与车间订单进度共用。
+     * @return array<int, string[]> 子工单 ID => 进行中工序描述
+     */
+    private function childProgress(Collection $childIds): array
+    {
+        return app(OrderProgressQueryService::class)->currentOperations($childIds);
     }
 
     private function workOrderBrief(MfgWorkOrder $w): array

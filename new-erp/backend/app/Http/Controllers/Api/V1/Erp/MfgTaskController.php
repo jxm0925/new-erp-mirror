@@ -44,9 +44,16 @@ class MfgTaskController extends Controller
         $action = $input['action'];
         $lane = TaskService::lane($input['lane'] ?? null);
         [$user, $codes] = $this->user($request, [in_array($action, ['assign', 'stop'], true) ? 'production.task.assign' : 'production.task.execute']);
+        $reminders = [];
         $message = match ($action) {
             'claim' => $this->run(fn () => $tasks->claim($id, $user, $lane), $lane === 'rework' ? '已接下返工。' : '接单成功。'),
-            'start' => $this->run(fn () => $tasks->start($id, $user, $lane, $request->validate(['unit_ids' => 'sometimes|array|min:1|max:1000', 'unit_ids.*' => 'integer|min:1|distinct'])['unit_ids'] ?? null), $lane === 'rework' ? '返工开始计时（返工工时单独记，不算提成）。' : '开始计时。'),
+            'start' => $this->run(function () use ($tasks, $id, $user, $lane, $request, &$reminders) {
+                $tasks->start($id, $user, $lane, $request->validate(['unit_ids' => 'sometimes|array|min:1|max:1000', 'unit_ids.*' => 'integer|min:1|distinct'])['unit_ids'] ?? null);
+                // 开工已提交，提醒只读计算；出错不能把成功的开工报成失败。
+                if ($lane === 'normal') {
+                    try { $reminders = $tasks->childOrderReminders($id); } catch (\Throwable $e) { report($e); }
+                }
+            }, $lane === 'rework' ? '返工开始计时（返工工时单独记，不算提成）。' : '开始计时。'),
             'pause' => $this->run(fn () => $tasks->pause($id, $user), '已暂停计时。'),
             'stop' => $this->run(fn () => $tasks->stopTiming($id, (int) $request->validate(['employee_legacy_id' => 'required|integer|min:1'])['employee_legacy_id'], $user), '已停止这个人的计时。'),
             'assign' => $this->run(fn () => $tasks->assign($id, (int) $request->validate(['employee_legacy_id' => 'required|integer|min:1'])['employee_legacy_id'], $user, $lane), '已派工。'),
@@ -56,7 +63,7 @@ class MfgTaskController extends Controller
             'reject' => $this->reject($request, $id, $tasks, $user, $lane),
             'semi_order' => $this->semiOrder($request, $id, $user, $lane),
         };
-        return response()->json(['message' => $message, 'data' => $query->task($id, $user, $codes, $lane)]);
+        return response()->json(['message' => $message, 'reminders' => $reminders, 'data' => $query->task($id, $user, $codes, $lane)]);
     }
 
     /** 待我审核（小程序）：报废申请、不良处置。工单生产负责人审自己工单的，有报废确认权限的都能审。 */

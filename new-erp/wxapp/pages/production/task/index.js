@@ -399,6 +399,8 @@ Page({
       if (payload.completion_action === 'store') {
         const numbers = response.receipt_nos || (response.data && response.data.receipt_nos) || [];
         view.modal(this, { title: '入库申请已提交', content: numbers.length ? `已生成入库申请：${numbers.join('、')}，等待仓库分别核对。` : response.message || '已提交入库，等待仓库确认', showCancel: false, confirmText: '知道了' });
+      } else if (response.reminders && response.reminders.length) {
+        view.modal(this, { theme: 'warn', title: '已开始计时', infoMain: '子件还没有着落，完成本工序前必须收齐', infoSub: response.reminders.join('；'), showCancel: false, confirmText: '知道了' });
       } else wx.showToast({ title: response.message || okText || '已完成', icon: 'none', duration: 2500 });
       this.setData({ panel: '' });
       if (response.data) this.apply(response.data); else this.load();

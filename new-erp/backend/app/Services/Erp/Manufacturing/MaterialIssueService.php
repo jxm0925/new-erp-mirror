@@ -20,7 +20,7 @@ use Illuminate\Support\Facades\DB;
 
 /**
  * 工序收料：车间按设备数收本道要用的料（总装收半成品和外购件，下料组收原料），收料时才扣库存。
- * 本道的料没收够就不能开工；仓库没货时总装可以给下料组开半成品工单。
+ * 本道可等自制半成品期间先计时，完成前必须收齐；仓库没货时可开半成品工单。
  * 板材／管材由下料人在开料批次自选来源，不在这里自动收料。
  */
 final class MaterialIssueService
@@ -87,15 +87,29 @@ final class MaterialIssueService
         if ($done + $firstPass > $cut) $this->fail('cutting_not_settled', $op->operation_name.'开料只登记了 '.$cut.' 套，已完成 '.$done.' 套，这次最多报 '.max(0, $cut - $done).' 套。请先在「开料」里登记切出的件和余料。');
     }
 
-    /**
-     * 普通物料必须收够到这些台；板材／管材另按实际开料可供套数校验，不要求仓库配送。
-     */
-    public function assertReceivedForStart(MfgWorkOrder $wo, MfgWorkOrderOperation $op, Collection $units, ?float $upTo = null): void
+    public function assertReceivedForStart(MfgWorkOrder $wo, MfgWorkOrderOperation $op, Collection $units): void
+    {
+        $this->assertReceived($wo, $op, $units, forStart: true);
+    }
+
+    public function assertReceivedForCompletion(MfgWorkOrder $wo, MfgWorkOrderOperation $op, Collection $units): void
+    {
+        $this->assertReceived($wo, $op, $units, forStart: false);
+    }
+
+    /** 板材／管材另按实际开料可供套数校验，不要求仓库配送。 */
+    private function assertReceived(MfgWorkOrder $wo, MfgWorkOrderOperation $op, Collection $units, bool $forStart): void
     {
         $materials = MfgWorkOrderMaterial::query()->where('work_order_operation_id', $op->id)->where('participates_in_kitting', true)
             ->where('required_qty', '>', 0)->orderBy('id')->lockForUpdate()->get()->reject(fn ($m) => in_array($m->cutting_mode, ['sheet', 'length'], true))->values();
         if ($materials->isEmpty()) return;
-        // 开工按已经到本道的设备数查；「已备料」按本道做到第几台查（$upTo）。
+        if ($forStart) {
+            // 只在计时时允许等自制件，与是否已经开了子工单无关。
+            $childItems = Item::query()->whereIn('id', $materials->pluck('component_item_id')->unique())->where('status', 'enabled')->get()
+                ->filter(fn (Item $item) => WorkOrderService::isChildOrderItem($item))->keyBy('id');
+            $materials = $materials->reject(fn ($m) => $childItems->has($m->component_item_id));
+            if ($materials->isEmpty()) return;
+        }
         $unitIds = $units->pluck('id')->map(fn ($id) => (int) $id)->all();
         CancellationProductionService::assertProductionAllowed((int) $wo->id, $unitIds);
         $reached = count($unitIds);
@@ -109,8 +123,9 @@ final class MaterialIssueService
             if ($allocated + self::EPS < $need) $missing[] = $m->component_item_name.' 还差 '.$this->num($need - $allocated).($m->unit_name ?: '');
             elseif ($have + self::EPS < $need) $waiting[] = $m->component_item_name;
         }
-        if ($waiting && ! $missing) $this->fail('material_not_signed', '仓库送来的料还没签收：'.implode('、', $waiting).'。请先核对实物并签收，再开工。');
-        if ($missing) $this->fail('material_not_received', $op->operation_name.'的料还没收齐：'.implode('、', $missing).'。请先收料；仓库没货的先开半成品工单或找采购。');
+        $action = $forStart ? '开始计时' : '完成本工序';
+        if ($waiting && ! $missing) $this->fail('material_not_signed', '仓库送来的料还没签收：'.implode('、', $waiting).'。请先核对实物并签收，再'.$action.'。');
+        if ($missing) $this->fail('material_not_received', $op->operation_name.'的料还没收齐：'.implode('、', $missing).'。请先收料，再'.$action.'。');
     }
 
     /**

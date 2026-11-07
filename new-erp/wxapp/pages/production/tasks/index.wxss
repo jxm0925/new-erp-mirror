@@ -485,9 +485,7 @@
   color: #92400e;
   flex: 1;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  word-break: break-all;
 }
 
 .wo-sub-toggle-right {

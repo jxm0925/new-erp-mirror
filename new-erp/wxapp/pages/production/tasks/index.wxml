@@ -28,7 +28,7 @@
           bindtap="pickTab"
         >
           <text>{{item.label}}</text>
-          <text wx:if="{{item.key !== 'done'}}" class="tasks-tab-count {{item.key === 'review' ? 'is-review' : ''}}">({{(counts[item.key] || 0) + (packCounts[item.key] || 0)}})</text>
+          <text wx:if="{{item.key !== 'done' && item.key !== 'progress'}}" class="tasks-tab-count {{item.key === 'review' ? 'is-review' : ''}}">({{(counts[item.key] || 0) + (packCounts[item.key] || 0)}})</text>
         </view>
       </view>
 
@@ -45,13 +45,17 @@
         <view wx:if="{{keyword}}" class="tasks-search-clear" bindtap="clearKeyword">×</view>
         <button class="tasks-search-btn" bindtap="search">查询</button>
       </view>
+      <view wx:if="{{tab === 'progress'}}" class="tasks-tabs">
+        <view class="tasks-tab {{progressScope === 'sales' ? 'on' : ''}}" data-scope="sales" bindtap="pickProgressScope"><text>销售订单</text></view>
+        <view class="tasks-tab {{progressScope === 'stock' ? 'on' : ''}}" data-scope="stock" bindtap="pickProgressScope"><text>备货</text></view>
+      </view>
     </view>
 
     <!-- 异常与空状态 -->
     <view wx:if="{{error}}" class="mt-error">{{error}}</view>
     <view wx:if="{{packError}}" class="mt-error">发货作业加载失败：{{packError}}</view>
 
-    <view wx:if="{{loading && !rows.length && !reviews.length && !packs.length}}" class="tasks-empty">
+    <view wx:if="{{loading && !rows.length && !reviews.length && !packs.length && !progressRows.length}}" class="tasks-empty">
       <van-loading color="#d81e06" size="44rpx" />
       <text class="tasks-empty-sub">正在读取工单任务…</text>
     </view>
@@ -60,7 +64,12 @@
       <text class="tasks-empty-title">暂无待审核申请</text>
       <text class="tasks-empty-sub">当前没有待处理的报废或不良处置申请</text>
     </view>
-    <view wx:elif="{{tab !== 'review' && !error && !packError && !rows.length && !packs.length}}" class="tasks-empty">
+    <view wx:elif="{{tab === 'progress' && !error && !progressRows.length}}" class="tasks-empty">
+      <van-icon name="notes-o" size="76rpx" color="#cbd5e1" />
+      <text class="tasks-empty-title">{{progressScope === 'stock' ? '暂无备货工单' : '暂无生产订单'}}</text>
+      <text class="tasks-empty-sub">可调整搜索关键词再查询</text>
+    </view>
+    <view wx:elif="{{tab !== 'review' && tab !== 'progress' && !error && !packError && !rows.length && !packs.length}}" class="tasks-empty">
       <van-icon name="notes-o" size="76rpx" color="#cbd5e1" />
       <text class="tasks-empty-title">{{tab === 'mine' ? '暂无进行中任务' : (tab === 'available' ? '暂无可接工序' : '暂无已完工记录')}}</text>
       <text class="tasks-empty-sub">{{tab === 'mine' ? '可切换至「可接工序」接单作业' : (tab === 'available' ? '当前没有待接单的工序任务' : '可调整搜索关键词查询历史完工单')}}</text>
@@ -228,6 +237,7 @@
                 <text wx:if="{{sub.status_label}}"> · {{sub.status_label}}</text>
                 <text wx:if="{{sub.specText}}"> · 规格：{{sub.specText}}</text>
               </view>
+              <view wx:if="{{sub.progressText}}" class="wo-sub-meta">当前：{{sub.progressText}}</view>
               <view wx:if="{{sub.paused && sub.pause_reason}}" class="mt-note">暂停原因：{{sub.pause_reason}}</view>
             </view>
 
@@ -267,6 +277,72 @@
             <view wx:if="{{!sub.tasks.length}}" class="wo-sub-empty" data-id="{{sub.id}}" catchtap="openWorkOrder">
               <text>已入库 {{sub.storedText || 0}} / {{sub.plannedText}} {{sub.unit_name}}</text>
               <text class="wo-sub-link">查看子工单 ›</text>
+            </view>
+          </view>
+        </view>
+      </view>
+    </view>
+
+    <!-- 订单进度：车间所有人可看，按订单汇总设备与工序 -->
+    <view wx:for="{{progressRows}}" wx:for-item="order" wx:key="id" class="wo-group-card">
+      <view class="wo-card-head" data-id="{{order.id}}" bindtap="toggleProgress">
+        <view class="wo-head-left">
+          <text class="wo-no mono">{{order.order_no}}</text>
+          <text class="mt-tag {{order.status_label === '生产中' ? 'blue' : 'green'}}">{{order.status_label}}</text>
+        </view>
+        <view class="wo-detail-pill" data-id="{{order.id}}" catchtap="toggleProgress">
+          <text>{{progressExpandedId === order.id ? '收起' : '展开'}}</text>
+          <van-icon name="{{progressExpandedId === order.id ? 'arrow-up' : 'arrow-down'}}" size="22rpx" color="#64748b" />
+        </view>
+      </view>
+      <view class="wo-card-main" data-id="{{order.id}}" bindtap="toggleProgress">
+        <view class="wo-main-product">{{order.products}}</view>
+        <view class="wo-task-sub">{{order.summary}}</view>
+        <view wx:if="{{order.unit_text}}" class="wo-task-sub">{{order.unit_text}}</view>
+        <view wx:if="{{order.current_text}}" class="mt-note">当前：{{order.current_text}}</view>
+      </view>
+
+      <view wx:if="{{progressExpandedId === order.id}}" class="wo-sub-list">
+        <view wx:if="{{progressDetailError}}" class="mt-error" bindtap="retryProgressDetail">{{progressDetailError}}（点此重试）</view>
+        <view wx:elif="{{!progressDetail}}" class="wo-task-sub">正在加载生产明细…</view>
+        <view wx:for="{{progressDetail.lines}}" wx:for-item="line" wx:key="key" wx:if="{{!progressDetailError}}">
+          <view wx:for="{{line.workOrders}}" wx:for-item="wo" wx:key="id" class="wo-sub-card">
+            <view class="wo-sub-head" data-id="{{wo.id}}" catchtap="openWorkOrder">
+              <view class="mt-row">
+                <text class="wo-sub-title">{{wo.parentNo ? '子工单' : '主工单'}}：{{wo.name}} × {{wo.planned_text}}</text>
+                <text class="wo-sub-link">工单详情 ›</text>
+              </view>
+              <view class="wo-sub-meta">
+                <text class="mono">{{wo.work_order_no}}</text>
+                <text> · {{wo.status_label}}</text>
+                <text wx:if="{{wo.parentNo}}"> · 上级工单 {{wo.parentNo}}</text>
+              </view>
+              <view wx:if="{{wo.operation_progress}}" class="wo-sub-meta">工序进度：{{wo.operation_progress}}</view>
+            </view>
+
+            <!-- 按台进度 -->
+            <view wx:for="{{wo.units}}" wx:for-item="unit" wx:key="id" class="wo-sub-task">
+              <view class="wo-task-info">
+                <view class="wo-task-title-line">
+                  <text class="wo-task-op mono">{{unit.serial_no}}</text>
+                  <text class="mt-tag {{unit.worker_names ? 'amber' : 'gray'}}">{{unit.status_label}}</text>
+                </view>
+                <view class="wo-task-sub">当前工序 {{unit.operation_name || '—'}} · 谁在做 {{unit.worker_names || '—'}}</view>
+              </view>
+            </view>
+
+            <!-- 工序明细 -->
+            <view wx:for="{{wo.operations}}" wx:for-item="op" wx:key="key" class="wo-sub-task">
+              <view class="wo-task-info">
+                <view class="wo-task-title-line">
+                  <text class="wo-task-op {{op.lane === 'rework' ? 'mt-rework' : ''}}">{{op.name}}</text>
+                  <text wx:if="{{op.is_current}}" class="mt-tag red">当前</text>
+                  <text class="mt-tag gray">{{op.status_label}}</text>
+                </view>
+                <view class="wo-task-sub">接单人 {{op.owner_name || '暂无'}} · 正在计时 {{op.timingText || '暂无'}}</view>
+                <view wx:if="{{op.materialText}}" class="wo-task-sub">子件已收/应收：{{op.materialText}}</view>
+              </view>
+              <button wx:if="{{op.can_open === true}}" class="wo-action-btn outline" data-id="{{op.id}}" data-lane="{{op.lane}}" catchtap="open">进入工序</button>
             </view>
           </view>
         </view>

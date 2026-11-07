@@ -42,6 +42,7 @@ use App\Http\Controllers\Api\V1\Erp\MfgSharedCuttingController;
 use App\Http\Controllers\Api\V1\Erp\MfgCuttingRunController;
 use App\Http\Controllers\Api\V1\Erp\ProductionPerformanceStatsController;
 use App\Http\Controllers\Api\V1\Erp\MfgTaskController;
+use App\Http\Controllers\Api\V1\Erp\MfgOrderProgressController;
 use App\Http\Controllers\Api\V1\Erp\MfgTechController;
 use App\Http\Controllers\Api\V1\Erp\ShipmentPackingController;
 use App\Http\Controllers\Api\V1\Erp\ShipmentOutboundApplicationController;
@@ -469,6 +470,8 @@ Route::prefix('v1/erp/sales')->group(function () {
 });
 
 Route::prefix('v1/erp/production')->group(function () {
+    Route::get('order-progress', [MfgOrderProgressController::class, 'index']);
+    Route::get('order-progress/{id}', [MfgOrderProgressController::class, 'show'])->whereNumber('id');
     Route::get('select-options/{type}', [ProductionMasterDataController::class, 'selector'])->whereIn('type', ['items', 'operations', 'products', 'skus', 'routings']);
     Route::get('operations', [ProductionMasterDataController::class, 'operations']);
     Route::post('operations', [ProductionMasterDataController::class, 'storeOperation']);

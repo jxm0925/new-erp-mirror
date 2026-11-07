@@ -464,12 +464,12 @@ final class WorkOrderQueryService
                 ->map(fn ($m) => $m['component_item_name'].' 在做 '.rtrim(rtrim(number_format((float) $m['in_production_qty'], 4, '.', ''), '0'), '.').($m['unit_name'] ?: ''))->implode('、');
             $purchase = $short->contains(fn ($m) => empty($m['can_make']));
             $advice = collect([
-                $making !== '' ? '已开半成品工单：'.$making.'，入库后即可配料' : null,
+                $making !== '' ? '已开半成品工单：'.$making.'，待交接或入库后领用' : null,
                 $canMake ? '其余半成品可在齐套看板点“开半成品工单”交下料组做' : null,
                 $purchase ? '外购件请采购跟进' : null,
             ])->filter()->implode('；');
             $items[] = ['type' => 'warning', 'title' => $op['operation_name'].'缺料', 'text' => $names.'。按当前可用库存算，'
-                .($advice !== '' ? $advice : '请采购跟进').'；料不齐不能开工。'];
+                .($advice !== '' ? $advice : '请核对待收物料').'。仅缺可自制子件时可先做准备，报合格前须按台收齐用料。'];
         }
         foreach ($row['completion_blockers'] ?? [] as $b) $items[] = ['type' => 'warning', 'title' => '工单还有事项待处理', 'text' => $b['text'].'。'];
         // 做完的设备可以分批入库；只有最后一批要求开料批次都已登记，成本才能收口。
@@ -510,7 +510,7 @@ final class WorkOrderQueryService
             foreach ($op['materials'] as &$m) {
                 $item = $items->get($m['component_item_id']);
                 $m = array_merge($m, self::materialSpecInfo($item, $bomLines->get($m['bom_item_id'] ?? null)));
-                $m['can_make'] = $openWo && $item && in_array($item->item_type, ['semi_finished', 'finished_product'], true) && ! $item->isPurchaseFulfilledItem();
+                $m['can_make'] = $openWo && $item && WorkOrderService::isChildOrderItem($item);
                 $m['in_production_qty'] = (float) ($open[$m['component_item_id']] ?? 0);
                 // 退回冻结、返工中的不良件：不算缺口，防止重复补单。
                 $m['held_qty'] = (float) ($held[$m['component_item_id']] ?? 0);

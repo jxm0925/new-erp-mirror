@@ -27,13 +27,36 @@ function decoratePack(row, tab) {
   };
 }
 
-const TABS = [{ key: 'mine', label: '我的待做' }, { key: 'available', label: '可接工序' }, { key: 'done', label: '已完工' }];
+const TABS = [{ key: 'mine', label: '我的待做' }, { key: 'available', label: '可接工序' }, { key: 'done', label: '已完工' }, { key: 'progress', label: '订单进度' }];
 const REVIEW_TAB = { key: 'review', label: '待审核' };
 
 function tabsFor(counts, tab) {
   return (counts && counts.review > 0) || tab === 'review'
-    ? [TABS[0], TABS[1], REVIEW_TAB, TABS[2]]
+    ? [TABS[0], TABS[1], REVIEW_TAB, TABS[2], TABS[3]]
     : TABS;
+}
+
+// 订单进度：主工单、子工单拉平成一列，子工单标出上级工单号。
+function progressWorkOrders(workOrders, parentNo = '', rows = []) {
+  (workOrders || []).forEach(wo => {
+    rows.push({
+      id: wo.id,
+      work_order_no: wo.work_order_no,
+      name: wo.name,
+      status_label: wo.status_label,
+      planned_text: wo.planned_text,
+      operation_progress: wo.operation_progress,
+      parentNo,
+      units: wo.units || [],
+      operations: (wo.operations || []).map(op => Object.assign({}, op, {
+        key: `${op.id}-${op.lane}`,
+        timingText: (op.timing_names || []).join('、'),
+        materialText: (op.materials || []).map(m => `${m.name} ${view.quantity(m.received_qty)}/${view.quantity(m.required_qty)}${m.unit_name || ''}`).join('；'),
+      })),
+    });
+    progressWorkOrders(wo.children, wo.work_order_no, rows);
+  });
+  return rows;
 }
 
 function buildSpecText(obj) {
@@ -226,6 +249,11 @@ function buildGroups(rows, expandedMap) {
       }
     });
 
+    // 子工单当前工序和人员：上级工序可先开工等子件，折叠时也要能看到谁在做。
+    const progressById = {};
+    semiList.forEach(semi => { progressById[String(semi.id)] = (semi.progress || []).join('；'); });
+    group.subGroups.forEach(sub => { sub.progressText = progressById[String(sub.id)] || ''; });
+
     const mainOpNames = group.mainTasks
       .map(t => t.title)
       .filter(Boolean)
@@ -233,7 +261,11 @@ function buildGroups(rows, expandedMap) {
       .slice(0, 3)
       .join('、');
     const subNames = group.subGroups
-      .map(s => s.product_name || s.item_name)
+      .map(s => {
+        const name = s.product_name || s.item_name || '';
+        const state = s.progressText || s.status_label;
+        return name && state ? `${name}（${state}）` : name;
+      })
       .filter(Boolean)
       .filter((v, i, a) => a.indexOf(v) === i)
       .join('、');
@@ -305,6 +337,11 @@ Page({
     userName: '',
     userInitial: '工',
     canExecute: false,
+    progressScope: 'sales',
+    progressRows: [],
+    progressExpandedId: 0,
+    progressDetail: null,
+    progressDetailError: '',
   },
   onLoad(options) {
     const user = wx.getStorageSync('erp_user') || {};
@@ -325,6 +362,7 @@ Page({
     const sequence = this.sequence = (this.sequence || 0) + 1;
     this.setData({ loading: true, error: '' });
     if (this.data.tab === 'review') return this.loadReviews(sequence);
+    if (this.data.tab === 'progress') return this.loadProgress(sequence);
     const packs = this.loadPacks(sequence);
     const tasks = production.tasks({ tab: this.data.tab, page: this.data.page, per_page: 10, keyword: this.data.keyword }).then(response => {
       if (sequence !== this.sequence) return;
@@ -359,6 +397,51 @@ Page({
     ));
     this.setData({ expandedMap, groups });
   },
+  // 车间公共订单进度：所有登录员工可看，不按接单人筛选。
+  loadProgress(sequence) {
+    const expandedId = this.data.progressExpandedId;
+    return production.orderProgress({ scope: this.data.progressScope, keyword: this.data.keyword, page: this.data.page, per_page: 10 }).then(response => {
+      if (sequence !== this.sequence) return;
+      const paged = view.rows(response);
+      if (paged.page > paged.lastPage && paged.lastPage >= 1) { this.setData({ page: paged.lastPage }); return this.loadProgress(sequence); }
+      const keep = expandedId && paged.rows.some(row => row.id === expandedId);
+      this.setData({
+        progressRows: paged.rows, rows: [], groups: [], packs: [], reviews: [],
+        page: paged.page, lastPage: paged.lastPage, total: paged.total,
+        progressExpandedId: keep ? expandedId : 0,
+        progressDetail: keep ? this.data.progressDetail : null,
+        loading: false,
+      });
+      if (keep) this.loadProgressDetail(expandedId);
+    }).catch(error => { if (sequence === this.sequence) this.setData({ loading: false, error: view.errorText(error) }); });
+  },
+  pickProgressScope(event) {
+    const scope = event.currentTarget.dataset.scope;
+    if (scope === this.data.progressScope) return;
+    this.setData({ progressScope: scope, page: 1, progressRows: [], progressExpandedId: 0, progressDetail: null, progressDetailError: '' });
+    this.load();
+  },
+  toggleProgress(event) {
+    const id = Number(event.currentTarget.dataset.id);
+    if (this.data.progressExpandedId === id) {
+      this.detailRequest = null;
+      this.setData({ progressExpandedId: 0, progressDetail: null, progressDetailError: '' });
+      return;
+    }
+    this.loadProgressDetail(id);
+  },
+  loadProgressDetail(id) {
+    const request = this.detailRequest = {};
+    const scope = this.data.progressScope;
+    this.setData({ progressExpandedId: id, progressDetailError: '' });
+    return production.orderProgressDetail(id, scope).then(response => {
+      if (request !== this.detailRequest) return;
+      const body = response.data || {};
+      const lines = (body.lines || []).map(line => ({ key: `${line.id || 0}-${line.name}`, name: line.name, workOrders: progressWorkOrders(line.work_orders) }));
+      this.setData({ progressDetail: { lines } });
+    }).catch(error => { if (request === this.detailRequest) this.setData({ progressDetail: null, progressDetailError: view.errorText(error) }); });
+  },
+  retryProgressDetail() { if (this.data.progressExpandedId) this.loadProgressDetail(this.data.progressExpandedId); },
   loadPacks(sequence) {
     const can = view.permissions();
     const tab = this.data.tab;
@@ -422,7 +505,7 @@ Page({
   pickTab(event) {
     const tab = event.currentTarget.dataset.tab;
     if (tab === this.data.tab) return;
-    this.setData({ tab, page: 1, packPage: 1, packLastPage: 1, packError: '', packs: [], rows: [], groups: [], reviews: [] });
+    this.setData({ tab, page: 1, packPage: 1, packLastPage: 1, packError: '', packs: [], rows: [], groups: [], reviews: [], progressRows: [], progressExpandedId: 0, progressDetail: null, progressDetailError: '' });
     this.load();
   },
   keywordInput(event) { this.setData({ keyword: event.detail.value }); },
