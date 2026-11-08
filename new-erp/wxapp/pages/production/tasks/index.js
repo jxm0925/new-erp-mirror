@@ -359,11 +359,13 @@ Page({
   },
   onShow() { if (this.mediaReturning) { this.mediaReturning = false; return; } this.load(); },
   onHide() { if (this.mediaActive) this.mediaReturning = true; },
+  onUnload() { this.detailRequest = null; this.sequence = (this.sequence || 0) + 1; },
   mediaActivity(event) { this.mediaActive = event.detail.active; },
   onPullDownRefresh() { this.load().finally(() => wx.stopPullDownRefresh()); },
   load() {
     const sequence = this.sequence = (this.sequence || 0) + 1;
-    this.setData({ loading: true, error: '' });
+    this.detailRequest = null;
+    this.setData({ loading: true, error: '', progressDetail: null, progressDetailError: '' });
     if (this.data.tab === 'review') return this.loadReviews(sequence);
     if (this.data.tab === 'progress') return this.loadProgress(sequence);
     const packs = this.loadPacks(sequence);
@@ -402,11 +404,11 @@ Page({
   },
   // 车间公共订单进度：所有登录员工可看，不按接单人筛选。
   loadProgress(sequence) {
-    const expandedId = this.data.progressExpandedId;
     return production.orderProgress({ scope: this.data.progressScope, keyword: this.data.keyword, page: this.data.page, per_page: 10 }).then(response => {
       if (sequence !== this.sequence) return;
       const paged = view.rows(response);
       if (paged.page > paged.lastPage && paged.lastPage >= 1) { this.setData({ page: paged.lastPage }); return this.loadProgress(sequence); }
+      const expandedId = this.data.progressExpandedId;
       const keep = expandedId && paged.rows.some(row => row.id === expandedId);
       this.setData({
         progressRows: paged.rows, rows: [], groups: [], packs: [], reviews: [],
@@ -434,15 +436,18 @@ Page({
     this.loadProgressDetail(id);
   },
   loadProgressDetail(id) {
+    if (this.data.tab !== 'progress' || this.data.loading) return;
     const request = this.detailRequest = {};
     const scope = this.data.progressScope;
-    this.setData({ progressExpandedId: id, progressDetailError: '' });
+    const isCurrent = () => request === this.detailRequest && this.data.tab === 'progress'
+      && scope === this.data.progressScope && id === this.data.progressExpandedId;
+    this.setData({ progressExpandedId: id, progressDetail: null, progressDetailError: '' });
     return production.orderProgressDetail(id, scope).then(response => {
-      if (request !== this.detailRequest) return;
+      if (!isCurrent()) return;
       const body = response.data || {};
       const lines = (body.lines || []).map(line => ({ key: `${line.id || 0}-${line.name}`, name: line.name, workOrders: progressWorkOrders(line.work_orders) }));
       this.setData({ progressDetail: { lines } });
-    }).catch(error => { if (request === this.detailRequest) this.setData({ progressDetail: null, progressDetailError: view.errorText(error) }); });
+    }).catch(error => { if (isCurrent()) this.setData({ progressDetail: null, progressDetailError: view.errorText(error) }); });
   },
   retryProgressDetail() { if (this.data.progressExpandedId) this.loadProgressDetail(this.data.progressExpandedId); },
   loadPacks(sequence) {

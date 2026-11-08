@@ -351,7 +351,7 @@ Do not change layout without approval.
                         <label class="required">{{ row.line_type === 'deduction' ? '扣减金额' : '销售单价' }}</label>
                         <div class="input-addon">
                           <span class="addon">¥</span>
-                          <el-input-number v-model="row.unit_price" size="small" :min="0" :precision="2" :controls="false" @change="recalc" />
+                          <el-input-number v-model="row.unit_price" size="small" :min="0" :precision="2" :controls="false" placeholder="请填写单价" @change="recalc" />
                         </div>
                       </div>
                       <div class="field">
@@ -498,7 +498,7 @@ Do not change layout without approval.
             <template slot-scope="{row}">
               <div class="price-cell">
                 <span class="unit-text">¥</span>
-                <el-input v-model.number="row.unit_price" size="mini" class="inline-input text-right" @input="recalc" />
+                <el-input v-model.number="row.unit_price" size="mini" class="inline-input text-right" placeholder="请填写单价" @input="recalc" />
               </div>
             </template>
           </el-table-column>
@@ -738,7 +738,7 @@ const emptyLine = () => ({
   item_base_unit_name_preview: null,
   line_type: 'physical',
   order_qty: 1,
-  unit_price: 0,
+  unit_price: undefined,
   discount_rate: 1,
   tax_rate: 0,
   price_tax_mode: 'tax_inclusive',
@@ -1417,7 +1417,8 @@ export default {
       line.sku_name = row.sku_name
       line.sku_code_snapshot = row.sku_code
       line.spec_text_snapshot = row.spec_text
-      line.unit_price = Number(row.default_price !== null && row.default_price !== undefined ? row.default_price : (row.sale_price !== null && row.sale_price !== undefined ? row.sale_price : 0))
+      const defaultPrice = row.default_price ?? row.sale_price
+      line.unit_price = defaultPrice === null || defaultPrice === undefined || defaultPrice === '' ? undefined : Number(defaultPrice)
       line.discount_rate = 1
       line.tax_rate = Number(row.default_tax_rate || 0)
       line.price_tax_mode = row.default_price_tax_mode || 'tax_inclusive'
@@ -2119,12 +2120,15 @@ export default {
       return line.line_type === 'deduction' ? -amount : Number(line.order_qty || 0) * Number(line.unit_price || 0)
     },
     lineAmountText(line) {
+      if (line.unit_price === null || line.unit_price === undefined || String(line.unit_price).trim() === '') return '待填写单价'
       const amount = this.lineAmount(line)
       if (line.line_type !== 'deduction' && line.product_id && !Number(line.unit_price || 0)) return '¥0.00 赠送'
       return `${amount < 0 ? '-' : ''}¥${this.money(Math.abs(amount))}`
     },
     linePriceMessage(line) {
-      const price = Number(line.unit_price || 0)
+      if (line.unit_price === null || line.unit_price === undefined || String(line.unit_price).trim() === '') return `${line.sku_name || '订单行'}：请填写单价，赠送请填 0`
+      const price = Number(line.unit_price)
+      if (!Number.isFinite(price)) return `${line.sku_name || '订单行'}：请填写有效单价`
       if (line.line_type === 'deduction') return price > 0 ? '' : `${line.sku_name || '扣减项'}：请填写扣减金额`
       return price >= 0 ? '' : `${line.sku_name || '订单行'}：单价不能小于 0，要减钱请用扣减项（如红包、优惠）`
     },

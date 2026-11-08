@@ -178,7 +178,6 @@ class MasterDataController extends Controller
             $query->where('status', 'enabled')
                 ->where('is_sale_item', true)
                 ->whereNotNull('sales_unit_id')
-                ->whereNotNull('sale_price')
                 ->whereHas('product', fn (Builder $product) => $product->where('status', 'enabled'))
                 ->where(function (Builder $sku) {
                     $sku->whereIn('order_line_type', ['service', 'no_delivery', 'deduction'])

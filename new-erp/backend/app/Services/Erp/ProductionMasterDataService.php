@@ -452,8 +452,13 @@ class ProductionMasterDataService
     public function defaultRoutingMatches(int $itemId, ?int $productId, ?int $skuId, bool $lock = true): \Illuminate\Support\Collection
     {
         $categories = ProductionRoutingApplicability::categoryChain($itemId);
+        $item = Item::find($itemId);
+        $allowShipmentOnly = $item && app(ShipmentDirectSourcePolicy::class)->allowsShipmentOnlyRouting($item);
         $candidates = ProductionRouting::with(['product', 'sku', 'operations.operation', 'applicabilities'])
             ->where('status', 'active')->applicableToItem($itemId)
+            // 类目可同时包含外购和自制；纯发货路线不能挤掉自制品的生产路线。
+            ->when(! $allowShipmentOnly, fn ($q) => $q->whereHas('operations', fn ($op) => $op
+                ->where('execution_context', 'production')->orWhereNull('execution_context')))
             ->where(fn ($q) => $q->whereNull('sku_id')->when($skuId, fn ($x) => $x->orWhere('sku_id', $skuId)))
             ->where(fn ($q) => $q->whereNull('product_id')->when($productId, fn ($x) => $x->orWhere('product_id', $productId)))
             ->orderBy('id')->when($lock, fn ($q) => $q->lockForUpdate())->get();
@@ -652,10 +657,10 @@ class ProductionMasterDataService
         $disabled = $scopes->where('scope_type', 'item')->filter(fn ($scope) => $scope->item?->status !== 'enabled');
         if ($disabled->isNotEmpty()) throw ValidationException::withMessages(['applicable_item_ids' => '适用物料包含不存在或已停用的物料。']);
         $production = $routing->operations->where('execution_context', 'production');
-        // 只有发货作业的路线只给外购物料用（外购件直发包装）；按类目适用无法逐个确认，必须逐个指定物料。
-        if ($production->isEmpty() && ($scopes->where('scope_type', 'category')->isNotEmpty()
-            || $scopes->contains(fn ($scope) => ! app(ShipmentDirectSourcePolicy::class)->allowsShipmentOnlyRouting($scope->item)))) {
-            throw ValidationException::withMessages(['operations' => '自制物料的工艺路线必须至少包含一道生产工序；外购物料可以维护独立发货包装路线（须逐个指定外购物料）。']);
+        // 纯发货路线可以按类目复用；类目中的物料在实际匹配时按履约方式筛选。
+        if ($production->isEmpty() && $scopes->where('scope_type', 'item')
+            ->contains(fn ($scope) => ! app(ShipmentDirectSourcePolicy::class)->allowsShipmentOnlyRouting($scope->item))) {
+            throw ValidationException::withMessages(['operations' => '自制物料的工艺路线必须至少包含一道生产工序；外购物料的独立发货路线可按物料或类目配置。']);
         }
         $firstShipment = $routing->operations->where('execution_context', 'shipment')->min('sequence');
         if ($firstShipment !== null && $production->isNotEmpty() && $production->max('sequence') >= $firstShipment) throw ValidationException::withMessages(['operations' => '发货包装工序必须排在生产工序之后。']);

@@ -2,7 +2,7 @@
   <div>
     <el-dialog
       class="sales-picker-dialog"
-      :title="mode === 'product' ? '选择Product' : '选择SKU'"
+      :title="mode === 'product' ? '选择商品' : '选择SKU'"
       :visible.sync="visible"
       width="980px"
       append-to-body
@@ -17,13 +17,13 @@
       </div>
 
       <div v-else class="picker-filters">
-        <el-input v-model="query.keyword" size="small" clearable placeholder="SKU / Product / 规格 / 编码 / 别名" @input="queueLoad" @keyup.enter.native="load" />
+        <el-input v-model="query.keyword" size="small" clearable placeholder="SKU / 商品 / 规格 / 编码 / 别名" @input="queueLoad" @keyup.enter.native="load" />
         <el-select v-model="query.status" size="small" clearable placeholder="销售状态">
           <el-option label="启用" value="enabled" />
           <el-option label="停用" value="disabled" />
         </el-select>
         <el-button size="small" type="success" @click="load">查询</el-button>
-        <span class="picker-tip">{{ mode === 'global_sku' ? '全局 SKU 搜索，结果按后端分页返回' : '仅展示当前 Product 下可用 SKU' }}</span>
+        <span class="picker-tip">{{ mode === 'global_sku' ? '全局 SKU 搜索，结果按后端分页返回' : '仅展示当前商品下可用 SKU' }}</span>
       </div>
 
       <div class="product-picker-body" :class="{ 'with-categories': mode === 'product' }">
@@ -72,9 +72,9 @@
             <div class="picker-img"><img v-if="imageUrl(row.image || (row.product && row.product.image))" :src="imageUrl(row.image || (row.product && row.product.image))"><i v-else class="el-icon-picture-outline" /></div>
           </template>
         </el-table-column>
+        <el-table-column v-if="mode === 'global_sku'" label="商品" min-width="150"><template slot-scope="{row}">{{ row.product && row.product.product_name || '-' }}</template></el-table-column>
         <el-table-column prop="sku_name" label="SKU名称" min-width="180" show-overflow-tooltip />
         <el-table-column prop="sku_code" label="SKU编码" width="150" />
-        <el-table-column v-if="mode === 'global_sku'" label="所属 Product" min-width="150"><template slot-scope="{row}">{{ row.product && row.product.product_name || '-' }}</template></el-table-column>
         <el-table-column prop="spec_text" label="规格摘要" min-width="180" show-overflow-tooltip />
         <el-table-column v-if="mode === 'global_sku'" label="销售单位" width="96"><template slot-scope="{row}">{{ row.sales_unit && row.sales_unit.unit_name || '-' }}</template></el-table-column>
         <el-table-column v-if="mode === 'global_sku'" label="可用库存" width="100"><template slot-scope="{row}">{{ row.available_stock === null ? '-' : row.available_stock }}</template></el-table-column>

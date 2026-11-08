@@ -282,7 +282,7 @@ class SalesOrderController extends Controller
         $perPage = min(max((int) $request->input('per_page', 10), 1), 50);
         $query = Sku::query()->with(['product', 'salesUnit', 'itemRelations.item.unit.standardUnit'])
             ->where('status', 'enabled')->where('is_sale_item', true)
-            ->whereNotNull('sales_unit_id')->whereNotNull('sale_price')
+            ->whereNotNull('sales_unit_id')
             ->whereHas('product', fn (Builder $q) => $q->where('status', 'enabled'));
         if (! empty($filters['product_id'])) $query->where('product_id', (int) $filters['product_id']);
         foreach (preg_split('/\\s+/u', $keyword, -1, PREG_SPLIT_NO_EMPTY) ?: [] as $token) {
@@ -1345,7 +1345,7 @@ class SalesOrderController extends Controller
             'lines.*.commercial_role' => ['nullable', Rule::in(['sale', 'gift'])],
             'lines.*.order_qty' => 'required|numeric|min:0.0001',
             'lines.*.unit_id' => 'nullable|exists:erp_units,id',
-            'lines.*.unit_price' => 'nullable|numeric',
+            'lines.*.unit_price' => 'required|numeric',
             'lines.*.fulfillment_method' => ['nullable', Rule::in(['auto', 'inventory', 'production', 'service', 'no_delivery'])],
             'lines.*.price_tax_mode' => ['nullable', Rule::in(['tax_inclusive', 'tax_exclusive'])],
             'lines.*.discount_rate' => 'nullable|numeric|min:0|max:1',
