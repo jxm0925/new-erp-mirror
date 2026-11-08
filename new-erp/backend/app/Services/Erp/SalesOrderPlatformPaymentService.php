@@ -20,7 +20,7 @@ final class SalesOrderPlatformPaymentService
 
     public static function canConfirm(SalesOrder $order, int $actorId): bool
     {
-        return self::isRecorder($order, $actorId)
+        return !$order->isLegacyHistory() && self::isRecorder($order, $actorId)
             && in_array($order->order_status, ['draft', 'confirmed'], true)
             && self::orderNumber($order) !== null;
     }
@@ -54,6 +54,7 @@ final class SalesOrderPlatformPaymentService
     /** 调用方先锁定订单；确认事实和发货状态在同一事务内更新。 */
     public function update(SalesOrder $order, bool $confirmed, ?object $actor, ?string $token = null): void
     {
+        $order->assertCurrentBusiness();
         abort_unless(self::isRecorder($order, (int) ($actor->legacy_id ?? 0)), 403, '只有录单人可以确认平台收款。');
         abort_unless(self::canConfirm($order, (int) $actor->legacy_id), 422, '只有已填写原始单号的线上平台订单可以确认平台收款。');
         $settlement = $this->settlements->status($order);

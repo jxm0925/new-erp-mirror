@@ -308,7 +308,7 @@ select {
   width: calc(100% - var(--sidebar-width));
   min-width: 0;
   margin-left: var(--sidebar-width);
-  overflow-x: hidden;
+  overflow-x: clip;
   transition: width 0.24s cubic-bezier(0.22, 0.61, 0.36, 1), margin-left 0.24s cubic-bezier(0.22, 0.61, 0.36, 1);
 }
 

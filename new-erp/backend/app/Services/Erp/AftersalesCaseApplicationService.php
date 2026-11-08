@@ -103,6 +103,7 @@ final class AftersalesCaseApplicationService
     {
         return DB::transaction(function () use ($payload, $actor): AftersalesCase {
             $order = SalesOrder::query()->lockForUpdate()->findOrFail((int) $payload['sales_order_id']);
+            $order->assertCurrentBusiness();
             $order->setRelation('lines', $order->lines()->orderBy('id')->lockForUpdate()->get());
             $this->assertCaseFields($payload);
             $items = $this->assertItems($order, $payload['items'] ?? []);

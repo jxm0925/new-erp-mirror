@@ -151,13 +151,14 @@ class ItemCategoryApplicationService
         abort_unless($parent, 422, '父级必须是有效的 Item 类目。');
     }
 
-    private function descendantIds(int $rootId): array
+    public function descendantIds(int $rootId): array
     {
         $all = ItemCategory::where('category_type', 'item')->get(['id', 'parent_id']);
         $result = [];
         $frontier = [$rootId];
         while ($frontier) {
-            $children = $all->whereIn('parent_id', $frontier)->pluck('id')->map(fn ($id) => (int) $id)->all();
+            $children = $all->whereIn('parent_id', $frontier)->pluck('id')->map(fn ($id) => (int) $id)
+                ->diff(array_merge([$rootId], $result))->values()->all();
             if (!$children) break;
             $result = array_merge($result, $children);
             $frontier = $children;

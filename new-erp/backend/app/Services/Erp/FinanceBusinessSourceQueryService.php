@@ -22,8 +22,8 @@ class FinanceBusinessSourceQueryService
     public function paginate(string $type, array $filters, int $perPage): LengthAwarePaginator
     {
         $query = match ($type) {
-            FinanceConstants::SOURCE_SALES_ORDER => SalesOrder::query()->whereNotIn('order_status', ['draft', 'cancelled']),
-            FinanceConstants::SOURCE_SALES_ORDER_REFUND => SalesOrder::query()->where('order_status', '!=', 'draft'),
+            FinanceConstants::SOURCE_SALES_ORDER => SalesOrder::query()->where('order_source', '!=', 'legacy')->whereNotIn('order_status', ['draft', 'cancelled']),
+            FinanceConstants::SOURCE_SALES_ORDER_REFUND => SalesOrder::query()->where('order_source', '!=', 'legacy')->where('order_status', '!=', 'draft'),
             FinanceConstants::SOURCE_PURCHASE_RECEIPT => PurchaseReceipt::query()->with('supplier')->where('confirm_status', 'confirmed')->where('settlement_mode', '<>', 'replacement_no_charge'),
             FinanceConstants::SOURCE_PURCHASE_SETTLEMENT_SOURCE => PurchaseSettlementSource::query()
                 ->whereIn('status', ['open', 'partially_paid']),

@@ -30,6 +30,7 @@ class SalesReturnApplicationService
     {
         return DB::transaction(function () use ($payload, $operatorId, $operatorName): SalesReturn {
             $order = SalesOrder::query()->lockForUpdate()->findOrFail($payload['sales_order_id']);
+            $order->assertCurrentBusiness();
             $order->setRelation('lines', $order->lines()->orderBy('id')->lockForUpdate()->get());
             $lineIds = collect($payload['items'])->pluck('sales_order_line_id')->unique()->values();
             $lines = $order->lines->whereIn('id', $lineIds)->keyBy('id');

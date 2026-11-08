@@ -87,8 +87,49 @@
       </div>
     </section>
 
+    <div v-if="canViewItems" class="item-list-layout" :class="{ 'without-categories': !canViewCategories }">
+      <aside v-if="canViewCategories" class="category-container-card">
+        <h2 class="category-card-title">物料分类</h2>
+        <el-input
+          v-model.trim="categoryKeyword"
+          size="small"
+          clearable
+          prefix-icon="el-icon-search"
+          placeholder="搜索分类"
+          aria-label="搜索物料分类"
+        />
+        <button type="button" class="all-category-button" :class="{ 'is-active': !query.category_id }" :aria-pressed="!query.category_id" @click="selectCategory()">
+          <i class="el-icon-folder-opened" />全部分类
+        </button>
+        <div v-loading="categoriesLoading" class="category-tree-scroll">
+          <div v-if="categoryLoadError" class="category-load-error">
+            <span>{{ categoryLoadError }}</span>
+            <el-button size="small" type="text" icon="el-icon-refresh" @click="loadOptions">重新加载</el-button>
+          </div>
+          <el-tree
+            v-else
+            ref="categoryFilterTree"
+            :data="categoryTree"
+            node-key="id"
+            :props="{ label: 'category_name', children: 'children' }"
+            :current-node-key="query.category_id || null"
+            :default-expanded-keys="query.category_id ? [query.category_id] : []"
+            :filter-node-method="filterCategoryNode"
+            :expand-on-click-node="false"
+            highlight-current
+            empty-text="暂无物料分类"
+            @node-click="selectCategory"
+          >
+            <span slot-scope="{ node, data }" class="category-tree-node" :title="data.full_path || data.category_name">
+              <i :class="node.expanded ? 'el-icon-folder-opened' : 'el-icon-folder'" />
+              <span>{{ data.category_name }}</span>
+            </span>
+          </el-tree>
+        </div>
+      </aside>
+
     <!-- 筛选工具栏与主表格卡片 -->
-    <section v-if="canViewItems" class="table-container-card">
+    <section class="table-container-card">
       <div class="filter-toolbar">
         <div class="filter-fields">
           <el-input
@@ -110,17 +151,6 @@
             @change="search"
           >
             <el-option v-for="type in itemTypes" :key="type.value" :label="type.label" :value="type.value" />
-          </el-select>
-          <el-select
-            v-model="query.category_id"
-            size="small"
-            clearable
-            filterable
-            placeholder="物料分类"
-            class="filter-select-md"
-            @change="search"
-          >
-            <el-option v-for="row in selectableCategories" :key="row.id" :label="row.full_path" :value="row.id" />
           </el-select>
           <paged-record-select
             v-model="query.unit_id"
@@ -281,6 +311,7 @@
         />
       </div>
     </section>
+    </div>
 
     <warehouse-label-print-dialog :visible.sync="labelPrintVisible" :labels="printLabels" />
 
@@ -598,6 +629,9 @@ export default {
       conversionForm: emptyConversion(),
       categoryTree: [],
       categories: [],
+      categoryKeyword: '',
+      categoriesLoading: false,
+      categoryLoadError: '',
       units: [],
       suppliers: [],
       scopeCounts: { ...scopeCountsCache },
@@ -649,9 +683,6 @@ export default {
     listPath () { return materialListPath(this.managementScope) },
     itemTypes () { return materialTypesForScope(this.managementScope) },
     selectedIsOffice () { return materialRecordScope(this.selected) === 'office' },
-    selectableCategories () {
-      return this.categories.filter(row => row.is_leaf && row.status === 'enabled')
-    },
     businessUnits () {
       return this.units.filter(row => !row.is_legacy)
     },
@@ -689,6 +720,14 @@ export default {
     }
   },
   watch: {
+    categoryKeyword (value) {
+      if (this.$refs.categoryFilterTree) this.$refs.categoryFilterTree.filter(value)
+    },
+    'query.category_id' () {
+      this.$nextTick(() => {
+        if (this.$refs.categoryFilterTree) this.$refs.categoryFilterTree.setCurrentKey(this.query.category_id || null)
+      })
+    },
     'pageRoute.query.management_scope' () {
       this.query.management_scope = routeMaterialScope(this.pageRoute)
       this.changeScope()
@@ -777,10 +816,35 @@ export default {
     async loadOptions () {
       if (!this.canViewItems) return
       const version = ++this.optionsVersion
-      const categories = this.canViewCategories ? await getItemCategoryTree(this.scopeParams()) : { data: { data: [] } }
-      if (version !== this.optionsVersion) return
-      this.categoryTree = categories.data.data || []
-      this.categories = this.flatten(this.categoryTree)
+      this.categoriesLoading = true
+      this.categoryLoadError = ''
+      this.categoryTree = []
+      this.categories = []
+      try {
+        const categories = this.canViewCategories ? await getItemCategoryTree(this.scopeParams()) : { data: { data: [] } }
+        if (version !== this.optionsVersion) return
+        this.categoryTree = categories.data.data || []
+        this.categories = this.flatten(this.categoryTree)
+        if (this.canViewCategories && this.query.category_id && !this.categories.some(row => Number(row.id) === Number(this.query.category_id))) {
+          this.query.category_id = ''
+          this.search()
+        }
+        await this.$nextTick()
+        if (version !== this.optionsVersion || !this.$refs.categoryFilterTree) return
+        this.$refs.categoryFilterTree.filter(this.categoryKeyword)
+        this.$refs.categoryFilterTree.setCurrentKey(this.query.category_id || null)
+      } catch (e) {
+        if (version === this.optionsVersion) this.categoryLoadError = e.userMessage || '分类加载失败'
+      } finally {
+        if (version === this.optionsVersion) this.categoriesLoading = false
+      }
+    },
+    filterCategoryNode (keyword, data) {
+      return !keyword || (data.full_path || data.category_name || '').toLowerCase().includes(keyword.toLowerCase())
+    },
+    selectCategory (row) {
+      this.query.category_id = row ? row.id : ''
+      this.search()
     },
     flatten (tree) {
       const rows = []
@@ -819,6 +883,7 @@ export default {
       if (this.$refs.itemLabelTable) this.$refs.itemLabelTable.clearSelection()
       this.detailVersion++
       this.query.category_id = ''
+      this.categoryKeyword = ''
       this.query.item_type = ''
       this.categories = []
       this.categoryTree = []
@@ -830,6 +895,7 @@ export default {
     },
     reset () {
       this.detailVersion++
+      this.categoryKeyword = ''
       this.query = {
         management_scope: '',
         keyword: '',
@@ -893,13 +959,11 @@ export default {
       if (!this.categoriesDirty || !this.canViewItems) return
       this.categoriesDirty = false
       await this.loadOptions()
-      if (this.query.category_id && !this.categories.some(row => Number(row.id) === Number(this.query.category_id))) {
-        this.query.category_id = ''
-      }
       await this.load()
     },
     showCategoryItems (row) {
       if (!this.canViewItems) return
+      this.categoryKeyword = ''
       this.query.management_scope = materialRecordScope(row)
       this.query.category_id = row.id
       this.query.item_type = ''
@@ -1336,8 +1400,113 @@ export default {
   line-height: 1.2;
 }
 
+/* 分类独立滚动与吸顶定高：脱离右侧表格行数变化，避免随列表上下伸缩。 */
+.item-list-layout {
+  display: grid;
+  grid-template-columns: 225px minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.item-list-layout.without-categories {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.category-container-card {
+  position: sticky;
+  top: 102px;
+  height: 640px;
+  max-height: calc(100vh - 116px);
+  min-width: 0;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  padding: 16px 14px;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02);
+}
+
+.category-card-title {
+  margin: 0 0 14px;
+  font-size: 16px;
+  line-height: 22px;
+  color: #0f172a;
+}
+
+.all-category-button {
+  width: 100%;
+  min-height: 36px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 8px 26px;
+  border: 0;
+  border-radius: 4px;
+  background: #ffffff;
+  color: #334155;
+  font: inherit;
+  font-size: 14px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.all-category-button:hover,
+.category-tree-scroll ::v-deep .el-tree-node__content:hover {
+  background: #f0fdf4;
+}
+
+.all-category-button.is-active,
+.category-tree-scroll ::v-deep .el-tree-node.is-current > .el-tree-node__content {
+  color: #00763f;
+  background: #dcfce7;
+  font-weight: 600;
+}
+
+.category-tree-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: auto;
+}
+
+.category-tree-scroll ::v-deep .el-tree {
+  min-width: max-content;
+  color: #334155;
+  font-size: 14px;
+}
+
+.category-tree-scroll ::v-deep .el-tree-node__content {
+  height: 36px;
+  border-radius: 4px;
+}
+
+.category-tree-node {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding-right: 12px;
+}
+
+.category-load-error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 24px 0;
+  font-size: 12px;
+  color: #64748b;
+}
+
 /* 主数据卡片容器 */
 .table-container-card {
+  min-width: 0;
+  min-height: 640px;
+  display: flex;
+  flex-direction: column;
   background: #ffffff;
   border: 1px solid #e2e8f0;
   border-radius: 8px;
@@ -1391,6 +1560,7 @@ export default {
 
 /* 表格主体 */
 .main-table-wrap {
+  flex: 1;
   width: 100%;
   overflow-x: auto;
 }
@@ -1451,9 +1621,8 @@ export default {
 .item-name-text {
   font-weight: 600;
   color: #0f172a;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .item-spec-sub {
@@ -1479,9 +1648,8 @@ export default {
   font-size: 12px;
   display: block;
   max-width: 100%;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  white-space: normal;
+  overflow-wrap: anywhere;
   align-items: center;
   gap: 4px;
 }
@@ -1567,6 +1735,7 @@ export default {
 
 /* 表格底部分页栏 */
 .table-pagination-footer {
+  margin-top: auto;
   padding: 12px 18px;
   background: #ffffff;
   border-top: 1px solid #f1f5f9;
@@ -1860,6 +2029,25 @@ export default {
 }
 
 /* 响应式调整 (遵照用户指令：自适应所有不同型号与分辨率屏幕) */
+@media (max-width: 1180px) {
+  .item-list-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .category-container-card {
+    position: static;
+    height: auto;
+    max-height: none;
+  }
+  .table-container-card {
+    min-height: 0;
+  }
+  .category-tree-scroll {
+    flex: none;
+    min-height: 0;
+    height: 220px;
+  }
+}
+
 @media (max-width: 1024px) {
   .metric-overview-grid {
     grid-template-columns: repeat(2, 1fr);

@@ -19,6 +19,7 @@ final class SalesOrderCompletionService
         if ($order === null) return;
         $order = SalesOrder::query()->lockForUpdate()->find($order instanceof SalesOrder ? $order->id : $order);
         if (! $order || ! in_array($order->order_status, ['confirmed', 'closed'], true)) return;
+        if ($order->isLegacyHistory()) return;
         $done = $order->production_confirm_status === 'confirmed'
             && in_array($order->shipment_status, ['shipped', 'not_required'], true)
             && $order->shipment_funding_status === 'passed'

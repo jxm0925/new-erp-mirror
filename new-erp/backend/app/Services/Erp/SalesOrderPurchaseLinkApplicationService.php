@@ -14,6 +14,7 @@ class SalesOrderPurchaseLinkApplicationService
     {
         return DB::transaction(function () use ($orderId, $data, $operator) {
             $order = SalesOrder::query()->lockForUpdate()->findOrFail($orderId);
+            $order->assertCurrentBusiness();
             $quantity = bcadd((string) $data['purchase_qty'], '0', 8);
             $hash = hash('sha256', json_encode([$orderId, (int) $data['purchase_order_item_id'], $quantity, trim($data['reason'])]));
             $existing = SalesOrderPurchaseLink::where('idempotency_key', $data['idempotency_key'])->lockForUpdate()->first();
@@ -68,6 +69,7 @@ class SalesOrderPurchaseLinkApplicationService
         return DB::transaction(function () use ($orderId, $linkId, $data, $operator) {
             $order = SalesOrder::query()->lockForUpdate()->findOrFail($orderId);
             $link = SalesOrderPurchaseLink::where('sales_order_id', $orderId)->findOrFail($linkId);
+            $order->assertCurrentBusiness();
             PurchaseOrder::query()->lockForUpdate()->findOrFail($link->purchase_order_id);
             PurchaseOrderItem::query()->lockForUpdate()->findOrFail($link->purchase_order_item_id);
             $link = SalesOrderPurchaseLink::query()->lockForUpdate()->findOrFail($linkId);

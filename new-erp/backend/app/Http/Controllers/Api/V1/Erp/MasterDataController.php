@@ -9,6 +9,7 @@ use App\Services\Erp\MasterDataApplicationService;
 use App\Services\Erp\MasterDataAccessService;
 use App\Services\Erp\MasterDataSummaryService;
 use App\Services\Erp\ItemManagementScopeService;
+use App\Services\Erp\ItemCategoryApplicationService;
 use App\Services\Erp\ProductMatrixApplicationService;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
@@ -125,6 +126,12 @@ class MasterDataController extends Controller
             }
             if ($request->route('entity') === 'skus' && $field === 'category_id') {
                 $query->whereHas('product', fn (Builder $product) => $product->where('category_id', $request->input($field)));
+                continue;
+            }
+            if ($request->route('entity') === 'items' && $field === 'category_id') {
+                $request->validate(['category_id' => 'integer|min:1']);
+                $categoryId = $request->integer('category_id');
+                $query->whereIn('category_id', [$categoryId, ...app(ItemCategoryApplicationService::class)->descendantIds($categoryId)]);
                 continue;
             }
             $query->where($field, $request->input($field));

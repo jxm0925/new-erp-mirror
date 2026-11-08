@@ -25,6 +25,7 @@ class SalesOrderInventoryLockService
         return $this->command($orderId, $payload, $user, function () use ($orderId, $payload, $user): array {
             $order = SalesOrder::query()->with('lines.item')->lockForUpdate()->find($orderId);
             if (! $order) $this->fail('sales_order_not_found', '销售订单不存在。', 404);
+            $order->assertCurrentBusiness();
             if ((int) $order->business_version !== (int) $payload['expected_version']) {
                 $this->fail('version_conflict', '销售订单版本已变化，请刷新后重试。', 409, [
                     'current_version' => (int) $order->business_version,
@@ -167,6 +168,7 @@ class SalesOrderInventoryLockService
 
     public function projection(SalesOrder $order, bool $enrich = false): array
     {
+        if ($order->isLegacyHistory()) return ['history_only' => true, 'sales_order_id' => (int) $order->id, 'totals' => [], 'lines' => []];
         $order->loadMissing(['lines.item', 'fulfillments']);
         $execution = $this->reservations->salesOrderExecutionProjection($order, DB::transactionLevel() > 0);
         foreach ($order->fulfillments->where('demand_status', 'confirmed') as $fulfillment) $fulfillment->fill($execution['fulfillments'][$fulfillment->id]);

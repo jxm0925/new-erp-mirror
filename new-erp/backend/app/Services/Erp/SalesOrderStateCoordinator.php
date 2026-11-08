@@ -49,6 +49,8 @@ final class SalesOrderStateCoordinator
         $orderId = $order instanceof SalesOrder ? (int) $order->id : (int) $order;
         $locked = SalesOrder::query()->lockForUpdate()->find($orderId);
         if (! $locked) return null;
+        // 旧单的发货、工时和收款并非本系统流水，不能按空流水重算或清零。
+        if ($locked->isLegacyHistory()) return null;
         if ($locked->order_status === 'cancelled') {
             if ($locked->fulfillment_status !== 'cancelled') $locked->update(['fulfillment_status' => 'cancelled']);
             return null;

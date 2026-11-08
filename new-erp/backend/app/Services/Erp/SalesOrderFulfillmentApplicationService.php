@@ -32,6 +32,7 @@ class SalesOrderFulfillmentApplicationService
     {
         return DB::transaction(function () use ($orderId, $operatorName, $operator): SalesOrder {
             $current = SalesOrder::query()->with('fulfillments')->whereKey($orderId)->lockForUpdate()->firstOrFail();
+            $current->assertCurrentBusiness();
             if ($current->order_status === 'confirmed'
                 && in_array($current->production_confirm_status, ['confirmed', 'blocked'], true)
                 && $current->fulfillments->where('demand_status', 'confirmed')->isNotEmpty()) {
@@ -70,6 +71,7 @@ class SalesOrderFulfillmentApplicationService
         return DB::transaction(function () use ($orderId, $operatorName) {
             $order = SalesOrder::with(['lines.sku.salesUnit.standardUnit', 'lines.item.unit.standardUnit'])
                 ->lockForUpdate()->findOrFail($orderId);
+            $order->assertCurrentBusiness();
             if ($order->order_status !== 'draft') {
                 throw ValidationException::withMessages(['order_status' => '只有草稿状态的销售订单可以提交确认。']);
             }
@@ -140,6 +142,7 @@ class SalesOrderFulfillmentApplicationService
     public function preview(int $orderId): array
     {
         $order = SalesOrder::with(['lines.product', 'lines.sku', 'lines.item', 'fulfillments'])->findOrFail($orderId);
+        $order->assertCurrentBusiness();
         $existing = $order->fulfillments->groupBy('sales_order_line_id');
         $plannedByBalance = [];
         $lines = $order->lines->sortBy('line_no')->values()->map(function (SalesOrderLine $line) use ($existing, $order, &$plannedByBalance) {
@@ -310,6 +313,7 @@ class SalesOrderFulfillmentApplicationService
         try {
             return DB::transaction(function () use ($orderId, $decisions, $remark, $operatorName, $adjustmentReason, $automatic, $operator, &$clientCommandId, $expectedVersion, $requestHash) {
                 $order = SalesOrder::with(['lines.product', 'lines.sku', 'lines.item'])->lockForUpdate()->findOrFail($orderId);
+                $order->assertCurrentBusiness();
                 $clientCommandId ??= 'sales-confirmation:order:'.$orderId.':v'.((int) $order->business_version ?: 1);
                 $existingCommand = SalesOrderCommand::where('client_command_id', $clientCommandId)->lockForUpdate()->first();
                 if ($existingCommand) return $this->replayConfirmation($existingCommand, $orderId, $requestHash);

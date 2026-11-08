@@ -66,6 +66,7 @@ class SalesOrderShortCloseService
 
     public function close(SalesOrder $order, string $reason, string $operator, object $actor): array
     {
+        $order->assertCurrentBusiness();
         $preview = $this->preview($order);
         if ($preview['blockers']) throw ValidationException::withMessages(['order' => implode('；', $preview['blockers'])]);
         foreach ($order->lines as $line) {

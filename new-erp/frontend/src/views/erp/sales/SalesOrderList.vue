@@ -104,7 +104,8 @@ Design status: 按“基础档案”页面风格重做（页头卡片 / 提示�
           </el-table-column>
           <el-table-column label="资金" width="92">
             <template slot-scope="{row}">
-              <span v-if="['draft', 'cancelled'].includes(row.order_status)" class="muted">-</span>
+              <span v-if="row.is_legacy_history" class="muted">历史收款未迁入</span>
+              <span v-else-if="['draft', 'cancelled'].includes(row.order_status)" class="muted">-</span>
               <el-tag v-else size="mini" :type="row.shipment_funding_status === 'passed' ? 'success' : 'warning'">{{ row.shipment_funding_status === 'passed' ? '款项已放行' : (row.channel_type_snapshot === 'online_platform' ? '款项待确认' : '尾款未齐') }}</el-tag>
             </template>
           </el-table-column>
@@ -129,8 +130,8 @@ Design status: 按“基础档案”页面风格重做（页头卡片 / 提示�
             <template slot-scope="{row}">
               <el-button type="text" size="mini" @click.stop="$router.push(`/sales/orders/${row.id}/detail`)">查看</el-button>
               <el-button v-if="canEdit(row)" type="text" size="mini" @click.stop="$router.push(`/sales/orders/${row.id}/edit`)">{{ editLabel(row) }}</el-button>
-              <el-button v-if="row.allowed_actions && row.allowed_actions.submit_confirmation" type="text" size="mini" @click.stop="confirmOrder(row)">确认订单</el-button>
-              <el-button v-if="row.allowed_actions && row.allowed_actions.production_confirmation" type="text" size="mini" @click.stop="$router.push(`/sales/orders/${row.id}/production-confirmation`)">生产确认</el-button>
+              <el-button v-if="!row.is_legacy_history && row.allowed_actions && row.allowed_actions.submit_confirmation" type="text" size="mini" @click.stop="confirmOrder(row)">确认订单</el-button>
+              <el-button v-if="!row.is_legacy_history && row.allowed_actions && row.allowed_actions.production_confirmation" type="text" size="mini" @click.stop="$router.push(`/sales/orders/${row.id}/production-confirmation`)">生产确认</el-button>
               <el-dropdown v-if="moreActions(row).length" trigger="click" @command="cmd => handleCommand(cmd, row)">
                 <span class="more-link">更多<i class="el-icon-arrow-down" /></span>
                 <el-dropdown-menu slot="dropdown">
@@ -178,7 +179,7 @@ Design status: 按“基础档案”页面风格重做（页头卡片 / 提示�
         <el-button size="small" @click="summaryVisible = false">关闭</el-button>
         <el-button v-if="selected" size="small" @click="$router.push(`/sales/orders/${selected.id}/detail`)">查看详情</el-button>
         <el-button v-if="selected && canEdit(selected)" size="small" @click="$router.push(`/sales/orders/${selected.id}/edit`)">{{ editLabel(selected) }}</el-button>
-        <el-button v-if="selected && selected.allowed_actions && selected.allowed_actions.production_confirmation" size="small" type="success" class="btn-theme-create" @click="$router.push(`/sales/orders/${selected.id}/production-confirmation`)">生产确认</el-button>
+        <el-button v-if="selected && !selected.is_legacy_history && selected.allowed_actions && selected.allowed_actions.production_confirmation" size="small" type="success" class="btn-theme-create" @click="$router.push(`/sales/orders/${selected.id}/production-confirmation`)">生产确认</el-button>
       </span>
     </el-dialog>
   </div>
@@ -271,6 +272,7 @@ export default {
       this.summaryVisible = true
     },
     canEdit(row) {
+      if (row.is_legacy_history) return false
       const actions = row.allowed_actions || {}
       return !!(actions.edit_draft || actions.edit)
     },
@@ -281,6 +283,7 @@ export default {
     },
     // 订单所处阶段：用于让销售一眼看出“现在能不能随便改”。
     stageOf(row) {
+      if (row.is_legacy_history) return { label: '历史订单', type: 'info', hint: '旧系统历史记录' }
       const actions = row.allowed_actions || {}
       if (row.order_status === 'draft') return { label: '草稿', type: 'info', hint: '可随意修改' }
       if (row.order_status === 'cancelled') return { label: '已取消', type: 'danger', hint: row.cancellation?.finance_status === 'pending' ? '资金待处理' : '资金已结清' }
@@ -293,6 +296,7 @@ export default {
       return { label: '待开工', type: 'success', hint: '开工及安排发货前，金额修改需财务审核' }
     },
     nextStep(row) {
+      if (row.is_legacy_history) return '旧系统历史记录；未完成工单需核对后接续'
       const actions = row.allowed_actions || {}
       if (row.order_status === 'draft') return '请核对订单信息，无误后点击“确认订单”。草稿可随意修改。'
       if (row.order_status === 'cancelled') return [row.cancellation?.production_pending ? `${row.cancellation.production_pending}个编号待实际接单人处置` : '生产处置已办结', row.cancellation?.finance_status === 'pending' ? '资金待财务处理' : '资金已结清'].join('；') + '。'
@@ -326,7 +330,7 @@ export default {
     },
     moreActions(row) {
       const actions = []
-      if (row.allowed_actions && row.allowed_actions.delete_draft) actions.push({ command: 'delete-draft', label: '删除草稿' })
+      if (!row.is_legacy_history && row.allowed_actions && row.allowed_actions.delete_draft) actions.push({ command: 'delete-draft', label: '删除草稿' })
       if (row.order_status === 'confirmed') actions.push({ command: 'logs', label: '日志与版本' })
       actions.push({ command: 'summary', label: '处理建议' })
       return actions

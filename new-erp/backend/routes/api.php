@@ -387,6 +387,7 @@ Route::prefix('v1/erp/bom')->group(function () {
 
 Route::get('v1/erp/sales-orders/{id}/change-production-units', [SalesOrderController::class, 'changeProductionUnits'])->whereNumber('id');
 Route::prefix('v1/erp/sales')->group(function () {
+    Route::get('orders/{id}/legacy-history', [SalesOrderController::class, 'legacyHistory'])->whereNumber('id');
     Route::get('customers', [SalesCustomerController::class, 'index']);
     Route::post('customers', [SalesCustomerController::class, 'store']);
     Route::get('customers/{id}', [SalesCustomerController::class, 'show'])->whereNumber('id');

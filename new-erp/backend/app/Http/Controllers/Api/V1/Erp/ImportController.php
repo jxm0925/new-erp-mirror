@@ -167,6 +167,15 @@ class ImportController extends Controller
 
     private function assertBatchContext(Request $request, ImportBatch $batch): void
     {
+        if ($batch->import_type === 'Legacy Users') {
+            $this->authorizePermission($request, 'system.admin.view');
+            abort_unless($request->isMethodSafe(), 422, '员工迁移批次只供追溯，不能通过普通导入入口重新处理。');
+        }
+        // 旧ERP完整快照保留旧成本字段，普通导入权限不能读取这类未脱敏追溯。
+        if (str_starts_with($batch->import_type, 'Legacy Master: ') || $batch->import_type === 'Legacy Orders') {
+            $this->authorizePermission($request, 'inventory.amount.view');
+            abort_unless($request->isMethodSafe(), 422, '历史迁移批次只供追溯，不能通过普通导入入口重新处理。');
+        }
         $scope = app(ItemManagementScopeService::class)->requestScope($request);
         if ($scope !== null && ($batch->import_type !== 'Item' || $batch->management_scope !== $scope)) {
             throw ValidationException::withMessages(['management_scope' => '该导入批次不属于当前管理范围，请从原上传入口打开。']);

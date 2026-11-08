@@ -22,7 +22,7 @@ final class SalesCancellationController extends Controller
     {
         $this->user($request, 'finance.payment.view');
         $data = $request->validate(['keyword' => 'nullable|string|max:120', 'include_settled' => 'nullable|boolean', 'per_page' => 'nullable|integer|min:1|max:100']);
-        $q = SalesOrder::where('order_status', 'cancelled');
+        $q = SalesOrder::where('order_status', 'cancelled')->where('order_source', '!=', 'legacy');
         if ($keyword = trim($data['keyword'] ?? '')) $q->where(fn ($q) => $q->where('sales_order_no', 'like', '%'.$keyword.'%')->orWhere('customer_name', 'like', '%'.$keyword.'%'));
         if (!$request->boolean('include_settled')) {
             $sum = fn ($type, $direction) => "COALESCE((SELECT SUM(a.allocated_amount) FROM erp_finance_allocations a JOIN erp_finance_cash_documents c ON c.id=a.cash_document_id WHERE a.source_document_id=erp_sales_orders.id AND a.source_business_type='{$type}' AND a.status='active' AND c.status='confirmed' AND c.direction='{$direction}'),0)";

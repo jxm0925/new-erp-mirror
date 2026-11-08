@@ -1,0 +1,4617 @@
+{
+    "contract_version": 1,
+    "timestamps_timezone": "UTC",
+    "captured_at": "2026-11-08T11:14:51+00:00",
+    "cleanup_batch_id": 7,
+    "table_counts": {
+        "accounts": 82,
+        "departments": 10,
+        "memberships": 79,
+        "business_staff": 77,
+        "role_groups": 82,
+        "role_assignments": 78,
+        "role_sources": 78
+    },
+    "tombstones": {
+        "user_legacy_ids": [
+            17,
+            20,
+            76,
+            84,
+            92,
+            93,
+            99,
+            100,
+            102,
+            104,
+            105,
+            106,
+            108,
+            110,
+            111,
+            113,
+            114,
+            118,
+            125,
+            127,
+            128,
+            129,
+            140,
+            144,
+            151,
+            155,
+            156,
+            162
+        ],
+        "policy": "validate_only_never_delete_local_manual_data"
+    },
+    "accounts": [
+        {
+            "id": 1,
+            "legacy_id": 1,
+            "username": "admin",
+            "password_hash": "$2y$12$VAxn/9Uw85L0Yik8zVRaqe8ai.9t7KcBUChsHHdKiKu7/b1MeRuMm",
+            "nickname": "管理员",
+            "mobile": null,
+            "email": null,
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": null,
+            "department_names": null,
+            "auth_group_ids": null,
+            "auth_group_names": null,
+            "local_managed": 1,
+            "business_version": 2,
+            "created_at": "2026-11-08 03:13:49",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 29,
+            "legacy_id": 5,
+            "username": "wangtao",
+            "password_hash": "$2y$12$J6cS56SG0MwBmLIOn1v85uLdYITKmbiPuCHImrU/DHYXBYy1RtYuO",
+            "nickname": "汪涛",
+            "mobile": "17765666666",
+            "email": "123111@163.com",
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 1,
+            "department_ids": "[39]",
+            "department_names": "[\"内贸销售B端\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 1,
+            "created_at": "2023-10-11 08:07:38",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 24,
+            "legacy_id": 6,
+            "username": "cangchutest",
+            "password_hash": "$2y$12$CTf1mmx1Zz/5QNwQUgGmUeXgXeMH7TetryOvBYdNF1LMH9sOpKEhe",
+            "nickname": "仓储测试-仓储部",
+            "mobile": "17765654551",
+            "email": "111131@163.com",
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[29]",
+            "department_names": "[\"生产仓储部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 2,
+            "created_at": "2023-12-17 01:31:05",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 2,
+            "legacy_id": 10,
+            "username": "yuchunxia",
+            "password_hash": "$2y$12$FRd73wNB0jVRyZgkHqf4aORRh1rkX.5UKQh6oMYg1OkiFprK2OB3O",
+            "nickname": "俞春霞",
+            "mobile": "17657159308",
+            "email": "sse@163.com",
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 1,
+            "department_ids": "[31]",
+            "department_names": "[\"内贸销售部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 2,
+            "created_at": "2023-06-08 08:10:25",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 9,
+            "legacy_id": 13,
+            "username": "lihui",
+            "password_hash": "$2y$12$Xlp6wFR./6LD6P2S1Z55UeAJDSjmQld/U0DBrnBPyKqxNtMIWwaSG",
+            "nickname": "李慧",
+            "mobile": "17657159306",
+            "email": "lihui@jiantan.com",
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 1,
+            "department_ids": "[31]",
+            "department_names": "[\"内贸销售部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 2,
+            "created_at": "2023-12-30 01:48:23",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 30,
+            "legacy_id": 14,
+            "username": "liyanfang",
+            "password_hash": "$2y$12$eI2z.ysVmPBw/Ll6xwIN.uPV73sKP154fSiMDQkPrg7jlNQtD6CGG",
+            "nickname": "李燕芳",
+            "mobile": "17657159303",
+            "email": "123@163.com",
+            "status": "hidden",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[]",
+            "department_names": "[]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 1,
+            "created_at": "2023-07-18 08:37:29",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 31,
+            "legacy_id": 15,
+            "username": "JT_waimaoZN",
+            "password_hash": "$2y$12$/nnoKnaVWM6BH0iZryUR4.LuG0hb/SaP7eIIxQeZ1ZvVEEKw7qlGy",
+            "nickname": "Joanna",
+            "mobile": "18234122311",
+            "email": "ada1e@163.com",
+            "status": "hidden",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[35]",
+            "department_names": "[\"外贸一部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 1,
+            "created_at": "2024-01-20 03:00:56",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 32,
+            "legacy_id": 16,
+            "username": "JT_wenzheng001",
+            "password_hash": "$2y$12$2IJoqCa7jpZw2T9cYubufeex.siSyepJzKkm7THbnL1BXpZiJFm3C",
+            "nickname": "外贸-俞萍",
+            "mobile": "17865923231",
+            "email": "jxmlzxc@163.com",
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 1,
+            "department_ids": "[35]",
+            "department_names": "[\"外贸一部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 1,
+            "created_at": "2024-03-02 08:04:14",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 20,
+            "legacy_id": 18,
+            "username": "zhangxue",
+            "password_hash": "$2y$12$mhOlj5CEhKQ2oenDDB8IV.irU9ZKh.atXmYUaASQg.VoMO3.o7GbC",
+            "nickname": "张雪",
+            "mobile": "17765666411",
+            "email": "1231131@163.com",
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[26]",
+            "department_names": "[\"营销部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 2,
+            "created_at": "2024-03-12 00:29:36",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 34,
+            "legacy_id": 19,
+            "username": "JT_CCO",
+            "password_hash": "$2y$12$bGPEb4gWbT3nyLH/30dkze5zKTPbIhu/pj2qtYZ0dITMT14UTa8ku",
+            "nickname": "蔡蔡",
+            "mobile": "18214122228",
+            "email": "114111aa@qq.com",
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[25, 28]",
+            "department_names": "[\"山东简谈\", \"文政部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 1,
+            "created_at": "2024-03-21 00:51:15",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 36,
+            "legacy_id": 22,
+            "username": "JT_waimao001",
+            "password_hash": "$2y$12$7LkDpPpL5mHh/OnSS1qy1.4orBAp9uAUL5Gag.j3M.P3RTAXxO5em",
+            "nickname": "江晓霞",
+            "mobile": "",
+            "email": "923854976@qq.com",
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 1,
+            "department_ids": "[35]",
+            "department_names": "[\"外贸一部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 1,
+            "created_at": "2024-04-01 07:25:38",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 21,
+            "legacy_id": 23,
+            "username": "yuping",
+            "password_hash": "$2y$12$fAafZ0E6YR9HharoIZlvQ.20gYZ9yrMZn0JQ.TEf/JT7P3VpUJ/XG",
+            "nickname": "俞萍",
+            "mobile": "",
+            "email": "1231111@163.com",
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 1,
+            "department_ids": "[28]",
+            "department_names": "[\"文政部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 2,
+            "created_at": "2023-12-30 01:40:48",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 37,
+            "legacy_id": 26,
+            "username": "JT_waimao003",
+            "password_hash": "$2y$12$hZw05diweXTBHrurzHEmzus1b/rmkDBz47tJW.aSkOh0/YcAIhH6y",
+            "nickname": "邢昊",
+            "mobile": "17657159307",
+            "email": "1123@163.com",
+            "status": "hidden",
+            "sort": -1,
+            "is_sales": 0,
+            "department_ids": "[35]",
+            "department_names": "[\"外贸一部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 1,
+            "created_at": "2024-04-23 03:09:02",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 22,
+            "legacy_id": 54,
+            "username": "liuyaoyao",
+            "password_hash": "$2y$12$7CLPAz3dtzk0u0RupqgPLuimA59CkzpptYM/IKlsN3bI6l.bbRRSe",
+            "nickname": "刘瑶瑶",
+            "mobile": "17657159302",
+            "email": "tttes@123.com",
+            "status": "hidden",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[31]",
+            "department_names": "[\"内贸销售部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 2,
+            "created_at": "2023-12-30 01:45:05",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 23,
+            "legacy_id": 57,
+            "username": "yuanpin",
+            "password_hash": "$2y$12$OsbrfGEgc8Dr3kj9YC3NBOCUWIwDpCphp5o3BrZs9Bt0qlGnxHHg2",
+            "nickname": "袁品",
+            "mobile": "17657159309",
+            "email": "yuanpin@163.com",
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 1,
+            "department_ids": "[31]",
+            "department_names": "[\"内贸销售部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 2,
+            "created_at": "2023-12-30 01:49:33",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 25,
+            "legacy_id": 81,
+            "username": "jiangxian",
+            "password_hash": "$2y$12$FNGWbCqGo3mMs4BgBLKirOQPgq.a0DLylexybGIvXt6G7XLUsejTm",
+            "nickname": "姜纤",
+            "mobile": "17657159312",
+            "email": "jiangxian@jiantan.com",
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 1,
+            "department_ids": "[31]",
+            "department_names": "[\"内贸销售部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 2,
+            "created_at": "2023-12-30 01:47:33",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 26,
+            "legacy_id": 91,
+            "username": "3448739676",
+            "password_hash": "$2y$12$KWlSE39GqUsRHiVUedYZH.pg2QvgHwA/iuarKxn40c3iHMGYLK.be",
+            "nickname": "刘雲",
+            "mobile": "17657159310",
+            "email": "3448739676@qq.com",
+            "status": "hidden",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[31]",
+            "department_names": "[\"内贸销售部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 2,
+            "created_at": "2024-03-21 01:54:55",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 42,
+            "legacy_id": 94,
+            "username": "JT_xiaoshouCY",
+            "password_hash": "$2y$12$w.5XMk3Hkt7x3MGLLNLAxeni02rzOu0O60Se0kyEqCsRSm/F7yA9W",
+            "nickname": "陈瑶",
+            "mobile": "17657159317",
+            "email": "17753915590@163.com",
+            "status": "hidden",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[31]",
+            "department_names": "[\"内贸销售部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 1,
+            "created_at": "2024-06-03 01:04:21",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 43,
+            "legacy_id": 95,
+            "username": "JT_cangchuPT",
+            "password_hash": "$2y$12$gfRNSkrxh6/d.D6R72aufOUYNbByEjSR7tm5jVgL4D49jN2USPIxW",
+            "nickname": "逄涛",
+            "mobile": "17855554545",
+            "email": "1356968082@qq.com",
+            "status": "normal",
+            "sort": -1,
+            "is_sales": 0,
+            "department_ids": "[29]",
+            "department_names": "[\"生产仓储部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 1,
+            "created_at": "2024-06-17 07:52:14",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 27,
+            "legacy_id": 96,
+            "username": "JT_cangchuLZC",
+            "password_hash": "$2y$12$XrAwd1UVTd8JixjlWAPd6.SnFxDH5pIdgvetFZZjUfhjrwHJ0R/Km",
+            "nickname": "李智城",
+            "mobile": "17985451212",
+            "email": "2788205179@qq.com",
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[29]",
+            "department_names": "[\"生产仓储部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 2,
+            "created_at": "2024-06-17 07:53:12",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 44,
+            "legacy_id": 97,
+            "username": "JT_cangchuZJX",
+            "password_hash": "$2y$12$xH93PCbc1/nyRd8gHSjdIuh9lbpJ1w8Yt0qzqCt2mkx/F7Z.f5QWC",
+            "nickname": "赵嘉鑫",
+            "mobile": "17866665432",
+            "email": "17866665432@163.com",
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[28]",
+            "department_names": "[\"文政部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 1,
+            "created_at": "2024-07-01 03:41:32",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 28,
+            "legacy_id": 98,
+            "username": "JT_wenzhengWXL",
+            "password_hash": "$2y$12$GnbtTSKw6xTbwAdvDIaODem/PqCe/pAqAxNZMt7pjY.4Jg6N9cGue",
+            "nickname": "王晓丽",
+            "mobile": "17765666631",
+            "email": "121123@163.com",
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 1,
+            "department_ids": "[28]",
+            "department_names": "[\"文政部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 2,
+            "created_at": "2024-07-16 02:41:06",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 3,
+            "legacy_id": 101,
+            "username": "JT_cangchuFXG",
+            "password_hash": "$2y$12$1RoNXkCdarNlb6VouzLNIuVX.6uflOvLE/36K4tKxfluuDdIxH2CK",
+            "nickname": "房宪光",
+            "mobile": "",
+            "email": "12312111@163.com",
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[29]",
+            "department_names": "[\"生产仓储部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 2,
+            "created_at": "2024-07-22 07:41:19",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 48,
+            "legacy_id": 103,
+            "username": "JT_cangchuWDM",
+            "password_hash": "$2y$12$YkgJJDmv4Mdw.YvLdOvaeO7jAEkK93QKXtFX13FY7M0fcnF7dCsaC",
+            "nickname": "王德民",
+            "mobile": "",
+            "email": "ss2e@163.com",
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[29]",
+            "department_names": "[\"生产仓储部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 1,
+            "created_at": "2024-07-22 07:42:39",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 52,
+            "legacy_id": 107,
+            "username": "JT_xiaoshouSXL",
+            "password_hash": "$2y$12$RIh3vBFTFk.w2uIBjZjNyeyXaJV3I8QYdKiBilnljp7ZFaKj4ocy.",
+            "nickname": "苏晓龙",
+            "mobile": "",
+            "email": "s21se@163.com",
+            "status": "hidden",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[31]",
+            "department_names": "[\"内贸销售部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 1,
+            "created_at": "2024-07-22 07:44:44",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 4,
+            "legacy_id": 109,
+            "username": "JT_cangchuZRC",
+            "password_hash": "$2y$12$IUl79YUCqf0UqQl.wvKNPu5wzqBrJGynNQWN0Ke.CvMlIdESDAUHe",
+            "nickname": "张荣臣",
+            "mobile": "",
+            "email": "ss31e@163.com",
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[29]",
+            "department_names": "[\"生产仓储部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 2,
+            "created_at": "2024-07-22 07:45:39",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 56,
+            "legacy_id": 112,
+            "username": "JT_zhanglianyong",
+            "password_hash": "$2y$12$Gzkc68.sDfqLCk0FGr7gCOhCmp7tDXdccr56dXyYLjGfiHbme3xgG",
+            "nickname": "张连勇",
+            "mobile": "16678791508",
+            "email": "11z2111@163.com",
+            "status": "hidden",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[]",
+            "department_names": "[]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 1,
+            "created_at": "2024-07-26 05:59:52",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 59,
+            "legacy_id": 115,
+            "username": "JT_xiaoshouWJ",
+            "password_hash": "$2y$12$QU2evaMTCRRKsoUE/HXqYeKVvJK7ysEvyhm7QimVkOGr1hDN.lLty",
+            "nickname": "王敬",
+            "mobile": "17657159301",
+            "email": "ss231e@163.com",
+            "status": "hidden",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[]",
+            "department_names": "[]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 1,
+            "created_at": "2024-10-06 01:53:36",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 5,
+            "legacy_id": 116,
+            "username": "JT_yunying002",
+            "password_hash": "$2y$12$b2KtzptZ2X0SIuUZTsw56epe1P3lFzQQ8W.UPilLPj8FgK.W8B9Yi",
+            "nickname": "宋文娇",
+            "mobile": "17765666133",
+            "email": "t3te2s@123.com",
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[26]",
+            "department_names": "[\"营销部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 2,
+            "created_at": "2024-11-10 02:11:18",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 60,
+            "legacy_id": 117,
+            "username": "JT_cangchuZJW",
+            "password_hash": "$2y$12$irzg4xwwmle.gc5Z0oWFheusIfBZMQsdwIjf8ApfvQXcKCWMe7Zyu",
+            "nickname": "朱俊伟",
+            "mobile": "17865132514",
+            "email": "00123@163.com",
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[29]",
+            "department_names": "[\"生产仓储部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 1,
+            "created_at": "2024-11-17 01:26:44",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 62,
+            "legacy_id": 119,
+            "username": "JT_wenzhengDH",
+            "password_hash": "$2y$12$mIKnr8A0Uu1T81zsmZ1NxOFCCAAzxjA39aafpVhLhgOXYp001YPSK",
+            "nickname": "董函",
+            "mobile": "17765667662",
+            "email": "t113tes@123.com",
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[28]",
+            "department_names": "[\"文政部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 1,
+            "created_at": "2024-11-25 03:05:35",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 63,
+            "legacy_id": 120,
+            "username": "JT_cangchuZQ",
+            "password_hash": "$2y$12$z8hXwhPTLKr5LR3vAxCakORK9r7dZ/H2.xAmIFG569kjd0Gj5CkhS",
+            "nickname": "周庆",
+            "mobile": "18396736646",
+            "email": "18396736646@163.com",
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[29]",
+            "department_names": "[\"生产仓储部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 1,
+            "created_at": "2024-12-05 01:24:26",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 6,
+            "legacy_id": 121,
+            "username": "JT_cangchuSHK",
+            "password_hash": "$2y$12$KIAAOZbRmj6edPm4acMw4.z4vJlIWBAkakv1WHfEgcvL3Qfw.k/km",
+            "nickname": "石昊凯",
+            "mobile": "17765641262",
+            "email": "ss1411e@163.com",
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[29]",
+            "department_names": "[\"生产仓储部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 2,
+            "created_at": "2024-12-06 06:09:16",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 64,
+            "legacy_id": 122,
+            "username": "JT_jishu",
+            "password_hash": "$2y$12$/J7MqQxu1LxnRW1nBMGHiux7e5St33nC/WMEIRDmOXIyDKPEy4CJy",
+            "nickname": "姜晓孟",
+            "mobile": "18601021538",
+            "email": "jxmlzxc@gmail.com",
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[28]",
+            "department_names": "[\"文政部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 1,
+            "created_at": "2024-12-25 02:31:30",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 7,
+            "legacy_id": 123,
+            "username": "JT_cangchuXCL",
+            "password_hash": "$2y$12$BOUt3iFos0Pnh8GtimSPYORTaQ7utaVWbEH0D5fkESMjJXWBwkTuu",
+            "nickname": "徐晨露",
+            "mobile": "17865923134",
+            "email": "s1s1e@163.com",
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[29]",
+            "department_names": "[\"生产仓储部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 2,
+            "created_at": "2025-01-07 08:25:10",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 8,
+            "legacy_id": 124,
+            "username": "JT_cangchuXRP",
+            "password_hash": "$2y$12$POJvWFkzyMEVvpiGA5ZTDe9XbMJFPc10OBGBKaFx8xjGd3WnCjHGy",
+            "nickname": "邢瑞鹏",
+            "mobile": "13020704478",
+            "email": "t3t21es@123.com",
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[29]",
+            "department_names": "[\"生产仓储部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 2,
+            "created_at": "2025-01-12 01:46:26",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 66,
+            "legacy_id": 126,
+            "username": "JT_yingxiaoYXY",
+            "password_hash": "$2y$12$fxcVpBvNuYOY8k13sq/Poe5Z7CsigUze7DNMzMWVKbbhf3IS7mhJ6",
+            "nickname": "杨小煜-外贸部",
+            "mobile": "17765111111",
+            "email": "ss131e@163.com",
+            "status": "hidden",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[35]",
+            "department_names": "[\"外贸一部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 1,
+            "created_at": "2025-01-19 06:18:21",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 70,
+            "legacy_id": 130,
+            "username": "JT_xiaoshouZYF",
+            "password_hash": "$2y$12$s1YXOhpBb24g3VdNm1Zkd.Py2NS4k89eIH5WO8dV2.ozx0O/uI5KC",
+            "nickname": "邹运福",
+            "mobile": "18234412328",
+            "email": "ss11411e@163.com",
+            "status": "hidden",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[31]",
+            "department_names": "[\"内贸销售部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 1,
+            "created_at": "2025-01-19 06:21:57",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 71,
+            "legacy_id": 131,
+            "username": "JT_yingxiaoYYB",
+            "password_hash": "$2y$12$TCxEsUw4XBrfkK9D5S6dBemsPPE/umK4XoIARYcnLxXF4CSM9eXgy",
+            "nickname": "杨玉冰",
+            "mobile": "18914141330",
+            "email": "t3t141es@123.com",
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[26]",
+            "department_names": "[\"营销部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 1,
+            "created_at": "2025-01-19 06:22:26",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 72,
+            "legacy_id": 132,
+            "username": "JT_yingxiaoHDD",
+            "password_hash": "$2y$12$ETsgrhDKsDkN2MduocUbUuScP2bXxFt26t.z7PgzrOP7n7N1zvNqe",
+            "nickname": "韩丹丹",
+            "mobile": "17765141312",
+            "email": "t1313tes@123.com",
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[26]",
+            "department_names": "[\"营销部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 1,
+            "created_at": "2025-01-19 06:22:57",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 10,
+            "legacy_id": 133,
+            "username": "JT_cangchuWY",
+            "password_hash": "$2y$12$miYALMbxNeWENiqdFsdsr.Wwt.GIYJoGvYs8XlIoQLxeXpdxU/x5G",
+            "nickname": "王毅",
+            "mobile": "17865923297",
+            "email": "jxmlzaaxc@163.com",
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[29]",
+            "department_names": "[\"生产仓储部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 2,
+            "created_at": "2025-02-28 05:29:49",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 73,
+            "legacy_id": 134,
+            "username": "JT_caiwu",
+            "password_hash": "$2y$12$GhTAuoRMgZ6sNgDKiQGf8e.m1Fag3Sv4J3fPI0EIpu0uAbbe/3sp.",
+            "nickname": "张莲莲",
+            "mobile": "17864123231",
+            "email": "jxml1zxc@163.com",
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[28]",
+            "department_names": "[\"文政部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 1,
+            "created_at": "2025-03-03 09:02:51",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 11,
+            "legacy_id": 135,
+            "username": "JT_xiaoshouDLL",
+            "password_hash": "$2y$12$NmhaPbjRo1WCQxENuFOov.PlWjty0M7952j5bOKbR7Am9aU4EwZey",
+            "nickname": "丁丽丽",
+            "mobile": "17657159305",
+            "email": "Dinglili@sdjiantan.com",
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 1,
+            "department_ids": "[31]",
+            "department_names": "[\"内贸销售部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 2,
+            "created_at": "2025-03-26 08:17:55",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 74,
+            "legacy_id": 136,
+            "username": "JT_xiaoshouZYH",
+            "password_hash": "$2y$12$SOjbaWWL28UlDDnoM/HBbuStdG9G2SpyMuHyWLJCFudzg9V.qisrK",
+            "nickname": "张玉涵",
+            "mobile": "13482211412",
+            "email": "Zhangyuhan@sdjiantan.com",
+            "status": "hidden",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[31]",
+            "department_names": "[\"内贸销售部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 1,
+            "created_at": "2025-03-30 02:10:37",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 12,
+            "legacy_id": 137,
+            "username": "JT_xiaoshouZD",
+            "password_hash": "$2y$12$wO9eZZMkxQ8dtcONXWiB8uwlw.rbXCNFCUOum3RStflYSWx384fxq",
+            "nickname": "张丹",
+            "mobile": "18512322228",
+            "email": "Zhangdan@sdjiantan.com",
+            "status": "hidden",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[31]",
+            "department_names": "[\"内贸销售部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 2,
+            "created_at": "2025-03-30 02:11:16",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 13,
+            "legacy_id": 138,
+            "username": "JT_xiaoshouZCH",
+            "password_hash": "$2y$12$vgEUzGfZ0r0Ri6aDpqRSiuUMgN2upaBqJbt.YKoQ./V.jAcybsM.2",
+            "nickname": "张春慧",
+            "mobile": "17657159318",
+            "email": "zhangchunhui@sdjiantan.com",
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 1,
+            "department_ids": "[31]",
+            "department_names": "[\"内贸销售部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 2,
+            "created_at": "2025-04-25 06:42:05",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 75,
+            "legacy_id": 139,
+            "username": "sdjiantan",
+            "password_hash": "$2y$12$vRV7vV9juibHhzFxkXANYOboFQGGmUN3q/JGy5ynKKXeFZ6t.1iIW",
+            "nickname": "山东简谈",
+            "mobile": "17865923111",
+            "email": "jxmlzxc1@163.com",
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[25]",
+            "department_names": "[\"山东简谈\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 1,
+            "created_at": "2025-05-21 08:49:08",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 77,
+            "legacy_id": 141,
+            "username": "JT_waimaoWH",
+            "password_hash": "$2y$12$nS32xA79BfBiRx0asAiX5OkQ80uwc02ucCg4Uqt9PAFgF8fwsYp4C",
+            "nickname": "王慧",
+            "mobile": "17865914111",
+            "email": "jxmlz3111xc@163.com",
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 1,
+            "department_ids": "[35]",
+            "department_names": "[\"外贸一部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 1,
+            "created_at": "2025-09-09 00:53:08",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 78,
+            "legacy_id": 142,
+            "username": "JT_waimaoXZC",
+            "password_hash": "$2y$12$r3bB56VH3YvWIvWPOMnXj.OmCGFmpbYO9oaUXBT7AahWLR4nbhp3a",
+            "nickname": "薛志成",
+            "mobile": "17865941113",
+            "email": "jxmlz441xc@163.com",
+            "status": "hidden",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[35]",
+            "department_names": "[\"外贸一部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 1,
+            "created_at": "2025-09-09 06:18:55",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 79,
+            "legacy_id": 143,
+            "username": "JT_yingxiaoDXX",
+            "password_hash": "$2y$12$qAaYwFy79ZB6/VOE16InxOLcATAJJkfevqi1pnYgYOzJOma8fLIBK",
+            "nickname": "丁晓璇",
+            "mobile": "17865131111",
+            "email": "jx2656mlzxc@163.com",
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[26]",
+            "department_names": "[\"营销部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 1,
+            "created_at": "2025-10-21 02:37:02",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 81,
+            "legacy_id": 145,
+            "username": "JT_waimaoGQ",
+            "password_hash": "$2y$12$I6fYer95jp37tkBhfAGp/OmzSqiIR4rD/f2PIpEbO/.d1ieO/JIf6",
+            "nickname": "郭庆",
+            "mobile": "17865923333",
+            "email": "da@admin.com",
+            "status": "hidden",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[36]",
+            "department_names": "[\"外贸二部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 1,
+            "created_at": "2026-01-16 05:30:13",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 82,
+            "legacy_id": 146,
+            "username": "JT_waimaoGCC",
+            "password_hash": "$2y$12$icur8WKylNyOJO1M5wWX7OrN6MGAMfteLB5i/99qk8Tf.2fccIEbW",
+            "nickname": "高翠翠",
+            "mobile": "17765663115",
+            "email": "jx3lzxc@163.com",
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 1,
+            "department_ids": "[36]",
+            "department_names": "[\"外贸二部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 1,
+            "created_at": "2026-01-16 05:30:42",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 83,
+            "legacy_id": 147,
+            "username": "JT_WGF",
+            "password_hash": "$2y$12$MOw2Wvmsppz0HzdwDsvLUe4dsVkgqpx0KkfMG0uXtP2YMJd23IH/2",
+            "nickname": "王国锋",
+            "mobile": "13954929930",
+            "email": "wgf@sdjiantan.com",
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[25]",
+            "department_names": "[\"山东简谈\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 1,
+            "created_at": "2026-01-19 14:08:59",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 84,
+            "legacy_id": 148,
+            "username": "JT_waimaoQSF",
+            "password_hash": "$2y$12$hjtJH9a2W.mIZi6eaSKS2On6QNFyrY1SDWaFqwhf4OMV4l63FclvG",
+            "nickname": "秦泗方",
+            "mobile": "17865941512",
+            "email": "jxmlzxc@16341.com",
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[37]",
+            "department_names": "[\"外贸运营\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 1,
+            "created_at": "2026-01-23 01:57:53",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 85,
+            "legacy_id": 149,
+            "username": "JT_xiaoshouLX",
+            "password_hash": "$2y$12$x51RVJwjtGGBJcFUyHo/jevWCFN.84hgaEgD6bQZuyhkrbFIm93aK",
+            "nickname": "刘璇",
+            "mobile": "17865132412",
+            "email": "jxmlz4113xc@163.com",
+            "status": "hidden",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[31]",
+            "department_names": "[\"内贸销售部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 1,
+            "created_at": "2026-01-28 02:45:50",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 86,
+            "legacy_id": 150,
+            "username": "JT_cangchuCWJ",
+            "password_hash": "$2y$12$DxMvSlHqVK6Jbj0kX30zFOWzTOtUxUMVILRefajS4yvXvmq9wFmlC",
+            "nickname": "丛维巨",
+            "mobile": "17765743662",
+            "email": "cwj@sdjiantran.com",
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[29]",
+            "department_names": "[\"生产仓储部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 1,
+            "created_at": "2026-02-28 02:46:41",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 88,
+            "legacy_id": 152,
+            "username": "JT_yingxiaoLZ",
+            "password_hash": "$2y$12$/Ph4HMPthHgeGURPd4SNueen0KonxnBlX9ft6EIlewvRq51lO9PPS",
+            "nickname": "刘臻",
+            "mobile": "17412323231",
+            "email": "lz@sdjiantan.com",
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[26]",
+            "department_names": "[\"营销部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 1,
+            "created_at": "2026-03-02 01:37:34",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 89,
+            "legacy_id": 153,
+            "username": "JT_wenzhengCYN",
+            "password_hash": "$2y$12$KBB5kfCYYbVksuv8YlcZA.TRw8B1.ojzRR4YuaX3Y8HNSXHD0GNAW",
+            "nickname": "程亚男-文政部",
+            "mobile": "17513113231",
+            "email": "cyn@sdjiantan.com",
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[28]",
+            "department_names": "[\"文政部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 1,
+            "created_at": "2026-03-02 01:38:29",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 90,
+            "legacy_id": 154,
+            "username": "JT_waimaoDY",
+            "password_hash": "$2y$12$D5Cv0n9fFom5rKAoEZgs8ODJmrIu51TF4MGJGXtI6W71H5fOkThju",
+            "nickname": "董月",
+            "mobile": "18724796223",
+            "email": "jxmlz131xc@163.com",
+            "status": "hidden",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[36]",
+            "department_names": "[\"外贸二部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 1,
+            "created_at": "2026-03-24 07:23:38",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 93,
+            "legacy_id": 157,
+            "username": "JT_xiaoshouDX",
+            "password_hash": "$2y$12$y5giAfCI37b4aVifTXO4peIdZP91b5yKdxEQA5qrmUpGTXNVK5V2y",
+            "nickname": "丁祥",
+            "mobile": "17765513115",
+            "email": "jxmlzx51c@gmail.com",
+            "status": "hidden",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[39]",
+            "department_names": "[\"内贸销售B端\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 1,
+            "created_at": "2026-04-11 06:33:55",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 94,
+            "legacy_id": 158,
+            "username": "JT_xiaoshouYJY",
+            "password_hash": "$2y$12$t3NG8w6ggGvE8Tsw1WA5B.M4tkx5YheIVzTgrDi1vLjy5emO2eGve",
+            "nickname": "尹俊义",
+            "mobile": "17412332514",
+            "email": "jx411mlzxc@gmail.com",
+            "status": "hidden",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[39]",
+            "department_names": "[\"内贸销售B端\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 1,
+            "created_at": "2026-04-11 06:35:44",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 95,
+            "legacy_id": 159,
+            "username": "JT_xiaoshouSHY",
+            "password_hash": "$2y$12$YHUwQzdblRpSpr/GPT3kT.T4cwHKgYPVF6fABXEaKljhdfrz1jzbm",
+            "nickname": "史航宇",
+            "mobile": "17865232514",
+            "email": "jxm113lzxc@gmail.com",
+            "status": "hidden",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[39]",
+            "department_names": "[\"内贸销售B端\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 1,
+            "created_at": "2026-04-11 07:40:22",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 96,
+            "legacy_id": 160,
+            "username": "JT_wenzhengLXY",
+            "password_hash": "$2y$12$vfw.hRJJVF9T4WXXtfydiuVIIs.denIgbcihM7HWNNneQ82O8QzYi",
+            "nickname": "廉晓雨",
+            "mobile": "17863147124",
+            "email": "jxm1311lzxc@163.com",
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[28]",
+            "department_names": "[\"文政部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 2,
+            "created_at": "2026-04-28 01:59:38",
+            "updated_at": "2026-11-08 10:55:39"
+        },
+        {
+            "id": 14,
+            "legacy_id": 161,
+            "username": "JT_cangchuWCJ",
+            "password_hash": "$2y$12$AWVkSTiOgnFVgYJWBQKoT.fQosBb9reOmEU/DdzyoV2cowtXIyq.6",
+            "nickname": "王传杰",
+            "mobile": "17765413115",
+            "email": "jxml411zxc@gmail.com",
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[29]",
+            "department_names": "[\"生产仓储部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 2,
+            "created_at": "2026-05-04 03:24:05",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 98,
+            "legacy_id": 163,
+            "username": "JT_wenzhengYWJ",
+            "password_hash": "$2y$12$WtPp1BAe07xAhjuFTdxWbOHX.bLjpld7z310kZoW6.uq8G.SK19K2",
+            "nickname": "殷文娟",
+            "mobile": "17865912471",
+            "email": "jxmlzx2311c@163.com",
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[28]",
+            "department_names": "[\"文政部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 1,
+            "created_at": "2026-05-13 00:29:59",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 99,
+            "legacy_id": 164,
+            "username": "yihan",
+            "password_hash": "$2y$12$5fw2OpzzzdkgUYqQAoZt/.fBve3EtbOAREd4C1rqVKXXj6VR.aKNW",
+            "nickname": "刘一涵",
+            "mobile": "17865123231",
+            "email": "j1111xmlzxc@163.com",
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[31]",
+            "department_names": "[\"内贸销售部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 1,
+            "created_at": "2026-05-19 02:05:11",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 100,
+            "legacy_id": 165,
+            "username": "JT_wenzhengZXQ",
+            "password_hash": "$2y$12$vqUGxkffHH4BkJuUzVT5z.2wE97skMnht4I4v4NE/zlsTlR3cN5I2",
+            "nickname": "张晓琪",
+            "mobile": "17865913131",
+            "email": "jxmlz1231xc@163.com",
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[28]",
+            "department_names": "[\"文政部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 1,
+            "created_at": "2026-05-30 00:52:16",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 15,
+            "legacy_id": 166,
+            "username": "JT_xiaoshouZZ",
+            "password_hash": "$2y$12$ZJa6PPsps66oq5K5yo6dV.I5Qe82hwy//kE9yuBWng8TYZ8bgGZkm",
+            "nickname": "张振",
+            "mobile": "17765312162",
+            "email": "jxmlz311xc@gmail.com",
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 1,
+            "department_ids": "[39]",
+            "department_names": "[\"内贸销售B端\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 2,
+            "created_at": "2026-06-25 07:34:14",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 101,
+            "legacy_id": 167,
+            "username": "JT_waimaoYHR",
+            "password_hash": "$2y$12$DwxvTG.k3gtFcLkxR383o.cyaA6HNCE15JLogpkOMgiFlKdnAefO6",
+            "nickname": "闫会然-外贸一部",
+            "mobile": "17865132167",
+            "email": "jxklzxc@gmail.com",
+            "status": "hidden",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[35]",
+            "department_names": "[\"外贸一部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 1,
+            "created_at": "2026-08-07 07:33:38",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 102,
+            "legacy_id": 168,
+            "username": "JT_waimaoZP",
+            "password_hash": "$2y$12$SZpBskX2dKhy1SY7v3UNV.2eMvFP8Wnwdaj/.J7gtwTw91vGQVAKm",
+            "nickname": "祝品-外贸一部",
+            "mobile": "17866665437",
+            "email": "jxmlzxu@163.com",
+            "status": "hidden",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[35]",
+            "department_names": "[\"外贸一部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 1,
+            "created_at": "2026-08-07 08:43:48",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 16,
+            "legacy_id": 169,
+            "username": "JT_waimaoMWY",
+            "password_hash": "$2y$12$SHrEEzECaQpBg3AJ8PCgDu40jhBwa4KA89Cmh6JX6VBgoWGOO53HO",
+            "nickname": "梅琬莹",
+            "mobile": "17865998971",
+            "email": "jxm121lzxc@163.com",
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 1,
+            "department_ids": "[35]",
+            "department_names": "[\"外贸一部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 2,
+            "created_at": "2026-08-25 07:45:13",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 17,
+            "legacy_id": 170,
+            "username": "JT_yingxiaoYL",
+            "password_hash": "$2y$12$qOt.g9koP6bKJ/jkODTuve.RtuCkhnXGXFymTdjd/ABlXnW5BZDY.",
+            "nickname": "杨恋",
+            "mobile": "17865917541",
+            "email": "jxml1010zxc@gmail.com",
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 1,
+            "department_ids": "[39]",
+            "department_names": "[\"内贸销售B端\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 2,
+            "created_at": "2026-09-05 00:46:19",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 103,
+            "legacy_id": 171,
+            "username": "JT_waimaoHXP",
+            "password_hash": "$2y$12$hi0.tov4xBRiGhu208.9oe8KyEK/FnbkUSSR.3GISG3PwwqZRLWBu",
+            "nickname": "黄欣萍",
+            "mobile": "17865914113",
+            "email": "jxml4132zxc@gmail.com",
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[35]",
+            "department_names": "[\"外贸一部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 1,
+            "created_at": "2026-09-11 09:11:21",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 104,
+            "legacy_id": 172,
+            "username": "JT_cangchuABL",
+            "password_hash": "$2y$12$jV3BxHhi30EHZH1sOxQVm.RGvaXUO/e6VAkNhro7TYuVM8NB8EKV.",
+            "nickname": "安佰龙",
+            "mobile": "17865941323",
+            "email": "jxmlzxc123444@gmail.com",
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[29]",
+            "department_names": "[\"生产仓储部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 1,
+            "created_at": "2026-09-11 09:12:51",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 18,
+            "legacy_id": 173,
+            "username": "JT_cangchuSC",
+            "password_hash": "$2y$12$dw3bxN9y2H42M.eJk71CWOFP18bcXPwao6DCbzptR574zuostvmPa",
+            "nickname": "孙超",
+            "mobile": "17654132117",
+            "email": "jxml411231zxc@gmail.com",
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[29]",
+            "department_names": "[\"生产仓储部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 2,
+            "created_at": "2026-09-11 09:13:22",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 105,
+            "legacy_id": 174,
+            "username": "JT_waimaoWHY",
+            "password_hash": "$2y$12$AXT4OIzzhkBU5YqI4nwzv.OZvDnDjGb4yrkFc8VY2fvQ4hzMX3U1u",
+            "nickname": "吴海源",
+            "mobile": "17865141113",
+            "email": "jx4123mlzxc@gmail.com",
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 1,
+            "department_ids": "[35]",
+            "department_names": "[\"外贸一部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 1,
+            "created_at": "2026-09-11 09:13:55",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 106,
+            "legacy_id": 175,
+            "username": "JT_xiaoshouZNW",
+            "password_hash": "$2y$12$9f3LjL4FC0cnfTxhd49d7.PeygEUwFtI7BrpGkysbNWUh0BLO0Vq6",
+            "nickname": "张念伟",
+            "mobile": "17641329317",
+            "email": "jxmlz41133xc@gmail.com",
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[31]",
+            "department_names": "[\"内贸销售部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 1,
+            "created_at": "2026-09-11 09:14:57",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 107,
+            "legacy_id": 176,
+            "username": "JT_xiaoshouWKX",
+            "password_hash": "$2y$12$sLLutH0EOL/X7SVcSLLahufHd1lsJVPdj8vJZN4AUXhN2YIwjN0wG",
+            "nickname": "王坤鑫",
+            "mobile": "17657159254",
+            "email": "jxmlzx12311@gmail.com",
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 1,
+            "department_ids": "[39]",
+            "department_names": "[\"内贸销售B端\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 1,
+            "created_at": "2026-10-07 00:46:41",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 108,
+            "legacy_id": 177,
+            "username": "JT_yunyingZNW",
+            "password_hash": "$2y$12$fdJBFzB1yOZpOU2.XIkGxu8Zu8ag0mBaXdU6FmJRMRqstkbEThC.i",
+            "nickname": "张念伟",
+            "mobile": "17657151347",
+            "email": "jxm1211lzxc@gmail.com",
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[31]",
+            "department_names": "[\"内贸销售部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 1,
+            "created_at": "2026-10-14 00:56:52",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 19,
+            "legacy_id": 178,
+            "username": "JT_xiaoshouWTT",
+            "password_hash": "$2y$12$BoufeQeeJtqD0s/fFYiOD.3Zd6LYDuNNGkKfv0/CiRPDtYjPzyOxK",
+            "nickname": "吴婷婷",
+            "mobile": "17812452471",
+            "email": "jxmqelzxc@gmail.com",
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 1,
+            "department_ids": "[39]",
+            "department_names": "[\"内贸销售B端\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 2,
+            "created_at": "2026-10-14 00:58:43",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 109,
+            "legacy_id": 179,
+            "username": "JT_waimaoHFK",
+            "password_hash": "$2y$12$01cuAqlB3nuJJ6BXjs4nVe0afMcQ/9m6VsB3forqcoIpGfDioKZwK",
+            "nickname": "侯方科",
+            "mobile": "17145123231",
+            "email": "jxmlz41xc@163.com",
+            "status": "hidden",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[35]",
+            "department_names": "[\"外贸一部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 1,
+            "created_at": "2026-10-15 05:16:00",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 110,
+            "legacy_id": 180,
+            "username": "JT_xiaoshouWCC",
+            "password_hash": "$2y$12$.DRMdrJFSLhwdp38aN61pObTCmP1prfERghLkAnXlF8UTmy5Vn6m.",
+            "nickname": "武陈陈",
+            "mobile": "",
+            "email": "jxmlzx123331c@gmail.com",
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 1,
+            "department_ids": "[31]",
+            "department_names": "[\"内贸销售部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 1,
+            "created_at": "2026-11-07 00:44:57",
+            "updated_at": "2026-11-08 09:58:24"
+        }
+    ],
+    "departments": [
+        {
+            "id": 1,
+            "legacy_id": 25,
+            "parent_legacy_id": 0,
+            "name": "山东简谈",
+            "status": "normal",
+            "sort": 25,
+            "local_managed": 1,
+            "business_version": 1,
+            "created_at": "2023-06-06 06:25:24",
+            "updated_at": "2023-06-06 06:25:24"
+        },
+        {
+            "id": 2,
+            "legacy_id": 26,
+            "parent_legacy_id": 25,
+            "name": "营销部",
+            "status": "normal",
+            "sort": 26,
+            "local_managed": 1,
+            "business_version": 1,
+            "created_at": "2023-06-06 06:25:42",
+            "updated_at": "2023-06-06 06:25:42"
+        },
+        {
+            "id": 3,
+            "legacy_id": 28,
+            "parent_legacy_id": 25,
+            "name": "文政部",
+            "status": "normal",
+            "sort": 28,
+            "local_managed": 1,
+            "business_version": 1,
+            "created_at": "2023-06-06 06:25:56",
+            "updated_at": "2023-06-06 06:25:56"
+        },
+        {
+            "id": 4,
+            "legacy_id": 29,
+            "parent_legacy_id": 25,
+            "name": "生产仓储部",
+            "status": "normal",
+            "sort": 29,
+            "local_managed": 1,
+            "business_version": 1,
+            "created_at": "2023-06-06 06:26:26",
+            "updated_at": "2026-02-28 02:39:27"
+        },
+        {
+            "id": 5,
+            "legacy_id": 31,
+            "parent_legacy_id": 25,
+            "name": "内贸销售部",
+            "status": "normal",
+            "sort": 31,
+            "local_managed": 1,
+            "business_version": 1,
+            "created_at": "2024-11-30 08:19:23",
+            "updated_at": "2026-02-28 02:39:14"
+        },
+        {
+            "id": 6,
+            "legacy_id": 35,
+            "parent_legacy_id": 25,
+            "name": "外贸一部",
+            "status": "normal",
+            "sort": 35,
+            "local_managed": 1,
+            "business_version": 1,
+            "created_at": "2025-09-09 00:53:26",
+            "updated_at": "2026-02-28 02:38:54"
+        },
+        {
+            "id": 7,
+            "legacy_id": 36,
+            "parent_legacy_id": 25,
+            "name": "外贸二部",
+            "status": "normal",
+            "sort": 36,
+            "local_managed": 1,
+            "business_version": 1,
+            "created_at": "2026-02-28 02:37:56",
+            "updated_at": "2026-02-28 02:37:56"
+        },
+        {
+            "id": 8,
+            "legacy_id": 37,
+            "parent_legacy_id": 25,
+            "name": "外贸运营",
+            "status": "normal",
+            "sort": 37,
+            "local_managed": 1,
+            "business_version": 1,
+            "created_at": "2026-02-28 02:44:51",
+            "updated_at": "2026-02-28 02:44:51"
+        },
+        {
+            "id": 9,
+            "legacy_id": 38,
+            "parent_legacy_id": 25,
+            "name": "外贸三部",
+            "status": "normal",
+            "sort": 38,
+            "local_managed": 1,
+            "business_version": 1,
+            "created_at": "2026-03-24 07:25:59",
+            "updated_at": "2026-03-24 07:25:59"
+        },
+        {
+            "id": 10,
+            "legacy_id": 39,
+            "parent_legacy_id": 25,
+            "name": "内贸销售B端",
+            "status": "normal",
+            "sort": 39,
+            "local_managed": 1,
+            "business_version": 1,
+            "created_at": "2026-08-10 06:55:14",
+            "updated_at": "2026-08-10 06:55:14"
+        }
+    ],
+    "memberships": [
+        {
+            "id": 2,
+            "department_legacy_id": 26,
+            "user_legacy_id": 18,
+            "is_principal": 0,
+            "is_owner": 0,
+            "created_at": "2024-03-12 00:29:37",
+            "updated_at": "2024-03-12 00:29:37"
+        },
+        {
+            "id": 4,
+            "department_legacy_id": 28,
+            "user_legacy_id": 98,
+            "is_principal": 0,
+            "is_owner": 0,
+            "created_at": "2024-07-21 02:14:52",
+            "updated_at": "2024-07-21 02:14:52"
+        },
+        {
+            "id": 7,
+            "department_legacy_id": 29,
+            "user_legacy_id": 101,
+            "is_principal": 0,
+            "is_owner": 0,
+            "created_at": "2024-07-22 07:41:19",
+            "updated_at": "2024-07-22 07:41:19"
+        },
+        {
+            "id": 9,
+            "department_legacy_id": 29,
+            "user_legacy_id": 103,
+            "is_principal": 0,
+            "is_owner": 0,
+            "created_at": "2024-07-22 07:42:39",
+            "updated_at": "2024-07-22 07:42:39"
+        },
+        {
+            "id": 14,
+            "department_legacy_id": 29,
+            "user_legacy_id": 109,
+            "is_principal": 0,
+            "is_owner": 0,
+            "created_at": "2024-07-22 07:45:39",
+            "updated_at": "2024-07-22 07:45:39"
+        },
+        {
+            "id": 18,
+            "department_legacy_id": 29,
+            "user_legacy_id": 95,
+            "is_principal": 0,
+            "is_owner": 0,
+            "created_at": "2024-09-05 01:13:10",
+            "updated_at": "2024-09-05 01:13:10"
+        },
+        {
+            "id": 19,
+            "department_legacy_id": 29,
+            "user_legacy_id": 96,
+            "is_principal": 0,
+            "is_owner": 0,
+            "created_at": "2024-09-05 01:13:52",
+            "updated_at": "2024-09-05 01:13:52"
+        },
+        {
+            "id": 21,
+            "department_legacy_id": 28,
+            "user_legacy_id": 23,
+            "is_principal": 0,
+            "is_owner": 0,
+            "created_at": "2024-10-10 07:17:53",
+            "updated_at": "2024-10-10 07:17:53"
+        },
+        {
+            "id": 22,
+            "department_legacy_id": 26,
+            "user_legacy_id": 116,
+            "is_principal": 0,
+            "is_owner": 0,
+            "created_at": "2024-11-10 02:11:18",
+            "updated_at": "2024-11-10 02:11:18"
+        },
+        {
+            "id": 23,
+            "department_legacy_id": 29,
+            "user_legacy_id": 117,
+            "is_principal": 0,
+            "is_owner": 0,
+            "created_at": "2024-11-17 01:26:44",
+            "updated_at": "2024-11-17 01:26:44"
+        },
+        {
+            "id": 24,
+            "department_legacy_id": 28,
+            "user_legacy_id": 119,
+            "is_principal": 0,
+            "is_owner": 0,
+            "created_at": "2024-11-25 03:05:35",
+            "updated_at": "2024-11-25 03:05:35"
+        },
+        {
+            "id": 25,
+            "department_legacy_id": 29,
+            "user_legacy_id": 120,
+            "is_principal": 0,
+            "is_owner": 0,
+            "created_at": "2024-12-05 01:24:26",
+            "updated_at": "2024-12-05 01:24:26"
+        },
+        {
+            "id": 26,
+            "department_legacy_id": 29,
+            "user_legacy_id": 121,
+            "is_principal": 0,
+            "is_owner": 0,
+            "created_at": "2024-12-06 06:09:16",
+            "updated_at": "2024-12-06 06:09:16"
+        },
+        {
+            "id": 27,
+            "department_legacy_id": 25,
+            "user_legacy_id": 19,
+            "is_principal": 0,
+            "is_owner": 0,
+            "created_at": "2024-12-06 06:41:53",
+            "updated_at": "2024-12-06 06:41:53"
+        },
+        {
+            "id": 28,
+            "department_legacy_id": 29,
+            "user_legacy_id": 123,
+            "is_principal": 0,
+            "is_owner": 0,
+            "created_at": "2025-01-07 08:25:10",
+            "updated_at": "2025-01-07 08:25:10"
+        },
+        {
+            "id": 29,
+            "department_legacy_id": 29,
+            "user_legacy_id": 124,
+            "is_principal": 0,
+            "is_owner": 0,
+            "created_at": "2025-01-12 01:46:26",
+            "updated_at": "2025-01-12 01:46:26"
+        },
+        {
+            "id": 33,
+            "department_legacy_id": 26,
+            "user_legacy_id": 131,
+            "is_principal": 0,
+            "is_owner": 0,
+            "created_at": "2025-01-19 06:22:26",
+            "updated_at": "2025-01-19 06:22:26"
+        },
+        {
+            "id": 34,
+            "department_legacy_id": 26,
+            "user_legacy_id": 132,
+            "is_principal": 0,
+            "is_owner": 0,
+            "created_at": "2025-01-19 06:22:57",
+            "updated_at": "2025-01-19 06:22:57"
+        },
+        {
+            "id": 35,
+            "department_legacy_id": 29,
+            "user_legacy_id": 133,
+            "is_principal": 0,
+            "is_owner": 0,
+            "created_at": "2025-02-28 05:29:49",
+            "updated_at": "2025-02-28 05:29:49"
+        },
+        {
+            "id": 36,
+            "department_legacy_id": 31,
+            "user_legacy_id": 81,
+            "is_principal": 0,
+            "is_owner": 0,
+            "created_at": "2025-03-03 06:58:32",
+            "updated_at": "2025-03-03 06:58:32"
+        },
+        {
+            "id": 37,
+            "department_legacy_id": 28,
+            "user_legacy_id": 134,
+            "is_principal": 0,
+            "is_owner": 0,
+            "created_at": "2025-03-03 09:02:51",
+            "updated_at": "2025-03-03 09:02:51"
+        },
+        {
+            "id": 39,
+            "department_legacy_id": 31,
+            "user_legacy_id": 135,
+            "is_principal": 0,
+            "is_owner": 0,
+            "created_at": "2025-03-26 08:17:55",
+            "updated_at": "2025-03-26 08:17:55"
+        },
+        {
+            "id": 40,
+            "department_legacy_id": 31,
+            "user_legacy_id": 136,
+            "is_principal": 0,
+            "is_owner": 0,
+            "created_at": "2025-03-30 02:10:37",
+            "updated_at": "2025-03-30 02:10:37"
+        },
+        {
+            "id": 41,
+            "department_legacy_id": 31,
+            "user_legacy_id": 137,
+            "is_principal": 0,
+            "is_owner": 0,
+            "created_at": "2025-03-30 02:11:16",
+            "updated_at": "2025-03-30 02:11:16"
+        },
+        {
+            "id": 42,
+            "department_legacy_id": 28,
+            "user_legacy_id": 122,
+            "is_principal": 0,
+            "is_owner": 0,
+            "created_at": "2025-04-09 02:08:45",
+            "updated_at": "2025-04-09 02:08:45"
+        },
+        {
+            "id": 43,
+            "department_legacy_id": 31,
+            "user_legacy_id": 138,
+            "is_principal": 0,
+            "is_owner": 0,
+            "created_at": "2025-04-25 06:42:05",
+            "updated_at": "2025-04-25 06:42:05"
+        },
+        {
+            "id": 44,
+            "department_legacy_id": 25,
+            "user_legacy_id": 139,
+            "is_principal": 0,
+            "is_owner": 0,
+            "created_at": "2025-05-21 08:49:08",
+            "updated_at": "2025-05-21 08:49:08"
+        },
+        {
+            "id": 46,
+            "department_legacy_id": 31,
+            "user_legacy_id": 130,
+            "is_principal": 0,
+            "is_owner": 0,
+            "created_at": "2025-07-28 07:00:13",
+            "updated_at": "2025-07-28 07:00:13"
+        },
+        {
+            "id": 48,
+            "department_legacy_id": 35,
+            "user_legacy_id": 141,
+            "is_principal": 0,
+            "is_owner": 0,
+            "created_at": "2025-09-09 00:53:38",
+            "updated_at": "2025-09-09 00:53:38"
+        },
+        {
+            "id": 49,
+            "department_legacy_id": 35,
+            "user_legacy_id": 15,
+            "is_principal": 0,
+            "is_owner": 0,
+            "created_at": "2025-09-09 00:54:11",
+            "updated_at": "2025-09-09 00:54:11"
+        },
+        {
+            "id": 50,
+            "department_legacy_id": 35,
+            "user_legacy_id": 22,
+            "is_principal": 0,
+            "is_owner": 0,
+            "created_at": "2025-09-09 00:54:35",
+            "updated_at": "2025-09-09 00:54:35"
+        },
+        {
+            "id": 51,
+            "department_legacy_id": 35,
+            "user_legacy_id": 26,
+            "is_principal": 0,
+            "is_owner": 0,
+            "created_at": "2025-09-09 00:54:47",
+            "updated_at": "2025-09-09 00:54:47"
+        },
+        {
+            "id": 52,
+            "department_legacy_id": 35,
+            "user_legacy_id": 142,
+            "is_principal": 0,
+            "is_owner": 0,
+            "created_at": "2025-09-09 06:18:55",
+            "updated_at": "2025-09-09 06:18:55"
+        },
+        {
+            "id": 53,
+            "department_legacy_id": 29,
+            "user_legacy_id": 6,
+            "is_principal": 0,
+            "is_owner": 0,
+            "created_at": "2025-10-22 01:26:12",
+            "updated_at": "2025-10-22 01:26:12"
+        },
+        {
+            "id": 55,
+            "department_legacy_id": 26,
+            "user_legacy_id": 143,
+            "is_principal": 0,
+            "is_owner": 0,
+            "created_at": "2025-11-08 08:38:10",
+            "updated_at": "2025-11-08 08:38:10"
+        },
+        {
+            "id": 56,
+            "department_legacy_id": 28,
+            "user_legacy_id": 97,
+            "is_principal": 0,
+            "is_owner": 0,
+            "created_at": "2025-12-28 06:38:17",
+            "updated_at": "2025-12-28 06:38:17"
+        },
+        {
+            "id": 57,
+            "department_legacy_id": 35,
+            "user_legacy_id": 126,
+            "is_principal": 0,
+            "is_owner": 0,
+            "created_at": "2025-12-28 06:41:50",
+            "updated_at": "2025-12-28 06:41:50"
+        },
+        {
+            "id": 58,
+            "department_legacy_id": 25,
+            "user_legacy_id": 147,
+            "is_principal": 0,
+            "is_owner": 0,
+            "created_at": "2026-01-19 14:08:59",
+            "updated_at": "2026-01-19 14:08:59"
+        },
+        {
+            "id": 59,
+            "department_legacy_id": 31,
+            "user_legacy_id": 149,
+            "is_principal": 0,
+            "is_owner": 0,
+            "created_at": "2026-01-28 02:45:50",
+            "updated_at": "2026-01-28 02:45:50"
+        },
+        {
+            "id": 60,
+            "department_legacy_id": 36,
+            "user_legacy_id": 146,
+            "is_principal": 0,
+            "is_owner": 0,
+            "created_at": "2026-02-28 02:39:41",
+            "updated_at": "2026-02-28 02:39:41"
+        },
+        {
+            "id": 61,
+            "department_legacy_id": 36,
+            "user_legacy_id": 145,
+            "is_principal": 0,
+            "is_owner": 0,
+            "created_at": "2026-02-28 02:39:55",
+            "updated_at": "2026-02-28 02:39:55"
+        },
+        {
+            "id": 62,
+            "department_legacy_id": 31,
+            "user_legacy_id": 91,
+            "is_principal": 0,
+            "is_owner": 0,
+            "created_at": "2026-02-28 02:40:43",
+            "updated_at": "2026-02-28 02:40:43"
+        },
+        {
+            "id": 63,
+            "department_legacy_id": 31,
+            "user_legacy_id": 94,
+            "is_principal": 0,
+            "is_owner": 0,
+            "created_at": "2026-02-28 02:40:57",
+            "updated_at": "2026-02-28 02:40:57"
+        },
+        {
+            "id": 64,
+            "department_legacy_id": 31,
+            "user_legacy_id": 54,
+            "is_principal": 0,
+            "is_owner": 0,
+            "created_at": "2026-02-28 02:41:08",
+            "updated_at": "2026-02-28 02:41:08"
+        },
+        {
+            "id": 65,
+            "department_legacy_id": 31,
+            "user_legacy_id": 13,
+            "is_principal": 0,
+            "is_owner": 0,
+            "created_at": "2026-02-28 02:41:17",
+            "updated_at": "2026-02-28 02:41:17"
+        },
+        {
+            "id": 66,
+            "department_legacy_id": 31,
+            "user_legacy_id": 10,
+            "is_principal": 0,
+            "is_owner": 0,
+            "created_at": "2026-02-28 02:41:25",
+            "updated_at": "2026-02-28 02:41:25"
+        },
+        {
+            "id": 67,
+            "department_legacy_id": 31,
+            "user_legacy_id": 57,
+            "is_principal": 0,
+            "is_owner": 0,
+            "created_at": "2026-02-28 02:41:39",
+            "updated_at": "2026-02-28 02:41:39"
+        },
+        {
+            "id": 68,
+            "department_legacy_id": 37,
+            "user_legacy_id": 148,
+            "is_principal": 0,
+            "is_owner": 0,
+            "created_at": "2026-02-28 02:45:04",
+            "updated_at": "2026-02-28 02:45:04"
+        },
+        {
+            "id": 69,
+            "department_legacy_id": 29,
+            "user_legacy_id": 150,
+            "is_principal": 0,
+            "is_owner": 0,
+            "created_at": "2026-02-28 02:46:41",
+            "updated_at": "2026-02-28 02:46:41"
+        },
+        {
+            "id": 71,
+            "department_legacy_id": 26,
+            "user_legacy_id": 152,
+            "is_principal": 0,
+            "is_owner": 0,
+            "created_at": "2026-03-02 01:37:34",
+            "updated_at": "2026-03-02 01:37:34"
+        },
+        {
+            "id": 72,
+            "department_legacy_id": 28,
+            "user_legacy_id": 153,
+            "is_principal": 0,
+            "is_owner": 0,
+            "created_at": "2026-03-02 01:38:29",
+            "updated_at": "2026-03-02 01:38:29"
+        },
+        {
+            "id": 73,
+            "department_legacy_id": 36,
+            "user_legacy_id": 154,
+            "is_principal": 0,
+            "is_owner": 0,
+            "created_at": "2026-03-24 08:06:12",
+            "updated_at": "2026-03-24 08:06:12"
+        },
+        {
+            "id": 74,
+            "department_legacy_id": 31,
+            "user_legacy_id": 107,
+            "is_principal": 0,
+            "is_owner": 0,
+            "created_at": "2026-03-30 08:09:43",
+            "updated_at": "2026-03-30 08:09:43"
+        },
+        {
+            "id": 77,
+            "department_legacy_id": 28,
+            "user_legacy_id": 160,
+            "is_principal": 0,
+            "is_owner": 0,
+            "created_at": "2026-04-28 01:59:38",
+            "updated_at": "2026-04-28 01:59:38"
+        },
+        {
+            "id": 78,
+            "department_legacy_id": 29,
+            "user_legacy_id": 161,
+            "is_principal": 0,
+            "is_owner": 0,
+            "created_at": "2026-05-04 03:24:05",
+            "updated_at": "2026-05-04 03:24:05"
+        },
+        {
+            "id": 80,
+            "department_legacy_id": 28,
+            "user_legacy_id": 163,
+            "is_principal": 0,
+            "is_owner": 0,
+            "created_at": "2026-05-13 00:29:59",
+            "updated_at": "2026-05-13 00:29:59"
+        },
+        {
+            "id": 81,
+            "department_legacy_id": 31,
+            "user_legacy_id": 164,
+            "is_principal": 0,
+            "is_owner": 0,
+            "created_at": "2026-05-19 02:10:43",
+            "updated_at": "2026-05-19 02:10:43"
+        },
+        {
+            "id": 82,
+            "department_legacy_id": 28,
+            "user_legacy_id": 19,
+            "is_principal": 0,
+            "is_owner": 0,
+            "created_at": "2026-06-30 09:15:47",
+            "updated_at": "2026-06-30 09:15:47"
+        },
+        {
+            "id": 83,
+            "department_legacy_id": 28,
+            "user_legacy_id": 165,
+            "is_principal": 0,
+            "is_owner": 0,
+            "created_at": "2026-07-24 03:15:14",
+            "updated_at": "2026-07-24 03:15:14"
+        },
+        {
+            "id": 84,
+            "department_legacy_id": 35,
+            "user_legacy_id": 167,
+            "is_principal": 0,
+            "is_owner": 0,
+            "created_at": "2026-08-07 07:33:38",
+            "updated_at": "2026-08-07 07:33:38"
+        },
+        {
+            "id": 85,
+            "department_legacy_id": 35,
+            "user_legacy_id": 168,
+            "is_principal": 0,
+            "is_owner": 0,
+            "created_at": "2026-08-07 08:43:48",
+            "updated_at": "2026-08-07 08:43:48"
+        },
+        {
+            "id": 86,
+            "department_legacy_id": 39,
+            "user_legacy_id": 166,
+            "is_principal": 0,
+            "is_owner": 0,
+            "created_at": "2026-08-10 06:58:16",
+            "updated_at": "2026-08-10 06:58:16"
+        },
+        {
+            "id": 87,
+            "department_legacy_id": 39,
+            "user_legacy_id": 159,
+            "is_principal": 0,
+            "is_owner": 0,
+            "created_at": "2026-08-10 06:58:27",
+            "updated_at": "2026-08-10 06:58:27"
+        },
+        {
+            "id": 88,
+            "department_legacy_id": 39,
+            "user_legacy_id": 158,
+            "is_principal": 0,
+            "is_owner": 0,
+            "created_at": "2026-08-10 06:58:37",
+            "updated_at": "2026-08-10 06:58:37"
+        },
+        {
+            "id": 89,
+            "department_legacy_id": 39,
+            "user_legacy_id": 157,
+            "is_principal": 0,
+            "is_owner": 0,
+            "created_at": "2026-08-10 06:58:46",
+            "updated_at": "2026-08-10 06:58:46"
+        },
+        {
+            "id": 90,
+            "department_legacy_id": 39,
+            "user_legacy_id": 5,
+            "is_principal": 0,
+            "is_owner": 0,
+            "created_at": "2026-08-10 06:59:18",
+            "updated_at": "2026-08-10 06:59:18"
+        },
+        {
+            "id": 91,
+            "department_legacy_id": 35,
+            "user_legacy_id": 169,
+            "is_principal": 0,
+            "is_owner": 0,
+            "created_at": "2026-08-25 07:45:13",
+            "updated_at": "2026-08-25 07:45:13"
+        },
+        {
+            "id": 92,
+            "department_legacy_id": 39,
+            "user_legacy_id": 170,
+            "is_principal": 0,
+            "is_owner": 0,
+            "created_at": "2026-09-05 00:46:19",
+            "updated_at": "2026-09-05 00:46:19"
+        },
+        {
+            "id": 93,
+            "department_legacy_id": 35,
+            "user_legacy_id": 171,
+            "is_principal": 0,
+            "is_owner": 0,
+            "created_at": "2026-09-11 09:11:21",
+            "updated_at": "2026-09-11 09:11:21"
+        },
+        {
+            "id": 94,
+            "department_legacy_id": 29,
+            "user_legacy_id": 172,
+            "is_principal": 0,
+            "is_owner": 0,
+            "created_at": "2026-09-11 09:12:51",
+            "updated_at": "2026-09-11 09:12:51"
+        },
+        {
+            "id": 95,
+            "department_legacy_id": 35,
+            "user_legacy_id": 174,
+            "is_principal": 0,
+            "is_owner": 0,
+            "created_at": "2026-09-11 09:13:55",
+            "updated_at": "2026-09-11 09:13:55"
+        },
+        {
+            "id": 96,
+            "department_legacy_id": 31,
+            "user_legacy_id": 175,
+            "is_principal": 0,
+            "is_owner": 0,
+            "created_at": "2026-09-11 09:14:57",
+            "updated_at": "2026-09-11 09:14:57"
+        },
+        {
+            "id": 97,
+            "department_legacy_id": 39,
+            "user_legacy_id": 176,
+            "is_principal": 0,
+            "is_owner": 0,
+            "created_at": "2026-10-07 00:46:41",
+            "updated_at": "2026-10-07 00:46:41"
+        },
+        {
+            "id": 98,
+            "department_legacy_id": 35,
+            "user_legacy_id": 16,
+            "is_principal": 0,
+            "is_owner": 0,
+            "created_at": "2026-10-09 05:45:31",
+            "updated_at": "2026-10-09 05:45:31"
+        },
+        {
+            "id": 99,
+            "department_legacy_id": 31,
+            "user_legacy_id": 177,
+            "is_principal": 0,
+            "is_owner": 0,
+            "created_at": "2026-10-14 00:56:52",
+            "updated_at": "2026-10-14 00:56:52"
+        },
+        {
+            "id": 100,
+            "department_legacy_id": 39,
+            "user_legacy_id": 178,
+            "is_principal": 0,
+            "is_owner": 0,
+            "created_at": "2026-10-14 00:58:43",
+            "updated_at": "2026-10-14 00:58:43"
+        },
+        {
+            "id": 101,
+            "department_legacy_id": 35,
+            "user_legacy_id": 179,
+            "is_principal": 0,
+            "is_owner": 0,
+            "created_at": "2026-10-15 05:16:00",
+            "updated_at": "2026-10-15 05:16:00"
+        },
+        {
+            "id": 102,
+            "department_legacy_id": 29,
+            "user_legacy_id": 173,
+            "is_principal": 0,
+            "is_owner": 0,
+            "created_at": "2026-10-30 08:02:41",
+            "updated_at": "2026-10-30 08:02:41"
+        },
+        {
+            "id": 103,
+            "department_legacy_id": 31,
+            "user_legacy_id": 180,
+            "is_principal": 0,
+            "is_owner": 0,
+            "created_at": "2026-11-07 00:44:57",
+            "updated_at": "2026-11-07 00:44:57"
+        }
+    ],
+    "business_staff": [
+        {
+            "id": 1,
+            "user_legacy_id": 5,
+            "staff_type": "sales",
+            "department_legacy_id": 39,
+            "status": "enabled",
+            "effective_from": null,
+            "effective_to": null,
+            "source": "manual",
+            "remark": "旧ERP岗位资料迁入",
+            "business_version": 1,
+            "created_by_legacy_id": 1,
+            "updated_by_legacy_id": 1,
+            "created_at": "2026-11-08 09:58:55",
+            "updated_at": "2026-11-08 09:58:55"
+        },
+        {
+            "id": 2,
+            "user_legacy_id": 10,
+            "staff_type": "sales",
+            "department_legacy_id": 31,
+            "status": "enabled",
+            "effective_from": null,
+            "effective_to": null,
+            "source": "manual",
+            "remark": "旧ERP岗位资料迁入",
+            "business_version": 1,
+            "created_by_legacy_id": 1,
+            "updated_by_legacy_id": 1,
+            "created_at": "2026-11-08 09:58:55",
+            "updated_at": "2026-11-08 09:58:55"
+        },
+        {
+            "id": 3,
+            "user_legacy_id": 13,
+            "staff_type": "sales",
+            "department_legacy_id": 31,
+            "status": "enabled",
+            "effective_from": null,
+            "effective_to": null,
+            "source": "manual",
+            "remark": "旧ERP岗位资料迁入",
+            "business_version": 1,
+            "created_by_legacy_id": 1,
+            "updated_by_legacy_id": 1,
+            "created_at": "2026-11-08 09:58:55",
+            "updated_at": "2026-11-08 09:58:55"
+        },
+        {
+            "id": 4,
+            "user_legacy_id": 14,
+            "staff_type": "sales",
+            "department_legacy_id": null,
+            "status": "disabled",
+            "effective_from": null,
+            "effective_to": null,
+            "source": "legacy_migration",
+            "remark": "旧ERP岗位资料迁入",
+            "business_version": 1,
+            "created_by_legacy_id": 1,
+            "updated_by_legacy_id": 1,
+            "created_at": "2026-11-08 09:58:24",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 5,
+            "user_legacy_id": 15,
+            "staff_type": "sales",
+            "department_legacy_id": 35,
+            "status": "disabled",
+            "effective_from": null,
+            "effective_to": null,
+            "source": "legacy_migration",
+            "remark": "旧ERP岗位资料迁入",
+            "business_version": 1,
+            "created_by_legacy_id": 1,
+            "updated_by_legacy_id": 1,
+            "created_at": "2026-11-08 09:58:24",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 6,
+            "user_legacy_id": 16,
+            "staff_type": "sales",
+            "department_legacy_id": 35,
+            "status": "enabled",
+            "effective_from": null,
+            "effective_to": null,
+            "source": "manual",
+            "remark": "旧ERP岗位资料迁入",
+            "business_version": 1,
+            "created_by_legacy_id": 1,
+            "updated_by_legacy_id": 1,
+            "created_at": "2026-11-08 09:58:55",
+            "updated_at": "2026-11-08 09:58:55"
+        },
+        {
+            "id": 7,
+            "user_legacy_id": 22,
+            "staff_type": "sales",
+            "department_legacy_id": 35,
+            "status": "enabled",
+            "effective_from": null,
+            "effective_to": null,
+            "source": "manual",
+            "remark": "旧ERP岗位资料迁入",
+            "business_version": 1,
+            "created_by_legacy_id": 1,
+            "updated_by_legacy_id": 1,
+            "created_at": "2026-11-08 09:58:55",
+            "updated_at": "2026-11-08 09:58:55"
+        },
+        {
+            "id": 8,
+            "user_legacy_id": 23,
+            "staff_type": "sales",
+            "department_legacy_id": 28,
+            "status": "enabled",
+            "effective_from": null,
+            "effective_to": null,
+            "source": "manual",
+            "remark": "旧ERP岗位资料迁入",
+            "business_version": 1,
+            "created_by_legacy_id": 1,
+            "updated_by_legacy_id": 1,
+            "created_at": "2026-11-08 09:58:55",
+            "updated_at": "2026-11-08 09:58:55"
+        },
+        {
+            "id": 9,
+            "user_legacy_id": 26,
+            "staff_type": "sales",
+            "department_legacy_id": 35,
+            "status": "disabled",
+            "effective_from": null,
+            "effective_to": null,
+            "source": "legacy_migration",
+            "remark": "旧ERP岗位资料迁入",
+            "business_version": 1,
+            "created_by_legacy_id": 1,
+            "updated_by_legacy_id": 1,
+            "created_at": "2026-11-08 09:58:24",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 10,
+            "user_legacy_id": 54,
+            "staff_type": "sales",
+            "department_legacy_id": 31,
+            "status": "disabled",
+            "effective_from": null,
+            "effective_to": null,
+            "source": "legacy_migration",
+            "remark": "旧ERP岗位资料迁入",
+            "business_version": 1,
+            "created_by_legacy_id": 1,
+            "updated_by_legacy_id": 1,
+            "created_at": "2026-11-08 09:58:24",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 11,
+            "user_legacy_id": 57,
+            "staff_type": "sales",
+            "department_legacy_id": 31,
+            "status": "enabled",
+            "effective_from": null,
+            "effective_to": null,
+            "source": "manual",
+            "remark": "旧ERP岗位资料迁入",
+            "business_version": 1,
+            "created_by_legacy_id": 1,
+            "updated_by_legacy_id": 1,
+            "created_at": "2026-11-08 09:58:55",
+            "updated_at": "2026-11-08 09:58:55"
+        },
+        {
+            "id": 12,
+            "user_legacy_id": 81,
+            "staff_type": "sales",
+            "department_legacy_id": 31,
+            "status": "enabled",
+            "effective_from": null,
+            "effective_to": null,
+            "source": "manual",
+            "remark": "旧ERP岗位资料迁入",
+            "business_version": 1,
+            "created_by_legacy_id": 1,
+            "updated_by_legacy_id": 1,
+            "created_at": "2026-11-08 09:58:55",
+            "updated_at": "2026-11-08 09:58:55"
+        },
+        {
+            "id": 13,
+            "user_legacy_id": 91,
+            "staff_type": "sales",
+            "department_legacy_id": 31,
+            "status": "disabled",
+            "effective_from": null,
+            "effective_to": null,
+            "source": "legacy_migration",
+            "remark": "旧ERP岗位资料迁入",
+            "business_version": 1,
+            "created_by_legacy_id": 1,
+            "updated_by_legacy_id": 1,
+            "created_at": "2026-11-08 09:58:24",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 14,
+            "user_legacy_id": 94,
+            "staff_type": "sales",
+            "department_legacy_id": 31,
+            "status": "disabled",
+            "effective_from": null,
+            "effective_to": null,
+            "source": "legacy_migration",
+            "remark": "旧ERP岗位资料迁入",
+            "business_version": 1,
+            "created_by_legacy_id": 1,
+            "updated_by_legacy_id": 1,
+            "created_at": "2026-11-08 09:58:24",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 15,
+            "user_legacy_id": 98,
+            "staff_type": "sales",
+            "department_legacy_id": 28,
+            "status": "enabled",
+            "effective_from": null,
+            "effective_to": null,
+            "source": "manual",
+            "remark": "旧ERP岗位资料迁入",
+            "business_version": 1,
+            "created_by_legacy_id": 1,
+            "updated_by_legacy_id": 1,
+            "created_at": "2026-11-08 09:58:55",
+            "updated_at": "2026-11-08 09:58:55"
+        },
+        {
+            "id": 16,
+            "user_legacy_id": 107,
+            "staff_type": "sales",
+            "department_legacy_id": 31,
+            "status": "disabled",
+            "effective_from": null,
+            "effective_to": null,
+            "source": "legacy_migration",
+            "remark": "旧ERP岗位资料迁入",
+            "business_version": 1,
+            "created_by_legacy_id": 1,
+            "updated_by_legacy_id": 1,
+            "created_at": "2026-11-08 09:58:24",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 17,
+            "user_legacy_id": 112,
+            "staff_type": "sales",
+            "department_legacy_id": null,
+            "status": "disabled",
+            "effective_from": null,
+            "effective_to": null,
+            "source": "legacy_migration",
+            "remark": "旧ERP岗位资料迁入",
+            "business_version": 1,
+            "created_by_legacy_id": 1,
+            "updated_by_legacy_id": 1,
+            "created_at": "2026-11-08 09:58:24",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 18,
+            "user_legacy_id": 115,
+            "staff_type": "sales",
+            "department_legacy_id": null,
+            "status": "disabled",
+            "effective_from": null,
+            "effective_to": null,
+            "source": "legacy_migration",
+            "remark": "旧ERP岗位资料迁入",
+            "business_version": 1,
+            "created_by_legacy_id": 1,
+            "updated_by_legacy_id": 1,
+            "created_at": "2026-11-08 09:58:24",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 19,
+            "user_legacy_id": 130,
+            "staff_type": "sales",
+            "department_legacy_id": 31,
+            "status": "disabled",
+            "effective_from": null,
+            "effective_to": null,
+            "source": "legacy_migration",
+            "remark": "旧ERP岗位资料迁入",
+            "business_version": 1,
+            "created_by_legacy_id": 1,
+            "updated_by_legacy_id": 1,
+            "created_at": "2026-11-08 09:58:24",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 20,
+            "user_legacy_id": 135,
+            "staff_type": "sales",
+            "department_legacy_id": 31,
+            "status": "enabled",
+            "effective_from": null,
+            "effective_to": null,
+            "source": "manual",
+            "remark": "旧ERP岗位资料迁入",
+            "business_version": 1,
+            "created_by_legacy_id": 1,
+            "updated_by_legacy_id": 1,
+            "created_at": "2026-11-08 09:58:55",
+            "updated_at": "2026-11-08 09:58:55"
+        },
+        {
+            "id": 21,
+            "user_legacy_id": 136,
+            "staff_type": "sales",
+            "department_legacy_id": 31,
+            "status": "disabled",
+            "effective_from": null,
+            "effective_to": null,
+            "source": "legacy_migration",
+            "remark": "旧ERP岗位资料迁入",
+            "business_version": 1,
+            "created_by_legacy_id": 1,
+            "updated_by_legacy_id": 1,
+            "created_at": "2026-11-08 09:58:24",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 22,
+            "user_legacy_id": 137,
+            "staff_type": "sales",
+            "department_legacy_id": 31,
+            "status": "disabled",
+            "effective_from": null,
+            "effective_to": null,
+            "source": "legacy_migration",
+            "remark": "旧ERP岗位资料迁入",
+            "business_version": 1,
+            "created_by_legacy_id": 1,
+            "updated_by_legacy_id": 1,
+            "created_at": "2026-11-08 09:58:24",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 23,
+            "user_legacy_id": 138,
+            "staff_type": "sales",
+            "department_legacy_id": 31,
+            "status": "enabled",
+            "effective_from": null,
+            "effective_to": null,
+            "source": "manual",
+            "remark": "旧ERP岗位资料迁入",
+            "business_version": 1,
+            "created_by_legacy_id": 1,
+            "updated_by_legacy_id": 1,
+            "created_at": "2026-11-08 09:58:55",
+            "updated_at": "2026-11-08 09:58:55"
+        },
+        {
+            "id": 24,
+            "user_legacy_id": 141,
+            "staff_type": "sales",
+            "department_legacy_id": 35,
+            "status": "enabled",
+            "effective_from": null,
+            "effective_to": null,
+            "source": "manual",
+            "remark": "旧ERP岗位资料迁入",
+            "business_version": 1,
+            "created_by_legacy_id": 1,
+            "updated_by_legacy_id": 1,
+            "created_at": "2026-11-08 09:58:55",
+            "updated_at": "2026-11-08 09:58:55"
+        },
+        {
+            "id": 25,
+            "user_legacy_id": 142,
+            "staff_type": "sales",
+            "department_legacy_id": 35,
+            "status": "disabled",
+            "effective_from": null,
+            "effective_to": null,
+            "source": "legacy_migration",
+            "remark": "旧ERP岗位资料迁入",
+            "business_version": 1,
+            "created_by_legacy_id": 1,
+            "updated_by_legacy_id": 1,
+            "created_at": "2026-11-08 09:58:24",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 26,
+            "user_legacy_id": 145,
+            "staff_type": "sales",
+            "department_legacy_id": 36,
+            "status": "disabled",
+            "effective_from": null,
+            "effective_to": null,
+            "source": "legacy_migration",
+            "remark": "旧ERP岗位资料迁入",
+            "business_version": 1,
+            "created_by_legacy_id": 1,
+            "updated_by_legacy_id": 1,
+            "created_at": "2026-11-08 09:58:24",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 27,
+            "user_legacy_id": 146,
+            "staff_type": "sales",
+            "department_legacy_id": 36,
+            "status": "enabled",
+            "effective_from": null,
+            "effective_to": null,
+            "source": "manual",
+            "remark": "旧ERP岗位资料迁入",
+            "business_version": 1,
+            "created_by_legacy_id": 1,
+            "updated_by_legacy_id": 1,
+            "created_at": "2026-11-08 09:58:55",
+            "updated_at": "2026-11-08 09:58:55"
+        },
+        {
+            "id": 28,
+            "user_legacy_id": 149,
+            "staff_type": "sales",
+            "department_legacy_id": 31,
+            "status": "disabled",
+            "effective_from": null,
+            "effective_to": null,
+            "source": "legacy_migration",
+            "remark": "旧ERP岗位资料迁入",
+            "business_version": 1,
+            "created_by_legacy_id": 1,
+            "updated_by_legacy_id": 1,
+            "created_at": "2026-11-08 09:58:24",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 29,
+            "user_legacy_id": 154,
+            "staff_type": "sales",
+            "department_legacy_id": 36,
+            "status": "disabled",
+            "effective_from": null,
+            "effective_to": null,
+            "source": "legacy_migration",
+            "remark": "旧ERP岗位资料迁入",
+            "business_version": 1,
+            "created_by_legacy_id": 1,
+            "updated_by_legacy_id": 1,
+            "created_at": "2026-11-08 09:58:24",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 30,
+            "user_legacy_id": 157,
+            "staff_type": "sales",
+            "department_legacy_id": 39,
+            "status": "disabled",
+            "effective_from": null,
+            "effective_to": null,
+            "source": "legacy_migration",
+            "remark": "旧ERP岗位资料迁入",
+            "business_version": 1,
+            "created_by_legacy_id": 1,
+            "updated_by_legacy_id": 1,
+            "created_at": "2026-11-08 09:58:24",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 31,
+            "user_legacy_id": 158,
+            "staff_type": "sales",
+            "department_legacy_id": 39,
+            "status": "disabled",
+            "effective_from": null,
+            "effective_to": null,
+            "source": "legacy_migration",
+            "remark": "旧ERP岗位资料迁入",
+            "business_version": 1,
+            "created_by_legacy_id": 1,
+            "updated_by_legacy_id": 1,
+            "created_at": "2026-11-08 09:58:24",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 32,
+            "user_legacy_id": 159,
+            "staff_type": "sales",
+            "department_legacy_id": 39,
+            "status": "disabled",
+            "effective_from": null,
+            "effective_to": null,
+            "source": "legacy_migration",
+            "remark": "旧ERP岗位资料迁入",
+            "business_version": 1,
+            "created_by_legacy_id": 1,
+            "updated_by_legacy_id": 1,
+            "created_at": "2026-11-08 09:58:24",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 33,
+            "user_legacy_id": 166,
+            "staff_type": "sales",
+            "department_legacy_id": 39,
+            "status": "enabled",
+            "effective_from": null,
+            "effective_to": null,
+            "source": "manual",
+            "remark": "旧ERP岗位资料迁入",
+            "business_version": 1,
+            "created_by_legacy_id": 1,
+            "updated_by_legacy_id": 1,
+            "created_at": "2026-11-08 09:58:55",
+            "updated_at": "2026-11-08 09:58:55"
+        },
+        {
+            "id": 34,
+            "user_legacy_id": 167,
+            "staff_type": "sales",
+            "department_legacy_id": 35,
+            "status": "disabled",
+            "effective_from": null,
+            "effective_to": null,
+            "source": "legacy_migration",
+            "remark": "旧ERP岗位资料迁入",
+            "business_version": 1,
+            "created_by_legacy_id": 1,
+            "updated_by_legacy_id": 1,
+            "created_at": "2026-11-08 09:58:24",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 35,
+            "user_legacy_id": 168,
+            "staff_type": "sales",
+            "department_legacy_id": 35,
+            "status": "disabled",
+            "effective_from": null,
+            "effective_to": null,
+            "source": "legacy_migration",
+            "remark": "旧ERP岗位资料迁入",
+            "business_version": 1,
+            "created_by_legacy_id": 1,
+            "updated_by_legacy_id": 1,
+            "created_at": "2026-11-08 09:58:24",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 36,
+            "user_legacy_id": 169,
+            "staff_type": "sales",
+            "department_legacy_id": 35,
+            "status": "enabled",
+            "effective_from": null,
+            "effective_to": null,
+            "source": "manual",
+            "remark": "旧ERP岗位资料迁入",
+            "business_version": 1,
+            "created_by_legacy_id": 1,
+            "updated_by_legacy_id": 1,
+            "created_at": "2026-11-08 09:58:55",
+            "updated_at": "2026-11-08 09:58:55"
+        },
+        {
+            "id": 37,
+            "user_legacy_id": 170,
+            "staff_type": "sales",
+            "department_legacy_id": 39,
+            "status": "enabled",
+            "effective_from": null,
+            "effective_to": null,
+            "source": "manual",
+            "remark": "旧ERP岗位资料迁入",
+            "business_version": 1,
+            "created_by_legacy_id": 1,
+            "updated_by_legacy_id": 1,
+            "created_at": "2026-11-08 09:58:55",
+            "updated_at": "2026-11-08 09:58:55"
+        },
+        {
+            "id": 38,
+            "user_legacy_id": 174,
+            "staff_type": "sales",
+            "department_legacy_id": 35,
+            "status": "enabled",
+            "effective_from": null,
+            "effective_to": null,
+            "source": "manual",
+            "remark": "旧ERP岗位资料迁入",
+            "business_version": 1,
+            "created_by_legacy_id": 1,
+            "updated_by_legacy_id": 1,
+            "created_at": "2026-11-08 09:58:55",
+            "updated_at": "2026-11-08 09:58:55"
+        },
+        {
+            "id": 39,
+            "user_legacy_id": 176,
+            "staff_type": "sales",
+            "department_legacy_id": 39,
+            "status": "enabled",
+            "effective_from": null,
+            "effective_to": null,
+            "source": "manual",
+            "remark": "旧ERP岗位资料迁入",
+            "business_version": 1,
+            "created_by_legacy_id": 1,
+            "updated_by_legacy_id": 1,
+            "created_at": "2026-11-08 09:58:55",
+            "updated_at": "2026-11-08 09:58:55"
+        },
+        {
+            "id": 40,
+            "user_legacy_id": 178,
+            "staff_type": "sales",
+            "department_legacy_id": 39,
+            "status": "enabled",
+            "effective_from": null,
+            "effective_to": null,
+            "source": "manual",
+            "remark": "旧ERP岗位资料迁入",
+            "business_version": 1,
+            "created_by_legacy_id": 1,
+            "updated_by_legacy_id": 1,
+            "created_at": "2026-11-08 09:58:55",
+            "updated_at": "2026-11-08 09:58:55"
+        },
+        {
+            "id": 41,
+            "user_legacy_id": 179,
+            "staff_type": "sales",
+            "department_legacy_id": 35,
+            "status": "disabled",
+            "effective_from": null,
+            "effective_to": null,
+            "source": "legacy_migration",
+            "remark": "旧ERP岗位资料迁入",
+            "business_version": 1,
+            "created_by_legacy_id": 1,
+            "updated_by_legacy_id": 1,
+            "created_at": "2026-11-08 09:58:24",
+            "updated_at": "2026-11-08 09:58:24"
+        },
+        {
+            "id": 42,
+            "user_legacy_id": 180,
+            "staff_type": "sales",
+            "department_legacy_id": 31,
+            "status": "enabled",
+            "effective_from": null,
+            "effective_to": null,
+            "source": "manual",
+            "remark": "旧ERP岗位资料迁入",
+            "business_version": 1,
+            "created_by_legacy_id": 1,
+            "updated_by_legacy_id": 1,
+            "created_at": "2026-11-08 09:58:55",
+            "updated_at": "2026-11-08 09:58:55"
+        },
+        {
+            "id": 43,
+            "user_legacy_id": 150,
+            "staff_type": "production_manager",
+            "department_legacy_id": 29,
+            "status": "enabled",
+            "effective_from": null,
+            "effective_to": null,
+            "source": "manual",
+            "remark": "旧ERP岗位资料迁入",
+            "business_version": 1,
+            "created_by_legacy_id": 1,
+            "updated_by_legacy_id": 1,
+            "created_at": "2026-11-08 09:58:55",
+            "updated_at": "2026-11-08 09:58:55"
+        },
+        {
+            "id": 44,
+            "user_legacy_id": 6,
+            "staff_type": "production_worker",
+            "department_legacy_id": 29,
+            "status": "enabled",
+            "effective_from": null,
+            "effective_to": null,
+            "source": "manual",
+            "remark": "旧ERP岗位资料迁入",
+            "business_version": 1,
+            "created_by_legacy_id": 1,
+            "updated_by_legacy_id": 1,
+            "created_at": "2026-11-08 09:58:55",
+            "updated_at": "2026-11-08 09:58:55"
+        },
+        {
+            "id": 47,
+            "user_legacy_id": 95,
+            "staff_type": "production_worker",
+            "department_legacy_id": 29,
+            "status": "enabled",
+            "effective_from": null,
+            "effective_to": null,
+            "source": "manual",
+            "remark": "旧ERP岗位资料迁入",
+            "business_version": 1,
+            "created_by_legacy_id": 1,
+            "updated_by_legacy_id": 1,
+            "created_at": "2026-11-08 09:58:55",
+            "updated_at": "2026-11-08 09:58:55"
+        },
+        {
+            "id": 48,
+            "user_legacy_id": 96,
+            "staff_type": "production_worker",
+            "department_legacy_id": 29,
+            "status": "enabled",
+            "effective_from": null,
+            "effective_to": null,
+            "source": "manual",
+            "remark": "旧ERP岗位资料迁入",
+            "business_version": 1,
+            "created_by_legacy_id": 1,
+            "updated_by_legacy_id": 1,
+            "created_at": "2026-11-08 09:58:55",
+            "updated_at": "2026-11-08 09:58:55"
+        },
+        {
+            "id": 49,
+            "user_legacy_id": 97,
+            "staff_type": "production_worker",
+            "department_legacy_id": 28,
+            "status": "enabled",
+            "effective_from": null,
+            "effective_to": null,
+            "source": "manual",
+            "remark": "旧ERP岗位资料迁入",
+            "business_version": 1,
+            "created_by_legacy_id": 1,
+            "updated_by_legacy_id": 1,
+            "created_at": "2026-11-08 09:58:55",
+            "updated_at": "2026-11-08 09:58:55"
+        },
+        {
+            "id": 52,
+            "user_legacy_id": 101,
+            "staff_type": "production_worker",
+            "department_legacy_id": 29,
+            "status": "enabled",
+            "effective_from": null,
+            "effective_to": null,
+            "source": "manual",
+            "remark": "旧ERP岗位资料迁入",
+            "business_version": 1,
+            "created_by_legacy_id": 1,
+            "updated_by_legacy_id": 1,
+            "created_at": "2026-11-08 09:58:55",
+            "updated_at": "2026-11-08 09:58:55"
+        },
+        {
+            "id": 54,
+            "user_legacy_id": 103,
+            "staff_type": "production_worker",
+            "department_legacy_id": 29,
+            "status": "enabled",
+            "effective_from": null,
+            "effective_to": null,
+            "source": "manual",
+            "remark": "旧ERP岗位资料迁入",
+            "business_version": 1,
+            "created_by_legacy_id": 1,
+            "updated_by_legacy_id": 1,
+            "created_at": "2026-11-08 09:58:55",
+            "updated_at": "2026-11-08 09:58:55"
+        },
+        {
+            "id": 59,
+            "user_legacy_id": 109,
+            "staff_type": "production_worker",
+            "department_legacy_id": 29,
+            "status": "enabled",
+            "effective_from": null,
+            "effective_to": null,
+            "source": "manual",
+            "remark": "旧ERP岗位资料迁入",
+            "business_version": 1,
+            "created_by_legacy_id": 1,
+            "updated_by_legacy_id": 1,
+            "created_at": "2026-11-08 09:58:55",
+            "updated_at": "2026-11-08 09:58:55"
+        },
+        {
+            "id": 63,
+            "user_legacy_id": 117,
+            "staff_type": "production_worker",
+            "department_legacy_id": 29,
+            "status": "enabled",
+            "effective_from": null,
+            "effective_to": null,
+            "source": "manual",
+            "remark": "旧ERP岗位资料迁入",
+            "business_version": 1,
+            "created_by_legacy_id": 1,
+            "updated_by_legacy_id": 1,
+            "created_at": "2026-11-08 09:58:55",
+            "updated_at": "2026-11-08 09:58:55"
+        },
+        {
+            "id": 64,
+            "user_legacy_id": 120,
+            "staff_type": "production_worker",
+            "department_legacy_id": 29,
+            "status": "enabled",
+            "effective_from": null,
+            "effective_to": null,
+            "source": "manual",
+            "remark": "旧ERP岗位资料迁入",
+            "business_version": 1,
+            "created_by_legacy_id": 1,
+            "updated_by_legacy_id": 1,
+            "created_at": "2026-11-08 09:58:55",
+            "updated_at": "2026-11-08 09:58:55"
+        },
+        {
+            "id": 65,
+            "user_legacy_id": 121,
+            "staff_type": "production_worker",
+            "department_legacy_id": 29,
+            "status": "enabled",
+            "effective_from": null,
+            "effective_to": null,
+            "source": "manual",
+            "remark": "旧ERP岗位资料迁入",
+            "business_version": 1,
+            "created_by_legacy_id": 1,
+            "updated_by_legacy_id": 1,
+            "created_at": "2026-11-08 09:58:55",
+            "updated_at": "2026-11-08 09:58:55"
+        },
+        {
+            "id": 66,
+            "user_legacy_id": 123,
+            "staff_type": "production_worker",
+            "department_legacy_id": 29,
+            "status": "enabled",
+            "effective_from": null,
+            "effective_to": null,
+            "source": "manual",
+            "remark": "旧ERP岗位资料迁入",
+            "business_version": 1,
+            "created_by_legacy_id": 1,
+            "updated_by_legacy_id": 1,
+            "created_at": "2026-11-08 09:58:55",
+            "updated_at": "2026-11-08 09:58:55"
+        },
+        {
+            "id": 67,
+            "user_legacy_id": 124,
+            "staff_type": "production_worker",
+            "department_legacy_id": 29,
+            "status": "enabled",
+            "effective_from": null,
+            "effective_to": null,
+            "source": "manual",
+            "remark": "旧ERP岗位资料迁入",
+            "business_version": 1,
+            "created_by_legacy_id": 1,
+            "updated_by_legacy_id": 1,
+            "created_at": "2026-11-08 09:58:55",
+            "updated_at": "2026-11-08 09:58:55"
+        },
+        {
+            "id": 68,
+            "user_legacy_id": 133,
+            "staff_type": "production_worker",
+            "department_legacy_id": 29,
+            "status": "enabled",
+            "effective_from": null,
+            "effective_to": null,
+            "source": "manual",
+            "remark": "旧ERP岗位资料迁入",
+            "business_version": 1,
+            "created_by_legacy_id": 1,
+            "updated_by_legacy_id": 1,
+            "created_at": "2026-11-08 09:58:55",
+            "updated_at": "2026-11-08 09:58:55"
+        },
+        {
+            "id": 71,
+            "user_legacy_id": 150,
+            "staff_type": "production_worker",
+            "department_legacy_id": 29,
+            "status": "enabled",
+            "effective_from": null,
+            "effective_to": null,
+            "source": "manual",
+            "remark": "旧ERP岗位资料迁入",
+            "business_version": 1,
+            "created_by_legacy_id": 1,
+            "updated_by_legacy_id": 1,
+            "created_at": "2026-11-08 09:58:55",
+            "updated_at": "2026-11-08 09:58:55"
+        },
+        {
+            "id": 72,
+            "user_legacy_id": 161,
+            "staff_type": "production_worker",
+            "department_legacy_id": 29,
+            "status": "enabled",
+            "effective_from": null,
+            "effective_to": null,
+            "source": "manual",
+            "remark": "旧ERP岗位资料迁入",
+            "business_version": 1,
+            "created_by_legacy_id": 1,
+            "updated_by_legacy_id": 1,
+            "created_at": "2026-11-08 09:58:55",
+            "updated_at": "2026-11-08 09:58:55"
+        },
+        {
+            "id": 74,
+            "user_legacy_id": 172,
+            "staff_type": "production_worker",
+            "department_legacy_id": 29,
+            "status": "enabled",
+            "effective_from": null,
+            "effective_to": null,
+            "source": "manual",
+            "remark": "旧ERP岗位资料迁入",
+            "business_version": 1,
+            "created_by_legacy_id": 1,
+            "updated_by_legacy_id": 1,
+            "created_at": "2026-11-08 09:58:55",
+            "updated_at": "2026-11-08 09:58:55"
+        },
+        {
+            "id": 75,
+            "user_legacy_id": 173,
+            "staff_type": "production_worker",
+            "department_legacy_id": 29,
+            "status": "enabled",
+            "effective_from": null,
+            "effective_to": null,
+            "source": "manual",
+            "remark": "旧ERP岗位资料迁入",
+            "business_version": 1,
+            "created_by_legacy_id": 1,
+            "updated_by_legacy_id": 1,
+            "created_at": "2026-11-08 09:58:55",
+            "updated_at": "2026-11-08 09:58:55"
+        },
+        {
+            "id": 76,
+            "user_legacy_id": 6,
+            "staff_type": "warehouse",
+            "department_legacy_id": 29,
+            "status": "enabled",
+            "effective_from": null,
+            "effective_to": null,
+            "source": "manual",
+            "remark": "旧ERP岗位资料迁入",
+            "business_version": 1,
+            "created_by_legacy_id": 1,
+            "updated_by_legacy_id": 1,
+            "created_at": "2026-11-08 09:58:55",
+            "updated_at": "2026-11-08 09:58:55"
+        },
+        {
+            "id": 79,
+            "user_legacy_id": 95,
+            "staff_type": "warehouse",
+            "department_legacy_id": 29,
+            "status": "enabled",
+            "effective_from": null,
+            "effective_to": null,
+            "source": "manual",
+            "remark": "旧ERP岗位资料迁入",
+            "business_version": 1,
+            "created_by_legacy_id": 1,
+            "updated_by_legacy_id": 1,
+            "created_at": "2026-11-08 09:58:55",
+            "updated_at": "2026-11-08 09:58:55"
+        },
+        {
+            "id": 80,
+            "user_legacy_id": 96,
+            "staff_type": "warehouse",
+            "department_legacy_id": 29,
+            "status": "enabled",
+            "effective_from": null,
+            "effective_to": null,
+            "source": "manual",
+            "remark": "旧ERP岗位资料迁入",
+            "business_version": 1,
+            "created_by_legacy_id": 1,
+            "updated_by_legacy_id": 1,
+            "created_at": "2026-11-08 09:58:55",
+            "updated_at": "2026-11-08 09:58:55"
+        },
+        {
+            "id": 81,
+            "user_legacy_id": 97,
+            "staff_type": "warehouse",
+            "department_legacy_id": 28,
+            "status": "enabled",
+            "effective_from": null,
+            "effective_to": null,
+            "source": "manual",
+            "remark": "旧ERP岗位资料迁入",
+            "business_version": 1,
+            "created_by_legacy_id": 1,
+            "updated_by_legacy_id": 1,
+            "created_at": "2026-11-08 09:58:55",
+            "updated_at": "2026-11-08 09:58:55"
+        },
+        {
+            "id": 84,
+            "user_legacy_id": 101,
+            "staff_type": "warehouse",
+            "department_legacy_id": 29,
+            "status": "enabled",
+            "effective_from": null,
+            "effective_to": null,
+            "source": "manual",
+            "remark": "旧ERP岗位资料迁入",
+            "business_version": 1,
+            "created_by_legacy_id": 1,
+            "updated_by_legacy_id": 1,
+            "created_at": "2026-11-08 09:58:55",
+            "updated_at": "2026-11-08 09:58:55"
+        },
+        {
+            "id": 86,
+            "user_legacy_id": 103,
+            "staff_type": "warehouse",
+            "department_legacy_id": 29,
+            "status": "enabled",
+            "effective_from": null,
+            "effective_to": null,
+            "source": "manual",
+            "remark": "旧ERP岗位资料迁入",
+            "business_version": 1,
+            "created_by_legacy_id": 1,
+            "updated_by_legacy_id": 1,
+            "created_at": "2026-11-08 09:58:55",
+            "updated_at": "2026-11-08 09:58:55"
+        },
+        {
+            "id": 91,
+            "user_legacy_id": 109,
+            "staff_type": "warehouse",
+            "department_legacy_id": 29,
+            "status": "enabled",
+            "effective_from": null,
+            "effective_to": null,
+            "source": "manual",
+            "remark": "旧ERP岗位资料迁入",
+            "business_version": 1,
+            "created_by_legacy_id": 1,
+            "updated_by_legacy_id": 1,
+            "created_at": "2026-11-08 09:58:55",
+            "updated_at": "2026-11-08 09:58:55"
+        },
+        {
+            "id": 95,
+            "user_legacy_id": 117,
+            "staff_type": "warehouse",
+            "department_legacy_id": 29,
+            "status": "enabled",
+            "effective_from": null,
+            "effective_to": null,
+            "source": "manual",
+            "remark": "旧ERP岗位资料迁入",
+            "business_version": 1,
+            "created_by_legacy_id": 1,
+            "updated_by_legacy_id": 1,
+            "created_at": "2026-11-08 09:58:55",
+            "updated_at": "2026-11-08 09:58:55"
+        },
+        {
+            "id": 96,
+            "user_legacy_id": 120,
+            "staff_type": "warehouse",
+            "department_legacy_id": 29,
+            "status": "enabled",
+            "effective_from": null,
+            "effective_to": null,
+            "source": "manual",
+            "remark": "旧ERP岗位资料迁入",
+            "business_version": 1,
+            "created_by_legacy_id": 1,
+            "updated_by_legacy_id": 1,
+            "created_at": "2026-11-08 09:58:55",
+            "updated_at": "2026-11-08 09:58:55"
+        },
+        {
+            "id": 97,
+            "user_legacy_id": 121,
+            "staff_type": "warehouse",
+            "department_legacy_id": 29,
+            "status": "enabled",
+            "effective_from": null,
+            "effective_to": null,
+            "source": "manual",
+            "remark": "旧ERP岗位资料迁入",
+            "business_version": 1,
+            "created_by_legacy_id": 1,
+            "updated_by_legacy_id": 1,
+            "created_at": "2026-11-08 09:58:55",
+            "updated_at": "2026-11-08 09:58:55"
+        },
+        {
+            "id": 98,
+            "user_legacy_id": 123,
+            "staff_type": "warehouse",
+            "department_legacy_id": 29,
+            "status": "enabled",
+            "effective_from": null,
+            "effective_to": null,
+            "source": "manual",
+            "remark": "旧ERP岗位资料迁入",
+            "business_version": 1,
+            "created_by_legacy_id": 1,
+            "updated_by_legacy_id": 1,
+            "created_at": "2026-11-08 09:58:55",
+            "updated_at": "2026-11-08 09:58:55"
+        },
+        {
+            "id": 99,
+            "user_legacy_id": 124,
+            "staff_type": "warehouse",
+            "department_legacy_id": 29,
+            "status": "enabled",
+            "effective_from": null,
+            "effective_to": null,
+            "source": "manual",
+            "remark": "旧ERP岗位资料迁入",
+            "business_version": 1,
+            "created_by_legacy_id": 1,
+            "updated_by_legacy_id": 1,
+            "created_at": "2026-11-08 09:58:55",
+            "updated_at": "2026-11-08 09:58:55"
+        },
+        {
+            "id": 100,
+            "user_legacy_id": 133,
+            "staff_type": "warehouse",
+            "department_legacy_id": 29,
+            "status": "enabled",
+            "effective_from": null,
+            "effective_to": null,
+            "source": "manual",
+            "remark": "旧ERP岗位资料迁入",
+            "business_version": 1,
+            "created_by_legacy_id": 1,
+            "updated_by_legacy_id": 1,
+            "created_at": "2026-11-08 09:58:55",
+            "updated_at": "2026-11-08 09:58:55"
+        },
+        {
+            "id": 103,
+            "user_legacy_id": 150,
+            "staff_type": "warehouse",
+            "department_legacy_id": 29,
+            "status": "enabled",
+            "effective_from": null,
+            "effective_to": null,
+            "source": "manual",
+            "remark": "旧ERP岗位资料迁入",
+            "business_version": 1,
+            "created_by_legacy_id": 1,
+            "updated_by_legacy_id": 1,
+            "created_at": "2026-11-08 09:58:55",
+            "updated_at": "2026-11-08 09:58:55"
+        },
+        {
+            "id": 104,
+            "user_legacy_id": 161,
+            "staff_type": "warehouse",
+            "department_legacy_id": 29,
+            "status": "enabled",
+            "effective_from": null,
+            "effective_to": null,
+            "source": "manual",
+            "remark": "旧ERP岗位资料迁入",
+            "business_version": 1,
+            "created_by_legacy_id": 1,
+            "updated_by_legacy_id": 1,
+            "created_at": "2026-11-08 09:58:55",
+            "updated_at": "2026-11-08 09:58:55"
+        },
+        {
+            "id": 106,
+            "user_legacy_id": 172,
+            "staff_type": "warehouse",
+            "department_legacy_id": 29,
+            "status": "enabled",
+            "effective_from": null,
+            "effective_to": null,
+            "source": "manual",
+            "remark": "旧ERP岗位资料迁入",
+            "business_version": 1,
+            "created_by_legacy_id": 1,
+            "updated_by_legacy_id": 1,
+            "created_at": "2026-11-08 09:58:55",
+            "updated_at": "2026-11-08 09:58:55"
+        },
+        {
+            "id": 107,
+            "user_legacy_id": 173,
+            "staff_type": "warehouse",
+            "department_legacy_id": 29,
+            "status": "enabled",
+            "effective_from": null,
+            "effective_to": null,
+            "source": "manual",
+            "remark": "旧ERP岗位资料迁入",
+            "business_version": 1,
+            "created_by_legacy_id": 1,
+            "updated_by_legacy_id": 1,
+            "created_at": "2026-11-08 09:58:55",
+            "updated_at": "2026-11-08 09:58:55"
+        }
+    ],
+    "role_groups": [
+        {
+            "user_legacy_id": 1,
+            "roles": []
+        },
+        {
+            "user_legacy_id": 5,
+            "roles": [
+                {
+                    "role_code": "sales_user",
+                    "sources": [
+                        "manual"
+                    ]
+                }
+            ]
+        },
+        {
+            "user_legacy_id": 6,
+            "roles": [
+                {
+                    "role_code": "production_operator",
+                    "sources": [
+                        "manual"
+                    ]
+                },
+                {
+                    "role_code": "warehouse_manager",
+                    "sources": [
+                        "manual"
+                    ]
+                }
+            ]
+        },
+        {
+            "user_legacy_id": 10,
+            "roles": [
+                {
+                    "role_code": "sales_user",
+                    "sources": [
+                        "manual"
+                    ]
+                }
+            ]
+        },
+        {
+            "user_legacy_id": 13,
+            "roles": [
+                {
+                    "role_code": "sales_user",
+                    "sources": [
+                        "manual"
+                    ]
+                }
+            ]
+        },
+        {
+            "user_legacy_id": 14,
+            "roles": [
+                {
+                    "role_code": "sales_user",
+                    "sources": [
+                        "manual"
+                    ]
+                }
+            ]
+        },
+        {
+            "user_legacy_id": 15,
+            "roles": [
+                {
+                    "role_code": "sales_user",
+                    "sources": [
+                        "manual"
+                    ]
+                }
+            ]
+        },
+        {
+            "user_legacy_id": 16,
+            "roles": [
+                {
+                    "role_code": "sales_user",
+                    "sources": [
+                        "manual"
+                    ]
+                }
+            ]
+        },
+        {
+            "user_legacy_id": 18,
+            "roles": []
+        },
+        {
+            "user_legacy_id": 19,
+            "roles": []
+        },
+        {
+            "user_legacy_id": 22,
+            "roles": [
+                {
+                    "role_code": "sales_user",
+                    "sources": [
+                        "manual"
+                    ]
+                }
+            ]
+        },
+        {
+            "user_legacy_id": 23,
+            "roles": [
+                {
+                    "role_code": "sales_user",
+                    "sources": [
+                        "manual"
+                    ]
+                }
+            ]
+        },
+        {
+            "user_legacy_id": 26,
+            "roles": [
+                {
+                    "role_code": "sales_user",
+                    "sources": [
+                        "manual"
+                    ]
+                }
+            ]
+        },
+        {
+            "user_legacy_id": 54,
+            "roles": [
+                {
+                    "role_code": "sales_user",
+                    "sources": [
+                        "manual"
+                    ]
+                }
+            ]
+        },
+        {
+            "user_legacy_id": 57,
+            "roles": [
+                {
+                    "role_code": "sales_user",
+                    "sources": [
+                        "manual"
+                    ]
+                }
+            ]
+        },
+        {
+            "user_legacy_id": 81,
+            "roles": [
+                {
+                    "role_code": "sales_user",
+                    "sources": [
+                        "manual"
+                    ]
+                }
+            ]
+        },
+        {
+            "user_legacy_id": 91,
+            "roles": [
+                {
+                    "role_code": "sales_user",
+                    "sources": [
+                        "manual"
+                    ]
+                }
+            ]
+        },
+        {
+            "user_legacy_id": 94,
+            "roles": [
+                {
+                    "role_code": "sales_user",
+                    "sources": [
+                        "manual"
+                    ]
+                }
+            ]
+        },
+        {
+            "user_legacy_id": 95,
+            "roles": [
+                {
+                    "role_code": "production_operator",
+                    "sources": [
+                        "manual"
+                    ]
+                },
+                {
+                    "role_code": "warehouse_manager",
+                    "sources": [
+                        "manual"
+                    ]
+                }
+            ]
+        },
+        {
+            "user_legacy_id": 96,
+            "roles": [
+                {
+                    "role_code": "production_operator",
+                    "sources": [
+                        "manual"
+                    ]
+                },
+                {
+                    "role_code": "warehouse_manager",
+                    "sources": [
+                        "manual"
+                    ]
+                }
+            ]
+        },
+        {
+            "user_legacy_id": 97,
+            "roles": [
+                {
+                    "role_code": "production_operator",
+                    "sources": [
+                        "manual"
+                    ]
+                },
+                {
+                    "role_code": "warehouse_manager",
+                    "sources": [
+                        "manual"
+                    ]
+                }
+            ]
+        },
+        {
+            "user_legacy_id": 98,
+            "roles": [
+                {
+                    "role_code": "sales_user",
+                    "sources": [
+                        "manual"
+                    ]
+                }
+            ]
+        },
+        {
+            "user_legacy_id": 101,
+            "roles": [
+                {
+                    "role_code": "production_operator",
+                    "sources": [
+                        "manual"
+                    ]
+                },
+                {
+                    "role_code": "warehouse_manager",
+                    "sources": [
+                        "manual"
+                    ]
+                }
+            ]
+        },
+        {
+            "user_legacy_id": 103,
+            "roles": [
+                {
+                    "role_code": "production_operator",
+                    "sources": [
+                        "manual"
+                    ]
+                },
+                {
+                    "role_code": "warehouse_manager",
+                    "sources": [
+                        "manual"
+                    ]
+                }
+            ]
+        },
+        {
+            "user_legacy_id": 107,
+            "roles": [
+                {
+                    "role_code": "sales_user",
+                    "sources": [
+                        "manual"
+                    ]
+                }
+            ]
+        },
+        {
+            "user_legacy_id": 109,
+            "roles": [
+                {
+                    "role_code": "production_operator",
+                    "sources": [
+                        "manual"
+                    ]
+                },
+                {
+                    "role_code": "warehouse_manager",
+                    "sources": [
+                        "manual"
+                    ]
+                }
+            ]
+        },
+        {
+            "user_legacy_id": 112,
+            "roles": [
+                {
+                    "role_code": "sales_user",
+                    "sources": [
+                        "manual"
+                    ]
+                }
+            ]
+        },
+        {
+            "user_legacy_id": 115,
+            "roles": [
+                {
+                    "role_code": "sales_user",
+                    "sources": [
+                        "manual"
+                    ]
+                }
+            ]
+        },
+        {
+            "user_legacy_id": 116,
+            "roles": []
+        },
+        {
+            "user_legacy_id": 117,
+            "roles": [
+                {
+                    "role_code": "production_operator",
+                    "sources": [
+                        "manual"
+                    ]
+                },
+                {
+                    "role_code": "warehouse_manager",
+                    "sources": [
+                        "manual"
+                    ]
+                }
+            ]
+        },
+        {
+            "user_legacy_id": 119,
+            "roles": []
+        },
+        {
+            "user_legacy_id": 120,
+            "roles": [
+                {
+                    "role_code": "production_operator",
+                    "sources": [
+                        "manual"
+                    ]
+                },
+                {
+                    "role_code": "warehouse_manager",
+                    "sources": [
+                        "manual"
+                    ]
+                }
+            ]
+        },
+        {
+            "user_legacy_id": 121,
+            "roles": [
+                {
+                    "role_code": "production_operator",
+                    "sources": [
+                        "manual"
+                    ]
+                },
+                {
+                    "role_code": "warehouse_manager",
+                    "sources": [
+                        "manual"
+                    ]
+                }
+            ]
+        },
+        {
+            "user_legacy_id": 122,
+            "roles": []
+        },
+        {
+            "user_legacy_id": 123,
+            "roles": [
+                {
+                    "role_code": "production_operator",
+                    "sources": [
+                        "manual"
+                    ]
+                },
+                {
+                    "role_code": "warehouse_manager",
+                    "sources": [
+                        "manual"
+                    ]
+                }
+            ]
+        },
+        {
+            "user_legacy_id": 124,
+            "roles": [
+                {
+                    "role_code": "production_operator",
+                    "sources": [
+                        "manual"
+                    ]
+                },
+                {
+                    "role_code": "warehouse_manager",
+                    "sources": [
+                        "manual"
+                    ]
+                }
+            ]
+        },
+        {
+            "user_legacy_id": 126,
+            "roles": []
+        },
+        {
+            "user_legacy_id": 130,
+            "roles": [
+                {
+                    "role_code": "sales_user",
+                    "sources": [
+                        "manual"
+                    ]
+                }
+            ]
+        },
+        {
+            "user_legacy_id": 131,
+            "roles": []
+        },
+        {
+            "user_legacy_id": 132,
+            "roles": []
+        },
+        {
+            "user_legacy_id": 133,
+            "roles": [
+                {
+                    "role_code": "production_operator",
+                    "sources": [
+                        "manual"
+                    ]
+                },
+                {
+                    "role_code": "warehouse_manager",
+                    "sources": [
+                        "manual"
+                    ]
+                }
+            ]
+        },
+        {
+            "user_legacy_id": 134,
+            "roles": []
+        },
+        {
+            "user_legacy_id": 135,
+            "roles": [
+                {
+                    "role_code": "sales_user",
+                    "sources": [
+                        "manual"
+                    ]
+                }
+            ]
+        },
+        {
+            "user_legacy_id": 136,
+            "roles": [
+                {
+                    "role_code": "sales_user",
+                    "sources": [
+                        "manual"
+                    ]
+                }
+            ]
+        },
+        {
+            "user_legacy_id": 137,
+            "roles": [
+                {
+                    "role_code": "sales_user",
+                    "sources": [
+                        "manual"
+                    ]
+                }
+            ]
+        },
+        {
+            "user_legacy_id": 138,
+            "roles": [
+                {
+                    "role_code": "sales_user",
+                    "sources": [
+                        "manual"
+                    ]
+                }
+            ]
+        },
+        {
+            "user_legacy_id": 139,
+            "roles": []
+        },
+        {
+            "user_legacy_id": 141,
+            "roles": [
+                {
+                    "role_code": "sales_user",
+                    "sources": [
+                        "manual"
+                    ]
+                }
+            ]
+        },
+        {
+            "user_legacy_id": 142,
+            "roles": [
+                {
+                    "role_code": "sales_user",
+                    "sources": [
+                        "manual"
+                    ]
+                }
+            ]
+        },
+        {
+            "user_legacy_id": 143,
+            "roles": []
+        },
+        {
+            "user_legacy_id": 145,
+            "roles": [
+                {
+                    "role_code": "sales_user",
+                    "sources": [
+                        "manual"
+                    ]
+                }
+            ]
+        },
+        {
+            "user_legacy_id": 146,
+            "roles": [
+                {
+                    "role_code": "sales_user",
+                    "sources": [
+                        "manual"
+                    ]
+                }
+            ]
+        },
+        {
+            "user_legacy_id": 147,
+            "roles": []
+        },
+        {
+            "user_legacy_id": 148,
+            "roles": []
+        },
+        {
+            "user_legacy_id": 149,
+            "roles": [
+                {
+                    "role_code": "sales_user",
+                    "sources": [
+                        "manual"
+                    ]
+                }
+            ]
+        },
+        {
+            "user_legacy_id": 150,
+            "roles": [
+                {
+                    "role_code": "production_manager",
+                    "sources": [
+                        "manual"
+                    ]
+                },
+                {
+                    "role_code": "production_operator",
+                    "sources": [
+                        "manual"
+                    ]
+                },
+                {
+                    "role_code": "warehouse_manager",
+                    "sources": [
+                        "manual"
+                    ]
+                }
+            ]
+        },
+        {
+            "user_legacy_id": 152,
+            "roles": []
+        },
+        {
+            "user_legacy_id": 153,
+            "roles": []
+        },
+        {
+            "user_legacy_id": 154,
+            "roles": [
+                {
+                    "role_code": "sales_user",
+                    "sources": [
+                        "manual"
+                    ]
+                }
+            ]
+        },
+        {
+            "user_legacy_id": 157,
+            "roles": [
+                {
+                    "role_code": "sales_user",
+                    "sources": [
+                        "manual"
+                    ]
+                }
+            ]
+        },
+        {
+            "user_legacy_id": 158,
+            "roles": [
+                {
+                    "role_code": "sales_user",
+                    "sources": [
+                        "manual"
+                    ]
+                }
+            ]
+        },
+        {
+            "user_legacy_id": 159,
+            "roles": [
+                {
+                    "role_code": "sales_user",
+                    "sources": [
+                        "manual"
+                    ]
+                }
+            ]
+        },
+        {
+            "user_legacy_id": 160,
+            "roles": [
+                {
+                    "role_code": "purchaser",
+                    "sources": [
+                        "manual"
+                    ]
+                }
+            ]
+        },
+        {
+            "user_legacy_id": 161,
+            "roles": [
+                {
+                    "role_code": "production_operator",
+                    "sources": [
+                        "manual"
+                    ]
+                },
+                {
+                    "role_code": "warehouse_manager",
+                    "sources": [
+                        "manual"
+                    ]
+                }
+            ]
+        },
+        {
+            "user_legacy_id": 163,
+            "roles": []
+        },
+        {
+            "user_legacy_id": 164,
+            "roles": []
+        },
+        {
+            "user_legacy_id": 165,
+            "roles": []
+        },
+        {
+            "user_legacy_id": 166,
+            "roles": [
+                {
+                    "role_code": "sales_user",
+                    "sources": [
+                        "manual"
+                    ]
+                }
+            ]
+        },
+        {
+            "user_legacy_id": 167,
+            "roles": [
+                {
+                    "role_code": "sales_user",
+                    "sources": [
+                        "manual"
+                    ]
+                }
+            ]
+        },
+        {
+            "user_legacy_id": 168,
+            "roles": [
+                {
+                    "role_code": "sales_user",
+                    "sources": [
+                        "manual"
+                    ]
+                }
+            ]
+        },
+        {
+            "user_legacy_id": 169,
+            "roles": [
+                {
+                    "role_code": "sales_user",
+                    "sources": [
+                        "manual"
+                    ]
+                }
+            ]
+        },
+        {
+            "user_legacy_id": 170,
+            "roles": [
+                {
+                    "role_code": "sales_user",
+                    "sources": [
+                        "manual"
+                    ]
+                }
+            ]
+        },
+        {
+            "user_legacy_id": 171,
+            "roles": []
+        },
+        {
+            "user_legacy_id": 172,
+            "roles": [
+                {
+                    "role_code": "production_operator",
+                    "sources": [
+                        "manual"
+                    ]
+                },
+                {
+                    "role_code": "warehouse_manager",
+                    "sources": [
+                        "manual"
+                    ]
+                }
+            ]
+        },
+        {
+            "user_legacy_id": 173,
+            "roles": [
+                {
+                    "role_code": "production_operator",
+                    "sources": [
+                        "manual"
+                    ]
+                },
+                {
+                    "role_code": "warehouse_manager",
+                    "sources": [
+                        "manual"
+                    ]
+                }
+            ]
+        },
+        {
+            "user_legacy_id": 174,
+            "roles": [
+                {
+                    "role_code": "sales_user",
+                    "sources": [
+                        "manual"
+                    ]
+                }
+            ]
+        },
+        {
+            "user_legacy_id": 175,
+            "roles": []
+        },
+        {
+            "user_legacy_id": 176,
+            "roles": [
+                {
+                    "role_code": "sales_user",
+                    "sources": [
+                        "manual"
+                    ]
+                }
+            ]
+        },
+        {
+            "user_legacy_id": 177,
+            "roles": []
+        },
+        {
+            "user_legacy_id": 178,
+            "roles": [
+                {
+                    "role_code": "sales_user",
+                    "sources": [
+                        "manual"
+                    ]
+                }
+            ]
+        },
+        {
+            "user_legacy_id": 179,
+            "roles": [
+                {
+                    "role_code": "sales_user",
+                    "sources": [
+                        "manual"
+                    ]
+                }
+            ]
+        },
+        {
+            "user_legacy_id": 180,
+            "roles": [
+                {
+                    "role_code": "sales_user",
+                    "sources": [
+                        "manual"
+                    ]
+                }
+            ]
+        }
+    ]
+}

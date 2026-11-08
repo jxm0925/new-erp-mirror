@@ -52,6 +52,7 @@ final class SalesOrderPriorityService
         $priority = self::normalize($priority);
         return DB::transaction(function () use ($orderId, $priority, $reason, $actor) {
             $order = SalesOrder::query()->lockForUpdate()->findOrFail($orderId);
+            $order->assertCurrentBusiness();
             if (in_array($order->order_status, ['cancelled', 'closed'], true)) throw ValidationException::withMessages(['priority' => '订单已取消或已完结，不用再调优先级。']);
             $before = (int) $order->priority;
             $name = (string) (($actor->nickname ?? null) ?: ($actor->username ?? null) ?: '系统');

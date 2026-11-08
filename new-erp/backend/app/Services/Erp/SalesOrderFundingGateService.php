@@ -45,6 +45,15 @@ final class SalesOrderFundingGateService
             if (DB::transactionLevel() > 0) $query->lockForUpdate();
             $order = $query->findOrFail($order);
         }
+        if ($order->isLegacyHistory()) return [
+            'history_only' => true, 'contract_amount' => (string) $order->total_amount,
+            'payment_status' => 'unknown', 'production_funding_status' => 'blocked', 'shipment_funding_status' => 'blocked',
+            'production_funds_satisfied' => false, 'shipment_funds_satisfied' => false,
+            'production_block_message' => '旧系统历史订单须核对后接续。',
+            'shipment_block_message' => '旧系统收款及库存未迁入，不能据历史订单办理发运。',
+            'platform_payment' => null, 'platform_payment_eligible' => false, 'platform_payment_required' => false,
+            'agreed_deposit_supported' => false,
+        ];
         $settlement = $this->settlements->status($order);
         // 退货退款冲减后的净应收用于计算约定定金及未收款。
         $receivable = $settlement['net_receivable_amount'];
@@ -107,6 +116,7 @@ final class SalesOrderFundingGateService
     /** 只写资金放行投影；完成状态等后续步骤由 SalesOrderStateCoordinator 统一编排。 */
     public function writeProjection(SalesOrder $order): array
     {
+        $order->assertCurrentBusiness();
         $status = $this->status($order);
         $updates = [
             'payment_status' => $status['payment_status'],

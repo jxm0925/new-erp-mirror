@@ -15,7 +15,7 @@ final class AssemblyDisplayController extends Controller
     {
         $filters = $request->validate([
             'page' => ['sometimes', 'integer', 'min:1'], 'per_page' => ['sometimes', 'integer', 'min:1', 'max:100'],
-            'type' => ['sometimes', 'in:all,produce,assemble,testing'], 'status' => ['sometimes', 'in:wait,accept,complete,cancel'],
+            'type' => ['sometimes', 'in:all,produce,assemble,testing,stock'], 'status' => ['sometimes', 'in:all,wait,accept,complete,cancel'],
             'create_from' => ['nullable', 'date_format:Y-m-d'], 'create_to' => ['nullable', 'date_format:Y-m-d', 'after_or_equal:create_from'],
             'customer' => ['nullable', 'string', 'max:200'], 'product_name' => ['nullable', 'string', 'max:200'],
             'order_no' => ['nullable', 'string', 'max:80'], 'order_type' => ['sometimes', 'in:all,ordinary,delayed,urgent,customized'],

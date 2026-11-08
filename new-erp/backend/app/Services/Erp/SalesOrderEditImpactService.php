@@ -1246,6 +1246,7 @@ class SalesOrderEditImpactService
     }
     private function lockedOrder(int $id): SalesOrder { return SalesOrder::query()->with(['lines', 'shipments', 'salesReturns'])->lockForUpdate()->findOrFail($id); }
     private function assertChangeable(SalesOrder $order): void {
+        $order->assertCurrentBusiness();
         if ($order->order_status !== 'confirmed' || $order->confirm_status !== 'confirmed') throw ValidationException::withMessages(['order_status' => '只有已正式确认的订单可编辑；草稿订单请直接保存。']);
         if ($order->short_closed_at) throw ValidationException::withMessages(['order_status' => '短交关闭的订单不能重新修改未发需求。']);
     }

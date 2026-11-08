@@ -405,6 +405,11 @@ class SalesOrderController extends Controller
             '订单行附件必须关联订单行或草稿行'
         );
 
+        if (!empty($payload['sales_order_line_id'])) {
+            $lineOrderId = (int) SalesOrderLine::findOrFail($payload['sales_order_line_id'])->sales_order_id;
+            abort_if(!empty($payload['sales_order_id']) && (int) $payload['sales_order_id'] !== $lineOrderId, 422, '订单行不属于当前订单');
+            $payload['sales_order_id'] = $lineOrderId;
+        }
         if (!empty($payload['sales_order_id'])) {
             $order = SalesOrder::with('lines')->findOrFail($payload['sales_order_id']);
             $this->abortUnlessOrderVisible($request, $order);
@@ -444,8 +449,9 @@ class SalesOrderController extends Controller
     {
         $this->abortUnlessPermission($request, 'sales_order.delete_attachment');
         $attachment = SalesOrderAttachment::where('status', 'active')->findOrFail($id);
-        if ($attachment->sales_order_id) {
-            $order = SalesOrder::findOrFail($attachment->sales_order_id);
+        $orderId = $attachment->sales_order_id ?: optional($attachment->line)->sales_order_id;
+        if ($orderId) {
+            $order = SalesOrder::findOrFail($orderId);
             $this->abortUnlessOrderVisible($request, $order);
             abort_if($order->order_status !== 'draft', 422, '只有草稿订单允许删除附件');
         } else {
@@ -709,6 +715,16 @@ class SalesOrderController extends Controller
         ]);
         $this->applySalesOrderVisibility($query, $request, true);
         $order = $query->findOrFail($id);
+        if ($order->isLegacyHistory()) {
+            $shipping = (array) data_get($order->legacy_payload, 'shipping', []);
+            $order->setAttribute('legacy_shipping', [
+                'carrier_name' => $shipping['carrier_name'] ?? null, 'tracking_no' => $shipping['tracking_no'] ?? null,
+                'shipped_at' => $shipping['shipped_at'] ?? null,
+                'images' => \App\Services\Erp\Sales\LegacyOrderHistoryQueryService::safeLinks((array) ($shipping['images'] ?? [])),
+            ]);
+            $order->makeHidden('legacy_payload');
+            $order->lines->each(fn ($line) => $line->makeHidden(['commercial_snapshot', 'item_match_snapshot']));
+        }
         $this->decorateOrderPeople([$order]);
         $order->setAttribute('share_users', array_values(app(ErpUserProjectionService::class)->many(explode(',', (string) $order->share_user))));
         $paymentMethodName = data_get($order->payment_method_snapshot, 'method_name')
@@ -769,6 +785,19 @@ class SalesOrderController extends Controller
             ])->values()->all());
         $payload = $order->toArray();
         return response()->json($payload);
+    }
+
+    public function legacyHistory(Request $request, int $id, \App\Services\Erp\Sales\LegacyOrderHistoryQueryService $history)
+    {
+        $this->abortUnlessPermission($request, 'sales_order.view');
+        $this->abortUnlessPermission($request, 'production.work_order.view');
+        $order = SalesOrder::findOrFail($id);
+        $this->abortUnlessOrderVisible($request, $order, true);
+        $filters = $request->validate([
+            'page' => 'nullable|integer|min:1', 'per_page' => 'nullable|integer|min:1|max:100',
+            'legacy_work_order_id' => 'nullable|integer|min:1',
+        ]);
+        return response()->json($history->history($order, $filters));
     }
 
     public function update(Request $request, int $id)
@@ -984,6 +1013,7 @@ class SalesOrderController extends Controller
     /** 短交关闭预览：只读，无金额权限时隐藏金额字段。 */
     private function decorateCancellation(Request $request, SalesOrder $order): void
     {
+        if ($order->isLegacyHistory()) return;
         if ($order->order_status !== 'cancelled') return;
         $order->setAttribute('fulfillment_status', 'cancelled');
         $auth = app(AuthContextService::class); $user = $auth->currentUser($request);
@@ -1599,6 +1629,12 @@ class SalesOrderController extends Controller
             'adjust_priority' => ! in_array($order->order_status, ['cancelled', 'closed'], true)
                 && in_array('sales_order.priority', $codes, true),
         ];
+        if ($order->isLegacyHistory()) {
+            $order->setAttribute('read_only', true);
+            $order->makeHidden('legacy_payload');
+            $order->lines->each(fn ($line) => $line->makeHidden(['commercial_snapshot', 'item_match_snapshot']));
+            return array_map(fn () => false, $actions);
+        }
         $writable = SalesOrder::query()->whereKey($order->id);
         $this->applySalesOrderVisibility($writable, $request);
         $order->setAttribute('read_only', !$writable->exists());
@@ -1766,6 +1802,7 @@ class SalesOrderController extends Controller
         $query = SalesOrder::query()->whereKey($order->id);
         $this->applySalesOrderVisibility($query, $request, $includeShared);
         abort_unless($query->exists(), 403, '无权访问该销售订单');
+        if (!$request->isMethodSafe()) $order->assertCurrentBusiness();
     }
 
     private function decorateOrderPeople(iterable $orders): void
@@ -2071,6 +2108,11 @@ class SalesOrderController extends Controller
 
     private function decorateFulfillmentComposition(SalesOrder $order): void
     {
+        if ($order->isLegacyHistory()) {
+            $order->setAttribute('fulfillment_composition_label', '旧系统记录');
+            $order->setAttribute('fulfillment_plan_status_label', '历史记录');
+            return;
+        }
         $rows = $order->relationLoaded('fulfillments') ? $order->fulfillments->where('demand_status', 'confirmed') : collect();
         $types = $rows
             ->where('demand_status', 'confirmed')

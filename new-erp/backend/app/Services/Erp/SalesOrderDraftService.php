@@ -65,6 +65,7 @@ class SalesOrderDraftService
 
     public function update(SalesOrder $order, array $payload, string $operator, ?object $actor = null): SalesOrder
     {
+        $order->assertCurrentBusiness();
         abort_if($order->order_status !== 'draft', 422, '只有草稿订单允许直接编辑');
         abort_if($order->shipment_status !== 'not_shipped', 422, '已有发货记录的订单不能编辑草稿');
 
@@ -239,6 +240,7 @@ class SalesOrderDraftService
 
     private function assertDraftDeletable(SalesOrder $order): void
     {
+        $order->assertCurrentBusiness();
         abort_if($order->order_status !== 'draft' || $order->confirmed_at !== null
             || $order->confirm_status === 'pending_confirmation', 422, '只有未确认、未进入待审核状态的销售订单草稿可以删除。');
         abort_if($order->fulfillments()->exists(), 422, '订单已产生库存、生产或交付记录，不能删除。');
@@ -251,6 +253,7 @@ class SalesOrderDraftService
 
     private function assertDraftConfirmationGate(SalesOrder $order): void
     {
+        $order->assertCurrentBusiness();
         abort_if($order->order_status !== 'draft', 422, 'Only draft orders can be submitted.');
         abort_if($order->confirm_status === 'pending_confirmation', 422, 'Order has already been submitted.');
         $order->load(['lines.sku', 'lines.attachments']);

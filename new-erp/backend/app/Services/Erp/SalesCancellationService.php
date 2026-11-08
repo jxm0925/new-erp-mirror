@@ -40,6 +40,7 @@ final class SalesCancellationService
 
     public function request(SalesOrder $order, array $data, string $operator): void
     {
+        $order->assertCurrentBusiness();
         $a = $this->amounts($order);
         $paid = Money::compare($a['remaining'], '0') > 0;
         abort_if($paid && !in_array($data['funds_method'] ?? null, ['refund', 'partial'], true), 422, '订单有未处理收款，请选择全额退款或部分退款、部分留存。');
@@ -55,6 +56,7 @@ final class SalesCancellationService
     {
         return DB::transaction(function () use ($orderId, $data, $actor) {
             $order = SalesOrder::whereKey($orderId)->lockForUpdate()->firstOrFail();
+            $order->assertCurrentBusiness();
             abort_unless($order->order_status === 'cancelled', 422, '仅处理已取消订单。');
             $case = SalesCancellation::where('sales_order_id', $orderId)->lockForUpdate()->first();
             // Historical cancellations can enter finance without rewriting old cash records.

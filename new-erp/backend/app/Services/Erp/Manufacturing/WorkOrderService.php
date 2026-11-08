@@ -39,6 +39,7 @@ final class WorkOrderService
     /** 订单生产确认的同一事务里调用：为本批 production 履约逐条建工单并尝试下达。 */
     public function createForSalesFulfillments(SalesOrder $order, array $fulfillmentIds, object $actor): array
     {
+        $order->assertCurrentBusiness();
         $rows = SalesOrderFulfillment::query()->with(['line', 'item'])
             ->whereIn('id', $fulfillmentIds)->where('fulfillment_type', 'production')->where('demand_status', 'confirmed')
             ->orderBy('id')->get();

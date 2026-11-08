@@ -246,6 +246,7 @@ class SalesInvoiceRequestService
 
     private function requestBlocker(SalesOrder $order): ?string
     {
+        if ($order->isLegacyHistory()) return '旧系统历史订单不生成新系统开票申请。';
         if (!$order->customer_id) return '订单还没有绑定客户，不能申请开票。';
         if (!in_array($order->order_status, ['confirmed', 'closed'], true)) return '订单确认后才能申请开票。';
         return null;

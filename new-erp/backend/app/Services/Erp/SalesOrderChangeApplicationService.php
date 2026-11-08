@@ -137,6 +137,7 @@ class SalesOrderChangeApplicationService
 
     private function assertChangeable(SalesOrder $order): void
     {
+        $order->assertCurrentBusiness();
         if ($order->order_status !== 'confirmed' || $order->confirm_status !== 'confirmed') {
             throw ValidationException::withMessages(['order_status' => '只有已正式确认的销售订单可走订单变更；草稿请直接编辑。']);
         }

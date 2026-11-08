@@ -4,10 +4,10 @@ Progress design: 用户确认的订单产品树、单台整链路与工单聚合
 -->
 <template>
   <section class="sales-detail-page">
-    <sales-order-cancellation-dialog :visible.sync="cancelDialogVisible" :order-id="order.id" @changed="load" />
+    <sales-order-cancellation-dialog v-if="!order.is_legacy_history" :visible.sync="cancelDialogVisible" :order-id="order.id" @changed="load" />
     <el-alert v-if="order.order_status === 'cancelled' && order.cancellation" :title="'订单已取消 · ' + (order.cancellation.finance_status === 'settled' ? '资金已结清' : '资金待处理') + (order.cancellation.production_pending ? ' · ' + order.cancellation.production_pending + '个编号待生产处理' : '')" type="warning" :closable="false" show-icon />
-    <cancellation-dispositions v-if="order.id && $can('production.work_order.view')" :sales-order-id="order.id" @changed="load" />
-    <aftersales-case-form v-if="$can('aftersales.view') || $can('aftersales.create')" ref="caseForm" :order="order" @saved="onAftersalesSaved" />
+    <cancellation-dispositions v-if="!order.is_legacy_history && order.id && $can('production.work_order.view')" :sales-order-id="order.id" @changed="load" />
+    <aftersales-case-form v-if="!order.is_legacy_history && ($can('aftersales.view') || $can('aftersales.create'))" ref="caseForm" :order="order" @saved="onAftersalesSaved" />
     <!-- 顶部主控导航与操作栏 -->
     <div class="detail-header-card">
       <div class="header-main">
@@ -15,6 +15,7 @@ Progress design: 用户确认的订单产品树、单台整链路与工单聚合
         <div class="title-row">
           <h1 class="order-no-title">{{ order.sales_order_no || '-' }}</h1>
           <div class="header-tags">
+            <el-tag v-if="order.is_legacy_history" size="small" type="info" effect="plain">历史订单</el-tag>
             <el-tag size="small" :type="orderStatusTag(order.order_status)" effect="light">{{ orderStatusText(order.order_status) }}</el-tag>
             <el-tag v-if="order.order_status !== 'cancelled'" size="small" :type="statusTag(order.shipment_status)" effect="plain">{{ shipmentStatusText(order.shipment_status) }}</el-tag>
             <el-tag v-if="order.aftersales_open_count > 0" size="small" type="warning" effect="plain">售后中 {{ order.aftersales_open_count }}</el-tag>
@@ -24,12 +25,12 @@ Progress design: 用户确认的订单产品树、单台整链路与工单聚合
       </div>
       <div class="header-actions">
         <el-button size="small" icon="el-icon-back" @click="$router.push('/sales/orders')">返回列表</el-button>
-        <el-button v-if="$can('sales_order.shipment.view')" size="small" icon="el-icon-truck" @click="$router.push({ path: '/sales/shipments', query: { sales_order_id: order.id } })">发货单</el-button>
+        <el-button v-if="!order.is_legacy_history && $can('sales_order.shipment.view')" size="small" icon="el-icon-truck" @click="$router.push({ path: '/sales/shipments', query: { sales_order_id: order.id } })">发货单</el-button>
         <el-button v-if="canCreateAftersales" size="small" type="success" plain icon="el-icon-service" @click="$refs.caseForm.open()">售后</el-button>
-        <el-button v-if="order.allowed_actions && order.allowed_actions.edit" size="small" icon="el-icon-edit" @click="$router.push(`/sales/orders/${order.id}/edit`)">修改订单</el-button>
-        <el-button v-if="order.allowed_actions && order.allowed_actions.lock_inventory" size="small" type="success" plain icon="el-icon-lock" @click="openInventoryLock">锁库存</el-button>
-        <el-button v-if="order.allowed_actions && order.allowed_actions.submit_confirmation" size="small" type="success" icon="el-icon-check" @click="doConfirm">确认订单</el-button>
-        <el-button v-if="order.allowed_actions && order.allowed_actions.production_confirmation" size="small" type="success" icon="el-icon-s-operation" @click="$router.push(`/sales/orders/${order.id}/production-confirmation`)">生产确认</el-button>
+        <el-button v-if="!order.is_legacy_history && order.allowed_actions && order.allowed_actions.edit" size="small" icon="el-icon-edit" @click="$router.push(`/sales/orders/${order.id}/edit`)">修改订单</el-button>
+        <el-button v-if="!order.is_legacy_history && order.allowed_actions && order.allowed_actions.lock_inventory" size="small" type="success" plain icon="el-icon-lock" @click="openInventoryLock">锁库存</el-button>
+        <el-button v-if="!order.is_legacy_history && order.allowed_actions && order.allowed_actions.submit_confirmation" size="small" type="success" icon="el-icon-check" @click="doConfirm">确认订单</el-button>
+        <el-button v-if="!order.is_legacy_history && order.allowed_actions && order.allowed_actions.production_confirmation" size="small" type="success" icon="el-icon-s-operation" @click="$router.push(`/sales/orders/${order.id}/production-confirmation`)">生产确认</el-button>
         <el-button v-if="canRequestInvoice" size="small" :type="hasStageAction ? '' : 'success'" icon="el-icon-tickets" @click="openInvoiceRequest">申请开票</el-button>
         <el-dropdown v-if="moreActions.length" trigger="click" @command="runMoreAction">
           <el-button size="small" :loading="shortClose.loading || cancelling">更多<i class="el-icon-arrow-down el-icon--right" /></el-button>
@@ -41,7 +42,7 @@ Progress design: 用户确认的订单产品树、单台整链路与工单聚合
     </div>
 
     <!-- 调整优先级 -->
-    <el-dialog title="调整订单优先级" :visible.sync="priority.visible" width="min(460px, calc(100vw - 32px))" :close-on-click-modal="false">
+    <el-dialog v-if="!order.is_legacy_history" title="调整订单优先级" :visible.sync="priority.visible" width="min(460px, calc(100vw - 32px))" :close-on-click-modal="false">
       <el-alert type="info" :closable="false" show-icon title="没做完的工单（含半成品、补做工单）会一起改，车间按优先级排先后，同级先建的先做。" />
       <el-form label-width="72px" class="priority-form">
         <el-form-item label="优先级">
@@ -60,7 +61,7 @@ Progress design: 用户确认的订单产品树、单台整链路与工单聚合
     </el-dialog>
 
     <!-- 锁定库存弹窗 -->
-    <el-dialog title="确认锁定库存" :visible.sync="inventoryLockVisible" width="min(1180px, calc(100vw - 32px))" :close-on-click-modal="false">
+    <el-dialog v-if="!order.is_legacy_history" title="确认锁定库存" :visible.sync="inventoryLockVisible" width="min(1180px, calc(100vw - 32px))" :close-on-click-modal="false">
       <el-alert type="info" :closable="false" show-icon title="系统将按当前可用库存、仓库、库位和批次进行正式占用，不会重复锁定。" />
       <el-alert v-if="inventoryLockError" type="error" :closable="false" show-icon :title="inventoryLockError" />
       <el-table v-else v-loading="inventoryLockLoading" :data="lockLines" border size="mini" max-height="360">
@@ -80,7 +81,7 @@ Progress design: 用户确认的订单产品树、单台整链路与工单聚合
     </el-dialog>
 
     <!-- 短交关闭弹窗：剩余未发不再发，应收改为实发金额 + 运费 -->
-    <el-dialog title="短交关闭" :visible.sync="shortClose.visible" width="min(720px, calc(100vw - 32px))" :close-on-click-modal="false" append-to-body>
+    <el-dialog v-if="!order.is_legacy_history" title="短交关闭" :visible.sync="shortClose.visible" width="min(720px, calc(100vw - 32px))" :close-on-click-modal="false" append-to-body>
       <template v-if="shortClose.preview">
         <el-alert v-if="shortClose.preview.blockers && shortClose.preview.blockers.length" type="error" :closable="false" show-icon title="当前不能短交关闭">
           <div v-for="item in shortClose.preview.blockers" :key="item">{{ item }}</div>
@@ -121,9 +122,9 @@ Progress design: 用户确认的订单产品树、单台整链路与工单聚合
     </div>
 
     <!-- 状态与预警提示 -->
-    <el-alert v-if="order.order_status === 'confirmed' && order.change_eligibility && !order.change_eligibility.allowed" class="change-block-alert" type="warning" :closable="false" show-icon :title="`当前订单不能原地变更：${order.change_eligibility.reason}`" />
-    <el-alert v-if="$route.query.changed" class="change-success-alert" type="success" :closable="false" show-icon title="订单已变更，请重新安排备货或进行订单生产确认。" />
-    <el-alert v-if="order.pending_change_candidate" class="change-success-alert" type="warning" :closable="false" show-icon :title="`存在待审核 Candidate V${order.pending_change_candidate.candidate_version}：正式订单、库存预留以及生产和交付安排尚未变化。`" />
+    <el-alert v-if="!order.is_legacy_history && order.order_status === 'confirmed' && order.change_eligibility && !order.change_eligibility.allowed" class="change-block-alert" type="warning" :closable="false" show-icon :title="`当前订单不能原地变更：${order.change_eligibility.reason}`" />
+    <el-alert v-if="!order.is_legacy_history && $route.query.changed" class="change-success-alert" type="success" :closable="false" show-icon title="订单已变更，请重新安排备货或进行订单生产确认。" />
+    <el-alert v-if="!order.is_legacy_history && order.pending_change_candidate" class="change-success-alert" type="warning" :closable="false" show-icon :title="`存在待审核 Candidate V${order.pending_change_candidate.candidate_version}：正式订单、库存预留以及生产和交付安排尚未变化。`" />
 
     <!-- 核心业务指标看板 (KPI Strip) -->
     <div class="kpi-metric-strip">
@@ -136,7 +137,8 @@ Progress design: 用户确认的订单产品树、单台整链路与工单聚合
       </div>
       <div class="kpi-card">
         <div class="kpi-label"><i class="el-icon-coin" /> {{ order.channel_type_snapshot === 'online_platform' ? 'ERP 核销进度' : '收款进度' }}{{ order.funding_status && order.funding_status.policy_name ? ` · ${order.funding_status.policy_name}` : '' }}</div>
-        <template v-if="order.funding_status && order.order_status !== 'cancelled'">
+        <div v-if="order.is_legacy_history" class="kpi-value text-muted">历史收款未迁入</div>
+        <template v-else-if="order.funding_status && order.order_status !== 'cancelled'">
           <div class="kpi-value" :class="receiptProgress.done ? 'green' : 'orange'">¥{{ money(order.funding_status.net_received_amount) }}<small class="kpi-of">/ {{ money(receiptProgress.target) }}</small></div>
           <div class="kpi-bar"><i :style="{ width: receiptProgress.percent + '%' }" /></div>
           <div class="kpi-sub">{{ receiptProgress.text }}</div>
@@ -145,7 +147,11 @@ Progress design: 用户确认的订单产品树、单台整链路与工单聚合
       </div>
       <div class="kpi-card">
         <div class="kpi-label"><i class="el-icon-truck" /> 发货进度</div>
-        <template v-if="shipmentProgress.total > 0">
+        <template v-if="order.is_legacy_history">
+          <div class="kpi-value">{{ shipmentStatusText(order.shipment_status) }}</div>
+          <div class="kpi-sub">{{ order.legacy_shipping && order.legacy_shipping.shipped_at ? date(order.legacy_shipping.shipped_at) : '旧系统发货记录' }}</div>
+        </template>
+        <template v-else-if="shipmentProgress.total > 0">
           <div class="kpi-value">{{ numberText(shipmentProgress.shipped) }}<small class="kpi-of">/ {{ numberText(shipmentProgress.total) }} 需发</small></div>
           <div class="kpi-bar"><i :style="{ width: shipmentProgress.percent + '%' }" /></div>
           <div class="kpi-sub">{{ shipmentProgress.text }}</div>
@@ -204,7 +210,7 @@ Progress design: 用户确认的订单产品树、单台整链路与工单聚合
             <span class="kv-value">
               <el-tag size="mini" :type="priorityTagType(order.priority)">{{ order.priority_label || '普通' }}</el-tag>
               <small v-if="order.priority_adjusted_by_name" class="text-muted">{{ order.priority_adjusted_by_name }} 调整{{ order.priority_reason ? `：${order.priority_reason}` : '' }}</small>
-              <el-button v-if="order.allowed_actions && order.allowed_actions.adjust_priority" type="text" size="mini" @click="openPriority">调整</el-button>
+              <el-button v-if="!order.is_legacy_history && order.allowed_actions && order.allowed_actions.adjust_priority" type="text" size="mini" @click="openPriority">调整</el-button>
             </span>
           </div>
           <div class="kv-item">
@@ -223,7 +229,7 @@ Progress design: 用户确认的订单产品树、单台整链路与工单聚合
             <span class="kv-label">平台付款确认</span>
             <span class="kv-value">
               <el-tag size="mini" :type="platformPayment ? 'success' : 'info'">{{ platformPayment ? '已确认平台付款' : '未确认平台付款' }}</el-tag>
-              <el-button v-if="order.allowed_actions && order.allowed_actions.platform_payment_confirm" type="text" size="mini" @click="$router.push({ path: `/sales/orders/${order.id}/edit`, query: { platform_payment: '1' } })">前往核对</el-button>
+              <el-button v-if="!order.is_legacy_history && order.allowed_actions && order.allowed_actions.platform_payment_confirm" type="text" size="mini" @click="$router.push({ path: `/sales/orders/${order.id}/edit`, query: { platform_payment: '1' } })">前往核对</el-button>
             </span>
             <small v-if="platformPayment" class="text-muted">{{ platformPayment.confirmed_by }} · {{ date(platformPayment.confirmed_at) }}</small>
           </div>
@@ -259,7 +265,7 @@ Progress design: 用户确认的订单产品树、单台整链路与工单聚合
                 <small style="color: #909399">{{ order.funding_status.deposit_source === 'agreed' ? '（与客户约定）' : '（按付款条件默认）' }}</small>
               </template>
               <template v-else>{{ order.funding_status.deposit_source === 'agreed' ? '与客户约定' : '按付款条件默认' }}</template>
-              <el-button v-if="order.allowed_actions && order.allowed_actions.edit_agreed_deposit" type="text" size="mini" :loading="depositSaving" @click="editAgreedDeposit">修改</el-button>
+              <el-button v-if="!order.is_legacy_history && order.allowed_actions && order.allowed_actions.edit_agreed_deposit" type="text" size="mini" :loading="depositSaving" @click="editAgreedDeposit">修改</el-button>
             </span>
           </div>
           <div class="kv-item kv-item--full">
@@ -305,7 +311,7 @@ Progress design: 用户确认的订单产品树、单台整链路与工单聚合
           </div>
           <div v-if="!(order.shipping_snapshot && order.shipping_snapshot.is_self_pickup)" class="kv-item">
             <span class="kv-label">客户指定物流</span>
-            <span class="kv-value">{{ shippingCarrierName }}<small v-if="shippingCarrierName !== '-'" class="kv-hint">发货时预填，可改</small></span>
+            <span class="kv-value">{{ shippingCarrierName }}<small v-if="!order.is_legacy_history && shippingCarrierName !== '-'" class="kv-hint">发货时预填，可改</small></span>
           </div>
           <div v-if="order.customer_snapshot && order.customer_snapshot.name && order.customer_snapshot.name !== order.customer_name" class="kv-item">
             <span class="kv-label">客户历史快照</span>
@@ -343,8 +349,18 @@ Progress design: 用户确认的订单产品树、单台整链路与工单聚合
         <div class="dispatch-records">
           <div class="dispatch-records-head">
             <b>发货记录</b>
-            <el-button v-if="$can('sales_order.shipment.view') && dispatchRecords.length" type="text" size="mini" @click="$router.push({ path: '/sales/shipments', query: { sales_order_id: order.id } })">查看发货单</el-button>
+            <el-button v-if="!order.is_legacy_history && $can('sales_order.shipment.view') && dispatchRecords.length" type="text" size="mini" @click="$router.push({ path: '/sales/shipments', query: { sales_order_id: order.id } })">查看发货单</el-button>
           </div>
+          <template v-if="order.is_legacy_history">
+            <el-table v-if="order.legacy_shipping" :data="[order.legacy_shipping]" size="mini" border>
+              <el-table-column label="快递公司" min-width="100"><template slot-scope="{row}">{{ row.carrier_name || '-' }}</template></el-table-column>
+              <el-table-column label="运单号" min-width="130"><template slot-scope="{row}"><span class="font-mono">{{ row.tracking_no || '-' }}</span></template></el-table-column>
+              <el-table-column label="发货时间" min-width="140"><template slot-scope="{row}">{{ date(row.shipped_at) }}</template></el-table-column>
+              <el-table-column label="物流凭证" min-width="100"><template slot-scope="{row}"><a v-for="(file, index) in row.images || []" :key="index" :href="file.url" target="_blank" rel="noopener noreferrer" class="legacy-shipping-file">凭证 {{ index + 1 }}</a><span v-if="!(row.images || []).length" class="text-muted">-</span></template></el-table-column>
+            </el-table>
+            <div v-else class="dispatch-empty text-muted">旧系统未记录物流信息</div>
+          </template>
+          <template v-else>
           <el-table v-if="dispatchRecords.length" :data="dispatchRecords" size="mini" border>
             <el-table-column label="发货单" min-width="140"><template slot-scope="{row}"><span class="font-mono">{{ row.dispatch_no }}</span></template></el-table-column>
             <el-table-column label="方式" width="60"><template slot-scope="{row}">{{ row.delivery_mode === 'pickup' ? '提货' : '发货' }}</template></el-table-column>
@@ -355,6 +371,7 @@ Progress design: 用户确认的订单产品树、单台整链路与工单聚合
           </el-table>
           <div v-else class="dispatch-empty text-muted">未发货。实际快递公司和运单号在每次发货时填写。</div>
           <div v-if="dispatchRecords.length > 1" class="dispatch-empty text-muted">共 {{ dispatchRecords.length }} 次发货 · {{ dispatchPackageCount }} 个包裹</div>
+          </template>
         </div>
       </section>
     </div>
@@ -554,7 +571,7 @@ Progress design: 用户确认的订单产品树、单台整链路与工单聚合
     <section ref="contractAttachmentSection" class="detail-card attachments-invoice-card">
       <div class="card-head is-clickable" @click="attachmentsOpen = !attachmentsOpen">
         <div class="card-title">
-          <i class="el-icon-paperclip" /> 附件与开票
+          <i class="el-icon-paperclip" /> {{ order.is_legacy_history ? '附件' : '附件与开票' }}
           <span class="title-sub-count">合同附件 {{ contractFiles.length }} 个</span>
           <span v-if="canViewInvoice" class="title-sub-count">开票申请 {{ invoiceRequestCount }} 笔</span>
           <span v-if="invoicePendingCount" class="title-sub-count title-sub-count--orange">{{ invoicePendingCount }} 笔待开票</span>
@@ -588,7 +605,7 @@ Progress design: 用户确认的订单产品树、单台整链路与工单聚合
     </section>
 
     <!-- 审核进度条 (存在审核任务时展开) -->
-    <section v-if="order.approval_task" class="detail-card approval-progress-strip">
+    <section v-if="!order.is_legacy_history && order.approval_task" class="detail-card approval-progress-strip">
       <div class="approval-status-block">
         <h3><i class="el-icon-s-check" /> 审核状态与进度</h3>
         <div>
@@ -615,9 +632,10 @@ Progress design: 用户确认的订单产品树、单台整链路与工单聚合
     </section>
 
         </el-tab-pane>
-        <el-tab-pane v-if="$can('sales_order.view')" name="production">
+        <el-tab-pane v-if="$can('sales_order.view') && (!order.is_legacy_history || $can('production.work_order.view'))" name="production">
           <span slot="label"><i class="el-icon-s-order" /> 生产与发货进度</span>
-          <order-progress v-if="activeTab === 'production' && order.id" ref="orderProgress" :order-id="order.id" @show-work-orders="loadWorkOrders(loadSequence)">
+          <legacy-order-history v-if="order.is_legacy_history && activeTab === 'production' && order.id && $can('production.work_order.view')" :order-id="order.id" />
+          <order-progress v-if="!order.is_legacy_history && activeTab === 'production' && order.id" ref="orderProgress" :order-id="order.id" @show-work-orders="loadWorkOrders(loadSequence)">
             <template slot="work-orders">
             <el-table v-loading="workOrderLoading" :data="workOrders" size="small" border empty-text="这张订单没有生产工单（全部用库存、外购或服务）">
               <el-table-column v-if="$can('production.work_order.view')" label="工单号" min-width="150"><template slot-scope="{ row }"><el-button type="text" class="font-mono" :disabled="!$can('production.work_order.view')" @click="$router.push(`/production/work-orders/${row.id}`)">{{ row.work_order_no }}</el-button></template></el-table-column>
@@ -630,14 +648,14 @@ Progress design: 用户确认的订单产品树、单台整链路与工单聚合
             </el-table>
             </template>
           </order-progress>
-          <sales-order-change-labor v-if="activeTab === 'production' && order.id && $can('production.work_order.view')" ref="changeLabor" :order-id="order.id" />
+          <sales-order-change-labor v-if="!order.is_legacy_history && activeTab === 'production' && order.id && $can('production.work_order.view')" ref="changeLabor" :order-id="order.id" />
         </el-tab-pane>
-        <el-tab-pane v-if="$can('sales_order.view')" label="采购关联" name="finance">
+        <el-tab-pane v-if="!order.is_legacy_history && $can('sales_order.view')" label="采购关联" name="finance">
           <div class="tab-pane-content"><sales-order-finance-panel v-if="activeTab === 'finance' && order.id" :order-id="order.id" /></div>
         </el-tab-pane>
 
         <!-- 售后：本订单售后单 + 可售后商品 -->
-        <el-tab-pane v-if="$can('aftersales.view')" name="aftersales">
+        <el-tab-pane v-if="!order.is_legacy_history && $can('aftersales.view')" name="aftersales">
           <span slot="label"><i class="el-icon-service" /> 售后<template v-if="order.aftersales_open_count > 0"><em class="tab-badge-num">{{ order.aftersales_open_count }}</em></template></span>
           <div class="tab-pane-content">
             <template v-if="!hasShippedQty && !aftersales.rows.length">
@@ -837,6 +855,7 @@ import SalesOrderAttachmentPreviewDialog from '@/components/sales/SalesOrderAtta
 import SalesOrderFinancePanel from '@/components/sales/SalesOrderFinancePanel.vue'
 import SalesOrderInvoicePanel from '@/components/sales/SalesOrderInvoicePanel.vue'
 import OrderProgress from './components/OrderProgress.vue'
+import LegacyOrderHistory from './components/LegacyOrderHistory.vue'
 import AftersalesCaseForm from '../aftersales/AftersalesCaseForm.vue'
 import { listOrderAftersales, getAftersalesEligible } from '@/api/erp/aftersales'
 import { promptAgreedDeposit } from '@/utils/salesAgreedDeposit'
@@ -846,7 +865,7 @@ import { listSalesOrderWorkOrders } from '@/api/erp/production'
 
 export default {
   mixins: [cachedPageRoute],
-  components: { SalesOrderCancellationDialog, CancellationDispositions, SalesOrderChangeLabor, SalesOrderAttachmentPreviewDialog, SalesOrderFinancePanel, SalesOrderInvoicePanel, OrderProgress, AftersalesCaseForm },
+  components: { SalesOrderCancellationDialog, CancellationDispositions, SalesOrderChangeLabor, SalesOrderAttachmentPreviewDialog, SalesOrderFinancePanel, SalesOrderInvoicePanel, OrderProgress, LegacyOrderHistory, AftersalesCaseForm },
   data: () => ({
     cancelDialogVisible: false,
     invoicePendingCount: 0,
@@ -882,12 +901,12 @@ export default {
     loadSequence: 0
   }),
   computed: {
-    canViewInvoice() { return this.$can('sales_order.view') },
+    canViewInvoice() { return !this.order.is_legacy_history && this.$can('sales_order.view') },
     hasShippedQty() { return (this.order.lines || []).some(line => Number(line.shipped_qty || 0) > 0) },
-    canCreateAftersales() { return this.$can('aftersales.create') && this.hasShippedQty && this.order.order_status !== 'cancelled' },
+    canCreateAftersales() { return !this.order.is_legacy_history && this.$can('aftersales.create') && this.hasShippedQty && this.order.order_status !== 'cancelled' },
     canRequestInvoice() { return this.canViewInvoice && this.$can('sales_order.invoice_request') && ['confirmed', 'closed'].includes(this.order.order_status) && !!this.order.customer_id },
     canShortClose() {
-      if (this.order.order_status !== 'confirmed' || this.order.short_closed_at || !this.$can('sales_order.short_close')) return false
+      if (this.order.is_legacy_history || this.order.order_status !== 'confirmed' || this.order.short_closed_at || !this.$can('sales_order.short_close')) return false
       return (this.order.lines || []).some(line => Number(line.shipped_qty || 0) > 0)
     },
     hasStageAction() {
@@ -895,6 +914,7 @@ export default {
       return !!(actions.submit_confirmation || actions.production_confirmation)
     },
     moreActions() {
+      if (this.order.is_legacy_history) return []
       const actions = this.order.allowed_actions || {}
       const list = []
       if (actions.adjust_priority) list.push({ key: 'priority', label: '调整优先级' })
@@ -989,6 +1009,7 @@ export default {
     },
     // 生产审核以受影响主子工单实际工时为界，财务仍按金额和结算影响判断。
     stageTip() {
+      if (this.order.is_legacy_history) return { type: 'info', icon: 'el-icon-document', text: '旧系统历史记录；未完成工单需核对后接续' }
       const actions = this.order.allowed_actions || {}
       if (this.order.order_status === 'draft') return { type: 'info', icon: 'el-icon-edit-outline', text: '草稿阶段：订单可随意修改。核对无误后点击“确认订单”，确认不会生成工单。' }
       if (this.order.order_status !== 'confirmed') return null
@@ -1121,6 +1142,7 @@ export default {
       const { data } = await getSalesOrder(id)
       if (sequence !== this.loadSequence) return
       this.order = data
+      if (data.is_legacy_history && (['finance', 'aftersales'].includes(this.activeTab) || (this.activeTab === 'production' && !this.$can('production.work_order.view')))) this.activeTab = 'info'
       if (this.$refs.changeLabor) this.$refs.changeLabor.load()
       if (this.contractFiles.length) this.attachmentsOpen = true
       this.expandedLineRowKeys = (data.lines || [])
@@ -1133,7 +1155,7 @@ export default {
       this.inventoryLockStorageKey = `erp_pending_sales_inventory_lock_${actor}_${id}`
       try { this.inventoryLockPending = JSON.parse(localStorage.getItem(this.inventoryLockStorageKey) || 'null') } catch (_) { this.inventoryLockPending = null }
       await this.loadChanges(1)
-      if (this.$route.query.tab === 'production') {
+      if (this.$route.query.tab === 'production' && (!data.is_legacy_history || this.$can('production.work_order.view'))) {
         this.activeTab = 'production'
       } else if (this.$route.query.tab === 'logs') {
         this.activeTab = 'logs'
@@ -1509,6 +1531,7 @@ export default {
     },
     canDeleteAttachment(file) {
       return Boolean(
+        !this.order.is_legacy_history &&
         file.attachment_id &&
         this.order.allowed_actions &&
         this.order.allowed_actions.delete_attachment &&
@@ -1526,6 +1549,11 @@ export default {
 </script>
 
 <style scoped>
+.legacy-shipping-file {
+  display: inline-block;
+  margin-right: 12px;
+  color: #008b4b;
+}
 /* 全局容器与版心 */
 .sales-detail-page {
   padding: 14px 16px 28px;

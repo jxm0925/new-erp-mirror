@@ -6,8 +6,28 @@ class SalesOrder extends MasterModel
 {
     protected $table = 'erp_sales_orders';
 
+    protected $appends = ['is_legacy_history'];
+
+    public function isLegacyHistory(): bool
+    {
+        return ($this->order_source === 'legacy' && (int) $this->legacy_order_id > 0)
+            || ($this->getRawOriginal('order_source') === 'legacy' && (int) $this->getRawOriginal('legacy_order_id') > 0);
+    }
+
+    public function getIsLegacyHistoryAttribute(): bool { return $this->isLegacyHistory(); }
+
+    public function assertCurrentBusiness(): void
+    {
+        if ($this->isLegacyHistory()) throw \Illuminate\Validation\ValidationException::withMessages([
+            'sales_order_id' => '旧系统历史订单只供查阅；未完成业务须核对后接续。',
+        ]);
+    }
+
     protected static function booted(): void
     {
+        // 历史迁移不重放库存、收款及生产；即使请求改掉来源标记，也不能改写原单。
+        static::updating(fn (SalesOrder $order) => $order->assertCurrentBusiness());
+        static::deleting(fn (SalesOrder $order) => $order->assertCurrentBusiness());
         // 销售勾的加急 / 延期自动对应优先级（销售负责人单独调过的不再自动改）；优先级变了，没做完的工单跟着改。
         static::saving(function (SalesOrder $order): void {
             if (! $order->exists || $order->isDirty(['is_urgent', 'is_delay', 'delay'])) \App\Services\Erp\SalesOrderPriorityService::applyFlags($order);

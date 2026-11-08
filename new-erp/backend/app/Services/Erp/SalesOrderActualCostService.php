@@ -12,6 +12,7 @@ class SalesOrderActualCostService
 {
     public function refresh(int $salesOrderId): void
     {
+        if (SalesOrder::find($salesOrderId)?->isLegacyHistory()) return;
         // 根订单锁由协调器持有；锁读明细避免沿用业务入口更早的 RR 快照。
         $outboundCost = SalesShipment::query()
             ->where('sales_order_id', $salesOrderId)

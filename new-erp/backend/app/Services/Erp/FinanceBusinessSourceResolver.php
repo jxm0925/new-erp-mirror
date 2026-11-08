@@ -37,6 +37,7 @@ class FinanceBusinessSourceResolver
     private function salesOrder(string $type, int $id): array
     {
         $order = SalesOrder::query()->lockForUpdate()->findOrFail($id);
+        $order->assertCurrentBusiness();
         if (!$order->customer_id) throw ValidationException::withMessages(['source_document_id' => '销售订单尚未绑定客户。']);
         $amount = $this->salesSettlements->receivableAmount($order);
         if ($type === FinanceConstants::SOURCE_SALES_ORDER_REFUND) {
