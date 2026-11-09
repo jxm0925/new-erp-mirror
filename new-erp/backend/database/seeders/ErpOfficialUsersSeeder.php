@@ -31,6 +31,7 @@ class ErpOfficialUsersSeeder extends Seeder
         try { $data = json_decode($bytes, true, 512, JSON_THROW_ON_ERROR); }
         catch (\JsonException $error) { throw new RuntimeException('正式人员数据包JSON无效，未输出认证数据。'); }
         $this->validatePackage($data);
+        $ssoIdentities = array_column($data['legacy_sso_identities'], null, 'admin_id');
         $this->denied = array_map('intval', $data['tombstones']['user_legacy_ids']);
         $this->newUsers = [];
         DB::connection()->disableQueryLog();
@@ -53,7 +54,9 @@ class ErpOfficialUsersSeeder extends Seeder
                 $row['auth_group_ids'] = '[]';
                 $row['auth_group_names'] = '[]';
                 $row['local_managed'] = true;
-                $row['legacy_payload'] = $this->json(['auth_source' => 'local_management', 'official_users_version' => 1]);
+                $payload = ['auth_source' => 'local_management', 'official_users_version' => 1];
+                if (isset($ssoIdentities[$legacyId])) $payload['legacy_sso_identity'] = $ssoIdentities[$legacyId];
+                $row['legacy_payload'] = $this->json($payload);
                 DB::table('erp_legacy_admin_users')->insert($row);
                 $this->newUsers[$legacyId] = true;
             }
@@ -188,6 +191,19 @@ class ErpOfficialUsersSeeder extends Seeder
             }
         }
         if (($accounts[1]['username'] ?? null) !== 'admin') throw new RuntimeException('正式用户包缺少确定的默认管理员身份。');
+        if (!is_array($data['legacy_sso_identities'] ?? null) || !array_is_list($data['legacy_sso_identities'])) {
+            throw new RuntimeException('正式人员包缺少旧系统身份绑定列表。');
+        }
+        $boundIds = [];
+        foreach ($data['legacy_sso_identities'] as $identity) {
+            $id = $identity['admin_id'] ?? null;
+            if (!is_int($id) || !isset($accounts[$id]) || isset($boundIds[$id])
+                || ($identity['issuer'] ?? null) !== 'fastadmin'
+                || !is_string($identity['username'] ?? null) || trim($identity['username']) === '') {
+                throw new RuntimeException('正式人员旧系统身份绑定无效。');
+            }
+            $boundIds[$id] = true;
+        }
         foreach ($departments as $row) if ($row['parent_legacy_id'] && !isset($departments[$row['parent_legacy_id']])) throw new RuntimeException('正式部门父身份缺失。');
         foreach (['memberships', 'business_staff'] as $key) foreach ($data[$key] as $row) {
             if (!isset($accounts[$row['user_legacy_id']]) || in_array($row['user_legacy_id'], $data['tombstones']['user_legacy_ids'], true)) throw new RuntimeException('正式人员关联引用已删或缺失身份。');

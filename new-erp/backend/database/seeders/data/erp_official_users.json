@@ -1,13 +1,13 @@
 {
     "contract_version": 1,
     "timestamps_timezone": "UTC",
-    "captured_at": "2026-11-08T11:14:51+00:00",
+    "captured_at": "2026-11-09T08:46:18+00:00",
     "cleanup_batch_id": 7,
     "table_counts": {
         "accounts": 82,
         "departments": 10,
         "memberships": 79,
-        "business_staff": 77,
+        "business_staff": 61,
         "role_groups": 82,
         "role_assignments": 78,
         "role_sources": 78
@@ -57,54 +57,14 @@
             "status": "normal",
             "sort": 0,
             "is_sales": 0,
-            "department_ids": null,
-            "department_names": null,
-            "auth_group_ids": null,
-            "auth_group_names": null,
-            "local_managed": 1,
-            "business_version": 2,
+            "department_ids": "[]",
+            "department_names": "[]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
             "created_at": "2026-11-08 03:13:49",
-            "updated_at": "2026-11-08 09:58:24"
-        },
-        {
-            "id": 29,
-            "legacy_id": 5,
-            "username": "wangtao",
-            "password_hash": "$2y$12$J6cS56SG0MwBmLIOn1v85uLdYITKmbiPuCHImrU/DHYXBYy1RtYuO",
-            "nickname": "汪涛",
-            "mobile": "17765666666",
-            "email": "123111@163.com",
-            "status": "normal",
-            "sort": 0,
-            "is_sales": 1,
-            "department_ids": "[39]",
-            "department_names": "[\"内贸销售B端\"]",
-            "auth_group_ids": "[]",
-            "auth_group_names": "[]",
-            "local_managed": 1,
-            "business_version": 1,
-            "created_at": "2023-10-11 08:07:38",
-            "updated_at": "2026-11-08 09:58:24"
-        },
-        {
-            "id": 24,
-            "legacy_id": 6,
-            "username": "cangchutest",
-            "password_hash": "$2y$12$CTf1mmx1Zz/5QNwQUgGmUeXgXeMH7TetryOvBYdNF1LMH9sOpKEhe",
-            "nickname": "仓储测试-仓储部",
-            "mobile": "17765654551",
-            "email": "111131@163.com",
-            "status": "normal",
-            "sort": 0,
-            "is_sales": 0,
-            "department_ids": "[29]",
-            "department_names": "[\"生产仓储部\"]",
-            "auth_group_ids": "[]",
-            "auth_group_names": "[]",
-            "local_managed": 1,
+            "updated_at": "2026-11-08 09:58:24",
             "business_version": 2,
-            "created_at": "2023-12-17 01:31:05",
-            "updated_at": "2026-11-08 09:58:24"
+            "local_managed": 1
         },
         {
             "id": 2,
@@ -121,370 +81,10 @@
             "department_names": "[\"内贸销售部\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
-            "local_managed": 1,
-            "business_version": 2,
             "created_at": "2023-06-08 08:10:25",
-            "updated_at": "2026-11-08 09:58:24"
-        },
-        {
-            "id": 9,
-            "legacy_id": 13,
-            "username": "lihui",
-            "password_hash": "$2y$12$Xlp6wFR./6LD6P2S1Z55UeAJDSjmQld/U0DBrnBPyKqxNtMIWwaSG",
-            "nickname": "李慧",
-            "mobile": "17657159306",
-            "email": "lihui@jiantan.com",
-            "status": "normal",
-            "sort": 0,
-            "is_sales": 1,
-            "department_ids": "[31]",
-            "department_names": "[\"内贸销售部\"]",
-            "auth_group_ids": "[]",
-            "auth_group_names": "[]",
-            "local_managed": 1,
+            "updated_at": "2026-11-08 09:58:24",
             "business_version": 2,
-            "created_at": "2023-12-30 01:48:23",
-            "updated_at": "2026-11-08 09:58:24"
-        },
-        {
-            "id": 30,
-            "legacy_id": 14,
-            "username": "liyanfang",
-            "password_hash": "$2y$12$eI2z.ysVmPBw/Ll6xwIN.uPV73sKP154fSiMDQkPrg7jlNQtD6CGG",
-            "nickname": "李燕芳",
-            "mobile": "17657159303",
-            "email": "123@163.com",
-            "status": "hidden",
-            "sort": 0,
-            "is_sales": 0,
-            "department_ids": "[]",
-            "department_names": "[]",
-            "auth_group_ids": "[]",
-            "auth_group_names": "[]",
-            "local_managed": 1,
-            "business_version": 1,
-            "created_at": "2023-07-18 08:37:29",
-            "updated_at": "2026-11-08 09:58:24"
-        },
-        {
-            "id": 31,
-            "legacy_id": 15,
-            "username": "JT_waimaoZN",
-            "password_hash": "$2y$12$/nnoKnaVWM6BH0iZryUR4.LuG0hb/SaP7eIIxQeZ1ZvVEEKw7qlGy",
-            "nickname": "Joanna",
-            "mobile": "18234122311",
-            "email": "ada1e@163.com",
-            "status": "hidden",
-            "sort": 0,
-            "is_sales": 0,
-            "department_ids": "[35]",
-            "department_names": "[\"外贸一部\"]",
-            "auth_group_ids": "[]",
-            "auth_group_names": "[]",
-            "local_managed": 1,
-            "business_version": 1,
-            "created_at": "2024-01-20 03:00:56",
-            "updated_at": "2026-11-08 09:58:24"
-        },
-        {
-            "id": 32,
-            "legacy_id": 16,
-            "username": "JT_wenzheng001",
-            "password_hash": "$2y$12$2IJoqCa7jpZw2T9cYubufeex.siSyepJzKkm7THbnL1BXpZiJFm3C",
-            "nickname": "外贸-俞萍",
-            "mobile": "17865923231",
-            "email": "jxmlzxc@163.com",
-            "status": "normal",
-            "sort": 0,
-            "is_sales": 1,
-            "department_ids": "[35]",
-            "department_names": "[\"外贸一部\"]",
-            "auth_group_ids": "[]",
-            "auth_group_names": "[]",
-            "local_managed": 1,
-            "business_version": 1,
-            "created_at": "2024-03-02 08:04:14",
-            "updated_at": "2026-11-08 09:58:24"
-        },
-        {
-            "id": 20,
-            "legacy_id": 18,
-            "username": "zhangxue",
-            "password_hash": "$2y$12$mhOlj5CEhKQ2oenDDB8IV.irU9ZKh.atXmYUaASQg.VoMO3.o7GbC",
-            "nickname": "张雪",
-            "mobile": "17765666411",
-            "email": "1231131@163.com",
-            "status": "normal",
-            "sort": 0,
-            "is_sales": 0,
-            "department_ids": "[26]",
-            "department_names": "[\"营销部\"]",
-            "auth_group_ids": "[]",
-            "auth_group_names": "[]",
-            "local_managed": 1,
-            "business_version": 2,
-            "created_at": "2024-03-12 00:29:36",
-            "updated_at": "2026-11-08 09:58:24"
-        },
-        {
-            "id": 34,
-            "legacy_id": 19,
-            "username": "JT_CCO",
-            "password_hash": "$2y$12$bGPEb4gWbT3nyLH/30dkze5zKTPbIhu/pj2qtYZ0dITMT14UTa8ku",
-            "nickname": "蔡蔡",
-            "mobile": "18214122228",
-            "email": "114111aa@qq.com",
-            "status": "normal",
-            "sort": 0,
-            "is_sales": 0,
-            "department_ids": "[25, 28]",
-            "department_names": "[\"山东简谈\", \"文政部\"]",
-            "auth_group_ids": "[]",
-            "auth_group_names": "[]",
-            "local_managed": 1,
-            "business_version": 1,
-            "created_at": "2024-03-21 00:51:15",
-            "updated_at": "2026-11-08 09:58:24"
-        },
-        {
-            "id": 36,
-            "legacy_id": 22,
-            "username": "JT_waimao001",
-            "password_hash": "$2y$12$7LkDpPpL5mHh/OnSS1qy1.4orBAp9uAUL5Gag.j3M.P3RTAXxO5em",
-            "nickname": "江晓霞",
-            "mobile": "",
-            "email": "923854976@qq.com",
-            "status": "normal",
-            "sort": 0,
-            "is_sales": 1,
-            "department_ids": "[35]",
-            "department_names": "[\"外贸一部\"]",
-            "auth_group_ids": "[]",
-            "auth_group_names": "[]",
-            "local_managed": 1,
-            "business_version": 1,
-            "created_at": "2024-04-01 07:25:38",
-            "updated_at": "2026-11-08 09:58:24"
-        },
-        {
-            "id": 21,
-            "legacy_id": 23,
-            "username": "yuping",
-            "password_hash": "$2y$12$fAafZ0E6YR9HharoIZlvQ.20gYZ9yrMZn0JQ.TEf/JT7P3VpUJ/XG",
-            "nickname": "俞萍",
-            "mobile": "",
-            "email": "1231111@163.com",
-            "status": "normal",
-            "sort": 0,
-            "is_sales": 1,
-            "department_ids": "[28]",
-            "department_names": "[\"文政部\"]",
-            "auth_group_ids": "[]",
-            "auth_group_names": "[]",
-            "local_managed": 1,
-            "business_version": 2,
-            "created_at": "2023-12-30 01:40:48",
-            "updated_at": "2026-11-08 09:58:24"
-        },
-        {
-            "id": 37,
-            "legacy_id": 26,
-            "username": "JT_waimao003",
-            "password_hash": "$2y$12$hZw05diweXTBHrurzHEmzus1b/rmkDBz47tJW.aSkOh0/YcAIhH6y",
-            "nickname": "邢昊",
-            "mobile": "17657159307",
-            "email": "1123@163.com",
-            "status": "hidden",
-            "sort": -1,
-            "is_sales": 0,
-            "department_ids": "[35]",
-            "department_names": "[\"外贸一部\"]",
-            "auth_group_ids": "[]",
-            "auth_group_names": "[]",
-            "local_managed": 1,
-            "business_version": 1,
-            "created_at": "2024-04-23 03:09:02",
-            "updated_at": "2026-11-08 09:58:24"
-        },
-        {
-            "id": 22,
-            "legacy_id": 54,
-            "username": "liuyaoyao",
-            "password_hash": "$2y$12$7CLPAz3dtzk0u0RupqgPLuimA59CkzpptYM/IKlsN3bI6l.bbRRSe",
-            "nickname": "刘瑶瑶",
-            "mobile": "17657159302",
-            "email": "tttes@123.com",
-            "status": "hidden",
-            "sort": 0,
-            "is_sales": 0,
-            "department_ids": "[31]",
-            "department_names": "[\"内贸销售部\"]",
-            "auth_group_ids": "[]",
-            "auth_group_names": "[]",
-            "local_managed": 1,
-            "business_version": 2,
-            "created_at": "2023-12-30 01:45:05",
-            "updated_at": "2026-11-08 09:58:24"
-        },
-        {
-            "id": 23,
-            "legacy_id": 57,
-            "username": "yuanpin",
-            "password_hash": "$2y$12$OsbrfGEgc8Dr3kj9YC3NBOCUWIwDpCphp5o3BrZs9Bt0qlGnxHHg2",
-            "nickname": "袁品",
-            "mobile": "17657159309",
-            "email": "yuanpin@163.com",
-            "status": "normal",
-            "sort": 0,
-            "is_sales": 1,
-            "department_ids": "[31]",
-            "department_names": "[\"内贸销售部\"]",
-            "auth_group_ids": "[]",
-            "auth_group_names": "[]",
-            "local_managed": 1,
-            "business_version": 2,
-            "created_at": "2023-12-30 01:49:33",
-            "updated_at": "2026-11-08 09:58:24"
-        },
-        {
-            "id": 25,
-            "legacy_id": 81,
-            "username": "jiangxian",
-            "password_hash": "$2y$12$FNGWbCqGo3mMs4BgBLKirOQPgq.a0DLylexybGIvXt6G7XLUsejTm",
-            "nickname": "姜纤",
-            "mobile": "17657159312",
-            "email": "jiangxian@jiantan.com",
-            "status": "normal",
-            "sort": 0,
-            "is_sales": 1,
-            "department_ids": "[31]",
-            "department_names": "[\"内贸销售部\"]",
-            "auth_group_ids": "[]",
-            "auth_group_names": "[]",
-            "local_managed": 1,
-            "business_version": 2,
-            "created_at": "2023-12-30 01:47:33",
-            "updated_at": "2026-11-08 09:58:24"
-        },
-        {
-            "id": 26,
-            "legacy_id": 91,
-            "username": "3448739676",
-            "password_hash": "$2y$12$KWlSE39GqUsRHiVUedYZH.pg2QvgHwA/iuarKxn40c3iHMGYLK.be",
-            "nickname": "刘雲",
-            "mobile": "17657159310",
-            "email": "3448739676@qq.com",
-            "status": "hidden",
-            "sort": 0,
-            "is_sales": 0,
-            "department_ids": "[31]",
-            "department_names": "[\"内贸销售部\"]",
-            "auth_group_ids": "[]",
-            "auth_group_names": "[]",
-            "local_managed": 1,
-            "business_version": 2,
-            "created_at": "2024-03-21 01:54:55",
-            "updated_at": "2026-11-08 09:58:24"
-        },
-        {
-            "id": 42,
-            "legacy_id": 94,
-            "username": "JT_xiaoshouCY",
-            "password_hash": "$2y$12$w.5XMk3Hkt7x3MGLLNLAxeni02rzOu0O60Se0kyEqCsRSm/F7yA9W",
-            "nickname": "陈瑶",
-            "mobile": "17657159317",
-            "email": "17753915590@163.com",
-            "status": "hidden",
-            "sort": 0,
-            "is_sales": 0,
-            "department_ids": "[31]",
-            "department_names": "[\"内贸销售部\"]",
-            "auth_group_ids": "[]",
-            "auth_group_names": "[]",
-            "local_managed": 1,
-            "business_version": 1,
-            "created_at": "2024-06-03 01:04:21",
-            "updated_at": "2026-11-08 09:58:24"
-        },
-        {
-            "id": 43,
-            "legacy_id": 95,
-            "username": "JT_cangchuPT",
-            "password_hash": "$2y$12$gfRNSkrxh6/d.D6R72aufOUYNbByEjSR7tm5jVgL4D49jN2USPIxW",
-            "nickname": "逄涛",
-            "mobile": "17855554545",
-            "email": "1356968082@qq.com",
-            "status": "normal",
-            "sort": -1,
-            "is_sales": 0,
-            "department_ids": "[29]",
-            "department_names": "[\"生产仓储部\"]",
-            "auth_group_ids": "[]",
-            "auth_group_names": "[]",
-            "local_managed": 1,
-            "business_version": 1,
-            "created_at": "2024-06-17 07:52:14",
-            "updated_at": "2026-11-08 09:58:24"
-        },
-        {
-            "id": 27,
-            "legacy_id": 96,
-            "username": "JT_cangchuLZC",
-            "password_hash": "$2y$12$XrAwd1UVTd8JixjlWAPd6.SnFxDH5pIdgvetFZZjUfhjrwHJ0R/Km",
-            "nickname": "李智城",
-            "mobile": "17985451212",
-            "email": "2788205179@qq.com",
-            "status": "normal",
-            "sort": 0,
-            "is_sales": 0,
-            "department_ids": "[29]",
-            "department_names": "[\"生产仓储部\"]",
-            "auth_group_ids": "[]",
-            "auth_group_names": "[]",
-            "local_managed": 1,
-            "business_version": 2,
-            "created_at": "2024-06-17 07:53:12",
-            "updated_at": "2026-11-08 09:58:24"
-        },
-        {
-            "id": 44,
-            "legacy_id": 97,
-            "username": "JT_cangchuZJX",
-            "password_hash": "$2y$12$xH93PCbc1/nyRd8gHSjdIuh9lbpJ1w8Yt0qzqCt2mkx/F7Z.f5QWC",
-            "nickname": "赵嘉鑫",
-            "mobile": "17866665432",
-            "email": "17866665432@163.com",
-            "status": "normal",
-            "sort": 0,
-            "is_sales": 0,
-            "department_ids": "[28]",
-            "department_names": "[\"文政部\"]",
-            "auth_group_ids": "[]",
-            "auth_group_names": "[]",
-            "local_managed": 1,
-            "business_version": 1,
-            "created_at": "2024-07-01 03:41:32",
-            "updated_at": "2026-11-08 09:58:24"
-        },
-        {
-            "id": 28,
-            "legacy_id": 98,
-            "username": "JT_wenzhengWXL",
-            "password_hash": "$2y$12$GnbtTSKw6xTbwAdvDIaODem/PqCe/pAqAxNZMt7pjY.4Jg6N9cGue",
-            "nickname": "王晓丽",
-            "mobile": "17765666631",
-            "email": "121123@163.com",
-            "status": "normal",
-            "sort": 0,
-            "is_sales": 1,
-            "department_ids": "[28]",
-            "department_names": "[\"文政部\"]",
-            "auth_group_ids": "[]",
-            "auth_group_names": "[]",
-            "local_managed": 1,
-            "business_version": 2,
-            "created_at": "2024-07-16 02:41:06",
-            "updated_at": "2026-11-08 09:58:24"
+            "local_managed": 1
         },
         {
             "id": 3,
@@ -501,50 +101,10 @@
             "department_names": "[\"生产仓储部\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
-            "local_managed": 1,
-            "business_version": 2,
             "created_at": "2024-07-22 07:41:19",
-            "updated_at": "2026-11-08 09:58:24"
-        },
-        {
-            "id": 48,
-            "legacy_id": 103,
-            "username": "JT_cangchuWDM",
-            "password_hash": "$2y$12$YkgJJDmv4Mdw.YvLdOvaeO7jAEkK93QKXtFX13FY7M0fcnF7dCsaC",
-            "nickname": "王德民",
-            "mobile": "",
-            "email": "ss2e@163.com",
-            "status": "normal",
-            "sort": 0,
-            "is_sales": 0,
-            "department_ids": "[29]",
-            "department_names": "[\"生产仓储部\"]",
-            "auth_group_ids": "[]",
-            "auth_group_names": "[]",
-            "local_managed": 1,
-            "business_version": 1,
-            "created_at": "2024-07-22 07:42:39",
-            "updated_at": "2026-11-08 09:58:24"
-        },
-        {
-            "id": 52,
-            "legacy_id": 107,
-            "username": "JT_xiaoshouSXL",
-            "password_hash": "$2y$12$RIh3vBFTFk.w2uIBjZjNyeyXaJV3I8QYdKiBilnljp7ZFaKj4ocy.",
-            "nickname": "苏晓龙",
-            "mobile": "",
-            "email": "s21se@163.com",
-            "status": "hidden",
-            "sort": 0,
-            "is_sales": 0,
-            "department_ids": "[31]",
-            "department_names": "[\"内贸销售部\"]",
-            "auth_group_ids": "[]",
-            "auth_group_names": "[]",
-            "local_managed": 1,
-            "business_version": 1,
-            "created_at": "2024-07-22 07:44:44",
-            "updated_at": "2026-11-08 09:58:24"
+            "updated_at": "2026-11-08 09:58:24",
+            "business_version": 2,
+            "local_managed": 1
         },
         {
             "id": 4,
@@ -561,50 +121,10 @@
             "department_names": "[\"生产仓储部\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
-            "local_managed": 1,
-            "business_version": 2,
             "created_at": "2024-07-22 07:45:39",
-            "updated_at": "2026-11-08 09:58:24"
-        },
-        {
-            "id": 56,
-            "legacy_id": 112,
-            "username": "JT_zhanglianyong",
-            "password_hash": "$2y$12$Gzkc68.sDfqLCk0FGr7gCOhCmp7tDXdccr56dXyYLjGfiHbme3xgG",
-            "nickname": "张连勇",
-            "mobile": "16678791508",
-            "email": "11z2111@163.com",
-            "status": "hidden",
-            "sort": 0,
-            "is_sales": 0,
-            "department_ids": "[]",
-            "department_names": "[]",
-            "auth_group_ids": "[]",
-            "auth_group_names": "[]",
-            "local_managed": 1,
-            "business_version": 1,
-            "created_at": "2024-07-26 05:59:52",
-            "updated_at": "2026-11-08 09:58:24"
-        },
-        {
-            "id": 59,
-            "legacy_id": 115,
-            "username": "JT_xiaoshouWJ",
-            "password_hash": "$2y$12$QU2evaMTCRRKsoUE/HXqYeKVvJK7ysEvyhm7QimVkOGr1hDN.lLty",
-            "nickname": "王敬",
-            "mobile": "17657159301",
-            "email": "ss231e@163.com",
-            "status": "hidden",
-            "sort": 0,
-            "is_sales": 0,
-            "department_ids": "[]",
-            "department_names": "[]",
-            "auth_group_ids": "[]",
-            "auth_group_names": "[]",
-            "local_managed": 1,
-            "business_version": 1,
-            "created_at": "2024-10-06 01:53:36",
-            "updated_at": "2026-11-08 09:58:24"
+            "updated_at": "2026-11-08 09:58:24",
+            "business_version": 2,
+            "local_managed": 1
         },
         {
             "id": 5,
@@ -621,70 +141,10 @@
             "department_names": "[\"营销部\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
-            "local_managed": 1,
-            "business_version": 2,
             "created_at": "2024-11-10 02:11:18",
-            "updated_at": "2026-11-08 09:58:24"
-        },
-        {
-            "id": 60,
-            "legacy_id": 117,
-            "username": "JT_cangchuZJW",
-            "password_hash": "$2y$12$irzg4xwwmle.gc5Z0oWFheusIfBZMQsdwIjf8ApfvQXcKCWMe7Zyu",
-            "nickname": "朱俊伟",
-            "mobile": "17865132514",
-            "email": "00123@163.com",
-            "status": "normal",
-            "sort": 0,
-            "is_sales": 0,
-            "department_ids": "[29]",
-            "department_names": "[\"生产仓储部\"]",
-            "auth_group_ids": "[]",
-            "auth_group_names": "[]",
-            "local_managed": 1,
-            "business_version": 1,
-            "created_at": "2024-11-17 01:26:44",
-            "updated_at": "2026-11-08 09:58:24"
-        },
-        {
-            "id": 62,
-            "legacy_id": 119,
-            "username": "JT_wenzhengDH",
-            "password_hash": "$2y$12$mIKnr8A0Uu1T81zsmZ1NxOFCCAAzxjA39aafpVhLhgOXYp001YPSK",
-            "nickname": "董函",
-            "mobile": "17765667662",
-            "email": "t113tes@123.com",
-            "status": "normal",
-            "sort": 0,
-            "is_sales": 0,
-            "department_ids": "[28]",
-            "department_names": "[\"文政部\"]",
-            "auth_group_ids": "[]",
-            "auth_group_names": "[]",
-            "local_managed": 1,
-            "business_version": 1,
-            "created_at": "2024-11-25 03:05:35",
-            "updated_at": "2026-11-08 09:58:24"
-        },
-        {
-            "id": 63,
-            "legacy_id": 120,
-            "username": "JT_cangchuZQ",
-            "password_hash": "$2y$12$z8hXwhPTLKr5LR3vAxCakORK9r7dZ/H2.xAmIFG569kjd0Gj5CkhS",
-            "nickname": "周庆",
-            "mobile": "18396736646",
-            "email": "18396736646@163.com",
-            "status": "normal",
-            "sort": 0,
-            "is_sales": 0,
-            "department_ids": "[29]",
-            "department_names": "[\"生产仓储部\"]",
-            "auth_group_ids": "[]",
-            "auth_group_names": "[]",
-            "local_managed": 1,
-            "business_version": 1,
-            "created_at": "2024-12-05 01:24:26",
-            "updated_at": "2026-11-08 09:58:24"
+            "updated_at": "2026-11-08 09:58:24",
+            "business_version": 2,
+            "local_managed": 1
         },
         {
             "id": 6,
@@ -701,30 +161,10 @@
             "department_names": "[\"生产仓储部\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
-            "local_managed": 1,
-            "business_version": 2,
             "created_at": "2024-12-06 06:09:16",
-            "updated_at": "2026-11-08 09:58:24"
-        },
-        {
-            "id": 64,
-            "legacy_id": 122,
-            "username": "JT_jishu",
-            "password_hash": "$2y$12$/J7MqQxu1LxnRW1nBMGHiux7e5St33nC/WMEIRDmOXIyDKPEy4CJy",
-            "nickname": "姜晓孟",
-            "mobile": "18601021538",
-            "email": "jxmlzxc@gmail.com",
-            "status": "normal",
-            "sort": 0,
-            "is_sales": 0,
-            "department_ids": "[28]",
-            "department_names": "[\"文政部\"]",
-            "auth_group_ids": "[]",
-            "auth_group_names": "[]",
-            "local_managed": 1,
-            "business_version": 1,
-            "created_at": "2024-12-25 02:31:30",
-            "updated_at": "2026-11-08 09:58:24"
+            "updated_at": "2026-11-08 09:58:24",
+            "business_version": 2,
+            "local_managed": 1
         },
         {
             "id": 7,
@@ -741,10 +181,10 @@
             "department_names": "[\"生产仓储部\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
-            "local_managed": 1,
-            "business_version": 2,
             "created_at": "2025-01-07 08:25:10",
-            "updated_at": "2026-11-08 09:58:24"
+            "updated_at": "2026-11-08 09:58:24",
+            "business_version": 2,
+            "local_managed": 1
         },
         {
             "id": 8,
@@ -761,90 +201,30 @@
             "department_names": "[\"生产仓储部\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
-            "local_managed": 1,
-            "business_version": 2,
             "created_at": "2025-01-12 01:46:26",
-            "updated_at": "2026-11-08 09:58:24"
+            "updated_at": "2026-11-08 09:58:24",
+            "business_version": 2,
+            "local_managed": 1
         },
         {
-            "id": 66,
-            "legacy_id": 126,
-            "username": "JT_yingxiaoYXY",
-            "password_hash": "$2y$12$fxcVpBvNuYOY8k13sq/Poe5Z7CsigUze7DNMzMWVKbbhf3IS7mhJ6",
-            "nickname": "杨小煜-外贸部",
-            "mobile": "17765111111",
-            "email": "ss131e@163.com",
-            "status": "hidden",
+            "id": 9,
+            "legacy_id": 13,
+            "username": "lihui",
+            "password_hash": "$2y$12$Xlp6wFR./6LD6P2S1Z55UeAJDSjmQld/U0DBrnBPyKqxNtMIWwaSG",
+            "nickname": "李慧",
+            "mobile": "17657159306",
+            "email": "lihui@jiantan.com",
+            "status": "normal",
             "sort": 0,
-            "is_sales": 0,
-            "department_ids": "[35]",
-            "department_names": "[\"外贸一部\"]",
-            "auth_group_ids": "[]",
-            "auth_group_names": "[]",
-            "local_managed": 1,
-            "business_version": 1,
-            "created_at": "2025-01-19 06:18:21",
-            "updated_at": "2026-11-08 09:58:24"
-        },
-        {
-            "id": 70,
-            "legacy_id": 130,
-            "username": "JT_xiaoshouZYF",
-            "password_hash": "$2y$12$s1YXOhpBb24g3VdNm1Zkd.Py2NS4k89eIH5WO8dV2.ozx0O/uI5KC",
-            "nickname": "邹运福",
-            "mobile": "18234412328",
-            "email": "ss11411e@163.com",
-            "status": "hidden",
-            "sort": 0,
-            "is_sales": 0,
+            "is_sales": 1,
             "department_ids": "[31]",
             "department_names": "[\"内贸销售部\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
-            "local_managed": 1,
-            "business_version": 1,
-            "created_at": "2025-01-19 06:21:57",
-            "updated_at": "2026-11-08 09:58:24"
-        },
-        {
-            "id": 71,
-            "legacy_id": 131,
-            "username": "JT_yingxiaoYYB",
-            "password_hash": "$2y$12$TCxEsUw4XBrfkK9D5S6dBemsPPE/umK4XoIARYcnLxXF4CSM9eXgy",
-            "nickname": "杨玉冰",
-            "mobile": "18914141330",
-            "email": "t3t141es@123.com",
-            "status": "normal",
-            "sort": 0,
-            "is_sales": 0,
-            "department_ids": "[26]",
-            "department_names": "[\"营销部\"]",
-            "auth_group_ids": "[]",
-            "auth_group_names": "[]",
-            "local_managed": 1,
-            "business_version": 1,
-            "created_at": "2025-01-19 06:22:26",
-            "updated_at": "2026-11-08 09:58:24"
-        },
-        {
-            "id": 72,
-            "legacy_id": 132,
-            "username": "JT_yingxiaoHDD",
-            "password_hash": "$2y$12$ETsgrhDKsDkN2MduocUbUuScP2bXxFt26t.z7PgzrOP7n7N1zvNqe",
-            "nickname": "韩丹丹",
-            "mobile": "17765141312",
-            "email": "t1313tes@123.com",
-            "status": "normal",
-            "sort": 0,
-            "is_sales": 0,
-            "department_ids": "[26]",
-            "department_names": "[\"营销部\"]",
-            "auth_group_ids": "[]",
-            "auth_group_names": "[]",
-            "local_managed": 1,
-            "business_version": 1,
-            "created_at": "2025-01-19 06:22:57",
-            "updated_at": "2026-11-08 09:58:24"
+            "created_at": "2023-12-30 01:48:23",
+            "updated_at": "2026-11-08 09:58:24",
+            "business_version": 2,
+            "local_managed": 1
         },
         {
             "id": 10,
@@ -861,30 +241,10 @@
             "department_names": "[\"生产仓储部\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
-            "local_managed": 1,
-            "business_version": 2,
             "created_at": "2025-02-28 05:29:49",
-            "updated_at": "2026-11-08 09:58:24"
-        },
-        {
-            "id": 73,
-            "legacy_id": 134,
-            "username": "JT_caiwu",
-            "password_hash": "$2y$12$GhTAuoRMgZ6sNgDKiQGf8e.m1Fag3Sv4J3fPI0EIpu0uAbbe/3sp.",
-            "nickname": "张莲莲",
-            "mobile": "17864123231",
-            "email": "jxml1zxc@163.com",
-            "status": "normal",
-            "sort": 0,
-            "is_sales": 0,
-            "department_ids": "[28]",
-            "department_names": "[\"文政部\"]",
-            "auth_group_ids": "[]",
-            "auth_group_names": "[]",
-            "local_managed": 1,
-            "business_version": 1,
-            "created_at": "2025-03-03 09:02:51",
-            "updated_at": "2026-11-08 09:58:24"
+            "updated_at": "2026-11-08 09:58:24",
+            "business_version": 2,
+            "local_managed": 1
         },
         {
             "id": 11,
@@ -901,30 +261,10 @@
             "department_names": "[\"内贸销售部\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
-            "local_managed": 1,
-            "business_version": 2,
             "created_at": "2025-03-26 08:17:55",
-            "updated_at": "2026-11-08 09:58:24"
-        },
-        {
-            "id": 74,
-            "legacy_id": 136,
-            "username": "JT_xiaoshouZYH",
-            "password_hash": "$2y$12$SOjbaWWL28UlDDnoM/HBbuStdG9G2SpyMuHyWLJCFudzg9V.qisrK",
-            "nickname": "张玉涵",
-            "mobile": "13482211412",
-            "email": "Zhangyuhan@sdjiantan.com",
-            "status": "hidden",
-            "sort": 0,
-            "is_sales": 0,
-            "department_ids": "[31]",
-            "department_names": "[\"内贸销售部\"]",
-            "auth_group_ids": "[]",
-            "auth_group_names": "[]",
-            "local_managed": 1,
-            "business_version": 1,
-            "created_at": "2025-03-30 02:10:37",
-            "updated_at": "2026-11-08 09:58:24"
+            "updated_at": "2026-11-08 09:58:24",
+            "business_version": 2,
+            "local_managed": 1
         },
         {
             "id": 12,
@@ -941,10 +281,10 @@
             "department_names": "[\"内贸销售部\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
-            "local_managed": 1,
-            "business_version": 2,
             "created_at": "2025-03-30 02:11:16",
-            "updated_at": "2026-11-08 09:58:24"
+            "updated_at": "2026-11-08 09:58:24",
+            "business_version": 2,
+            "local_managed": 1
         },
         {
             "id": 13,
@@ -961,350 +301,10 @@
             "department_names": "[\"内贸销售部\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
-            "local_managed": 1,
-            "business_version": 2,
             "created_at": "2025-04-25 06:42:05",
-            "updated_at": "2026-11-08 09:58:24"
-        },
-        {
-            "id": 75,
-            "legacy_id": 139,
-            "username": "sdjiantan",
-            "password_hash": "$2y$12$vRV7vV9juibHhzFxkXANYOboFQGGmUN3q/JGy5ynKKXeFZ6t.1iIW",
-            "nickname": "山东简谈",
-            "mobile": "17865923111",
-            "email": "jxmlzxc1@163.com",
-            "status": "normal",
-            "sort": 0,
-            "is_sales": 0,
-            "department_ids": "[25]",
-            "department_names": "[\"山东简谈\"]",
-            "auth_group_ids": "[]",
-            "auth_group_names": "[]",
-            "local_managed": 1,
-            "business_version": 1,
-            "created_at": "2025-05-21 08:49:08",
-            "updated_at": "2026-11-08 09:58:24"
-        },
-        {
-            "id": 77,
-            "legacy_id": 141,
-            "username": "JT_waimaoWH",
-            "password_hash": "$2y$12$nS32xA79BfBiRx0asAiX5OkQ80uwc02ucCg4Uqt9PAFgF8fwsYp4C",
-            "nickname": "王慧",
-            "mobile": "17865914111",
-            "email": "jxmlz3111xc@163.com",
-            "status": "normal",
-            "sort": 0,
-            "is_sales": 1,
-            "department_ids": "[35]",
-            "department_names": "[\"外贸一部\"]",
-            "auth_group_ids": "[]",
-            "auth_group_names": "[]",
-            "local_managed": 1,
-            "business_version": 1,
-            "created_at": "2025-09-09 00:53:08",
-            "updated_at": "2026-11-08 09:58:24"
-        },
-        {
-            "id": 78,
-            "legacy_id": 142,
-            "username": "JT_waimaoXZC",
-            "password_hash": "$2y$12$r3bB56VH3YvWIvWPOMnXj.OmCGFmpbYO9oaUXBT7AahWLR4nbhp3a",
-            "nickname": "薛志成",
-            "mobile": "17865941113",
-            "email": "jxmlz441xc@163.com",
-            "status": "hidden",
-            "sort": 0,
-            "is_sales": 0,
-            "department_ids": "[35]",
-            "department_names": "[\"外贸一部\"]",
-            "auth_group_ids": "[]",
-            "auth_group_names": "[]",
-            "local_managed": 1,
-            "business_version": 1,
-            "created_at": "2025-09-09 06:18:55",
-            "updated_at": "2026-11-08 09:58:24"
-        },
-        {
-            "id": 79,
-            "legacy_id": 143,
-            "username": "JT_yingxiaoDXX",
-            "password_hash": "$2y$12$qAaYwFy79ZB6/VOE16InxOLcATAJJkfevqi1pnYgYOzJOma8fLIBK",
-            "nickname": "丁晓璇",
-            "mobile": "17865131111",
-            "email": "jx2656mlzxc@163.com",
-            "status": "normal",
-            "sort": 0,
-            "is_sales": 0,
-            "department_ids": "[26]",
-            "department_names": "[\"营销部\"]",
-            "auth_group_ids": "[]",
-            "auth_group_names": "[]",
-            "local_managed": 1,
-            "business_version": 1,
-            "created_at": "2025-10-21 02:37:02",
-            "updated_at": "2026-11-08 09:58:24"
-        },
-        {
-            "id": 81,
-            "legacy_id": 145,
-            "username": "JT_waimaoGQ",
-            "password_hash": "$2y$12$I6fYer95jp37tkBhfAGp/OmzSqiIR4rD/f2PIpEbO/.d1ieO/JIf6",
-            "nickname": "郭庆",
-            "mobile": "17865923333",
-            "email": "da@admin.com",
-            "status": "hidden",
-            "sort": 0,
-            "is_sales": 0,
-            "department_ids": "[36]",
-            "department_names": "[\"外贸二部\"]",
-            "auth_group_ids": "[]",
-            "auth_group_names": "[]",
-            "local_managed": 1,
-            "business_version": 1,
-            "created_at": "2026-01-16 05:30:13",
-            "updated_at": "2026-11-08 09:58:24"
-        },
-        {
-            "id": 82,
-            "legacy_id": 146,
-            "username": "JT_waimaoGCC",
-            "password_hash": "$2y$12$icur8WKylNyOJO1M5wWX7OrN6MGAMfteLB5i/99qk8Tf.2fccIEbW",
-            "nickname": "高翠翠",
-            "mobile": "17765663115",
-            "email": "jx3lzxc@163.com",
-            "status": "normal",
-            "sort": 0,
-            "is_sales": 1,
-            "department_ids": "[36]",
-            "department_names": "[\"外贸二部\"]",
-            "auth_group_ids": "[]",
-            "auth_group_names": "[]",
-            "local_managed": 1,
-            "business_version": 1,
-            "created_at": "2026-01-16 05:30:42",
-            "updated_at": "2026-11-08 09:58:24"
-        },
-        {
-            "id": 83,
-            "legacy_id": 147,
-            "username": "JT_WGF",
-            "password_hash": "$2y$12$MOw2Wvmsppz0HzdwDsvLUe4dsVkgqpx0KkfMG0uXtP2YMJd23IH/2",
-            "nickname": "王国锋",
-            "mobile": "13954929930",
-            "email": "wgf@sdjiantan.com",
-            "status": "normal",
-            "sort": 0,
-            "is_sales": 0,
-            "department_ids": "[25]",
-            "department_names": "[\"山东简谈\"]",
-            "auth_group_ids": "[]",
-            "auth_group_names": "[]",
-            "local_managed": 1,
-            "business_version": 1,
-            "created_at": "2026-01-19 14:08:59",
-            "updated_at": "2026-11-08 09:58:24"
-        },
-        {
-            "id": 84,
-            "legacy_id": 148,
-            "username": "JT_waimaoQSF",
-            "password_hash": "$2y$12$hjtJH9a2W.mIZi6eaSKS2On6QNFyrY1SDWaFqwhf4OMV4l63FclvG",
-            "nickname": "秦泗方",
-            "mobile": "17865941512",
-            "email": "jxmlzxc@16341.com",
-            "status": "normal",
-            "sort": 0,
-            "is_sales": 0,
-            "department_ids": "[37]",
-            "department_names": "[\"外贸运营\"]",
-            "auth_group_ids": "[]",
-            "auth_group_names": "[]",
-            "local_managed": 1,
-            "business_version": 1,
-            "created_at": "2026-01-23 01:57:53",
-            "updated_at": "2026-11-08 09:58:24"
-        },
-        {
-            "id": 85,
-            "legacy_id": 149,
-            "username": "JT_xiaoshouLX",
-            "password_hash": "$2y$12$x51RVJwjtGGBJcFUyHo/jevWCFN.84hgaEgD6bQZuyhkrbFIm93aK",
-            "nickname": "刘璇",
-            "mobile": "17865132412",
-            "email": "jxmlz4113xc@163.com",
-            "status": "hidden",
-            "sort": 0,
-            "is_sales": 0,
-            "department_ids": "[31]",
-            "department_names": "[\"内贸销售部\"]",
-            "auth_group_ids": "[]",
-            "auth_group_names": "[]",
-            "local_managed": 1,
-            "business_version": 1,
-            "created_at": "2026-01-28 02:45:50",
-            "updated_at": "2026-11-08 09:58:24"
-        },
-        {
-            "id": 86,
-            "legacy_id": 150,
-            "username": "JT_cangchuCWJ",
-            "password_hash": "$2y$12$DxMvSlHqVK6Jbj0kX30zFOWzTOtUxUMVILRefajS4yvXvmq9wFmlC",
-            "nickname": "丛维巨",
-            "mobile": "17765743662",
-            "email": "cwj@sdjiantran.com",
-            "status": "normal",
-            "sort": 0,
-            "is_sales": 0,
-            "department_ids": "[29]",
-            "department_names": "[\"生产仓储部\"]",
-            "auth_group_ids": "[]",
-            "auth_group_names": "[]",
-            "local_managed": 1,
-            "business_version": 1,
-            "created_at": "2026-02-28 02:46:41",
-            "updated_at": "2026-11-08 09:58:24"
-        },
-        {
-            "id": 88,
-            "legacy_id": 152,
-            "username": "JT_yingxiaoLZ",
-            "password_hash": "$2y$12$/Ph4HMPthHgeGURPd4SNueen0KonxnBlX9ft6EIlewvRq51lO9PPS",
-            "nickname": "刘臻",
-            "mobile": "17412323231",
-            "email": "lz@sdjiantan.com",
-            "status": "normal",
-            "sort": 0,
-            "is_sales": 0,
-            "department_ids": "[26]",
-            "department_names": "[\"营销部\"]",
-            "auth_group_ids": "[]",
-            "auth_group_names": "[]",
-            "local_managed": 1,
-            "business_version": 1,
-            "created_at": "2026-03-02 01:37:34",
-            "updated_at": "2026-11-08 09:58:24"
-        },
-        {
-            "id": 89,
-            "legacy_id": 153,
-            "username": "JT_wenzhengCYN",
-            "password_hash": "$2y$12$KBB5kfCYYbVksuv8YlcZA.TRw8B1.ojzRR4YuaX3Y8HNSXHD0GNAW",
-            "nickname": "程亚男-文政部",
-            "mobile": "17513113231",
-            "email": "cyn@sdjiantan.com",
-            "status": "normal",
-            "sort": 0,
-            "is_sales": 0,
-            "department_ids": "[28]",
-            "department_names": "[\"文政部\"]",
-            "auth_group_ids": "[]",
-            "auth_group_names": "[]",
-            "local_managed": 1,
-            "business_version": 1,
-            "created_at": "2026-03-02 01:38:29",
-            "updated_at": "2026-11-08 09:58:24"
-        },
-        {
-            "id": 90,
-            "legacy_id": 154,
-            "username": "JT_waimaoDY",
-            "password_hash": "$2y$12$D5Cv0n9fFom5rKAoEZgs8ODJmrIu51TF4MGJGXtI6W71H5fOkThju",
-            "nickname": "董月",
-            "mobile": "18724796223",
-            "email": "jxmlz131xc@163.com",
-            "status": "hidden",
-            "sort": 0,
-            "is_sales": 0,
-            "department_ids": "[36]",
-            "department_names": "[\"外贸二部\"]",
-            "auth_group_ids": "[]",
-            "auth_group_names": "[]",
-            "local_managed": 1,
-            "business_version": 1,
-            "created_at": "2026-03-24 07:23:38",
-            "updated_at": "2026-11-08 09:58:24"
-        },
-        {
-            "id": 93,
-            "legacy_id": 157,
-            "username": "JT_xiaoshouDX",
-            "password_hash": "$2y$12$y5giAfCI37b4aVifTXO4peIdZP91b5yKdxEQA5qrmUpGTXNVK5V2y",
-            "nickname": "丁祥",
-            "mobile": "17765513115",
-            "email": "jxmlzx51c@gmail.com",
-            "status": "hidden",
-            "sort": 0,
-            "is_sales": 0,
-            "department_ids": "[39]",
-            "department_names": "[\"内贸销售B端\"]",
-            "auth_group_ids": "[]",
-            "auth_group_names": "[]",
-            "local_managed": 1,
-            "business_version": 1,
-            "created_at": "2026-04-11 06:33:55",
-            "updated_at": "2026-11-08 09:58:24"
-        },
-        {
-            "id": 94,
-            "legacy_id": 158,
-            "username": "JT_xiaoshouYJY",
-            "password_hash": "$2y$12$t3NG8w6ggGvE8Tsw1WA5B.M4tkx5YheIVzTgrDi1vLjy5emO2eGve",
-            "nickname": "尹俊义",
-            "mobile": "17412332514",
-            "email": "jx411mlzxc@gmail.com",
-            "status": "hidden",
-            "sort": 0,
-            "is_sales": 0,
-            "department_ids": "[39]",
-            "department_names": "[\"内贸销售B端\"]",
-            "auth_group_ids": "[]",
-            "auth_group_names": "[]",
-            "local_managed": 1,
-            "business_version": 1,
-            "created_at": "2026-04-11 06:35:44",
-            "updated_at": "2026-11-08 09:58:24"
-        },
-        {
-            "id": 95,
-            "legacy_id": 159,
-            "username": "JT_xiaoshouSHY",
-            "password_hash": "$2y$12$YHUwQzdblRpSpr/GPT3kT.T4cwHKgYPVF6fABXEaKljhdfrz1jzbm",
-            "nickname": "史航宇",
-            "mobile": "17865232514",
-            "email": "jxm113lzxc@gmail.com",
-            "status": "hidden",
-            "sort": 0,
-            "is_sales": 0,
-            "department_ids": "[39]",
-            "department_names": "[\"内贸销售B端\"]",
-            "auth_group_ids": "[]",
-            "auth_group_names": "[]",
-            "local_managed": 1,
-            "business_version": 1,
-            "created_at": "2026-04-11 07:40:22",
-            "updated_at": "2026-11-08 09:58:24"
-        },
-        {
-            "id": 96,
-            "legacy_id": 160,
-            "username": "JT_wenzhengLXY",
-            "password_hash": "$2y$12$vfw.hRJJVF9T4WXXtfydiuVIIs.denIgbcihM7HWNNneQ82O8QzYi",
-            "nickname": "廉晓雨",
-            "mobile": "17863147124",
-            "email": "jxm1311lzxc@163.com",
-            "status": "normal",
-            "sort": 0,
-            "is_sales": 0,
-            "department_ids": "[28]",
-            "department_names": "[\"文政部\"]",
-            "auth_group_ids": "[]",
-            "auth_group_names": "[]",
-            "local_managed": 1,
+            "updated_at": "2026-11-08 09:58:24",
             "business_version": 2,
-            "created_at": "2026-04-28 01:59:38",
-            "updated_at": "2026-11-08 10:55:39"
+            "local_managed": 1
         },
         {
             "id": 14,
@@ -1321,70 +321,10 @@
             "department_names": "[\"生产仓储部\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
-            "local_managed": 1,
-            "business_version": 2,
             "created_at": "2026-05-04 03:24:05",
-            "updated_at": "2026-11-08 09:58:24"
-        },
-        {
-            "id": 98,
-            "legacy_id": 163,
-            "username": "JT_wenzhengYWJ",
-            "password_hash": "$2y$12$WtPp1BAe07xAhjuFTdxWbOHX.bLjpld7z310kZoW6.uq8G.SK19K2",
-            "nickname": "殷文娟",
-            "mobile": "17865912471",
-            "email": "jxmlzx2311c@163.com",
-            "status": "normal",
-            "sort": 0,
-            "is_sales": 0,
-            "department_ids": "[28]",
-            "department_names": "[\"文政部\"]",
-            "auth_group_ids": "[]",
-            "auth_group_names": "[]",
-            "local_managed": 1,
-            "business_version": 1,
-            "created_at": "2026-05-13 00:29:59",
-            "updated_at": "2026-11-08 09:58:24"
-        },
-        {
-            "id": 99,
-            "legacy_id": 164,
-            "username": "yihan",
-            "password_hash": "$2y$12$5fw2OpzzzdkgUYqQAoZt/.fBve3EtbOAREd4C1rqVKXXj6VR.aKNW",
-            "nickname": "刘一涵",
-            "mobile": "17865123231",
-            "email": "j1111xmlzxc@163.com",
-            "status": "normal",
-            "sort": 0,
-            "is_sales": 0,
-            "department_ids": "[31]",
-            "department_names": "[\"内贸销售部\"]",
-            "auth_group_ids": "[]",
-            "auth_group_names": "[]",
-            "local_managed": 1,
-            "business_version": 1,
-            "created_at": "2026-05-19 02:05:11",
-            "updated_at": "2026-11-08 09:58:24"
-        },
-        {
-            "id": 100,
-            "legacy_id": 165,
-            "username": "JT_wenzhengZXQ",
-            "password_hash": "$2y$12$vqUGxkffHH4BkJuUzVT5z.2wE97skMnht4I4v4NE/zlsTlR3cN5I2",
-            "nickname": "张晓琪",
-            "mobile": "17865913131",
-            "email": "jxmlz1231xc@163.com",
-            "status": "normal",
-            "sort": 0,
-            "is_sales": 0,
-            "department_ids": "[28]",
-            "department_names": "[\"文政部\"]",
-            "auth_group_ids": "[]",
-            "auth_group_names": "[]",
-            "local_managed": 1,
-            "business_version": 1,
-            "created_at": "2026-05-30 00:52:16",
-            "updated_at": "2026-11-08 09:58:24"
+            "updated_at": "2026-11-08 09:58:24",
+            "business_version": 2,
+            "local_managed": 1
         },
         {
             "id": 15,
@@ -1401,50 +341,10 @@
             "department_names": "[\"内贸销售B端\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
-            "local_managed": 1,
-            "business_version": 2,
             "created_at": "2026-06-25 07:34:14",
-            "updated_at": "2026-11-08 09:58:24"
-        },
-        {
-            "id": 101,
-            "legacy_id": 167,
-            "username": "JT_waimaoYHR",
-            "password_hash": "$2y$12$DwxvTG.k3gtFcLkxR383o.cyaA6HNCE15JLogpkOMgiFlKdnAefO6",
-            "nickname": "闫会然-外贸一部",
-            "mobile": "17865132167",
-            "email": "jxklzxc@gmail.com",
-            "status": "hidden",
-            "sort": 0,
-            "is_sales": 0,
-            "department_ids": "[35]",
-            "department_names": "[\"外贸一部\"]",
-            "auth_group_ids": "[]",
-            "auth_group_names": "[]",
-            "local_managed": 1,
-            "business_version": 1,
-            "created_at": "2026-08-07 07:33:38",
-            "updated_at": "2026-11-08 09:58:24"
-        },
-        {
-            "id": 102,
-            "legacy_id": 168,
-            "username": "JT_waimaoZP",
-            "password_hash": "$2y$12$SZpBskX2dKhy1SY7v3UNV.2eMvFP8Wnwdaj/.J7gtwTw91vGQVAKm",
-            "nickname": "祝品-外贸一部",
-            "mobile": "17866665437",
-            "email": "jxmlzxu@163.com",
-            "status": "hidden",
-            "sort": 0,
-            "is_sales": 0,
-            "department_ids": "[35]",
-            "department_names": "[\"外贸一部\"]",
-            "auth_group_ids": "[]",
-            "auth_group_names": "[]",
-            "local_managed": 1,
-            "business_version": 1,
-            "created_at": "2026-08-07 08:43:48",
-            "updated_at": "2026-11-08 09:58:24"
+            "updated_at": "2026-11-08 09:58:24",
+            "business_version": 2,
+            "local_managed": 1
         },
         {
             "id": 16,
@@ -1461,10 +361,10 @@
             "department_names": "[\"外贸一部\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
-            "local_managed": 1,
-            "business_version": 2,
             "created_at": "2026-08-25 07:45:13",
-            "updated_at": "2026-11-08 09:58:24"
+            "updated_at": "2026-11-08 09:58:24",
+            "business_version": 2,
+            "local_managed": 1
         },
         {
             "id": 17,
@@ -1481,50 +381,10 @@
             "department_names": "[\"内贸销售B端\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
-            "local_managed": 1,
-            "business_version": 2,
             "created_at": "2026-09-05 00:46:19",
-            "updated_at": "2026-11-08 09:58:24"
-        },
-        {
-            "id": 103,
-            "legacy_id": 171,
-            "username": "JT_waimaoHXP",
-            "password_hash": "$2y$12$hi0.tov4xBRiGhu208.9oe8KyEK/FnbkUSSR.3GISG3PwwqZRLWBu",
-            "nickname": "黄欣萍",
-            "mobile": "17865914113",
-            "email": "jxml4132zxc@gmail.com",
-            "status": "normal",
-            "sort": 0,
-            "is_sales": 0,
-            "department_ids": "[35]",
-            "department_names": "[\"外贸一部\"]",
-            "auth_group_ids": "[]",
-            "auth_group_names": "[]",
-            "local_managed": 1,
-            "business_version": 1,
-            "created_at": "2026-09-11 09:11:21",
-            "updated_at": "2026-11-08 09:58:24"
-        },
-        {
-            "id": 104,
-            "legacy_id": 172,
-            "username": "JT_cangchuABL",
-            "password_hash": "$2y$12$jV3BxHhi30EHZH1sOxQVm.RGvaXUO/e6VAkNhro7TYuVM8NB8EKV.",
-            "nickname": "安佰龙",
-            "mobile": "17865941323",
-            "email": "jxmlzxc123444@gmail.com",
-            "status": "normal",
-            "sort": 0,
-            "is_sales": 0,
-            "department_ids": "[29]",
-            "department_names": "[\"生产仓储部\"]",
-            "auth_group_ids": "[]",
-            "auth_group_names": "[]",
-            "local_managed": 1,
-            "business_version": 1,
-            "created_at": "2026-09-11 09:12:51",
-            "updated_at": "2026-11-08 09:58:24"
+            "updated_at": "2026-11-08 09:58:24",
+            "business_version": 2,
+            "local_managed": 1
         },
         {
             "id": 18,
@@ -1541,90 +401,10 @@
             "department_names": "[\"生产仓储部\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
-            "local_managed": 1,
-            "business_version": 2,
             "created_at": "2026-09-11 09:13:22",
-            "updated_at": "2026-11-08 09:58:24"
-        },
-        {
-            "id": 105,
-            "legacy_id": 174,
-            "username": "JT_waimaoWHY",
-            "password_hash": "$2y$12$AXT4OIzzhkBU5YqI4nwzv.OZvDnDjGb4yrkFc8VY2fvQ4hzMX3U1u",
-            "nickname": "吴海源",
-            "mobile": "17865141113",
-            "email": "jx4123mlzxc@gmail.com",
-            "status": "normal",
-            "sort": 0,
-            "is_sales": 1,
-            "department_ids": "[35]",
-            "department_names": "[\"外贸一部\"]",
-            "auth_group_ids": "[]",
-            "auth_group_names": "[]",
-            "local_managed": 1,
-            "business_version": 1,
-            "created_at": "2026-09-11 09:13:55",
-            "updated_at": "2026-11-08 09:58:24"
-        },
-        {
-            "id": 106,
-            "legacy_id": 175,
-            "username": "JT_xiaoshouZNW",
-            "password_hash": "$2y$12$9f3LjL4FC0cnfTxhd49d7.PeygEUwFtI7BrpGkysbNWUh0BLO0Vq6",
-            "nickname": "张念伟",
-            "mobile": "17641329317",
-            "email": "jxmlz41133xc@gmail.com",
-            "status": "normal",
-            "sort": 0,
-            "is_sales": 0,
-            "department_ids": "[31]",
-            "department_names": "[\"内贸销售部\"]",
-            "auth_group_ids": "[]",
-            "auth_group_names": "[]",
-            "local_managed": 1,
-            "business_version": 1,
-            "created_at": "2026-09-11 09:14:57",
-            "updated_at": "2026-11-08 09:58:24"
-        },
-        {
-            "id": 107,
-            "legacy_id": 176,
-            "username": "JT_xiaoshouWKX",
-            "password_hash": "$2y$12$sLLutH0EOL/X7SVcSLLahufHd1lsJVPdj8vJZN4AUXhN2YIwjN0wG",
-            "nickname": "王坤鑫",
-            "mobile": "17657159254",
-            "email": "jxmlzx12311@gmail.com",
-            "status": "normal",
-            "sort": 0,
-            "is_sales": 1,
-            "department_ids": "[39]",
-            "department_names": "[\"内贸销售B端\"]",
-            "auth_group_ids": "[]",
-            "auth_group_names": "[]",
-            "local_managed": 1,
-            "business_version": 1,
-            "created_at": "2026-10-07 00:46:41",
-            "updated_at": "2026-11-08 09:58:24"
-        },
-        {
-            "id": 108,
-            "legacy_id": 177,
-            "username": "JT_yunyingZNW",
-            "password_hash": "$2y$12$fdJBFzB1yOZpOU2.XIkGxu8Zu8ag0mBaXdU6FmJRMRqstkbEThC.i",
-            "nickname": "张念伟",
-            "mobile": "17657151347",
-            "email": "jxm1211lzxc@gmail.com",
-            "status": "normal",
-            "sort": 0,
-            "is_sales": 0,
-            "department_ids": "[31]",
-            "department_names": "[\"内贸销售部\"]",
-            "auth_group_ids": "[]",
-            "auth_group_names": "[]",
-            "local_managed": 1,
-            "business_version": 1,
-            "created_at": "2026-10-14 00:56:52",
-            "updated_at": "2026-11-08 09:58:24"
+            "updated_at": "2026-11-08 09:58:24",
+            "business_version": 2,
+            "local_managed": 1
         },
         {
             "id": 19,
@@ -1641,10 +421,1230 @@
             "department_names": "[\"内贸销售B端\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
-            "local_managed": 1,
-            "business_version": 2,
             "created_at": "2026-10-14 00:58:43",
-            "updated_at": "2026-11-08 09:58:24"
+            "updated_at": "2026-11-08 09:58:24",
+            "business_version": 2,
+            "local_managed": 1
+        },
+        {
+            "id": 20,
+            "legacy_id": 18,
+            "username": "zhangxue",
+            "password_hash": "$2y$12$mhOlj5CEhKQ2oenDDB8IV.irU9ZKh.atXmYUaASQg.VoMO3.o7GbC",
+            "nickname": "张雪",
+            "mobile": "17765666411",
+            "email": "1231131@163.com",
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[26]",
+            "department_names": "[\"营销部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "created_at": "2024-03-12 00:29:36",
+            "updated_at": "2026-11-08 09:58:24",
+            "business_version": 2,
+            "local_managed": 1
+        },
+        {
+            "id": 21,
+            "legacy_id": 23,
+            "username": "yuping",
+            "password_hash": "$2y$12$fAafZ0E6YR9HharoIZlvQ.20gYZ9yrMZn0JQ.TEf/JT7P3VpUJ/XG",
+            "nickname": "俞萍",
+            "mobile": "",
+            "email": "1231111@163.com",
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 1,
+            "department_ids": "[28]",
+            "department_names": "[\"文政部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "created_at": "2023-12-30 01:40:48",
+            "updated_at": "2026-11-08 09:58:24",
+            "business_version": 2,
+            "local_managed": 1
+        },
+        {
+            "id": 22,
+            "legacy_id": 54,
+            "username": "liuyaoyao",
+            "password_hash": "$2y$12$7CLPAz3dtzk0u0RupqgPLuimA59CkzpptYM/IKlsN3bI6l.bbRRSe",
+            "nickname": "刘瑶瑶",
+            "mobile": "17657159302",
+            "email": "tttes@123.com",
+            "status": "hidden",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[31]",
+            "department_names": "[\"内贸销售部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "created_at": "2023-12-30 01:45:05",
+            "updated_at": "2026-11-08 09:58:24",
+            "business_version": 2,
+            "local_managed": 1
+        },
+        {
+            "id": 23,
+            "legacy_id": 57,
+            "username": "yuanpin",
+            "password_hash": "$2y$12$OsbrfGEgc8Dr3kj9YC3NBOCUWIwDpCphp5o3BrZs9Bt0qlGnxHHg2",
+            "nickname": "袁品",
+            "mobile": "17657159309",
+            "email": "yuanpin@163.com",
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 1,
+            "department_ids": "[31]",
+            "department_names": "[\"内贸销售部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "created_at": "2023-12-30 01:49:33",
+            "updated_at": "2026-11-08 09:58:24",
+            "business_version": 2,
+            "local_managed": 1
+        },
+        {
+            "id": 24,
+            "legacy_id": 6,
+            "username": "cangchutest",
+            "password_hash": "$2y$12$CTf1mmx1Zz/5QNwQUgGmUeXgXeMH7TetryOvBYdNF1LMH9sOpKEhe",
+            "nickname": "仓储测试-仓储部",
+            "mobile": "17765654551",
+            "email": "111131@163.com",
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[29]",
+            "department_names": "[\"生产仓储部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "created_at": "2023-12-17 01:31:05",
+            "updated_at": "2026-11-08 09:58:24",
+            "business_version": 2,
+            "local_managed": 1
+        },
+        {
+            "id": 25,
+            "legacy_id": 81,
+            "username": "jiangxian",
+            "password_hash": "$2y$12$FNGWbCqGo3mMs4BgBLKirOQPgq.a0DLylexybGIvXt6G7XLUsejTm",
+            "nickname": "姜纤",
+            "mobile": "17657159312",
+            "email": "jiangxian@jiantan.com",
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 1,
+            "department_ids": "[31]",
+            "department_names": "[\"内贸销售部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "created_at": "2023-12-30 01:47:33",
+            "updated_at": "2026-11-08 09:58:24",
+            "business_version": 2,
+            "local_managed": 1
+        },
+        {
+            "id": 26,
+            "legacy_id": 91,
+            "username": "3448739676",
+            "password_hash": "$2y$12$KWlSE39GqUsRHiVUedYZH.pg2QvgHwA/iuarKxn40c3iHMGYLK.be",
+            "nickname": "刘雲",
+            "mobile": "17657159310",
+            "email": "3448739676@qq.com",
+            "status": "hidden",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[31]",
+            "department_names": "[\"内贸销售部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "created_at": "2024-03-21 01:54:55",
+            "updated_at": "2026-11-08 09:58:24",
+            "business_version": 2,
+            "local_managed": 1
+        },
+        {
+            "id": 27,
+            "legacy_id": 96,
+            "username": "JT_cangchuLZC",
+            "password_hash": "$2y$12$XrAwd1UVTd8JixjlWAPd6.SnFxDH5pIdgvetFZZjUfhjrwHJ0R/Km",
+            "nickname": "李智城",
+            "mobile": "17985451212",
+            "email": "2788205179@qq.com",
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[29]",
+            "department_names": "[\"生产仓储部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "created_at": "2024-06-17 07:53:12",
+            "updated_at": "2026-11-08 09:58:24",
+            "business_version": 2,
+            "local_managed": 1
+        },
+        {
+            "id": 28,
+            "legacy_id": 98,
+            "username": "JT_wenzhengWXL",
+            "password_hash": "$2y$12$GnbtTSKw6xTbwAdvDIaODem/PqCe/pAqAxNZMt7pjY.4Jg6N9cGue",
+            "nickname": "王晓丽",
+            "mobile": "17765666631",
+            "email": "121123@163.com",
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 1,
+            "department_ids": "[28]",
+            "department_names": "[\"文政部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "created_at": "2024-07-16 02:41:06",
+            "updated_at": "2026-11-08 09:58:24",
+            "business_version": 2,
+            "local_managed": 1
+        },
+        {
+            "id": 29,
+            "legacy_id": 5,
+            "username": "wangtao",
+            "password_hash": "$2y$12$J6cS56SG0MwBmLIOn1v85uLdYITKmbiPuCHImrU/DHYXBYy1RtYuO",
+            "nickname": "汪涛",
+            "mobile": "17765666666",
+            "email": "123111@163.com",
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 1,
+            "department_ids": "[39]",
+            "department_names": "[\"内贸销售B端\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "created_at": "2023-10-11 08:07:38",
+            "updated_at": "2026-11-08 09:58:24",
+            "business_version": 1,
+            "local_managed": 1
+        },
+        {
+            "id": 30,
+            "legacy_id": 14,
+            "username": "liyanfang",
+            "password_hash": "$2y$12$eI2z.ysVmPBw/Ll6xwIN.uPV73sKP154fSiMDQkPrg7jlNQtD6CGG",
+            "nickname": "李燕芳",
+            "mobile": "17657159303",
+            "email": "123@163.com",
+            "status": "hidden",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[]",
+            "department_names": "[]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "created_at": "2023-07-18 08:37:29",
+            "updated_at": "2026-11-08 09:58:24",
+            "business_version": 1,
+            "local_managed": 1
+        },
+        {
+            "id": 31,
+            "legacy_id": 15,
+            "username": "JT_waimaoZN",
+            "password_hash": "$2y$12$/nnoKnaVWM6BH0iZryUR4.LuG0hb/SaP7eIIxQeZ1ZvVEEKw7qlGy",
+            "nickname": "Joanna",
+            "mobile": "18234122311",
+            "email": "ada1e@163.com",
+            "status": "hidden",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[35]",
+            "department_names": "[\"外贸一部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "created_at": "2024-01-20 03:00:56",
+            "updated_at": "2026-11-08 09:58:24",
+            "business_version": 1,
+            "local_managed": 1
+        },
+        {
+            "id": 32,
+            "legacy_id": 16,
+            "username": "JT_wenzheng001",
+            "password_hash": "$2y$12$2IJoqCa7jpZw2T9cYubufeex.siSyepJzKkm7THbnL1BXpZiJFm3C",
+            "nickname": "外贸-俞萍",
+            "mobile": "17865923231",
+            "email": "jxmlzxc@163.com",
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 1,
+            "department_ids": "[35]",
+            "department_names": "[\"外贸一部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "created_at": "2024-03-02 08:04:14",
+            "updated_at": "2026-11-08 09:58:24",
+            "business_version": 1,
+            "local_managed": 1
+        },
+        {
+            "id": 34,
+            "legacy_id": 19,
+            "username": "JT_CCO",
+            "password_hash": "$2y$12$bGPEb4gWbT3nyLH/30dkze5zKTPbIhu/pj2qtYZ0dITMT14UTa8ku",
+            "nickname": "蔡蔡",
+            "mobile": "18214122228",
+            "email": "114111aa@qq.com",
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[25, 28]",
+            "department_names": "[\"山东简谈\", \"文政部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "created_at": "2024-03-21 00:51:15",
+            "updated_at": "2026-11-08 09:58:24",
+            "business_version": 1,
+            "local_managed": 1
+        },
+        {
+            "id": 36,
+            "legacy_id": 22,
+            "username": "JT_waimao001",
+            "password_hash": "$2y$12$7LkDpPpL5mHh/OnSS1qy1.4orBAp9uAUL5Gag.j3M.P3RTAXxO5em",
+            "nickname": "江晓霞",
+            "mobile": "",
+            "email": "923854976@qq.com",
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 1,
+            "department_ids": "[35]",
+            "department_names": "[\"外贸一部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "created_at": "2024-04-01 07:25:38",
+            "updated_at": "2026-11-08 09:58:24",
+            "business_version": 1,
+            "local_managed": 1
+        },
+        {
+            "id": 37,
+            "legacy_id": 26,
+            "username": "JT_waimao003",
+            "password_hash": "$2y$12$hZw05diweXTBHrurzHEmzus1b/rmkDBz47tJW.aSkOh0/YcAIhH6y",
+            "nickname": "邢昊",
+            "mobile": "17657159307",
+            "email": "1123@163.com",
+            "status": "hidden",
+            "sort": -1,
+            "is_sales": 0,
+            "department_ids": "[35]",
+            "department_names": "[\"外贸一部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "created_at": "2024-04-23 03:09:02",
+            "updated_at": "2026-11-08 09:58:24",
+            "business_version": 1,
+            "local_managed": 1
+        },
+        {
+            "id": 42,
+            "legacy_id": 94,
+            "username": "JT_xiaoshouCY",
+            "password_hash": "$2y$12$w.5XMk3Hkt7x3MGLLNLAxeni02rzOu0O60Se0kyEqCsRSm/F7yA9W",
+            "nickname": "陈瑶",
+            "mobile": "17657159317",
+            "email": "17753915590@163.com",
+            "status": "hidden",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[31]",
+            "department_names": "[\"内贸销售部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "created_at": "2024-06-03 01:04:21",
+            "updated_at": "2026-11-08 09:58:24",
+            "business_version": 1,
+            "local_managed": 1
+        },
+        {
+            "id": 43,
+            "legacy_id": 95,
+            "username": "JT_cangchuPT",
+            "password_hash": "$2y$12$gfRNSkrxh6/d.D6R72aufOUYNbByEjSR7tm5jVgL4D49jN2USPIxW",
+            "nickname": "逄涛",
+            "mobile": "17855554545",
+            "email": "1356968082@qq.com",
+            "status": "normal",
+            "sort": -1,
+            "is_sales": 0,
+            "department_ids": "[29]",
+            "department_names": "[\"生产仓储部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "created_at": "2024-06-17 07:52:14",
+            "updated_at": "2026-11-08 09:58:24",
+            "business_version": 1,
+            "local_managed": 1
+        },
+        {
+            "id": 44,
+            "legacy_id": 97,
+            "username": "JT_cangchuWH",
+            "password_hash": "$2y$12$xH93PCbc1/nyRd8gHSjdIuh9lbpJ1w8Yt0qzqCt2mkx/F7Z.f5QWC",
+            "nickname": "王辉",
+            "mobile": "17866665432",
+            "email": "17866665432@163.com",
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[28]",
+            "department_names": "[\"文政部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "created_at": "2024-07-01 03:41:32",
+            "updated_at": "2026-11-09 08:42:15",
+            "business_version": 2,
+            "local_managed": 1
+        },
+        {
+            "id": 48,
+            "legacy_id": 103,
+            "username": "JT_cangchuWDM",
+            "password_hash": "$2y$12$YkgJJDmv4Mdw.YvLdOvaeO7jAEkK93QKXtFX13FY7M0fcnF7dCsaC",
+            "nickname": "王德民",
+            "mobile": "",
+            "email": "ss2e@163.com",
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[29]",
+            "department_names": "[\"生产仓储部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "created_at": "2024-07-22 07:42:39",
+            "updated_at": "2026-11-08 09:58:24",
+            "business_version": 1,
+            "local_managed": 1
+        },
+        {
+            "id": 52,
+            "legacy_id": 107,
+            "username": "JT_xiaoshouSXL",
+            "password_hash": "$2y$12$RIh3vBFTFk.w2uIBjZjNyeyXaJV3I8QYdKiBilnljp7ZFaKj4ocy.",
+            "nickname": "苏晓龙",
+            "mobile": "",
+            "email": "s21se@163.com",
+            "status": "hidden",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[31]",
+            "department_names": "[\"内贸销售部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "created_at": "2024-07-22 07:44:44",
+            "updated_at": "2026-11-08 09:58:24",
+            "business_version": 1,
+            "local_managed": 1
+        },
+        {
+            "id": 56,
+            "legacy_id": 112,
+            "username": "JT_zhanglianyong",
+            "password_hash": "$2y$12$Gzkc68.sDfqLCk0FGr7gCOhCmp7tDXdccr56dXyYLjGfiHbme3xgG",
+            "nickname": "张连勇",
+            "mobile": "16678791508",
+            "email": "11z2111@163.com",
+            "status": "hidden",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[]",
+            "department_names": "[]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "created_at": "2024-07-26 05:59:52",
+            "updated_at": "2026-11-08 09:58:24",
+            "business_version": 1,
+            "local_managed": 1
+        },
+        {
+            "id": 59,
+            "legacy_id": 115,
+            "username": "JT_xiaoshouWJ",
+            "password_hash": "$2y$12$QU2evaMTCRRKsoUE/HXqYeKVvJK7ysEvyhm7QimVkOGr1hDN.lLty",
+            "nickname": "王敬",
+            "mobile": "17657159301",
+            "email": "ss231e@163.com",
+            "status": "hidden",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[]",
+            "department_names": "[]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "created_at": "2024-10-06 01:53:36",
+            "updated_at": "2026-11-08 09:58:24",
+            "business_version": 1,
+            "local_managed": 1
+        },
+        {
+            "id": 60,
+            "legacy_id": 117,
+            "username": "JT_cangchuZJW",
+            "password_hash": "$2y$12$irzg4xwwmle.gc5Z0oWFheusIfBZMQsdwIjf8ApfvQXcKCWMe7Zyu",
+            "nickname": "朱俊伟",
+            "mobile": "17865132514",
+            "email": "00123@163.com",
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[29]",
+            "department_names": "[\"生产仓储部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "created_at": "2024-11-17 01:26:44",
+            "updated_at": "2026-11-08 09:58:24",
+            "business_version": 1,
+            "local_managed": 1
+        },
+        {
+            "id": 62,
+            "legacy_id": 119,
+            "username": "JT_wenzhengDH",
+            "password_hash": "$2y$12$mIKnr8A0Uu1T81zsmZ1NxOFCCAAzxjA39aafpVhLhgOXYp001YPSK",
+            "nickname": "董函",
+            "mobile": "17765667662",
+            "email": "t113tes@123.com",
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[28]",
+            "department_names": "[\"文政部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "created_at": "2024-11-25 03:05:35",
+            "updated_at": "2026-11-08 09:58:24",
+            "business_version": 1,
+            "local_managed": 1
+        },
+        {
+            "id": 63,
+            "legacy_id": 120,
+            "username": "JT_cangchuZQ",
+            "password_hash": "$2y$12$z8hXwhPTLKr5LR3vAxCakORK9r7dZ/H2.xAmIFG569kjd0Gj5CkhS",
+            "nickname": "周庆",
+            "mobile": "18396736646",
+            "email": "18396736646@163.com",
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[29]",
+            "department_names": "[\"生产仓储部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "created_at": "2024-12-05 01:24:26",
+            "updated_at": "2026-11-08 09:58:24",
+            "business_version": 1,
+            "local_managed": 1
+        },
+        {
+            "id": 64,
+            "legacy_id": 122,
+            "username": "JT_jishu",
+            "password_hash": "$2y$12$/J7MqQxu1LxnRW1nBMGHiux7e5St33nC/WMEIRDmOXIyDKPEy4CJy",
+            "nickname": "姜晓孟",
+            "mobile": "18601021538",
+            "email": "jxmlzxc@gmail.com",
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[28]",
+            "department_names": "[\"文政部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "created_at": "2024-12-25 02:31:30",
+            "updated_at": "2026-11-08 09:58:24",
+            "business_version": 1,
+            "local_managed": 1
+        },
+        {
+            "id": 66,
+            "legacy_id": 126,
+            "username": "JT_yingxiaoYXY",
+            "password_hash": "$2y$12$fxcVpBvNuYOY8k13sq/Poe5Z7CsigUze7DNMzMWVKbbhf3IS7mhJ6",
+            "nickname": "杨小煜-外贸部",
+            "mobile": "17765111111",
+            "email": "ss131e@163.com",
+            "status": "hidden",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[35]",
+            "department_names": "[\"外贸一部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "created_at": "2025-01-19 06:18:21",
+            "updated_at": "2026-11-08 09:58:24",
+            "business_version": 1,
+            "local_managed": 1
+        },
+        {
+            "id": 70,
+            "legacy_id": 130,
+            "username": "JT_xiaoshouZYF",
+            "password_hash": "$2y$12$s1YXOhpBb24g3VdNm1Zkd.Py2NS4k89eIH5WO8dV2.ozx0O/uI5KC",
+            "nickname": "邹运福",
+            "mobile": "18234412328",
+            "email": "ss11411e@163.com",
+            "status": "hidden",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[31]",
+            "department_names": "[\"内贸销售部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "created_at": "2025-01-19 06:21:57",
+            "updated_at": "2026-11-08 09:58:24",
+            "business_version": 1,
+            "local_managed": 1
+        },
+        {
+            "id": 71,
+            "legacy_id": 131,
+            "username": "JT_yingxiaoYYB",
+            "password_hash": "$2y$12$TCxEsUw4XBrfkK9D5S6dBemsPPE/umK4XoIARYcnLxXF4CSM9eXgy",
+            "nickname": "杨玉冰",
+            "mobile": "18914141330",
+            "email": "t3t141es@123.com",
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[26]",
+            "department_names": "[\"营销部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "created_at": "2025-01-19 06:22:26",
+            "updated_at": "2026-11-08 09:58:24",
+            "business_version": 1,
+            "local_managed": 1
+        },
+        {
+            "id": 72,
+            "legacy_id": 132,
+            "username": "JT_yingxiaoHDD",
+            "password_hash": "$2y$12$ETsgrhDKsDkN2MduocUbUuScP2bXxFt26t.z7PgzrOP7n7N1zvNqe",
+            "nickname": "韩丹丹",
+            "mobile": "17765141312",
+            "email": "t1313tes@123.com",
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[26]",
+            "department_names": "[\"营销部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "created_at": "2025-01-19 06:22:57",
+            "updated_at": "2026-11-08 09:58:24",
+            "business_version": 1,
+            "local_managed": 1
+        },
+        {
+            "id": 73,
+            "legacy_id": 134,
+            "username": "JT_caiwu",
+            "password_hash": "$2y$12$GhTAuoRMgZ6sNgDKiQGf8e.m1Fag3Sv4J3fPI0EIpu0uAbbe/3sp.",
+            "nickname": "张莲莲",
+            "mobile": "17864123231",
+            "email": "jxml1zxc@163.com",
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[28]",
+            "department_names": "[\"文政部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "created_at": "2025-03-03 09:02:51",
+            "updated_at": "2026-11-08 09:58:24",
+            "business_version": 1,
+            "local_managed": 1
+        },
+        {
+            "id": 74,
+            "legacy_id": 136,
+            "username": "JT_xiaoshouZYH",
+            "password_hash": "$2y$12$SOjbaWWL28UlDDnoM/HBbuStdG9G2SpyMuHyWLJCFudzg9V.qisrK",
+            "nickname": "张玉涵",
+            "mobile": "13482211412",
+            "email": "Zhangyuhan@sdjiantan.com",
+            "status": "hidden",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[31]",
+            "department_names": "[\"内贸销售部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "created_at": "2025-03-30 02:10:37",
+            "updated_at": "2026-11-08 09:58:24",
+            "business_version": 1,
+            "local_managed": 1
+        },
+        {
+            "id": 75,
+            "legacy_id": 139,
+            "username": "sdjiantan",
+            "password_hash": "$2y$12$vRV7vV9juibHhzFxkXANYOboFQGGmUN3q/JGy5ynKKXeFZ6t.1iIW",
+            "nickname": "山东简谈",
+            "mobile": "17865923111",
+            "email": "jxmlzxc1@163.com",
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[25]",
+            "department_names": "[\"山东简谈\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "created_at": "2025-05-21 08:49:08",
+            "updated_at": "2026-11-08 09:58:24",
+            "business_version": 1,
+            "local_managed": 1
+        },
+        {
+            "id": 77,
+            "legacy_id": 141,
+            "username": "JT_waimaoWH",
+            "password_hash": "$2y$12$nS32xA79BfBiRx0asAiX5OkQ80uwc02ucCg4Uqt9PAFgF8fwsYp4C",
+            "nickname": "王慧",
+            "mobile": "17865914111",
+            "email": "jxmlz3111xc@163.com",
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 1,
+            "department_ids": "[35]",
+            "department_names": "[\"外贸一部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "created_at": "2025-09-09 00:53:08",
+            "updated_at": "2026-11-08 09:58:24",
+            "business_version": 1,
+            "local_managed": 1
+        },
+        {
+            "id": 78,
+            "legacy_id": 142,
+            "username": "JT_waimaoXZC",
+            "password_hash": "$2y$12$r3bB56VH3YvWIvWPOMnXj.OmCGFmpbYO9oaUXBT7AahWLR4nbhp3a",
+            "nickname": "薛志成",
+            "mobile": "17865941113",
+            "email": "jxmlz441xc@163.com",
+            "status": "hidden",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[35]",
+            "department_names": "[\"外贸一部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "created_at": "2025-09-09 06:18:55",
+            "updated_at": "2026-11-08 09:58:24",
+            "business_version": 1,
+            "local_managed": 1
+        },
+        {
+            "id": 79,
+            "legacy_id": 143,
+            "username": "JT_yingxiaoDXX",
+            "password_hash": "$2y$12$qAaYwFy79ZB6/VOE16InxOLcATAJJkfevqi1pnYgYOzJOma8fLIBK",
+            "nickname": "丁晓璇",
+            "mobile": "17865131111",
+            "email": "jx2656mlzxc@163.com",
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[26]",
+            "department_names": "[\"营销部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "created_at": "2025-10-21 02:37:02",
+            "updated_at": "2026-11-08 09:58:24",
+            "business_version": 1,
+            "local_managed": 1
+        },
+        {
+            "id": 81,
+            "legacy_id": 145,
+            "username": "JT_waimaoGQ",
+            "password_hash": "$2y$12$I6fYer95jp37tkBhfAGp/OmzSqiIR4rD/f2PIpEbO/.d1ieO/JIf6",
+            "nickname": "郭庆",
+            "mobile": "17865923333",
+            "email": "da@admin.com",
+            "status": "hidden",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[36]",
+            "department_names": "[\"外贸二部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "created_at": "2026-01-16 05:30:13",
+            "updated_at": "2026-11-08 09:58:24",
+            "business_version": 1,
+            "local_managed": 1
+        },
+        {
+            "id": 82,
+            "legacy_id": 146,
+            "username": "JT_waimaoGCC",
+            "password_hash": "$2y$12$icur8WKylNyOJO1M5wWX7OrN6MGAMfteLB5i/99qk8Tf.2fccIEbW",
+            "nickname": "高翠翠",
+            "mobile": "17765663115",
+            "email": "jx3lzxc@163.com",
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 1,
+            "department_ids": "[36]",
+            "department_names": "[\"外贸二部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "created_at": "2026-01-16 05:30:42",
+            "updated_at": "2026-11-08 09:58:24",
+            "business_version": 1,
+            "local_managed": 1
+        },
+        {
+            "id": 83,
+            "legacy_id": 147,
+            "username": "JT_WGF",
+            "password_hash": "$2y$12$MOw2Wvmsppz0HzdwDsvLUe4dsVkgqpx0KkfMG0uXtP2YMJd23IH/2",
+            "nickname": "王国锋",
+            "mobile": "13954929930",
+            "email": "wgf@sdjiantan.com",
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[25]",
+            "department_names": "[\"山东简谈\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "created_at": "2026-01-19 14:08:59",
+            "updated_at": "2026-11-08 09:58:24",
+            "business_version": 1,
+            "local_managed": 1
+        },
+        {
+            "id": 84,
+            "legacy_id": 148,
+            "username": "JT_waimaoQSF",
+            "password_hash": "$2y$12$hjtJH9a2W.mIZi6eaSKS2On6QNFyrY1SDWaFqwhf4OMV4l63FclvG",
+            "nickname": "秦泗方",
+            "mobile": "17865941512",
+            "email": "jxmlzxc@16341.com",
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[37]",
+            "department_names": "[\"外贸运营\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "created_at": "2026-01-23 01:57:53",
+            "updated_at": "2026-11-08 09:58:24",
+            "business_version": 1,
+            "local_managed": 1
+        },
+        {
+            "id": 85,
+            "legacy_id": 149,
+            "username": "JT_xiaoshouLX",
+            "password_hash": "$2y$12$x51RVJwjtGGBJcFUyHo/jevWCFN.84hgaEgD6bQZuyhkrbFIm93aK",
+            "nickname": "刘璇",
+            "mobile": "17865132412",
+            "email": "jxmlz4113xc@163.com",
+            "status": "hidden",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[31]",
+            "department_names": "[\"内贸销售部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "created_at": "2026-01-28 02:45:50",
+            "updated_at": "2026-11-08 09:58:24",
+            "business_version": 1,
+            "local_managed": 1
+        },
+        {
+            "id": 86,
+            "legacy_id": 150,
+            "username": "JT_cangchuCWJ",
+            "password_hash": "$2y$12$DxMvSlHqVK6Jbj0kX30zFOWzTOtUxUMVILRefajS4yvXvmq9wFmlC",
+            "nickname": "丛维巨",
+            "mobile": "17765743662",
+            "email": "cwj@sdjiantran.com",
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[29]",
+            "department_names": "[\"生产仓储部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "created_at": "2026-02-28 02:46:41",
+            "updated_at": "2026-11-08 09:58:24",
+            "business_version": 1,
+            "local_managed": 1
+        },
+        {
+            "id": 88,
+            "legacy_id": 152,
+            "username": "JT_yingxiaoLZ",
+            "password_hash": "$2y$12$/Ph4HMPthHgeGURPd4SNueen0KonxnBlX9ft6EIlewvRq51lO9PPS",
+            "nickname": "刘臻",
+            "mobile": "17412323231",
+            "email": "lz@sdjiantan.com",
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[26]",
+            "department_names": "[\"营销部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "created_at": "2026-03-02 01:37:34",
+            "updated_at": "2026-11-08 09:58:24",
+            "business_version": 1,
+            "local_managed": 1
+        },
+        {
+            "id": 89,
+            "legacy_id": 153,
+            "username": "JT_wenzhengCYN",
+            "password_hash": "$2y$12$KBB5kfCYYbVksuv8YlcZA.TRw8B1.ojzRR4YuaX3Y8HNSXHD0GNAW",
+            "nickname": "程亚男-文政部",
+            "mobile": "17513113231",
+            "email": "cyn@sdjiantan.com",
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[28]",
+            "department_names": "[\"文政部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "created_at": "2026-03-02 01:38:29",
+            "updated_at": "2026-11-08 09:58:24",
+            "business_version": 1,
+            "local_managed": 1
+        },
+        {
+            "id": 90,
+            "legacy_id": 154,
+            "username": "JT_waimaoDY",
+            "password_hash": "$2y$12$D5Cv0n9fFom5rKAoEZgs8ODJmrIu51TF4MGJGXtI6W71H5fOkThju",
+            "nickname": "董月",
+            "mobile": "18724796223",
+            "email": "jxmlz131xc@163.com",
+            "status": "hidden",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[36]",
+            "department_names": "[\"外贸二部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "created_at": "2026-03-24 07:23:38",
+            "updated_at": "2026-11-08 09:58:24",
+            "business_version": 1,
+            "local_managed": 1
+        },
+        {
+            "id": 93,
+            "legacy_id": 157,
+            "username": "JT_xiaoshouDX",
+            "password_hash": "$2y$12$y5giAfCI37b4aVifTXO4peIdZP91b5yKdxEQA5qrmUpGTXNVK5V2y",
+            "nickname": "丁祥",
+            "mobile": "17765513115",
+            "email": "jxmlzx51c@gmail.com",
+            "status": "hidden",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[39]",
+            "department_names": "[\"内贸销售B端\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "created_at": "2026-04-11 06:33:55",
+            "updated_at": "2026-11-08 09:58:24",
+            "business_version": 1,
+            "local_managed": 1
+        },
+        {
+            "id": 94,
+            "legacy_id": 158,
+            "username": "JT_xiaoshouYJY",
+            "password_hash": "$2y$12$t3NG8w6ggGvE8Tsw1WA5B.M4tkx5YheIVzTgrDi1vLjy5emO2eGve",
+            "nickname": "尹俊义",
+            "mobile": "17412332514",
+            "email": "jx411mlzxc@gmail.com",
+            "status": "hidden",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[39]",
+            "department_names": "[\"内贸销售B端\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "created_at": "2026-04-11 06:35:44",
+            "updated_at": "2026-11-08 09:58:24",
+            "business_version": 1,
+            "local_managed": 1
+        },
+        {
+            "id": 95,
+            "legacy_id": 159,
+            "username": "JT_xiaoshouSHY",
+            "password_hash": "$2y$12$YHUwQzdblRpSpr/GPT3kT.T4cwHKgYPVF6fABXEaKljhdfrz1jzbm",
+            "nickname": "史航宇",
+            "mobile": "17865232514",
+            "email": "jxm113lzxc@gmail.com",
+            "status": "hidden",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[39]",
+            "department_names": "[\"内贸销售B端\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "created_at": "2026-04-11 07:40:22",
+            "updated_at": "2026-11-08 09:58:24",
+            "business_version": 1,
+            "local_managed": 1
+        },
+        {
+            "id": 96,
+            "legacy_id": 160,
+            "username": "JT_wenzhengLXY",
+            "password_hash": "$2y$12$vfw.hRJJVF9T4WXXtfydiuVIIs.denIgbcihM7HWNNneQ82O8QzYi",
+            "nickname": "廉晓雨",
+            "mobile": "17863147124",
+            "email": "jxm1311lzxc@163.com",
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[28]",
+            "department_names": "[\"文政部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "created_at": "2026-04-28 01:59:38",
+            "updated_at": "2026-11-08 10:55:39",
+            "business_version": 2,
+            "local_managed": 1
+        },
+        {
+            "id": 98,
+            "legacy_id": 163,
+            "username": "JT_wenzhengYWJ",
+            "password_hash": "$2y$12$WtPp1BAe07xAhjuFTdxWbOHX.bLjpld7z310kZoW6.uq8G.SK19K2",
+            "nickname": "殷文娟",
+            "mobile": "17865912471",
+            "email": "jxmlzx2311c@163.com",
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[28]",
+            "department_names": "[\"文政部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "created_at": "2026-05-13 00:29:59",
+            "updated_at": "2026-11-08 09:58:24",
+            "business_version": 1,
+            "local_managed": 1
+        },
+        {
+            "id": 99,
+            "legacy_id": 164,
+            "username": "yihan",
+            "password_hash": "$2y$12$5fw2OpzzzdkgUYqQAoZt/.fBve3EtbOAREd4C1rqVKXXj6VR.aKNW",
+            "nickname": "刘一涵",
+            "mobile": "17865123231",
+            "email": "j1111xmlzxc@163.com",
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[31]",
+            "department_names": "[\"内贸销售部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "created_at": "2026-05-19 02:05:11",
+            "updated_at": "2026-11-08 09:58:24",
+            "business_version": 1,
+            "local_managed": 1
+        },
+        {
+            "id": 100,
+            "legacy_id": 165,
+            "username": "JT_wenzhengZXQ",
+            "password_hash": "$2y$12$vqUGxkffHH4BkJuUzVT5z.2wE97skMnht4I4v4NE/zlsTlR3cN5I2",
+            "nickname": "张晓琪",
+            "mobile": "17865913131",
+            "email": "jxmlz1231xc@163.com",
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[28]",
+            "department_names": "[\"文政部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "created_at": "2026-05-30 00:52:16",
+            "updated_at": "2026-11-08 09:58:24",
+            "business_version": 1,
+            "local_managed": 1
+        },
+        {
+            "id": 101,
+            "legacy_id": 167,
+            "username": "JT_waimaoYHR",
+            "password_hash": "$2y$12$DwxvTG.k3gtFcLkxR383o.cyaA6HNCE15JLogpkOMgiFlKdnAefO6",
+            "nickname": "闫会然-外贸一部",
+            "mobile": "17865132167",
+            "email": "jxklzxc@gmail.com",
+            "status": "hidden",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[35]",
+            "department_names": "[\"外贸一部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "created_at": "2026-08-07 07:33:38",
+            "updated_at": "2026-11-08 09:58:24",
+            "business_version": 1,
+            "local_managed": 1
+        },
+        {
+            "id": 102,
+            "legacy_id": 168,
+            "username": "JT_waimaoZP",
+            "password_hash": "$2y$12$SZpBskX2dKhy1SY7v3UNV.2eMvFP8Wnwdaj/.J7gtwTw91vGQVAKm",
+            "nickname": "祝品-外贸一部",
+            "mobile": "17866665437",
+            "email": "jxmlzxu@163.com",
+            "status": "hidden",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[35]",
+            "department_names": "[\"外贸一部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "created_at": "2026-08-07 08:43:48",
+            "updated_at": "2026-11-08 09:58:24",
+            "business_version": 1,
+            "local_managed": 1
+        },
+        {
+            "id": 103,
+            "legacy_id": 171,
+            "username": "JT_waimaoHXP",
+            "password_hash": "$2y$12$hi0.tov4xBRiGhu208.9oe8KyEK/FnbkUSSR.3GISG3PwwqZRLWBu",
+            "nickname": "黄欣萍",
+            "mobile": "17865914113",
+            "email": "jxml4132zxc@gmail.com",
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[35]",
+            "department_names": "[\"外贸一部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "created_at": "2026-09-11 09:11:21",
+            "updated_at": "2026-11-08 09:58:24",
+            "business_version": 1,
+            "local_managed": 1
+        },
+        {
+            "id": 104,
+            "legacy_id": 172,
+            "username": "JT_cangchuABL",
+            "password_hash": "$2y$12$jV3BxHhi30EHZH1sOxQVm.RGvaXUO/e6VAkNhro7TYuVM8NB8EKV.",
+            "nickname": "安佰龙",
+            "mobile": "17865941323",
+            "email": "jxmlzxc123444@gmail.com",
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[29]",
+            "department_names": "[\"生产仓储部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "created_at": "2026-09-11 09:12:51",
+            "updated_at": "2026-11-08 09:58:24",
+            "business_version": 1,
+            "local_managed": 1
+        },
+        {
+            "id": 105,
+            "legacy_id": 174,
+            "username": "JT_waimaoWHY",
+            "password_hash": "$2y$12$AXT4OIzzhkBU5YqI4nwzv.OZvDnDjGb4yrkFc8VY2fvQ4hzMX3U1u",
+            "nickname": "吴海源",
+            "mobile": "17865141113",
+            "email": "jx4123mlzxc@gmail.com",
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 1,
+            "department_ids": "[35]",
+            "department_names": "[\"外贸一部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "created_at": "2026-09-11 09:13:55",
+            "updated_at": "2026-11-08 09:58:24",
+            "business_version": 1,
+            "local_managed": 1
+        },
+        {
+            "id": 106,
+            "legacy_id": 175,
+            "username": "JT_xiaoshouZNW",
+            "password_hash": "$2y$12$9f3LjL4FC0cnfTxhd49d7.PeygEUwFtI7BrpGkysbNWUh0BLO0Vq6",
+            "nickname": "张念伟",
+            "mobile": "17641329317",
+            "email": "jxmlz41133xc@gmail.com",
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[31]",
+            "department_names": "[\"内贸销售部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "created_at": "2026-09-11 09:14:57",
+            "updated_at": "2026-11-08 09:58:24",
+            "business_version": 1,
+            "local_managed": 1
+        },
+        {
+            "id": 107,
+            "legacy_id": 176,
+            "username": "JT_xiaoshouWKX",
+            "password_hash": "$2y$12$sLLutH0EOL/X7SVcSLLahufHd1lsJVPdj8vJZN4AUXhN2YIwjN0wG",
+            "nickname": "王坤鑫",
+            "mobile": "17657159254",
+            "email": "jxmlzx12311@gmail.com",
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 1,
+            "department_ids": "[39]",
+            "department_names": "[\"内贸销售B端\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "created_at": "2026-10-07 00:46:41",
+            "updated_at": "2026-11-08 09:58:24",
+            "business_version": 1,
+            "local_managed": 1
+        },
+        {
+            "id": 108,
+            "legacy_id": 177,
+            "username": "JT_yunyingZNW",
+            "password_hash": "$2y$12$fdJBFzB1yOZpOU2.XIkGxu8Zu8ag0mBaXdU6FmJRMRqstkbEThC.i",
+            "nickname": "张念伟",
+            "mobile": "17657151347",
+            "email": "jxm1211lzxc@gmail.com",
+            "status": "normal",
+            "sort": 0,
+            "is_sales": 0,
+            "department_ids": "[31]",
+            "department_names": "[\"内贸销售部\"]",
+            "auth_group_ids": "[]",
+            "auth_group_names": "[]",
+            "created_at": "2026-10-14 00:56:52",
+            "updated_at": "2026-11-08 09:58:24",
+            "business_version": 1,
+            "local_managed": 1
         },
         {
             "id": 109,
@@ -1661,10 +1661,10 @@
             "department_names": "[\"外贸一部\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
-            "local_managed": 1,
-            "business_version": 1,
             "created_at": "2026-10-15 05:16:00",
-            "updated_at": "2026-11-08 09:58:24"
+            "updated_at": "2026-11-08 09:58:24",
+            "business_version": 1,
+            "local_managed": 1
         },
         {
             "id": 110,
@@ -1681,10 +1681,10 @@
             "department_names": "[\"内贸销售部\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
-            "local_managed": 1,
-            "business_version": 1,
             "created_at": "2026-11-07 00:44:57",
-            "updated_at": "2026-11-08 09:58:24"
+            "updated_at": "2026-11-08 09:58:24",
+            "business_version": 1,
+            "local_managed": 1
         }
     ],
     "departments": [
@@ -3484,266 +3484,10 @@
             "updated_at": "2026-11-08 09:58:55"
         },
         {
-            "id": 76,
-            "user_legacy_id": 6,
-            "staff_type": "warehouse",
-            "department_legacy_id": 29,
-            "status": "enabled",
-            "effective_from": null,
-            "effective_to": null,
-            "source": "manual",
-            "remark": "旧ERP岗位资料迁入",
-            "business_version": 1,
-            "created_by_legacy_id": 1,
-            "updated_by_legacy_id": 1,
-            "created_at": "2026-11-08 09:58:55",
-            "updated_at": "2026-11-08 09:58:55"
-        },
-        {
-            "id": 79,
-            "user_legacy_id": 95,
-            "staff_type": "warehouse",
-            "department_legacy_id": 29,
-            "status": "enabled",
-            "effective_from": null,
-            "effective_to": null,
-            "source": "manual",
-            "remark": "旧ERP岗位资料迁入",
-            "business_version": 1,
-            "created_by_legacy_id": 1,
-            "updated_by_legacy_id": 1,
-            "created_at": "2026-11-08 09:58:55",
-            "updated_at": "2026-11-08 09:58:55"
-        },
-        {
-            "id": 80,
-            "user_legacy_id": 96,
-            "staff_type": "warehouse",
-            "department_legacy_id": 29,
-            "status": "enabled",
-            "effective_from": null,
-            "effective_to": null,
-            "source": "manual",
-            "remark": "旧ERP岗位资料迁入",
-            "business_version": 1,
-            "created_by_legacy_id": 1,
-            "updated_by_legacy_id": 1,
-            "created_at": "2026-11-08 09:58:55",
-            "updated_at": "2026-11-08 09:58:55"
-        },
-        {
             "id": 81,
             "user_legacy_id": 97,
             "staff_type": "warehouse",
             "department_legacy_id": 28,
-            "status": "enabled",
-            "effective_from": null,
-            "effective_to": null,
-            "source": "manual",
-            "remark": "旧ERP岗位资料迁入",
-            "business_version": 1,
-            "created_by_legacy_id": 1,
-            "updated_by_legacy_id": 1,
-            "created_at": "2026-11-08 09:58:55",
-            "updated_at": "2026-11-08 09:58:55"
-        },
-        {
-            "id": 84,
-            "user_legacy_id": 101,
-            "staff_type": "warehouse",
-            "department_legacy_id": 29,
-            "status": "enabled",
-            "effective_from": null,
-            "effective_to": null,
-            "source": "manual",
-            "remark": "旧ERP岗位资料迁入",
-            "business_version": 1,
-            "created_by_legacy_id": 1,
-            "updated_by_legacy_id": 1,
-            "created_at": "2026-11-08 09:58:55",
-            "updated_at": "2026-11-08 09:58:55"
-        },
-        {
-            "id": 86,
-            "user_legacy_id": 103,
-            "staff_type": "warehouse",
-            "department_legacy_id": 29,
-            "status": "enabled",
-            "effective_from": null,
-            "effective_to": null,
-            "source": "manual",
-            "remark": "旧ERP岗位资料迁入",
-            "business_version": 1,
-            "created_by_legacy_id": 1,
-            "updated_by_legacy_id": 1,
-            "created_at": "2026-11-08 09:58:55",
-            "updated_at": "2026-11-08 09:58:55"
-        },
-        {
-            "id": 91,
-            "user_legacy_id": 109,
-            "staff_type": "warehouse",
-            "department_legacy_id": 29,
-            "status": "enabled",
-            "effective_from": null,
-            "effective_to": null,
-            "source": "manual",
-            "remark": "旧ERP岗位资料迁入",
-            "business_version": 1,
-            "created_by_legacy_id": 1,
-            "updated_by_legacy_id": 1,
-            "created_at": "2026-11-08 09:58:55",
-            "updated_at": "2026-11-08 09:58:55"
-        },
-        {
-            "id": 95,
-            "user_legacy_id": 117,
-            "staff_type": "warehouse",
-            "department_legacy_id": 29,
-            "status": "enabled",
-            "effective_from": null,
-            "effective_to": null,
-            "source": "manual",
-            "remark": "旧ERP岗位资料迁入",
-            "business_version": 1,
-            "created_by_legacy_id": 1,
-            "updated_by_legacy_id": 1,
-            "created_at": "2026-11-08 09:58:55",
-            "updated_at": "2026-11-08 09:58:55"
-        },
-        {
-            "id": 96,
-            "user_legacy_id": 120,
-            "staff_type": "warehouse",
-            "department_legacy_id": 29,
-            "status": "enabled",
-            "effective_from": null,
-            "effective_to": null,
-            "source": "manual",
-            "remark": "旧ERP岗位资料迁入",
-            "business_version": 1,
-            "created_by_legacy_id": 1,
-            "updated_by_legacy_id": 1,
-            "created_at": "2026-11-08 09:58:55",
-            "updated_at": "2026-11-08 09:58:55"
-        },
-        {
-            "id": 97,
-            "user_legacy_id": 121,
-            "staff_type": "warehouse",
-            "department_legacy_id": 29,
-            "status": "enabled",
-            "effective_from": null,
-            "effective_to": null,
-            "source": "manual",
-            "remark": "旧ERP岗位资料迁入",
-            "business_version": 1,
-            "created_by_legacy_id": 1,
-            "updated_by_legacy_id": 1,
-            "created_at": "2026-11-08 09:58:55",
-            "updated_at": "2026-11-08 09:58:55"
-        },
-        {
-            "id": 98,
-            "user_legacy_id": 123,
-            "staff_type": "warehouse",
-            "department_legacy_id": 29,
-            "status": "enabled",
-            "effective_from": null,
-            "effective_to": null,
-            "source": "manual",
-            "remark": "旧ERP岗位资料迁入",
-            "business_version": 1,
-            "created_by_legacy_id": 1,
-            "updated_by_legacy_id": 1,
-            "created_at": "2026-11-08 09:58:55",
-            "updated_at": "2026-11-08 09:58:55"
-        },
-        {
-            "id": 99,
-            "user_legacy_id": 124,
-            "staff_type": "warehouse",
-            "department_legacy_id": 29,
-            "status": "enabled",
-            "effective_from": null,
-            "effective_to": null,
-            "source": "manual",
-            "remark": "旧ERP岗位资料迁入",
-            "business_version": 1,
-            "created_by_legacy_id": 1,
-            "updated_by_legacy_id": 1,
-            "created_at": "2026-11-08 09:58:55",
-            "updated_at": "2026-11-08 09:58:55"
-        },
-        {
-            "id": 100,
-            "user_legacy_id": 133,
-            "staff_type": "warehouse",
-            "department_legacy_id": 29,
-            "status": "enabled",
-            "effective_from": null,
-            "effective_to": null,
-            "source": "manual",
-            "remark": "旧ERP岗位资料迁入",
-            "business_version": 1,
-            "created_by_legacy_id": 1,
-            "updated_by_legacy_id": 1,
-            "created_at": "2026-11-08 09:58:55",
-            "updated_at": "2026-11-08 09:58:55"
-        },
-        {
-            "id": 103,
-            "user_legacy_id": 150,
-            "staff_type": "warehouse",
-            "department_legacy_id": 29,
-            "status": "enabled",
-            "effective_from": null,
-            "effective_to": null,
-            "source": "manual",
-            "remark": "旧ERP岗位资料迁入",
-            "business_version": 1,
-            "created_by_legacy_id": 1,
-            "updated_by_legacy_id": 1,
-            "created_at": "2026-11-08 09:58:55",
-            "updated_at": "2026-11-08 09:58:55"
-        },
-        {
-            "id": 104,
-            "user_legacy_id": 161,
-            "staff_type": "warehouse",
-            "department_legacy_id": 29,
-            "status": "enabled",
-            "effective_from": null,
-            "effective_to": null,
-            "source": "manual",
-            "remark": "旧ERP岗位资料迁入",
-            "business_version": 1,
-            "created_by_legacy_id": 1,
-            "updated_by_legacy_id": 1,
-            "created_at": "2026-11-08 09:58:55",
-            "updated_at": "2026-11-08 09:58:55"
-        },
-        {
-            "id": 106,
-            "user_legacy_id": 172,
-            "staff_type": "warehouse",
-            "department_legacy_id": 29,
-            "status": "enabled",
-            "effective_from": null,
-            "effective_to": null,
-            "source": "manual",
-            "remark": "旧ERP岗位资料迁入",
-            "business_version": 1,
-            "created_by_legacy_id": 1,
-            "updated_by_legacy_id": 1,
-            "created_at": "2026-11-08 09:58:55",
-            "updated_at": "2026-11-08 09:58:55"
-        },
-        {
-            "id": 107,
-            "user_legacy_id": 173,
-            "staff_type": "warehouse",
-            "department_legacy_id": 29,
             "status": "enabled",
             "effective_from": null,
             "effective_to": null,
@@ -3762,7 +3506,272 @@
             "roles": []
         },
         {
-            "user_legacy_id": 5,
+            "user_legacy_id": 10,
+            "roles": [
+                {
+                    "role_code": "sales_user",
+                    "sources": [
+                        "manual"
+                    ]
+                }
+            ]
+        },
+        {
+            "user_legacy_id": 101,
+            "roles": [
+                {
+                    "role_code": "production_operator",
+                    "sources": [
+                        "manual"
+                    ]
+                },
+                {
+                    "role_code": "warehouse_manager",
+                    "sources": [
+                        "manual"
+                    ]
+                }
+            ]
+        },
+        {
+            "user_legacy_id": 109,
+            "roles": [
+                {
+                    "role_code": "production_operator",
+                    "sources": [
+                        "manual"
+                    ]
+                },
+                {
+                    "role_code": "warehouse_manager",
+                    "sources": [
+                        "manual"
+                    ]
+                }
+            ]
+        },
+        {
+            "user_legacy_id": 116,
+            "roles": []
+        },
+        {
+            "user_legacy_id": 121,
+            "roles": [
+                {
+                    "role_code": "production_operator",
+                    "sources": [
+                        "manual"
+                    ]
+                },
+                {
+                    "role_code": "warehouse_manager",
+                    "sources": [
+                        "manual"
+                    ]
+                }
+            ]
+        },
+        {
+            "user_legacy_id": 123,
+            "roles": [
+                {
+                    "role_code": "production_operator",
+                    "sources": [
+                        "manual"
+                    ]
+                },
+                {
+                    "role_code": "warehouse_manager",
+                    "sources": [
+                        "manual"
+                    ]
+                }
+            ]
+        },
+        {
+            "user_legacy_id": 124,
+            "roles": [
+                {
+                    "role_code": "production_operator",
+                    "sources": [
+                        "manual"
+                    ]
+                },
+                {
+                    "role_code": "warehouse_manager",
+                    "sources": [
+                        "manual"
+                    ]
+                }
+            ]
+        },
+        {
+            "user_legacy_id": 13,
+            "roles": [
+                {
+                    "role_code": "sales_user",
+                    "sources": [
+                        "manual"
+                    ]
+                }
+            ]
+        },
+        {
+            "user_legacy_id": 133,
+            "roles": [
+                {
+                    "role_code": "production_operator",
+                    "sources": [
+                        "manual"
+                    ]
+                },
+                {
+                    "role_code": "warehouse_manager",
+                    "sources": [
+                        "manual"
+                    ]
+                }
+            ]
+        },
+        {
+            "user_legacy_id": 135,
+            "roles": [
+                {
+                    "role_code": "sales_user",
+                    "sources": [
+                        "manual"
+                    ]
+                }
+            ]
+        },
+        {
+            "user_legacy_id": 137,
+            "roles": [
+                {
+                    "role_code": "sales_user",
+                    "sources": [
+                        "manual"
+                    ]
+                }
+            ]
+        },
+        {
+            "user_legacy_id": 138,
+            "roles": [
+                {
+                    "role_code": "sales_user",
+                    "sources": [
+                        "manual"
+                    ]
+                }
+            ]
+        },
+        {
+            "user_legacy_id": 161,
+            "roles": [
+                {
+                    "role_code": "production_operator",
+                    "sources": [
+                        "manual"
+                    ]
+                },
+                {
+                    "role_code": "warehouse_manager",
+                    "sources": [
+                        "manual"
+                    ]
+                }
+            ]
+        },
+        {
+            "user_legacy_id": 166,
+            "roles": [
+                {
+                    "role_code": "sales_user",
+                    "sources": [
+                        "manual"
+                    ]
+                }
+            ]
+        },
+        {
+            "user_legacy_id": 169,
+            "roles": [
+                {
+                    "role_code": "sales_user",
+                    "sources": [
+                        "manual"
+                    ]
+                }
+            ]
+        },
+        {
+            "user_legacy_id": 170,
+            "roles": [
+                {
+                    "role_code": "sales_user",
+                    "sources": [
+                        "manual"
+                    ]
+                }
+            ]
+        },
+        {
+            "user_legacy_id": 173,
+            "roles": [
+                {
+                    "role_code": "production_operator",
+                    "sources": [
+                        "manual"
+                    ]
+                },
+                {
+                    "role_code": "warehouse_manager",
+                    "sources": [
+                        "manual"
+                    ]
+                }
+            ]
+        },
+        {
+            "user_legacy_id": 178,
+            "roles": [
+                {
+                    "role_code": "sales_user",
+                    "sources": [
+                        "manual"
+                    ]
+                }
+            ]
+        },
+        {
+            "user_legacy_id": 18,
+            "roles": []
+        },
+        {
+            "user_legacy_id": 23,
+            "roles": [
+                {
+                    "role_code": "sales_user",
+                    "sources": [
+                        "manual"
+                    ]
+                }
+            ]
+        },
+        {
+            "user_legacy_id": 54,
+            "roles": [
+                {
+                    "role_code": "sales_user",
+                    "sources": [
+                        "manual"
+                    ]
+                }
+            ]
+        },
+        {
+            "user_legacy_id": 57,
             "roles": [
                 {
                     "role_code": "sales_user",
@@ -3790,7 +3799,7 @@
             ]
         },
         {
-            "user_legacy_id": 10,
+            "user_legacy_id": 81,
             "roles": [
                 {
                     "role_code": "sales_user",
@@ -3801,7 +3810,46 @@
             ]
         },
         {
-            "user_legacy_id": 13,
+            "user_legacy_id": 91,
+            "roles": [
+                {
+                    "role_code": "sales_user",
+                    "sources": [
+                        "manual"
+                    ]
+                }
+            ]
+        },
+        {
+            "user_legacy_id": 96,
+            "roles": [
+                {
+                    "role_code": "production_operator",
+                    "sources": [
+                        "manual"
+                    ]
+                },
+                {
+                    "role_code": "warehouse_manager",
+                    "sources": [
+                        "manual"
+                    ]
+                }
+            ]
+        },
+        {
+            "user_legacy_id": 98,
+            "roles": [
+                {
+                    "role_code": "sales_user",
+                    "sources": [
+                        "manual"
+                    ]
+                }
+            ]
+        },
+        {
+            "user_legacy_id": 5,
             "roles": [
                 {
                     "role_code": "sales_user",
@@ -3845,10 +3893,6 @@
             ]
         },
         {
-            "user_legacy_id": 18,
-            "roles": []
-        },
-        {
             "user_legacy_id": 19,
             "roles": []
         },
@@ -3864,62 +3908,7 @@
             ]
         },
         {
-            "user_legacy_id": 23,
-            "roles": [
-                {
-                    "role_code": "sales_user",
-                    "sources": [
-                        "manual"
-                    ]
-                }
-            ]
-        },
-        {
             "user_legacy_id": 26,
-            "roles": [
-                {
-                    "role_code": "sales_user",
-                    "sources": [
-                        "manual"
-                    ]
-                }
-            ]
-        },
-        {
-            "user_legacy_id": 54,
-            "roles": [
-                {
-                    "role_code": "sales_user",
-                    "sources": [
-                        "manual"
-                    ]
-                }
-            ]
-        },
-        {
-            "user_legacy_id": 57,
-            "roles": [
-                {
-                    "role_code": "sales_user",
-                    "sources": [
-                        "manual"
-                    ]
-                }
-            ]
-        },
-        {
-            "user_legacy_id": 81,
-            "roles": [
-                {
-                    "role_code": "sales_user",
-                    "sources": [
-                        "manual"
-                    ]
-                }
-            ]
-        },
-        {
-            "user_legacy_id": 91,
             "roles": [
                 {
                     "role_code": "sales_user",
@@ -3958,52 +3947,7 @@
             ]
         },
         {
-            "user_legacy_id": 96,
-            "roles": [
-                {
-                    "role_code": "production_operator",
-                    "sources": [
-                        "manual"
-                    ]
-                },
-                {
-                    "role_code": "warehouse_manager",
-                    "sources": [
-                        "manual"
-                    ]
-                }
-            ]
-        },
-        {
             "user_legacy_id": 97,
-            "roles": [
-                {
-                    "role_code": "production_operator",
-                    "sources": [
-                        "manual"
-                    ]
-                },
-                {
-                    "role_code": "warehouse_manager",
-                    "sources": [
-                        "manual"
-                    ]
-                }
-            ]
-        },
-        {
-            "user_legacy_id": 98,
-            "roles": [
-                {
-                    "role_code": "sales_user",
-                    "sources": [
-                        "manual"
-                    ]
-                }
-            ]
-        },
-        {
-            "user_legacy_id": 101,
             "roles": [
                 {
                     "role_code": "production_operator",
@@ -4048,23 +3992,6 @@
             ]
         },
         {
-            "user_legacy_id": 109,
-            "roles": [
-                {
-                    "role_code": "production_operator",
-                    "sources": [
-                        "manual"
-                    ]
-                },
-                {
-                    "role_code": "warehouse_manager",
-                    "sources": [
-                        "manual"
-                    ]
-                }
-            ]
-        },
-        {
             "user_legacy_id": 112,
             "roles": [
                 {
@@ -4085,10 +4012,6 @@
                     ]
                 }
             ]
-        },
-        {
-            "user_legacy_id": 116,
-            "roles": []
         },
         {
             "user_legacy_id": 117,
@@ -4129,59 +4052,8 @@
             ]
         },
         {
-            "user_legacy_id": 121,
-            "roles": [
-                {
-                    "role_code": "production_operator",
-                    "sources": [
-                        "manual"
-                    ]
-                },
-                {
-                    "role_code": "warehouse_manager",
-                    "sources": [
-                        "manual"
-                    ]
-                }
-            ]
-        },
-        {
             "user_legacy_id": 122,
             "roles": []
-        },
-        {
-            "user_legacy_id": 123,
-            "roles": [
-                {
-                    "role_code": "production_operator",
-                    "sources": [
-                        "manual"
-                    ]
-                },
-                {
-                    "role_code": "warehouse_manager",
-                    "sources": [
-                        "manual"
-                    ]
-                }
-            ]
-        },
-        {
-            "user_legacy_id": 124,
-            "roles": [
-                {
-                    "role_code": "production_operator",
-                    "sources": [
-                        "manual"
-                    ]
-                },
-                {
-                    "role_code": "warehouse_manager",
-                    "sources": [
-                        "manual"
-                    ]
-                }
-            ]
         },
         {
             "user_legacy_id": 126,
@@ -4207,61 +4079,11 @@
             "roles": []
         },
         {
-            "user_legacy_id": 133,
-            "roles": [
-                {
-                    "role_code": "production_operator",
-                    "sources": [
-                        "manual"
-                    ]
-                },
-                {
-                    "role_code": "warehouse_manager",
-                    "sources": [
-                        "manual"
-                    ]
-                }
-            ]
-        },
-        {
             "user_legacy_id": 134,
             "roles": []
         },
         {
-            "user_legacy_id": 135,
-            "roles": [
-                {
-                    "role_code": "sales_user",
-                    "sources": [
-                        "manual"
-                    ]
-                }
-            ]
-        },
-        {
             "user_legacy_id": 136,
-            "roles": [
-                {
-                    "role_code": "sales_user",
-                    "sources": [
-                        "manual"
-                    ]
-                }
-            ]
-        },
-        {
-            "user_legacy_id": 137,
-            "roles": [
-                {
-                    "role_code": "sales_user",
-                    "sources": [
-                        "manual"
-                    ]
-                }
-            ]
-        },
-        {
-            "user_legacy_id": 138,
             "roles": [
                 {
                     "role_code": "sales_user",
@@ -4429,23 +4251,6 @@
             ]
         },
         {
-            "user_legacy_id": 161,
-            "roles": [
-                {
-                    "role_code": "production_operator",
-                    "sources": [
-                        "manual"
-                    ]
-                },
-                {
-                    "role_code": "warehouse_manager",
-                    "sources": [
-                        "manual"
-                    ]
-                }
-            ]
-        },
-        {
             "user_legacy_id": 163,
             "roles": []
         },
@@ -4456,17 +4261,6 @@
         {
             "user_legacy_id": 165,
             "roles": []
-        },
-        {
-            "user_legacy_id": 166,
-            "roles": [
-                {
-                    "role_code": "sales_user",
-                    "sources": [
-                        "manual"
-                    ]
-                }
-            ]
         },
         {
             "user_legacy_id": 167,
@@ -4491,50 +4285,11 @@
             ]
         },
         {
-            "user_legacy_id": 169,
-            "roles": [
-                {
-                    "role_code": "sales_user",
-                    "sources": [
-                        "manual"
-                    ]
-                }
-            ]
-        },
-        {
-            "user_legacy_id": 170,
-            "roles": [
-                {
-                    "role_code": "sales_user",
-                    "sources": [
-                        "manual"
-                    ]
-                }
-            ]
-        },
-        {
             "user_legacy_id": 171,
             "roles": []
         },
         {
             "user_legacy_id": 172,
-            "roles": [
-                {
-                    "role_code": "production_operator",
-                    "sources": [
-                        "manual"
-                    ]
-                },
-                {
-                    "role_code": "warehouse_manager",
-                    "sources": [
-                        "manual"
-                    ]
-                }
-            ]
-        },
-        {
-            "user_legacy_id": 173,
             "roles": [
                 {
                     "role_code": "production_operator",
@@ -4581,17 +4336,6 @@
             "roles": []
         },
         {
-            "user_legacy_id": 178,
-            "roles": [
-                {
-                    "role_code": "sales_user",
-                    "sources": [
-                        "manual"
-                    ]
-                }
-            ]
-        },
-        {
             "user_legacy_id": 179,
             "roles": [
                 {
@@ -4613,5 +4357,413 @@
                 }
             ]
         }
-    ]
+    ],
+    "legacy_sso_identities": [
+        {
+            "issuer": "fastadmin",
+            "admin_id": 10,
+            "username": "yuchunxia"
+        },
+        {
+            "issuer": "fastadmin",
+            "admin_id": 101,
+            "username": "JT_cangchuFXG"
+        },
+        {
+            "issuer": "fastadmin",
+            "admin_id": 109,
+            "username": "JT_cangchuZRC"
+        },
+        {
+            "issuer": "fastadmin",
+            "admin_id": 116,
+            "username": "JT_yunying002"
+        },
+        {
+            "issuer": "fastadmin",
+            "admin_id": 121,
+            "username": "JT_cangchuSHK"
+        },
+        {
+            "issuer": "fastadmin",
+            "admin_id": 123,
+            "username": "JT_cangchuXCL"
+        },
+        {
+            "issuer": "fastadmin",
+            "admin_id": 124,
+            "username": "JT_cangchuXRP"
+        },
+        {
+            "issuer": "fastadmin",
+            "admin_id": 13,
+            "username": "lihui"
+        },
+        {
+            "issuer": "fastadmin",
+            "admin_id": 133,
+            "username": "JT_cangchuWY"
+        },
+        {
+            "issuer": "fastadmin",
+            "admin_id": 135,
+            "username": "JT_xiaoshouDLL"
+        },
+        {
+            "issuer": "fastadmin",
+            "admin_id": 137,
+            "username": "JT_xiaoshouZD"
+        },
+        {
+            "issuer": "fastadmin",
+            "admin_id": 138,
+            "username": "JT_xiaoshouZCH"
+        },
+        {
+            "issuer": "fastadmin",
+            "admin_id": 161,
+            "username": "JT_cangchuWCJ"
+        },
+        {
+            "issuer": "fastadmin",
+            "admin_id": 166,
+            "username": "JT_xiaoshouZZ"
+        },
+        {
+            "issuer": "fastadmin",
+            "admin_id": 169,
+            "username": "JT_waimaoMWY"
+        },
+        {
+            "issuer": "fastadmin",
+            "admin_id": 170,
+            "username": "JT_yingxiaoYL"
+        },
+        {
+            "issuer": "fastadmin",
+            "admin_id": 173,
+            "username": "JT_cangchuSC"
+        },
+        {
+            "issuer": "fastadmin",
+            "admin_id": 178,
+            "username": "JT_xiaoshouWTT"
+        },
+        {
+            "issuer": "fastadmin",
+            "admin_id": 18,
+            "username": "zhangxue"
+        },
+        {
+            "issuer": "fastadmin",
+            "admin_id": 23,
+            "username": "yuping"
+        },
+        {
+            "issuer": "fastadmin",
+            "admin_id": 54,
+            "username": "liuyaoyao"
+        },
+        {
+            "issuer": "fastadmin",
+            "admin_id": 57,
+            "username": "yuanpin"
+        },
+        {
+            "issuer": "fastadmin",
+            "admin_id": 6,
+            "username": "cangchutest"
+        },
+        {
+            "issuer": "fastadmin",
+            "admin_id": 81,
+            "username": "jiangxian"
+        },
+        {
+            "issuer": "fastadmin",
+            "admin_id": 91,
+            "username": "3448739676"
+        },
+        {
+            "issuer": "fastadmin",
+            "admin_id": 96,
+            "username": "JT_cangchuLZC"
+        },
+        {
+            "issuer": "fastadmin",
+            "admin_id": 98,
+            "username": "JT_wenzhengWXL"
+        },
+        {
+            "issuer": "fastadmin",
+            "admin_id": 5,
+            "username": "wangtao"
+        },
+        {
+            "issuer": "fastadmin",
+            "admin_id": 14,
+            "username": "liyanfang"
+        },
+        {
+            "issuer": "fastadmin",
+            "admin_id": 15,
+            "username": "JT_waimaoZN"
+        },
+        {
+            "issuer": "fastadmin",
+            "admin_id": 16,
+            "username": "JT_wenzheng001"
+        },
+        {
+            "issuer": "fastadmin",
+            "admin_id": 19,
+            "username": "JT_CCO"
+        },
+        {
+            "issuer": "fastadmin",
+            "admin_id": 22,
+            "username": "JT_waimao001"
+        },
+        {
+            "issuer": "fastadmin",
+            "admin_id": 26,
+            "username": "JT_waimao003"
+        },
+        {
+            "issuer": "fastadmin",
+            "admin_id": 94,
+            "username": "JT_xiaoshouCY"
+        },
+        {
+            "issuer": "fastadmin",
+            "admin_id": 95,
+            "username": "JT_cangchuPT"
+        },
+        {
+            "issuer": "fastadmin",
+            "admin_id": 97,
+            "username": "JT_cangchuWH"
+        },
+        {
+            "issuer": "fastadmin",
+            "admin_id": 103,
+            "username": "JT_cangchuWDM"
+        },
+        {
+            "issuer": "fastadmin",
+            "admin_id": 107,
+            "username": "JT_xiaoshouSXL"
+        },
+        {
+            "issuer": "fastadmin",
+            "admin_id": 112,
+            "username": "JT_zhanglianyong"
+        },
+        {
+            "issuer": "fastadmin",
+            "admin_id": 115,
+            "username": "JT_xiaoshouWJ"
+        },
+        {
+            "issuer": "fastadmin",
+            "admin_id": 117,
+            "username": "JT_cangchuZJW"
+        },
+        {
+            "issuer": "fastadmin",
+            "admin_id": 119,
+            "username": "JT_wenzhengDH"
+        },
+        {
+            "issuer": "fastadmin",
+            "admin_id": 120,
+            "username": "JT_cangchuZQ"
+        },
+        {
+            "issuer": "fastadmin",
+            "admin_id": 122,
+            "username": "JT_jishu"
+        },
+        {
+            "issuer": "fastadmin",
+            "admin_id": 126,
+            "username": "JT_yingxiaoYXY"
+        },
+        {
+            "issuer": "fastadmin",
+            "admin_id": 130,
+            "username": "JT_xiaoshouZYF"
+        },
+        {
+            "issuer": "fastadmin",
+            "admin_id": 131,
+            "username": "JT_yingxiaoYYB"
+        },
+        {
+            "issuer": "fastadmin",
+            "admin_id": 132,
+            "username": "JT_yingxiaoHDD"
+        },
+        {
+            "issuer": "fastadmin",
+            "admin_id": 134,
+            "username": "JT_caiwu"
+        },
+        {
+            "issuer": "fastadmin",
+            "admin_id": 136,
+            "username": "JT_xiaoshouZYH"
+        },
+        {
+            "issuer": "fastadmin",
+            "admin_id": 139,
+            "username": "sdjiantan"
+        },
+        {
+            "issuer": "fastadmin",
+            "admin_id": 141,
+            "username": "JT_waimaoWH"
+        },
+        {
+            "issuer": "fastadmin",
+            "admin_id": 142,
+            "username": "JT_waimaoXZC"
+        },
+        {
+            "issuer": "fastadmin",
+            "admin_id": 143,
+            "username": "JT_yingxiaoDXX"
+        },
+        {
+            "issuer": "fastadmin",
+            "admin_id": 145,
+            "username": "JT_waimaoGQ"
+        },
+        {
+            "issuer": "fastadmin",
+            "admin_id": 146,
+            "username": "JT_waimaoGCC"
+        },
+        {
+            "issuer": "fastadmin",
+            "admin_id": 147,
+            "username": "JT_WGF"
+        },
+        {
+            "issuer": "fastadmin",
+            "admin_id": 148,
+            "username": "JT_waimaoQSF"
+        },
+        {
+            "issuer": "fastadmin",
+            "admin_id": 149,
+            "username": "JT_xiaoshouLX"
+        },
+        {
+            "issuer": "fastadmin",
+            "admin_id": 150,
+            "username": "JT_cangchuCWJ"
+        },
+        {
+            "issuer": "fastadmin",
+            "admin_id": 152,
+            "username": "JT_yingxiaoLZ"
+        },
+        {
+            "issuer": "fastadmin",
+            "admin_id": 153,
+            "username": "JT_wenzhengCYN"
+        },
+        {
+            "issuer": "fastadmin",
+            "admin_id": 154,
+            "username": "JT_waimaoDY"
+        },
+        {
+            "issuer": "fastadmin",
+            "admin_id": 157,
+            "username": "JT_xiaoshouDX"
+        },
+        {
+            "issuer": "fastadmin",
+            "admin_id": 158,
+            "username": "JT_xiaoshouYJY"
+        },
+        {
+            "issuer": "fastadmin",
+            "admin_id": 159,
+            "username": "JT_xiaoshouSHY"
+        },
+        {
+            "issuer": "fastadmin",
+            "admin_id": 160,
+            "username": "JT_wenzhengLXY"
+        },
+        {
+            "issuer": "fastadmin",
+            "admin_id": 163,
+            "username": "JT_wenzhengYWJ"
+        },
+        {
+            "issuer": "fastadmin",
+            "admin_id": 164,
+            "username": "yihan"
+        },
+        {
+            "issuer": "fastadmin",
+            "admin_id": 165,
+            "username": "JT_wenzhengZXQ"
+        },
+        {
+            "issuer": "fastadmin",
+            "admin_id": 167,
+            "username": "JT_waimaoYHR"
+        },
+        {
+            "issuer": "fastadmin",
+            "admin_id": 168,
+            "username": "JT_waimaoZP"
+        },
+        {
+            "issuer": "fastadmin",
+            "admin_id": 171,
+            "username": "JT_waimaoHXP"
+        },
+        {
+            "issuer": "fastadmin",
+            "admin_id": 172,
+            "username": "JT_cangchuABL"
+        },
+        {
+            "issuer": "fastadmin",
+            "admin_id": 174,
+            "username": "JT_waimaoWHY"
+        },
+        {
+            "issuer": "fastadmin",
+            "admin_id": 175,
+            "username": "JT_xiaoshouZNW"
+        },
+        {
+            "issuer": "fastadmin",
+            "admin_id": 176,
+            "username": "JT_xiaoshouWKX"
+        },
+        {
+            "issuer": "fastadmin",
+            "admin_id": 177,
+            "username": "JT_yunyingZNW"
+        },
+        {
+            "issuer": "fastadmin",
+            "admin_id": 179,
+            "username": "JT_waimaoHFK"
+        },
+        {
+            "issuer": "fastadmin",
+            "admin_id": 180,
+            "username": "JT_xiaoshouWCC"
+        }
+    ],
+    "refresh_reason": "同步王辉账号、仓管档案仅保留王辉，保留廉晓雨采购员角色及现有人员资料。"
 }

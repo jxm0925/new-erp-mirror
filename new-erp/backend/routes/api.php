@@ -389,6 +389,8 @@ Route::get('v1/erp/sales-orders/{id}/change-production-units', [SalesOrderContro
 Route::prefix('v1/erp/sales')->group(function () {
     Route::get('orders/{id}/legacy-history', [SalesOrderController::class, 'legacyHistory'])->whereNumber('id');
     Route::get('customers', [SalesCustomerController::class, 'index']);
+    Route::get('customers/regions', [SalesCustomerController::class, 'regions']);
+    Route::get('customers/regions/{id}/path', [SalesCustomerController::class, 'regionPath'])->whereNumber('id');
     Route::post('customers', [SalesCustomerController::class, 'store']);
     Route::get('customers/{id}', [SalesCustomerController::class, 'show'])->whereNumber('id');
     Route::put('customers/{id}', [SalesCustomerController::class, 'update'])->whereNumber('id');

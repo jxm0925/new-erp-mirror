@@ -13,7 +13,10 @@ use Illuminate\Support\Facades\DB;
 
 class SalesOrderSnapshotService
 {
-    public function __construct(private readonly PaymentMethodApplicationService $paymentMethods) {}
+    public function __construct(
+        private readonly PaymentMethodApplicationService $paymentMethods,
+        private readonly SalesCustomerOrderDetailsService $customerDetails,
+    ) {}
 
     public function lock(array $payload, ?SalesOrder $current = null): array
     {
@@ -221,10 +224,6 @@ class SalesOrderSnapshotService
             'platform_buyer_id' => $buyerId,
             'platform_identity_key' => $identityKey,
             'dedupe_name_key' => $nameKey,
-            'dedupe_address_key' => $addressKey,
-            'contact_name' => $contactName ?: null,
-            'contact_phone' => $contactPhone,
-            'full_address' => $fullAddress ?: null,
             'status' => 'enabled',
         ], static fn ($value) => $value !== null && $value !== '');
         if ($customer) {
@@ -236,34 +235,11 @@ class SalesOrderSnapshotService
             ]);
         }
 
-        // Explicit selected contacts/addresses retain precedence. For direct
-        // platform input, create/update a default master contact and address.
-        if (empty($payload['customer_contact_id']) && ($contactName !== '' || $contactPhone)) {
-            $contact = $customer->contacts()->where('status', 'enabled')->orderByDesc('is_default')->first();
-            $contactData = array_filter([
-                'contact_name' => $contactName ?: $customer->customer_name,
-                'mobile' => $contactPhone,
-                'phone' => $contactPhone,
-                'is_default' => true,
-                'status' => 'enabled',
-            ], static fn ($value) => $value !== null && $value !== '');
-            if ($contact) $contact->update($contactData);
-            else $contact = $customer->contacts()->create($contactData);
-            $payload['customer_contact_id'] = $contact->id;
+        if (empty($payload['customer_contact_id'])) {
+            $payload['customer_contact_id'] = $this->customerDetails->contact($customer, $contactName, $contactPhone)?->id;
         }
-        if (empty($payload['customer_address_id']) && $fullAddress !== '') {
-            $address = $customer->addresses()->where('status', 'enabled')->orderByDesc('is_default')->first();
-            $addressData = [
-                'receiver_name' => $contactName ?: $customer->customer_name,
-                'receiver_phone' => $contactPhone,
-                'detail_address' => $fullAddress,
-                'full_address' => $fullAddress,
-                'is_default' => true,
-                'status' => 'enabled',
-            ];
-            if ($address) $address->update($addressData);
-            else $address = $customer->addresses()->create($addressData);
-            $payload['customer_address_id'] = $address->id;
+        if (empty($payload['customer_address_id'])) {
+            $payload['customer_address_id'] = $this->customerDetails->address($customer, $fullAddress, $contactName, $contactPhone, $addressKey)?->id;
         }
         $payload['customer_id'] = $customer->id;
         return $customer->fresh();
@@ -310,6 +286,7 @@ class SalesOrderSnapshotService
             return SalesCustomerContact::query()
                 ->where('customer_id', $customer->id)
                 ->where('status', 'enabled')
+                ->lockForUpdate()
                 ->findOrFail($id);
         }
 
@@ -322,6 +299,7 @@ class SalesOrderSnapshotService
             return SalesCustomerAddress::query()
                 ->where('customer_id', $customer->id)
                 ->where('status', 'enabled')
+                ->lockForUpdate()
                 ->findOrFail($id);
         }
 

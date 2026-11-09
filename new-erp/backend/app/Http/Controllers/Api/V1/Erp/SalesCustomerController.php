@@ -7,14 +7,29 @@ use App\Models\Erp\SalesCustomer;
 use App\Models\Erp\SalesCustomerAddress;
 use App\Models\Erp\SalesCustomerContact;
 use App\Services\Erp\AuthContextService;
+use App\Services\Erp\CustomerRegionService;
 use App\Services\Erp\DocumentNumberService;
 use App\Services\Erp\SalesCustomerDeletionApplicationService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
 
 class SalesCustomerController extends Controller
 {
+    public function regions(Request $request, CustomerRegionService $regions)
+    {
+        $this->authorize($request, 'sales.customer');
+        $data = $request->validate(['parent_id' => 'required|integer|min:0']);
+        return response()->json($regions->children((int) $data['parent_id']));
+    }
+
+    public function regionPath(Request $request, int $id, CustomerRegionService $regions)
+    {
+        $this->authorize($request, 'sales.customer');
+        return response()->json($regions->path($id));
+    }
+
     public function index(Request $request)
     {
         $this->authorize($request, 'sales.customer');
@@ -67,8 +82,8 @@ class SalesCustomerController extends Controller
             $data = $this->validated($request);
             $reservationToken = $data['reservation_token'] ?? null;
             $operatorId = app(AuthContextService::class)->currentUser($request)?->legacy_id;
-            $contacts = $data['contacts'] ?? [];
-            $addresses = $data['addresses'] ?? [];
+            $contacts = $data['contacts'] ?? null;
+            $addresses = $data['addresses'] ?? null;
             $creationSessionId = $data['creation_session_id'] ?? null;
             unset($data['contacts'], $data['addresses'], $data['reservation_token'], $data['creation_session_id']);
             $data = $this->withDedupeIdentity($data);
@@ -86,10 +101,10 @@ class SalesCustomerController extends Controller
     {
         $this->authorize($request, 'sales.customer.edit');
         return DB::transaction(function () use ($request, $id) {
-            $customer = SalesCustomer::findOrFail($id);
+            $customer = SalesCustomer::query()->lockForUpdate()->findOrFail($id);
             $data = $this->validated($request, $id);
-            $contacts = $data['contacts'] ?? [];
-            $addresses = $data['addresses'] ?? [];
+            $contacts = $data['contacts'] ?? null;
+            $addresses = $data['addresses'] ?? null;
             unset($data['contacts'], $data['addresses']);
             $data = $this->withDedupeIdentity($data);
             $customer->update($data);
@@ -105,16 +120,19 @@ class SalesCustomerController extends Controller
         return response()->json(['message' => '未被业务引用的客户档案已删除。']);
     }
 
-    private function syncChildren(SalesCustomer $customer, array $contacts, array $addresses): void
+    private function syncChildren(SalesCustomer $customer, ?array $contacts, ?array $addresses): void
     {
-        $this->sync($customer, $contacts, SalesCustomerContact::class, ['contact_name', 'mobile', 'phone', 'email', 'position', 'is_default', 'status', 'remark']);
-        $this->sync($customer, $addresses, SalesCustomerAddress::class, ['receiver_name', 'receiver_phone', 'province', 'city', 'district', 'detail_address', 'full_address', 'is_default', 'status', 'remark']);
+        if ($contacts !== null) $this->sync($customer, $contacts, SalesCustomerContact::class, ['contact_name', 'mobile', 'phone', 'email', 'position', 'is_default', 'status', 'remark']);
+        if ($addresses !== null) $this->sync($customer, $addresses, SalesCustomerAddress::class, ['receiver_name', 'receiver_phone', 'country', 'region_id', 'province', 'city', 'district', 'detail_address', 'full_address', 'is_default', 'status', 'remark']);
         $defaultContact = $customer->contacts()->where('status', 'enabled')->orderByDesc('is_default')->first();
         $defaultAddress = $customer->addresses()->where('status', 'enabled')->orderByDesc('is_default')->first();
         $customer->update([
             'contact_name' => $defaultContact?->contact_name,
             'contact_phone' => $defaultContact?->mobile ?: $defaultContact?->phone,
             'full_address' => $defaultAddress?->full_address,
+            'province' => $defaultAddress?->province,
+            'city' => $defaultAddress?->city,
+            'district' => $defaultAddress?->district,
             'dedupe_name_key' => $this->dedupeKey($customer->customer_name),
             'dedupe_address_key' => $this->dedupeKey($defaultAddress?->full_address),
         ]);
@@ -126,19 +144,18 @@ class SalesCustomerController extends Controller
         foreach ($rows as $index => $row) {
             $payload = array_intersect_key($row, array_flip($allowed));
             $payload['is_default'] = !empty($row['is_default']);
-            if ($model === SalesCustomerAddress::class) $payload['full_address'] = trim(implode(' ', array_filter([$payload['province'] ?? null, $payload['city'] ?? null, $payload['district'] ?? null, $payload['detail_address'] ?? null])));
             $record = !empty($row['id']) ? $model::where('customer_id', $customer->id)->findOrFail($row['id']) : new $model(['customer_id' => $customer->id]);
             $record->fill($payload)->save();
             $keep[] = $record->id;
         }
-        if ($rows !== []) $model::where('customer_id', $customer->id)->whereNotIn('id', $keep)->update(['status' => 'disabled', 'is_default' => false]);
+        $model::where('customer_id', $customer->id)->whereNotIn('id', $keep)->update(['status' => 'disabled', 'is_default' => false]);
         $default = $model::where('customer_id', $customer->id)->where('is_default', true)->where('status', 'enabled')->orderBy('id')->first();
         if ($default) $model::where('customer_id', $customer->id)->whereKeyNot($default->id)->update(['is_default' => false]);
     }
 
     private function validated(Request $request, ?int $id = null): array
     {
-        return $request->validate([
+        $data = $request->validate([
             'customer_code' => ['nullable', 'string', 'max:80', Rule::unique('erp_sales_customers', 'customer_code')->ignore($id)],
             'reservation_token' => $id ? 'prohibited' : 'nullable|required_with:creation_session_id|uuid',
             'creation_session_id' => $id ? 'prohibited' : 'nullable|required_with:reservation_token|uuid',
@@ -147,8 +164,8 @@ class SalesCustomerController extends Controller
             'owner_legacy_id' => 'nullable|integer', 'owner_name' => 'nullable|string|max:80', 'status' => 'required|in:enabled,disabled,blacklisted,potential', 'remark' => 'nullable|string',
             'invoice_type' => 'nullable|in:vat_normal,vat_special', 'invoice_title' => 'nullable|string|max:200', 'invoice_tax_no' => 'nullable|string|max:60',
             'invoice_address_phone' => 'nullable|string|max:300', 'invoice_bank_account' => 'nullable|string|max:300', 'invoice_email' => 'nullable|email|max:160',
-            'contacts' => 'nullable|array', 'contacts.*.id' => 'nullable|integer', 'contacts.*.contact_name' => 'required|string|max:80', 'contacts.*.mobile' => 'nullable|string|max:40', 'contacts.*.phone' => 'nullable|string|max:40', 'contacts.*.email' => 'nullable|email|max:160', 'contacts.*.position' => 'nullable|string|max:80', 'contacts.*.is_default' => 'boolean', 'contacts.*.status' => 'nullable|in:enabled,disabled', 'contacts.*.remark' => 'nullable|string',
-            'addresses' => 'nullable|array', 'addresses.*.id' => 'nullable|integer', 'addresses.*.receiver_name' => 'required|string|max:80', 'addresses.*.receiver_phone' => 'nullable|string|max:40', 'addresses.*.province' => 'nullable|string|max:80', 'addresses.*.city' => 'nullable|string|max:80', 'addresses.*.district' => 'nullable|string|max:80', 'addresses.*.detail_address' => 'required|string|max:500', 'addresses.*.is_default' => 'boolean', 'addresses.*.status' => 'nullable|in:enabled,disabled', 'addresses.*.remark' => 'nullable|string',
+            'contacts' => 'nullable|array', 'contacts.*.id' => 'nullable|integer', 'contacts.*.contact_name' => 'required|string|max:80', 'contacts.*.mobile' => 'nullable|string|max:80', 'contacts.*.phone' => 'nullable|string|max:80', 'contacts.*.email' => 'nullable|email|max:160', 'contacts.*.position' => 'nullable|string|max:80', 'contacts.*.is_default' => 'boolean', 'contacts.*.status' => 'nullable|in:enabled,disabled', 'contacts.*.remark' => 'nullable|string',
+            'addresses' => 'nullable|array', 'addresses.*.id' => 'nullable|integer', 'addresses.*.receiver_name' => 'required|string|max:80', 'addresses.*.receiver_phone' => 'nullable|string|max:80', 'addresses.*.country' => 'nullable|string|max:80', 'addresses.*.region_id' => 'nullable|integer|min:1', 'addresses.*.province' => 'nullable|string|max:80', 'addresses.*.city' => 'nullable|string|max:80', 'addresses.*.district' => 'nullable|string|max:80', 'addresses.*.detail_address' => 'required|string|max:500', 'addresses.*.is_default' => 'boolean', 'addresses.*.status' => 'nullable|in:enabled,disabled', 'addresses.*.remark' => 'nullable|string',
         ], [], [
             'customer_code' => '客户编码', 'customer_name' => '客户名称', 'customer_short_name' => '客户简称', 'owner_name' => '负责人',
             'invoice_title' => '发票抬头', 'invoice_tax_no' => '纳税人识别号', 'invoice_address_phone' => '开票地址电话', 'invoice_bank_account' => '开户行及账号', 'invoice_email' => '收票邮箱',
@@ -156,6 +173,24 @@ class SalesCustomerController extends Controller
             'addresses.*.receiver_name' => '收货人', 'addresses.*.receiver_phone' => '收货电话', 'addresses.*.province' => '省份', 'addresses.*.city' => '城市',
             'addresses.*.district' => '区县', 'addresses.*.detail_address' => '详细地址',
         ]);
+        foreach ($data['addresses'] ?? [] as $index => $address) {
+            if (!empty($address['region_id'])) {
+                $data['addresses'][$index] = array_merge($address, app(CustomerRegionService::class)->address((int) $address['region_id'], $address['detail_address']));
+                continue;
+            }
+            $old = $id && !empty($address['id'])
+                ? SalesCustomerAddress::where('customer_id', $id)->find($address['id']) : null;
+            // 未关联地区的历史地址允许原样保存；新增或改地址必须选择真实地区。
+            $unchanged = $old && !$old->region_id;
+            foreach (['country', 'province', 'city', 'district', 'detail_address'] as $field) {
+                $unchanged = $unchanged && trim((string) ($address[$field] ?? '')) === trim((string) $old?->$field);
+            }
+            if (!$unchanged) {
+                throw ValidationException::withMessages(["addresses.$index.region_id" => '请选择收货地区。']);
+            }
+            $data['addresses'][$index]['full_address'] = $old->full_address;
+        }
+        return $data;
     }
 
     private function withDedupeIdentity(array $data): array

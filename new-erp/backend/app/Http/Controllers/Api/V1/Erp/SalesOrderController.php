@@ -30,6 +30,7 @@ use App\Services\Erp\DocumentNumberService;
 use App\Services\Erp\InventoryReservationService;
 use App\Services\Erp\InventoryAvailabilityService;
 use App\Services\Erp\LengthCutRequirementService;
+use App\Services\Erp\SalesCustomerOrderDetailsService;
 use App\Services\Erp\SalesOrderDraftService;
 use App\Services\Erp\SalesOrderAttachmentService;
 use App\Services\Erp\SalesOrderFundingGateService;
@@ -1273,9 +1274,9 @@ class SalesOrderController extends Controller
             'customer_address_id' => 'nullable|integer|min:1',
             'customer_name' => 'required_without:customer_id|nullable|string|max:160',
             'customer_kind' => ['nullable', Rule::in(['enterprise', 'individual'])],
-            'customer_phone' => 'nullable|string|max:40',
+            'customer_phone' => 'nullable|string|max:80',
             'contact_name' => 'nullable|string|max:80',
-            'contact_phone' => 'nullable|string|max:40',
+            'contact_phone' => 'nullable|string|max:80',
             'country_id' => 'nullable|string|max:40',
             'province_id' => 'nullable|string|max:40',
             'city_id' => 'nullable|string|max:40',
@@ -1442,13 +1443,9 @@ class SalesOrderController extends Controller
             'customer_name' => $customerName,
             'customer_kind' => $kind,
             'dedupe_name_key' => $nameKey,
-            'dedupe_address_key' => $addressKey,
             'source_platform' => $sourcePlatform,
             'platform_buyer_id' => $buyerId,
             'platform_identity_key' => $platformIdentityKey,
-            'contact_name' => $contactName ?: null,
-            'contact_phone' => $contactPhone,
-            'full_address' => $address ?: null,
             'status' => 'enabled',
         ], fn ($value) => $value !== null && $value !== '');
 
@@ -1461,11 +1458,14 @@ class SalesOrderController extends Controller
             ]);
         }
 
-        $contact = $this->upsertDefaultOrderContact($customer, $contactName, $contactPhone);
-        $customerAddress = $this->upsertDefaultOrderAddress($customer, $address, $contactName ?: $customerName, $contactPhone);
+        $details = app(SalesCustomerOrderDetailsService::class);
+        if (empty($payload['customer_contact_id'])) {
+            $payload['customer_contact_id'] = $details->contact($customer, $contactName, $contactPhone)?->id;
+        }
+        if (empty($payload['customer_address_id'])) {
+            $payload['customer_address_id'] = $details->address($customer, $address, $contactName, $contactPhone, $addressKey)?->id;
+        }
         $payload['customer_id'] = $customer->id;
-        $payload['customer_contact_id'] = $contact?->id;
-        $payload['customer_address_id'] = $customerAddress?->id;
     }
 
     private function findDuplicateCustomer(string $kind, ?string $platformIdentityKey, ?string $nameKey, ?string $addressKey): ?SalesCustomer
@@ -1481,34 +1481,6 @@ class SalesOrderController extends Controller
                 ->where('dedupe_name_key', $nameKey)->where('dedupe_address_key', $addressKey)->first();
         }
         return null;
-    }
-
-    private function upsertDefaultOrderContact(SalesCustomer $customer, string $name, ?string $phone): ?SalesCustomerContact
-    {
-        if ($name === '' && !$phone) return null;
-        $contact = $customer->contacts()->where('status', 'enabled')->orderByDesc('is_default')->first();
-        $data = array_filter(['contact_name' => $name ?: null, 'mobile' => $phone, 'phone' => $phone, 'is_default' => true, 'status' => 'enabled'], fn ($value) => $value !== null && $value !== '');
-        if ($contact) {
-            $contact->update($data);
-            return $contact->fresh();
-        }
-        return $customer->contacts()->create($data + ['contact_name' => $name ?: $customer->customer_name, 'is_default' => true, 'status' => 'enabled']);
-    }
-
-    private function upsertDefaultOrderAddress(SalesCustomer $customer, string $fullAddress, string $receiverName, ?string $receiverPhone): ?SalesCustomerAddress
-    {
-        if ($fullAddress === '') return null;
-        $address = $customer->addresses()->where('status', 'enabled')->orderByDesc('is_default')->first();
-        $data = array_filter([
-            'receiver_name' => $receiverName ?: null, 'receiver_phone' => $receiverPhone,
-            'detail_address' => $fullAddress, 'full_address' => $fullAddress,
-            'is_default' => true, 'status' => 'enabled',
-        ], fn ($value) => $value !== null && $value !== '');
-        if ($address) {
-            $address->update($data);
-            return $address->fresh();
-        }
-        return $customer->addresses()->create($data + ['receiver_name' => $receiverName ?: $customer->customer_name, 'detail_address' => $fullAddress, 'full_address' => $fullAddress, 'is_default' => true, 'status' => 'enabled']);
     }
 
     private function customerSourcePlatform(array $payload): ?string
@@ -1533,10 +1505,10 @@ class SalesOrderController extends Controller
         if (empty($payload['customer_id'])) return;
         $customer = SalesCustomer::findOrFail($payload['customer_id']);
         $contact = !empty($payload['customer_contact_id'])
-            ? SalesCustomerContact::where('customer_id', $customer->id)->where('status', 'enabled')->findOrFail($payload['customer_contact_id'])
+            ? SalesCustomerContact::where('customer_id', $customer->id)->where('status', 'enabled')->lockForUpdate()->findOrFail($payload['customer_contact_id'])
             : $customer->contacts()->where('status', 'enabled')->orderByDesc('is_default')->first();
         $address = !empty($payload['customer_address_id'])
-            ? SalesCustomerAddress::where('customer_id', $customer->id)->where('status', 'enabled')->findOrFail($payload['customer_address_id'])
+            ? SalesCustomerAddress::where('customer_id', $customer->id)->where('status', 'enabled')->lockForUpdate()->findOrFail($payload['customer_address_id'])
             : $customer->addresses()->where('status', 'enabled')->orderByDesc('is_default')->first();
         $payload['customer_contact_id'] = $contact?->id;
         $payload['customer_address_id'] = $address?->id;

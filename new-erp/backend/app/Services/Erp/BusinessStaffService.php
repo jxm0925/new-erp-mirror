@@ -286,8 +286,14 @@ final class BusinessStaffService
             $ids = $ids->merge(DB::table('erp_legacy_admin_users')->where('is_sales', true)->pluck('legacy_id'));
         }
         if ($roles = self::BACKFILL_ROLES[$type] ?? null) {
-            $ids = $ids->merge(DB::table('erp_rbac_user_roles as ur')->join('erp_rbac_roles as r', 'r.id', '=', 'ur.role_id')
-                ->whereIn('r.code', $roles)->pluck('ur.user_legacy_id'));
+            $roleUsers = DB::table('erp_rbac_user_roles as ur')->join('erp_rbac_roles as r', 'r.id', '=', 'ur.role_id')
+                ->whereIn('r.code', $roles);
+            if ($type === 'warehouse') {
+                // 正式人员包已明确登记仓管档案，不能仅凭保留的角色把缺省档案补回。
+                $roleUsers->whereNotExists(fn ($users) => $users->selectRaw('1')->from('erp_legacy_admin_users as u')
+                    ->whereColumn('u.legacy_id', 'ur.user_legacy_id')->whereNotNull('u.legacy_payload->official_users_version'));
+            }
+            $ids = $ids->merge($roleUsers->pluck('ur.user_legacy_id'));
         }
         if ($permissions = self::BACKFILL_PERMISSIONS[$type] ?? null) {
             $ids = $ids->merge(DB::table('erp_rbac_user_roles as ur')->join('erp_rbac_roles as r', 'r.id', '=', 'ur.role_id')

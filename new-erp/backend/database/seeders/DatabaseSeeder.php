@@ -13,8 +13,8 @@ class DatabaseSeeder extends Seeder
     /**
      * Seed only stable ERP bootstrap/reference data.
      *
-     * User-approved supplier/category, sales references and the official product/SKU/Item
-     * catalog are permanent master-data baselines. Do not add other customers, suppliers,
+     * User-approved supplier/category, sales references and deduplicated customers
+     * are permanent master-data baselines. Do not add other customers, suppliers,
      * warehouses, items, SKUs, BOMs, QA fixtures, or acceptance accounts.
      */
     private function seed(): void
@@ -28,12 +28,12 @@ class DatabaseSeeder extends Seeder
             ErpDocumentNumberRuleSeeder::class,
             ErpApprovedMasterDataSeeder::class,
             ErpApprovedSalesReferenceSeeder::class,
+            ErpRegionSeeder::class,
+            ErpOfficialCustomersSeeder::class,
             ErpFinanceReferenceSeeder::class,
             ErpProductionCatalogSeeder::class,
             ErpSalesReferenceSeeder::class,
             ErpStandardUnitSeeder::class,
-            // 用户批准的正式目录：仅补缺，保留人工维护及业务事实。
-            ErpOfficialCatalogSeeder::class
         ]);
     }
 }

@@ -47,12 +47,16 @@ class LegacySsoService
             $groups = $hasGroups ? $identity['auth_groups'] : [];
             $now = now();
             $existingUser = DB::table('erp_legacy_admin_users')->where('legacy_id', $legacyId)->lockForUpdate()->first();
-            $localPayload = json_decode(($existingUser->legacy_payload ?? null) ?: '{}', true) ?: [];
-            if (($localPayload['auth_source'] ?? '') === 'local_management') {
-                throw new ErpSsoException('该账号是新 ERP 本地账号，请使用账号密码登录。', 403);
-            }
-            if ($existingUser && ! in_array($existingUser->status, self::ACTIVE_STATUSES, true)) {
+            $existingPayload = json_decode(($existingUser->legacy_payload ?? null) ?: '{}', true) ?: [];
+            if ($existingUser && ($existingUser->deleted_at !== null || ! in_array($existingUser->status, self::ACTIVE_STATUSES, true))) {
                 throw new ErpSsoException('该账号已在新 ERP 停用或删除，不能登录。', 403);
+            }
+            if (($existingPayload['auth_source'] ?? '') === 'local_management') {
+                if (! $this->matchesMigratedIdentity($existingPayload, $legacyId, $username)) {
+                    throw new ErpSsoException('该账号是新 ERP 本地账号，请使用账号密码登录。', 403);
+                }
+                // 已迁入账号用旧身份完成认证，人员档案和授权仍由新 ERP 管理。
+                return $legacyId;
             }
             // A source identity may still authenticate after local maintenance,
             // but a later login must not overwrite its locally maintained roles
@@ -60,7 +64,6 @@ class LegacySsoService
             if ($existingUser->local_managed ?? false) return $legacyId;
             $wasPrincipal = DB::table('erp_department_users')->where('user_legacy_id', $legacyId)->where('is_principal', true)->exists();
             $previousRoleCandidate = $this->previousProjectedRole($existingUser, $wasPrincipal);
-            $existingPayload = json_decode(($existingUser->legacy_payload ?? null) ?: '{}', true) ?: [];
             $projectedPayload = array_merge($existingPayload, [
                 'source_system' => 'fastadmin',
                 'last_sso_issued_at' => (int) $payload['issued_at'],
@@ -115,6 +118,24 @@ class LegacySsoService
 
             return $legacyId;
         });
+    }
+
+    private function matchesMigratedIdentity(array $localPayload, int $legacyId, string $username): bool
+    {
+        if (array_key_exists('legacy_sso_identity', $localPayload)) {
+            $binding = $localPayload['legacy_sso_identity'];
+            return ($binding['issuer'] ?? null) === 'fastadmin'
+                && ($binding['admin_id'] ?? null) === $legacyId
+                && ($binding['username'] ?? null) === $username;
+        }
+
+        // 兼容正式用户包记录旧身份之前已同步的员工。
+        $migration = $localPayload['users_migration'] ?? [];
+        $sourceIdentity = $migration['identity'] ?? [];
+        $sourceId = $sourceIdentity['id'] ?? null;
+        return ($migration['source'] ?? null) === 'jiantan_erp'
+            && ($sourceId === $legacyId || $sourceId === (string) $legacyId)
+            && ($sourceIdentity['username'] ?? null) === $username;
     }
 
     private function verify(string $ticket): array

@@ -179,14 +179,12 @@
               <el-col :xs="24" :sm="12">
                 <el-input v-model.trim="address.receiver_phone" size="small" placeholder="收货电话" />
               </el-col>
-              <el-col :xs="24" :sm="8">
-                <el-input v-model.trim="address.province" size="small" placeholder="省" />
-              </el-col>
-              <el-col :xs="24" :sm="8">
-                <el-input v-model.trim="address.city" size="small" placeholder="市" />
-              </el-col>
-              <el-col :xs="24" :sm="8">
-                <el-input v-model.trim="address.district" size="small" placeholder="区/县" />
+              <el-col :xs="24" :sm="24">
+                <CustomerRegionSelect
+                  v-model="address.region_id"
+                  :disabled="saving"
+                  :legacy-label="[address.country, address.province, address.city, address.district].filter(Boolean).join(' / ')"
+                />
               </el-col>
               <el-col :xs="24" :sm="24">
                 <el-input v-model.trim="address.detail_address" size="small" placeholder="详细地址（如街道、门牌号等，必填）" />
@@ -249,6 +247,7 @@
 <script>
 import { createSalesCustomer, getSalesCustomer, updateSalesCustomer } from '@/api/erp/sales'
 import { clearCreatePageReservation, reserveForCreatePage } from '@/utils/documentNumberReservation'
+import CustomerRegionSelect from './CustomerRegionSelect.vue'
 
 const blankContact = () => ({
   localId: `contact-${Date.now()}-${Math.random().toString(16).slice(2)}`,
@@ -265,6 +264,8 @@ const blankAddress = () => ({
   localId: `address-${Date.now()}-${Math.random().toString(16).slice(2)}`,
   receiver_name: '',
   receiver_phone: '',
+  country: '',
+  region_id: null,
   province: '',
   city: '',
   district: '',
@@ -298,6 +299,7 @@ const blankForm = (kind = 'individual') => ({
 
 export default {
   name: 'CustomerDrawer',
+  components: { CustomerRegionSelect },
   props: {
     visible: {
       type: Boolean,
@@ -374,8 +376,8 @@ export default {
           customer_kind: data.customer_kind || 'individual',
           owner_legacy_id: data.owner_legacy_id ?? undefined,
           invoice_type: data.invoice_type || 'vat_normal',
-          contacts: (data.contacts || []).map(item => ({ ...item, localId: `contact-${item.id}` })),
-          addresses: (data.addresses || []).map(item => ({ ...item, localId: `address-${item.id}` }))
+          contacts: (data.contacts || []).filter(item => item.status !== 'disabled').map(item => ({ ...item, localId: `contact-${item.id}` })),
+          addresses: (data.addresses || []).filter(item => item.status !== 'disabled').map(item => ({ ...item, localId: `address-${item.id}` }))
         }
       } catch (err) {
         if (session !== this.openSession || !this.innerVisible) return

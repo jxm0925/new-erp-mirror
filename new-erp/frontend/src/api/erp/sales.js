@@ -17,6 +17,8 @@ export const cancelSalesOrder = (id, data) => api.post(`/v1/erp/sales/orders/${i
 export const previewShortCloseSalesOrder = id => api.get(`/v1/erp/sales/orders/${id}/short-close-preview`)
 export const shortCloseSalesOrder = (id, data) => api.post(`/v1/erp/sales/orders/${id}/short-close`, data)
 export const listSalesCustomers = params => api.get('/v1/erp/sales/customers', { params })
+export const listCustomerRegions = parentId => api.get('/v1/erp/sales/customers/regions', { params: { parent_id: parentId } })
+export const getCustomerRegionPath = id => api.get(`/v1/erp/sales/customers/regions/${id}/path`)
 export const getSalesCustomer = id => api.get(`/v1/erp/sales/customers/${id}`)
 export const createSalesCustomer = data => api.post('/v1/erp/sales/customers', data)
 export const updateSalesCustomer = (id, data) => api.put(`/v1/erp/sales/customers/${id}`, data)

@@ -167,6 +167,10 @@ class ImportController extends Controller
 
     private function assertBatchContext(Request $request, ImportBatch $batch): void
     {
+        if ($batch->import_type === 'Legacy Customers') {
+            $this->authorizePermission($request, 'sales.customer');
+            abort_unless($request->isMethodSafe(), 422, '客户迁移批次及合并映射只供追溯，不能通过普通导入入口重新处理。');
+        }
         if ($batch->import_type === 'Legacy Users') {
             $this->authorizePermission($request, 'system.admin.view');
             abort_unless($request->isMethodSafe(), 422, '员工迁移批次只供追溯，不能通过普通导入入口重新处理。');

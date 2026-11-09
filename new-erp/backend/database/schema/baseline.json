@@ -2,6 +2,7 @@
   "format": 1,
   "source_server_version": "8.0.12",
   "tables": {
+    "erp_regions": "2026_11_09_000001_create_erp_regions_table",
     "cache": "2026_10_12_000001_create_cache_table",
     "cache_locks": "2026_10_12_000002_create_cache_locks_table",
     "erp_approval_action_executions": "2026_10_12_000003_create_erp_approval_action_executions_table",
