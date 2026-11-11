@@ -14,6 +14,10 @@ class ErpUserDirectoryService
     public function users(array $filters = [], ?object $actor = null)
     {
         $query = DB::table('erp_legacy_admin_users')->whereNull('deleted_at')->orderByDesc('sort')->orderBy('legacy_id');
+        if ($filters['admin_list'] ?? false) {
+            $query->reorder()->orderByRaw("CASE WHEN status IN ('normal', 'active') THEN 0 ELSE 1 END")
+                ->orderByDesc('created_at')->orderByDesc('legacy_id');
+        }
 
         $warehouseScope = ($filters['scope'] ?? null) === 'warehouse';
         $salesScope = ($filters['scope'] ?? null) === 'sales';

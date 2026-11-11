@@ -20,7 +20,7 @@ class SalesOrderFulfillmentApplicationService
 {
     public function __construct(
         private readonly UnitConversionDomainService $conversions,
-        private readonly BomMatcher $bomMatcher,
+        private readonly SalesProductionBomService $productionBom,
         private readonly DocumentNumberService $numbers,
         private readonly InventoryAvailabilityService $inventoryAvailability,
         private readonly InventoryReservationService $inventoryReservations,
@@ -207,7 +207,10 @@ class SalesOrderFulfillmentApplicationService
                     : $this->inventoryAvailability->analyzeSalesOrderLine($line, $confirmQty);
             }
             $productionQty = (float) $quantities['production_qty'];
-            $bom = $productionQty > 0 ? $this->bomMatcher->match($line->product_id, $line->sku_id, $line->item_id, $line->configuration_snapshot) : null;
+            $canPlanProduction = $remainingSalesQty > 0.00000001 && $this->isPhysicalLine($line) && ! SalesOrderFulfillmentPolicy::isPurchaseLine($line);
+            $bom = $canPlanProduction ? $this->productionBom->preview($line, $this->salesToBaseQuantity($line, $productionQty)) : null;
+            $batches = $lineFulfillments->where('fulfillment_type', 'production')->whereIn('demand_status', ['confirmed', 'superseded'])
+                ->sortBy('id')->values()->map(fn (SalesOrderFulfillment $batch) => $this->productionBom->history($batch));
             $drawing = $line->is_special_customized ? ($this->hasTechnicalAttachment($line) ? 'ready' : 'missing') : 'not_required';
             $routing = $this->isPhysicalLine($line) && $line->item_id ? $this->routingSummary($line) : null;
             $blocking = [];
@@ -250,13 +253,16 @@ class SalesOrderFulfillmentApplicationService
                 'undetermined_base_qty' => $this->isPhysicalLine($line) ? $this->salesToBaseQuantity($line, $quantities['undetermined_qty']) : null,
                 ...$quantities,
                 'routing_summary' => $routing,
-                'bom_summary' => ($bom['status'] ?? null) === 'matched' ? ['bom_no' => data_get($bom, 'bom_snapshot.bom_no'), 'version' => $bom['bom_version']] : null,
+                'bom_summary' => ($bom['detail'] ?? null) ? array_intersect_key($bom['detail'], ['bom_no' => true, 'version' => true]) : null,
+                'bom_detail' => $bom['detail'] ?? null,
+                'bom_block_reason' => $bom['block_reason'] ?? null,
+                'confirmed_production_batches' => $batches,
                 'delivery_inspection_required' => (bool) data_get($line->inspection_snapshot, 'delivery_inspection_required', false),
                 'commercial_role' => $line->commercial_role ?: 'sale',
                 'blocking_reason' => implode('；', $blocking),
                 'generated_result' => $this->resultTextFromQuantities($quantities),
                 'data_readiness' => [
-                    'bom' => $productionQty <= 0 ? 'not_required' : (($bom['status'] ?? null) === 'matched' ? 'ready' : 'missing'),
+                    'bom' => $productionQty <= 0 ? 'not_required' : (($bom['detail'] ?? null) && ! $bom['block_reason'] ? 'ready' : 'missing'),
                     'routing' => $productionQty <= 0 ? 'not_required' : ($routing && $routing['production_operations'] ? 'ready' : 'missing'),
                     'drawing' => $drawing,
                     'inspection' => 'ready',
@@ -343,6 +349,7 @@ class SalesOrderFulfillmentApplicationService
                     'processing_started_at' => now(),
                 ]);
                 $batchFulfillmentIds = [];
+                $productionPlans = [];
 
                 SalesOrderFulfillment::where('sales_order_id', $order->id)
                     ->where('demand_status', 'pending')->delete();
@@ -402,12 +409,16 @@ class SalesOrderFulfillmentApplicationService
                         : [];
                     $this->addPlannedAllocations($plannedByBalance, $inventoryAllocations);
                     $productionQty = (float) $quantities['production_qty'];
-                    $bom = $productionQty > 0 ? $this->bomMatcher->match($line->product_id, $line->sku_id, $line->item_id, $line->configuration_snapshot) : null;
+                    $production = $productionQty > 0 || ! empty($row['bom_replacements'])
+                        ? $this->productionBom->confirm($line, $productionQty > 0 ? $this->salesToBaseQuantity($line, $productionQty) : 0, $row)
+                        : null;
+                    $bom = $production['snapshot'] ?? null;
+                    $productionPlan = $production['plan'] ?? null;
                     // 与生产需求状态同一口径：只有 BOM 未匹配才算阻塞；缺图纸由工单发布检查拦截，
                     // 避免履约记录显示“阻塞”而生产需求显示“就绪”。
-                    $lineBlocked = $productionQty > 0 && (($bom['status'] ?? null) !== 'matched');
+                    $lineBlocked = $productionQty > 0 && $bom === null;
                     $prepared[$line->id] = compact(
-                        'quantities', 'bom', 'lineBlocked', 'alreadyFulfilled', 'remainingSalesQty',
+                        'quantities', 'bom', 'productionPlan', 'lineBlocked', 'alreadyFulfilled', 'remainingSalesQty',
                         'inventoryAnalysis', 'inventoryAllocations', 'isAdjusted', 'currentConfirmQty'
                     );
                 }
@@ -486,12 +497,16 @@ class SalesOrderFulfillmentApplicationService
                                     'item_base_qty' => $allocation ? $allocatedBaseQty : $itemBaseQuantity,
                                     'planning' => $planningSnapshot,
                                     'inventory_allocation' => $allocation,
+                                    ...($type === 'production' ? ['production_bom' => $prepared[$line->id]['bom']] : []),
                                     // 服务行（如安装红包）确认时默认“已完成”，没发的可取消勾选。
                                     'service_completed' => $type === 'service' ? (bool) ($byLine->get($line->id)['service_completed'] ?? true) : null,
                                 ],
                                 'remark' => $remark,
                             ]);
                             $batchFulfillmentIds[] = (int) $fulfillment->id;
+                            if ($type === 'production' && $prepared[$line->id]['productionPlan']) {
+                                $productionPlans[$fulfillment->id] = $prepared[$line->id]['productionPlan'];
+                            }
                         }
                     }
 
@@ -528,7 +543,7 @@ class SalesOrderFulfillmentApplicationService
                 $this->inventoryReservations->reserveForSalesOrder($order->fresh('fulfillments'));
                 // 生产行一行一张工单，资料齐全就自动下达并生成序列号；BOM/路线缺失的停在“计划”等补齐。
                 $workOrderIds = app(\App\Services\Erp\Manufacturing\WorkOrderService::class)
-                    ->createForSalesFulfillments($order, $batchFulfillmentIds, $operator);
+                    ->createForSalesFulfillments($order, $batchFulfillmentIds, $operator, $productionPlans);
                 // 生产确认已按库存锁定备货，锁库状态同步回写，避免订单仍显示“待锁库”。
                 $lockStatus = app(SalesOrderInventoryLockService::class)->lockStatus($order->fresh(['lines', 'fulfillments']));
                 $order->update([

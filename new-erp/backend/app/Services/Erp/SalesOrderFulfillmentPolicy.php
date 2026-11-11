@@ -189,6 +189,15 @@ final class SalesOrderFulfillmentPolicy
             foreach (array_merge(['confirm'], self::TYPES) as $type) {
                 $result[$type.'_qty'] = number_format((float) ($line[$type.'_qty'] ?? 0), 8, '.', '');
             }
+            if (! empty($line['bom_replacements'])) {
+                $replacements = array_map(fn (array $row) => [
+                    'position_key' => $row['position_key'], 'replacement_item_id' => (int) $row['replacement_item_id'],
+                ], $line['bom_replacements']);
+                usort($replacements, fn (array $a, array $b) => $a['position_key'] <=> $b['position_key']);
+                $result['bom_revision'] = $line['bom_revision'] ?? null;
+                $result['bom_adjustment_reason'] = trim((string) ($line['bom_adjustment_reason'] ?? ''));
+                $result['bom_replacements'] = $replacements;
+            }
             return $result;
         }, $decisions);
         return hash('sha256', json_encode([

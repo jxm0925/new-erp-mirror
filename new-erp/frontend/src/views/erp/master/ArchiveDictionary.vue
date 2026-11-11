@@ -184,6 +184,16 @@
               </template>
             </el-table-column>
 
+            <el-table-column v-if="kind === 'platforms'" label="买家ID识别" min-width="160">
+              <template slot-scope="{ row }">
+                <template v-if="isRoot(row)">
+                  <el-tag v-if="row.buyer_identity_scope" size="mini" effect="plain">{{ row.buyer_identity_scope === 'platform' ? `按电商平台：${row.buyer_platform_group || '-'}` : '按本店' }}</el-tag>
+                  <span v-else class="text-muted">未设置</span>
+                </template>
+                <span v-else class="text-muted">-</span>
+              </template>
+            </el-table-column>
+
             <el-table-column v-if="kind === 'payments'" label="适用业务" min-width="210">
               <template slot-scope="{ row }">
                 <div class="usage-tags-row">
@@ -341,6 +351,19 @@
               <el-option label="线上" value="online" />
               <el-option label="线下" value="offline" />
             </el-select>
+          </el-form-item>
+        </div>
+
+        <div v-if="kind === 'platforms' && !Number(form.parent_legacy_id)" class="form-grid-2col">
+          <el-form-item label="买家ID识别">
+            <el-select v-model="form.buyer_identity_scope" class="full" placeholder="未设置" clearable>
+              <el-option label="各店买家ID相同（按电商平台识别）" value="platform" />
+              <el-option label="各店买家ID不同（按本店识别）" value="shop" />
+            </el-select>
+            <div class="field-help">未设置时，CRM 线上线索只能保存草稿</div>
+          </el-form-item>
+          <el-form-item label="所属电商平台" :required="form.buyer_identity_scope === 'platform'">
+            <el-input v-model.trim="form.buyer_platform_group" maxlength="80" placeholder="如：京东、天猫；同一平台的店铺填写相同名称" />
           </el-form-item>
         </div>
 
@@ -536,6 +559,8 @@ export default {
         short_name: '',
         trade_type: parent && this.kind === 'platforms' ? (parent.trade_type || '') : '',
         payment_mode: '',
+        buyer_identity_scope: '',
+        buyer_platform_group: '',
         available_for_sales: true,
         available_for_receipt: true,
         available_for_payment: true
@@ -549,6 +574,8 @@ export default {
       this.form = {
         ...row,
         payment_mode: row.payment_mode || '',
+        buyer_identity_scope: row.buyer_identity_scope || '',
+        buyer_platform_group: row.buyer_platform_group || '',
         status: this.isEnabled(row) ? 'enabled' : 'disabled',
         available_for_sales: !!row.available_for_sales,
         available_for_receipt: !!row.available_for_receipt,
@@ -611,6 +638,8 @@ export default {
             short_name: f.short_name,
             trade_type: f.trade_type || null,
             payment_mode: f.payment_mode || null,
+            buyer_identity_scope: f.buyer_identity_scope || null,
+            buyer_platform_group: f.buyer_platform_group || null,
             parent_legacy_id: Number(f.parent_legacy_id || 0),
             sort: f.sort,
             status: f.status

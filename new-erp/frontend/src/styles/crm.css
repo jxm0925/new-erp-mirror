@@ -1,0 +1,270 @@
+.crm-page, .crm-dialog, .crm-page *, .crm-dialog * {
+  box-sizing: border-box;
+}
+.crm-page {
+  min-height: calc(100vh - 52px);
+  padding: 16px 20px;
+  background: #f8fafc;
+  color: #1e293b;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+.crm-head, .crm-actions, .crm-filters, .crm-pager, .crm-inline {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.crm-head h1 {
+  margin: 0;
+  font-size: 20px;
+}
+.crm-head-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  background: #f0fdf4;
+  color: #008b4b;
+  font-size: 20px;
+}
+.crm-actions {
+  margin-left: auto;
+}
+.crm-card, .crm-box {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  min-width: 0;
+}
+.crm-card {
+  overflow: hidden;
+}
+.crm-box {
+  padding: 14px;
+}
+.crm-filters {
+  padding: 12px 16px;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+}
+.crm-filters > .el-input {
+  width: 220px;
+}
+.crm-filters label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: #475569;
+}
+.crm-filters .el-select {
+  width: 140px;
+}
+.crm-page .el-tabs__header {
+  margin: 0;
+}
+.crm-page .el-tabs__item.is-active, .crm-page .el-tabs__item:hover, .crm-page .el-button--text, .crm-dialog .el-button--text {
+  color: #008b4b;
+}
+.crm-page .el-tabs__active-bar {
+  background: #008b4b;
+}
+.crm-page .el-table th.el-table__cell, .crm-dialog .el-table th.el-table__cell {
+  background: #f8fafc;
+  color: #475569;
+}
+.crm-page .el-table .cell, .crm-dialog .el-table .cell {
+  word-break: break-word;
+}
+.crm-pager {
+  justify-content: flex-end;
+  padding: 12px 16px;
+  color: #64748b;
+}
+.crm-page .el-pagination.is-background .el-pager li:not(.disabled).active, .crm-dialog .el-pagination.is-background .el-pager li:not(.disabled).active {
+  background: #008b4b;
+}
+.crm-sub {
+  display: block;
+  color: #64748b;
+  font-size: 12px;
+  margin-top: 3px;
+  white-space: normal;
+  line-height: 1.6;
+}
+.crm-muted {
+  color: #64748b;
+  font-size: 12px;
+}
+.crm-overdue {
+  color: #ef4444;
+}
+.crm-tag {
+  margin: 2px 4px 2px 0;
+}
+.crm-section-title {
+  margin: 4px 0 14px;
+  padding-left: 9px;
+  border-left: 3px solid #008b4b;
+  font-size: 14px;
+  font-weight: 600;
+  color: #1e293b;
+}
+.crm-dialog .el-dialog {
+  max-width: calc(100vw - 32px);
+  max-height: 88vh;
+  display: flex;
+  flex-direction: column;
+  border-radius: 10px;
+  margin: 6vh auto !important;
+}
+.crm-dialog .el-dialog__header {
+  padding: 18px 22px;
+  border-bottom: 1px solid #e2e8f0;
+}
+.crm-dialog .el-dialog__title {
+  font-size: 16px;
+  font-weight: 600;
+  color: #1e293b;
+}
+.crm-dialog .el-dialog__body {
+  padding: 18px 22px;
+  min-height: 0;
+  overflow-y: auto;
+}
+.crm-dialog .el-dialog__footer {
+  padding: 14px 22px;
+  border-top: 1px solid #e2e8f0;
+}
+.crm-dialog .el-form-item {
+  margin-bottom: 12px;
+}
+.crm-dialog .el-form-item__label {
+  color: #475569;
+  font-size: 13px;
+}
+.crm-dialog .el-select, .crm-dialog .el-date-editor, .crm-dialog .el-input-number {
+  width: 100%;
+}
+.crm-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: 20px;
+}
+.crm-span-all {
+  grid-column: 1 / -1;
+}
+.crm-note {
+  padding: 10px 12px;
+  margin: 12px 0;
+  background: #f8fafc;
+  color: #475569;
+  font-size: 12px;
+  line-height: 1.8;
+  border-radius: 6px;
+}
+.crm-note.warning {
+  background: #fffbeb;
+  color: #b45309;
+}
+.crm-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.crm-footer .crm-muted {
+  margin-right: auto;
+}
+.crm-dialog .el-descriptions {
+  margin-bottom: 18px;
+}
+.crm-dialog .el-descriptions-item__label.is-bordered-label {
+  width: 105px;
+  background: #f8fafc;
+  color: #64748b;
+  font-weight: 400;
+}
+.crm-dialog .el-descriptions-item__content {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.crm-page .el-button + .el-button, .crm-dialog .crm-actions .el-button + .el-button {
+  margin-left: 0;
+}
+.crm-page .el-radio__input.is-checked .el-radio__inner, .crm-dialog .el-radio__input.is-checked .el-radio__inner,
+.crm-page .el-checkbox__input.is-checked .el-checkbox__inner, .crm-dialog .el-checkbox__input.is-checked .el-checkbox__inner,
+.crm-dialog .el-checkbox__input.is-indeterminate .el-checkbox__inner {
+  background: #008b4b;
+  border-color: #008b4b;
+}
+.crm-page .el-radio__input.is-checked + .el-radio__label, .crm-dialog .el-radio__input.is-checked + .el-radio__label,
+.crm-page .el-checkbox__input.is-checked + .el-checkbox__label, .crm-dialog .el-checkbox__input.is-checked + .el-checkbox__label,
+.crm-select-popper .el-select-dropdown__item.selected, .crm-select-popper .el-dropdown-menu__item:not(.is-disabled):hover {
+  color: #008b4b;
+}
+.crm-dialog .el-radio-button__orig-radio:checked + .el-radio-button__inner {
+  background: #f0fdf4;
+  color: #00763f;
+  border-color: #008b4b;
+  box-shadow: -1px 0 0 0 #008b4b;
+}
+.crm-page .el-input__inner:focus, .crm-dialog .el-input__inner:focus, .crm-dialog .el-textarea__inner:focus,
+.crm-page .el-select .el-input.is-focus .el-input__inner, .crm-dialog .el-select .el-input.is-focus .el-input__inner {
+  border-color: #008b4b;
+}
+.crm-date-popper .el-date-table td.today span, .crm-date-popper .el-date-table td.available:hover,
+.crm-date-popper .el-picker-panel__icon-btn:hover, .crm-date-popper .el-date-picker__header-label:hover {
+  color: #008b4b;
+}
+.crm-date-popper .el-date-table td.current:not(.disabled) span, .crm-date-popper .el-time-panel__btn.confirm {
+  background: #008b4b;
+  color: #fff;
+}
+.crm-danger-link {
+  color: #ef4444 !important;
+}
+.crm-danger-link:hover {
+  color: #dc2626 !important;
+}
+.crm-warn-link {
+  color: #d97706 !important;
+}
+.crm-selected-row td.el-table__cell {
+  background-color: #f0fdf4 !important;
+}
+.crm-copy-btn {
+  padding: 0 2px;
+  margin-left: 4px;
+  color: #94a3b8;
+  cursor: pointer;
+  transition: color 0.15s;
+}
+.crm-copy-btn:hover {
+  color: #008b4b;
+}
+@media (max-width: 780px) {
+  .crm-page {
+    padding: 12px;
+  }
+  .crm-form-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .crm-dialog .el-dialog__body {
+    padding: 14px;
+  }
+  .crm-filters > .el-input, .crm-filters label, .crm-filters .el-select {
+    width: 100%;
+  }
+  .crm-filters label .el-select {
+    flex: 1;
+    min-width: 0;
+  }
+}

@@ -37,7 +37,7 @@ final class WorkOrderService
     ) {}
 
     /** 订单生产确认的同一事务里调用：为本批 production 履约逐条建工单并尝试下达。 */
-    public function createForSalesFulfillments(SalesOrder $order, array $fulfillmentIds, object $actor): array
+    public function createForSalesFulfillments(SalesOrder $order, array $fulfillmentIds, object $actor, array $confirmedPlans = []): array
     {
         $order->assertCurrentBusiness();
         $rows = SalesOrderFulfillment::query()->with(['line', 'item'])
@@ -66,7 +66,12 @@ final class WorkOrderService
             // 定制产品：先由技术上传图纸、确认定制 BOM，再下发车间。
             $custom = (bool) $line->is_special_customized;
             if ($custom) MfgWorkOrderTech::create(['work_order_id' => $wo->id, 'status' => 'pending']);
-            $this->applyPlan($wo, $item, null, null);
+            $snapshot = data_get($fulfillment->match_snapshot, 'production_bom');
+            $plan = $confirmedPlans[$fulfillment->id] ?? null;
+            if (is_array($snapshot) && $plan === null) {
+                $plan = $this->plans->build($item, $line->product_id, $line->sku_id, $line->configuration_snapshot, $qty, null, null, $snapshot);
+            }
+            $this->applyPlan($wo, $item, null, null, false, false, $plan);
             if ($custom) MfgWorkOrderTech::query()->where('work_order_id', $wo->id)->update(['base_bom_id' => $wo->bom_id]);
             $this->log($wo, 'created', null, 'planned', "订单 {$order->sales_order_no} 第 {$line->line_no} 行生产确认后自动生成工单".($custom ? '，定制产品等技术处理' : ''), $actor);
             if (! $wo->block_reason) $this->doRelease($wo, $actor, true);
@@ -260,6 +265,7 @@ final class WorkOrderService
         try {
             $this->applyPlan($child->fresh(), $item, $source->bom_id, $source->routing_id, true);
         } catch (WorkOrderDomainException $e) {
+            if (data_get($source->bom_snapshot, 'sales_confirmation.has_replacements')) throw $e;
             $this->applyPlan($child->fresh(), $item, null, null, true);
         }
         $child = $child->fresh();
@@ -362,6 +368,9 @@ final class WorkOrderService
                 || \App\Models\Erp\MfgCuttingRunAllocation::query()->where('work_order_id', $wo->id)->lockForUpdate()->first(['id'])
                 || MfgMaterialIssue::query()->where('work_order_id', $wo->id)->lockForUpdate()->first(['id'])))
                 $this->fail('material_already_issued', '工单已有真实领料或开料事实，不能覆盖原 BOM、路线和数量，请先核实已发生的用料。');
+            if ((isset($changes['bom_id']) || $refreshBom) && data_get($wo->bom_snapshot, 'sales_confirmation.has_replacements')) {
+                $this->fail('sales_bom_locked', '本工单已有销售确认的替换物料，请通过订单变更重新确认本单用料。');
+            }
             $wo->business_version = (int) $wo->business_version + 1;
             $wo->updated_by_legacy_id = $this->actorId($actor);
             $wo->save();
@@ -490,7 +499,15 @@ final class WorkOrderService
         if ($qty < -0.00000001 || $wo->status !== 'planned' || $wo->units()->exists() || CancellationProductionService::hasMaterialFacts((int) $wo->id)
             || OrderChangeLaborService::hasActualWork([(int) $wo->id])) $this->fail('planned_quantity_changed', '待下达计划已有实际投入或编号，请重新预览并选择具体编号。');
         $old = (float) $wo->planned_qty;
-        foreach ($wo->materials()->lockForUpdate()->get() as $material) $material->update(['required_qty' => $old > 0 ? round((float) $material->required_qty * max(0, $qty) / $old, 4) : 0]);
+        foreach ($wo->materials()->lockForUpdate()->get() as $material) {
+            $required = $old > 0 ? round((float) $material->required_qty * max(0, $qty) / $old, 4) : 0;
+            if (data_get($wo->bom_snapshot, 'sales_confirmation.has_replacements')) {
+                $required = $qty > 0 ? round(WorkOrderPlanBuilder::requiredQuantity([
+                    'qty' => $material->unit_qty, 'loss_rate' => $material->loss_rate, 'fixed_qty' => $material->fixed_qty,
+                ], $qty) * (float) $material->qty_ratio, 4) : 0;
+            }
+            $material->update(['required_qty' => $required]);
+        }
         if ($qty <= 0.00000001) $this->doCancel($wo, '订单减少尚未下达的计划数量', $actor, false);
         else $wo->update(['planned_qty' => $qty, 'business_version' => $wo->business_version + 1]);
         $this->log($wo, 'planned_quantity_reduced', 'planned', $wo->status, '订单减少未下达计划 '.$old.' → '.max(0, $qty), $actor, ['before_qty' => $old, 'after_qty' => max(0, $qty)]);
@@ -644,7 +661,8 @@ final class WorkOrderService
         try {
             $this->applyPlan($child, $item, $wo->bom_id, $wo->routing_id, true);
         } catch (WorkOrderDomainException $e) {
-            $this->applyPlan($child, $item, null, null);
+            if (data_get($wo->bom_snapshot, 'sales_confirmation.has_replacements')) $child->update(['block_reason' => $e->getMessage()]);
+            else $this->applyPlan($child, $item, null, null);
         }
         $num = rtrim(rtrim(number_format($qty, 4, '.', ''), '0'), '.');
         $this->log($child, 'created', null, 'planned', "工单 {$wo->work_order_no} 有设备报废，订单 {$wo->sales_order_no} 还差 {$num} 台设备，自动补做", $actor, ['replaces_work_order_id' => $wo->id]);
@@ -835,7 +853,7 @@ final class WorkOrderService
     }
 
     /** 写入 BOM/路线快照、工序、用料；已下达工单换版本时只重建工序和用料，序列号不变。 */
-    private function applyPlan(MfgWorkOrder $wo, Item $item, ?int $bomId, ?int $routingId, bool $replace = false, bool $refreshBom = false): void
+    private function applyPlan(MfgWorkOrder $wo, Item $item, ?int $bomId, ?int $routingId, bool $replace = false, bool $refreshBom = false, ?array $confirmedPlan = null): void
     {
         $bomSnapshot = null;
         if ($replace && ! $refreshBom && (int) $bomId === (int) $wo->bom_id) {
@@ -866,7 +884,8 @@ final class WorkOrderService
                 $this->fail('bom_snapshot_missing', '工单的 BOM 快照不完整，不能重新计算用料，请先核实原工单资料。');
             }
         }
-        $plan = $this->plans->build($item, $wo->product_id, $wo->sku_id, $wo->configuration_snapshot, (float) $wo->planned_qty, $bomId, $routingId, $bomSnapshot);
+        // 同次销售确认沿用锁内生成的路线和用料，不能在建工单时再次匹配主档。
+        $plan = $confirmedPlan ?? $this->plans->build($item, $wo->product_id, $wo->sku_id, $wo->configuration_snapshot, (float) $wo->planned_qty, $bomId, $routingId, $bomSnapshot);
         if ($replace) {
             MfgWorkOrderMaterial::query()->where('work_order_id', $wo->id)->delete();
             MfgWorkOrderOperation::query()->where('work_order_id', $wo->id)->delete();

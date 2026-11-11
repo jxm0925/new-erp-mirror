@@ -53,17 +53,30 @@
           </span>
         </template>
       </el-table-column>
-      <el-table-column prop="customer_name" label="客户名称" min-width="180" show-overflow-tooltip />
-      <el-table-column prop="contact_name" label="联系人" width="105" show-overflow-tooltip />
-      <el-table-column prop="contact_phone" label="联系电话" width="130" show-overflow-tooltip />
-      <el-table-column prop="full_address" label="收货地址" min-width="240" show-overflow-tooltip />
+      <el-table-column prop="customer_name" label="客户名称" min-width="170" />
+      <el-table-column label="所属部门 / 负责销售" min-width="150">
+        <template slot-scope="{row}">{{ row.owner_department_name || '—' }} / {{ row.owner_name || '暂无' }}</template>
+      </el-table-column>
+      <el-table-column label="联系人" min-width="150">
+        <template slot-scope="{row}">
+          <span v-if="row.visible">{{ row.contact_name || '—' }} {{ row.contact_phone || '' }}</span>
+          <span v-else class="muted">其他部门客户，无权查看</span>
+        </template>
+      </el-table-column>
+      <el-table-column label="收货地址" min-width="200">
+        <template slot-scope="{row}">{{ row.visible ? (row.full_address || '—') : '—' }}</template>
+      </el-table-column>
       <el-table-column label="状态" width="80" align="center">
         <template slot-scope="{row}">
           <el-tag size="mini" :type="row.status === 'enabled' ? 'success' : 'info'">{{ statusText(row.status) }}</el-tag>
         </template>
       </el-table-column>
+      <el-table-column label="操作" width="100">
+        <template slot-scope="{row}"><el-button v-if="row.visible === false && ['enabled', 'potential'].includes(row.status)" type="text" size="mini" @click.stop="requestCollaboration(row)">申请协作</el-button></template>
+      </el-table-column>
     </el-table>
 
+    <div class="picker-hint">搜索范围为全公司客户；其他部门负责的客户只显示名称、部门和负责销售，可申请协作后选用。停用客户不可选。</div>
     <div class="picker-footer">
       <el-pagination
         layout="total, sizes, prev, pager, next"
@@ -82,6 +95,7 @@
 
     <!-- 新增客户抽屉 -->
     <customer-drawer ref="customerDrawer" confirm-text="保存并选择" @saved="handleCustomerCreated" />
+    <crm-identity-review-dialog v-if="visible" :key="openSession" ref="identityReview" />
   </el-dialog>
 </template>
 
@@ -89,16 +103,19 @@
 import { listSalesCustomers } from '@/api/erp/sales'
 import { statusText } from '@/utils/erpStatus'
 import CustomerDrawer from '@/components/sales/CustomerDrawer.vue'
+import CrmIdentityReviewDialog from '@/components/crm/CrmIdentityReviewDialog.vue'
 
 export default {
   name: 'CustomerPicker',
-  components: { CustomerDrawer },
+  components: { CustomerDrawer, CrmIdentityReviewDialog },
   data: () => ({
     visible: false,
     loading: false,
     rows: [],
     current: null,
-    query: { keyword: '', customer_kind: '', status: 'enabled', page: 1, per_page: 10 },
+    openSession: 0,
+    requestSequence: 0,
+    query: { keyword: '', customer_kind: '', status: 'enabled', picker: 1, page: 1, per_page: 10 },
     page: { total: 0 }
   }),
   computed: {
@@ -107,9 +124,11 @@ export default {
       set(id) { this.current = this.rows.find(row => row.id === id) || null }
     }
   },
+  watch: { visible(value) { if (!value) this.openSession += 1 } },
   methods: {
     statusText,
     async open() {
+      this.openSession += 1
       this.visible = true
       this.current = null
       await this.search()
@@ -119,23 +138,30 @@ export default {
       return this.load()
     },
     async load() {
+      const session = this.openSession
+      const sequence = ++this.requestSequence
       this.loading = true
       try {
         const { data } = await listSalesCustomers(this.query)
+        if (!this.visible || session !== this.openSession || sequence !== this.requestSequence) return
         this.rows = data.data || []
         this.page = { total: data.total || 0 }
       } catch (err) {
-        this.$message.error('客户列表加载失败')
+        if (this.visible && session === this.openSession && sequence === this.requestSequence) this.$message.error('客户列表加载失败')
       } finally {
-        this.loading = false
+        if (session === this.openSession && sequence === this.requestSequence) this.loading = false
       }
     },
     isSelectable(customer) {
-      return !!customer && ['enabled', 'potential'].includes(customer.status)
+      return !!customer && customer.visible !== false && customer.selectable !== false && ['enabled', 'potential'].includes(customer.status)
+    },
+    requestCollaboration(row) {
+      this.$refs.identityReview.openRequest({ purpose: 'collaboration', subject_type: 'customer', subject_id: null,
+        target_customer_id: row.id, input_snapshot: { customer_name: row.customer_name, customer_kind: row.customer_kind }, matches: [row] })
     },
     confirm() {
       if (!this.current) return
-      if (!this.isSelectable(this.current)) return this.$message.warning('仅可选择启用或潜在客户')
+      if (!this.isSelectable(this.current)) return this.$message.warning(this.current.visible === false ? '该客户由其他部门负责，请联系负责销售添加协作后再选用' : '仅可选择启用或潜在客户')
       this.$emit('select', this.current)
       this.visible = false
     },
@@ -189,6 +215,14 @@ export default {
   background-color: #008042;
   border-color: #008042;
   color: #fff;
+}
+.picker-hint {
+  margin-top: 8px;
+  color: #64748b;
+  font-size: 12px;
+}
+.muted {
+  color: #94a3b8;
 }
 .picker-footer {
   display: flex;

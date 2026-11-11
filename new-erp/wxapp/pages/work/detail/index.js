@@ -1,9 +1,16 @@
 // pages/work/detail/index.js
 var util = require('../../../utils/util.js');
 var api = require('../../../config/api.js');
+const legacyWorkTimer = require('../../../utils/legacy-work-timer.js');
 import Notify from '@vant/weapp/notify/notify';
 import Dialog from '@vant/weapp/dialog/dialog';
 Page({
+  ...legacyWorkTimer({
+    infoUrl: api.WorksOrderInfo,
+    pauseUrl: api.PausedWorkTime,
+    continueUrl: api.ContinueWorkTime,
+    procedureKey: 'work_status',
+  }, Notify),
 
   /**
    * 页面的初始数据
@@ -36,7 +43,6 @@ Page({
     show_goods:false,
     works_other:[],
     is_inStock_secord:0,
-    time_count_down:0,
     record_data:{}
   },
 
@@ -44,7 +50,6 @@ Page({
    * 生命周期函数--监听页面加载
    */
   onLoad(options) {
-    let userInfo = wx.getStorageSync('userInfo')
     let deviceHeight = wx.getWindowInfo().windowHeight;
     this.setData({
       id:options.id,
@@ -108,73 +113,23 @@ Page({
     that.setData(data)
     
   },
-  /**
-   * 生命周期函数--监听页面显示
-   */
-  // updateTime() {
-  //   const hours = String(Math.floor(this.data.secondsElapsed / 3600)).padStart(2, '0');
-  //   const minutes = String(Math.floor((this.data.secondsElapsed % 3600) / 60)).padStart(2, '0');
-  //   const seconds = String(this.data.secondsElapsed % 60).padStart(2, '0');
-    
-  //   this.setData({ hours, minutes, seconds });
-  // },
-  getInfo(){
-    var that = this;
-    util.request(api.WorksOrderInfo,{id:that.data.id}).then(function(res){
-      if(res.code){
-        var data = {};
-        data.info = res.data.info;
-        data.logs = res.data.logs;
-        data.workers = res.data.workers;
-        data.check_workers = res.data.workers
-        for(var i=0;i<data.workers.length;i++){
-          data.workers[i].checked=false;
-          if(data.info.step_status=='accept' && data.workers[i].id==data.info.step_admin){
-            data.default_worker = data.workers[i].id;
-            data.choose_staff = data.workers[i].nickname
-            data.workers[i].checked=!data.workers[i].checked;
-          }
-        }
-        //处理数据，已完成入库剔除
-        var temp_instock_arr = [];
-        for(var k=0;k<res.data.info.products.length;k++){
-          if(res.data.info.products[k].amount==res.data.info.products[k].instock_nums){
-            continue;
-          }
-          res.data.info.products[k].nums=1;//数量默认为1
-          temp_instock_arr.push(res.data.info.products[k]);
-        }
-        
-        data.instock_arr = temp_instock_arr;
-        data.works_other=res.data.info.works_orher;
-        data.workers=data.workers;
-        //工时相关
-        data.time_count_down = res.data.time_record.time_count_down;
-        data.total_time_ms = res.data.time_record.all_work_time * 1000; // 总工时转换为毫秒
-        data.alertPoints={ '50': false, '25': false, '10': false, '5': false };
-        data.count_down_status = res.data.time_record.status;
-
-        console.log(data)
-        that.setData(data);
-
-        that.setData(data, () => {
-          const countdown = that.selectComponent('.control-count-down');
-        
-          // 更新剩余时间（必须）
-          that.setData({
-            time_count_down: res.data.time_record.time_count_down
-          });
-        
-          if (res.data.time_record.status == 1 || res.data.time_record.status==0) {
-            // 状态 1 = 暂停
-            countdown.pause();
-          } else {
-            // 状态 0 = 继续
-            countdown.start();
-          }
-        });
-      }
-    });
+  applyWorkInfo({ info, logs, workers }, keepForm) {
+    const data = { info, logs, works_other: info.works_orher };
+    if (keepForm && this.data.show_goods) {
+      info.products = this.data.info.products;
+    } else {
+      data.instock_arr = info.products.filter(product => product.amount != product.instock_nums);
+      data.instock_arr.forEach(product => { product.nums = 1; });
+    }
+    if (!keepForm) {
+      data.workers = workers;
+      data.check_workers = workers;
+      const owner = workers.find(worker => info.step_status === 'accept' && worker.id == info.step_admin);
+      workers.forEach(worker => { worker.checked = worker === owner; });
+      data.default_worker = owner ? owner.id : 0;
+      data.choose_staff = owner ? owner.nickname : '请选择负责人';
+    }
+    this.setData(data);
   },
   showPop(e){
     var that=this;
@@ -186,20 +141,7 @@ Page({
       data.show_check_staff=true;
     }else if(type=='stage'){
       data.show_stage=true;
-      //暂停工序时间
-      
-      that.getInfo();
-      //获取当前时间戳  
-      // var timestamp = Date.parse(new Date());
-      // timestamp = timestamp / 1000;
-      
-      // util.request(api.PausedWorkTime,{id:that.data.info.id,paused_time:timestamp,time_count_down:that.data.time_count_down}).then(function(res){
-      //   if(res.code){
-      //     that.getInfo();
-      //   }else{
-      //     Notify({ type: 'warning', message: res.msg });
-      //   }
-      // })
+      this.workReportIdentity = this.workProcedureIdentity();
     }else if(type=='inStock'){
       data.show_goods=true;
       data.is_inStock=true;
@@ -233,19 +175,6 @@ Page({
       data.show_check_staff=false;
     }else if(type=='stage'){
       data.show_stage=false;
-      //继续计时
-      that.getInfo();
-      //获取当前时间戳  
-      // var timestamp = Date.parse(new Date());
-      // timestamp = timestamp / 1000;
-      // util.request(api.ContinueWorkTime,{id:that.data.info.id,continue_time:timestamp}).then(function(res){
-      //   console.log(res);
-      //   if(res.code){
-      //     that.getInfo();
-      //   }else{
-      //     Notify({ type: 'warning', message: res.msg });
-      //   }
-      // })
     }else if(type=='result'){
       data.show_result=false;
     }else if(type=='goods'){
@@ -268,12 +197,13 @@ Page({
   },
   async subStage(){
     var that = this;
+    if (that.data.button_stage) return;
     that.setData({
       button_stage:true
     })
     var images = [];
     var id = that.data.id;
-    const extJsonStr = {}
+    const extJsonStr = { ...this.workReportIdentity };
     if(!that.data.default_worker){
       Notify({ type: 'warning', message: '请选择工序负责人' });
       that.setData({
@@ -297,46 +227,33 @@ Page({
     extJsonStr['message'] = that.data.message
     extJsonStr['need_stage'] = that.data.need_stage
     extJsonStr['default_worker'] = that.data.default_worker
-    extJsonStr['system_worktime'] = that.data.system_worktime
-    if (that.data.picsList) {
-      for (let index = 0; index < that.data.picsList.length; index++) {
-        const pic = that.data.picsList[index];
-        const res = await util.uploadFile(pic.url)
-        if (res.code == 1) {
-          images.push('/'+res.data.key)
-        }else{
-          Notify({ type: 'warning', message: '上传文件失败' });
-          that.setData({
-            button_stage:false
-          })
-          return;
-        }
+    try {
+      for (const pic of that.data.picsList || []) {
+        const upload = await util.uploadFile(pic.url);
+        if (upload.code != 1) throw new Error('上传文件失败');
+        images.push('/' + upload.data.key);
       }
-    }
-      
-    extJsonStr['images'] = images;
-    util.request(api.WorkSubStep,extJsonStr).then(function(res){
-      if(res.code){
-        that.setData({
-          button_stage:false
-        })
-        Notify({ type: 'success', message: '操作成功' });
-        
-        that.setData({
-          show_stage:false,
-          default_worker:0,
-          choose_staff:'请选择',
-          picsList:[],
-          message:'',
-          use_time:'',
-          check_user:''
-        })
-        that.onLoad({id:id});
-      }else{
-        Notify({ type: 'warning', message: res.msg });
-      }
+      extJsonStr['images'] = images;
+      const res = await util.request(api.WorkSubStep, extJsonStr);
+      if (!res.code) throw new Error(res.msg || '工序提交失败，请重试');
+      Notify({ type: 'success', message: '操作成功' });
+      that.setData({
+        show_stage:false,
+        default_worker:0,
+        choose_staff:'请选择',
+        picsList:[],
+        message:'',
+        use_time:'',
+        check_user:''
+      });
+    } catch (error) {
+      Notify({ type: 'warning', message: error.message || '工序提交失败，请重试' });
+      return;
+    } finally {
+      that.setData({ button_stage: false });
       wx.hideLoading();
-    })
+    }
+    that.getInfo();
   },
   selectStageUser(e){
     var that = this;
@@ -367,10 +284,11 @@ Page({
   skipSteps(e){
     var that = this;
     const id = e.currentTarget.dataset.id;
+    const identity = this.workProcedureIdentity();
     Dialog.confirm({
       title: '跳过工序后此工序将立即结束，是否确认？',
     }).then(() => {
-      util.request(api.WorkSkip,{id:id}).then(function(res){
+      util.request(api.WorkSkip,{id, ...identity}).then(function(res){
         if(res.code){
           Notify({ type: 'success', message: '操作成功' });
           that.onLoad({id:id});
@@ -386,10 +304,11 @@ Page({
   acceptSteps(e){
     var that = this;
     var id = that.data.id;
+    const { procedure } = this.workProcedureIdentity();
     Dialog.confirm({
       title: '是否接单？',
     }).then(() => {
-      util.request(api.WorkAcceptSteps,{id:id}).then(function(res){
+      util.request(api.WorkAcceptSteps,{id, procedure}).then(function(res){
         if(res.code){
           Notify({ type: 'success', message: '接受工序成功' });
           that.onLoad({id:id});
@@ -404,6 +323,7 @@ Page({
   accept(e){
     var that = this;
     var id = that.data.id;
+    const { procedure } = this.workProcedureIdentity();
     if(!id){
       Notify({ type: 'warning', message: '上传文件失败' });
       return;
@@ -411,7 +331,7 @@ Page({
     Dialog.confirm({
       title: '接单后将会开始计算订单工时，是否确认？',
     }).then(() => {
-      util.request(api.WorkAccept,{id:id}).then(function(res){
+      util.request(api.WorkAccept,{id, procedure}).then(function(res){
         if(res.code){
           Notify({ type: 'success', message: '接单成功' });
           that.onLoad({id:id});
@@ -451,14 +371,6 @@ Page({
       }
     })
   },
-  onChangeCountDown(e){
-    if(e.detail.days){
-      e.detail.hours+=e.detail.days*24;
-    }
-    this.setData({
-      timeData: e.detail,
-    });
-  },
   subInStock(e){
     var that = this;
     var instock = JSON.stringify(that.data.instock_arr);
@@ -488,34 +400,6 @@ Page({
     this.setData({
       instock_arr:carts
     })
-  },
-  switchTimeButton(e){
-    console.log(e);
-    const data = e.currentTarget.dataset
-    var that = this;
-    //获取当前时间戳  
-    var timestamp = Date.parse(new Date());
-    timestamp = timestamp / 1000;
-    console.log(that.data.info);
-    if(data.type=='paused'){
-      util.request(api.PausedWorkTime,{id:that.data.info.id,paused_time:timestamp}).then(function(res){
-        console.log(res);
-        if(res.code){
-          that.getInfo();
-        }else{
-          Notify({ type: 'warning', message: res.msg });
-        }
-      })
-    }else{
-      util.request(api.ContinueWorkTime,{id:that.data.info.id,continue_time:timestamp}).then(function(res){
-        console.log(res);
-        if(res.code){
-          that.getInfo();
-        }else{
-          Notify({ type: 'warning', message: res.msg });
-        }
-      })
-    }
   },
   copyNo(e){
     wx.setClipboardData({

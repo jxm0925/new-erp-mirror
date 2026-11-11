@@ -60,6 +60,8 @@ module.exports = {
     ProductsInfo:API_BASE_URL + 'work/products/info',
     ProductsOrderAccept:API_BASE_URL + 'work/products/accept',
     ProductsSubStep:API_BASE_URL + 'work/products/subStep',
+    ProductsPausedWorkTime:API_BASE_URL + 'work/products/pausedTime',
+    ProductsContinueWorkTime:API_BASE_URL + 'work/products/continueTime',
     NewOrderInfo2:API_BASE_URL +'orders/info2',
 
     //积分商城

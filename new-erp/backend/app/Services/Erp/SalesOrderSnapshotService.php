@@ -30,7 +30,7 @@ class SalesOrderSnapshotService
             $payload['full_address'] = $enteredAddress ?: null;
             $payload['address'] = $enteredAddress ?: null;
         }
-        $customer = $this->resolveAndUpsertCustomer($payload);
+        $customer = $this->resolveAndUpsertCustomer($payload, $current);
         abort_if($customer->status === 'blacklisted', 422, '该客户已在黑名单，不能创建销售订单');
 
         $contact = $this->contact($customer, $payload['customer_contact_id'] ?? null);
@@ -68,7 +68,8 @@ class SalesOrderSnapshotService
             'name' => $customer->customer_name,
             'customer_kind' => $customer->customer_kind,
             'source_platform' => $customer->source_platform,
-            'platform_buyer_id' => $customer->platform_buyer_id,
+            // 本单买家ID记在订单快照里；客户主档不再被订单覆盖。
+            'platform_buyer_id' => trim((string) ($payload['platform_buyer_id'] ?? '')) ?: $customer->platform_buyer_id,
             'contact' => [
                 'id' => $contact?->id,
                 'name' => $contactName ?: null,
@@ -181,103 +182,21 @@ class SalesOrderSnapshotService
             $updates['payment_terms_snapshot'] = $updates['funding_policy_snapshot'];
         }
         if ($updates !== []) $order->update($updates);
+        // 无负责销售的客户在首个有效订单确认时自动归属该订单销售（用户确认的“谁先用归谁”）。
+        if ($order->customer_id) {
+            app(\App\Services\Erp\Crm\CrmCustomerApplicationService::class)
+                ->claimIfUnowned((int) $order->customer_id, $order->sales_user_legacy_id ? (int) $order->sales_user_legacy_id : null, '有效订单确认');
+        }
         return $order->fresh();
     }
 
     /**
-     * Resolve a selected master customer or create/update one from the order's
-     * platform identity. This is intentionally here, before snapshots are
-     * frozen, so master-data dedupe and order facts use the same identity.
+     * 客户识别统一交给 CRM 共用解析器：不覆盖客户主资料、买家ID冲突拒绝、不可见客户需协作。
+     * 编辑已有订单时原客户保持可用，避免可见范围调整后旧单无法保存。
      */
-    private function resolveAndUpsertCustomer(array &$payload): SalesCustomer
+    private function resolveAndUpsertCustomer(array &$payload, ?SalesOrder $current = null): SalesCustomer
     {
-        $requested = !empty($payload['customer_id'])
-            ? SalesCustomer::query()->where('status', '<>', 'disabled')->findOrFail($payload['customer_id'])
-            : null;
-        $kind = in_array($payload['customer_kind'] ?? null, ['enterprise', 'individual'], true)
-            ? $payload['customer_kind']
-            : ($requested?->customer_kind ?: 'individual');
-        $name = trim((string) ($payload['customer_name'] ?? $requested?->customer_name ?? ''));
-        abort_if($name === '', 422, '请选择客户或填写客户名称。');
-
-        $sourcePlatform = $this->sourcePlatform($payload) ?: $requested?->source_platform;
-        $buyerId = trim((string) ($payload['platform_buyer_id'] ?? '')) ?: $requested?->platform_buyer_id;
-        $identityKey = $this->platformIdentityKey($sourcePlatform, $buyerId);
-        $fullAddress = trim((string) ($payload['full_address'] ?? $payload['address'] ?? ''));
-        $nameKey = $this->dedupeKey($name);
-        $addressKey = $this->dedupeKey($fullAddress);
-        // A platform buyer id is stronger than a manually selected name: the
-        // same buyer can use aliases or virtual phone numbers on later orders.
-        $identityCustomer = $identityKey
-            ? SalesCustomer::query()->where('platform_identity_key', $identityKey)->first()
-            : null;
-        $customer = $identityCustomer ?: $requested ?: $this->findDuplicateCustomer($kind, $identityKey, $nameKey, $addressKey);
-        abort_if($customer?->status === 'blacklisted', 422, '该客户已在黑名单，不能创建销售订单。');
-
-        $contactName = trim((string) ($payload['contact_name'] ?? ''));
-        if ($contactName === '' && $kind === 'individual') $contactName = $name;
-        $contactPhone = trim((string) ($payload['contact_phone'] ?? $payload['customer_phone'] ?? '')) ?: null;
-        $master = array_filter([
-            'customer_name' => $name,
-            'customer_kind' => $kind,
-            'source_platform' => $sourcePlatform,
-            'platform_buyer_id' => $buyerId,
-            'platform_identity_key' => $identityKey,
-            'dedupe_name_key' => $nameKey,
-            'status' => 'enabled',
-        ], static fn ($value) => $value !== null && $value !== '');
-        if ($customer) {
-            $customer->update($master);
-        } else {
-            $customer = SalesCustomer::create([
-                'customer_code' => 'CUST-'.now()->format('YmdHis').'-'.random_int(100, 999),
-                ...$master,
-            ]);
-        }
-
-        if (empty($payload['customer_contact_id'])) {
-            $payload['customer_contact_id'] = $this->customerDetails->contact($customer, $contactName, $contactPhone)?->id;
-        }
-        if (empty($payload['customer_address_id'])) {
-            $payload['customer_address_id'] = $this->customerDetails->address($customer, $fullAddress, $contactName, $contactPhone, $addressKey)?->id;
-        }
-        $payload['customer_id'] = $customer->id;
-        return $customer->fresh();
-    }
-
-    private function findDuplicateCustomer(string $kind, ?string $identityKey, ?string $nameKey, ?string $addressKey): ?SalesCustomer
-    {
-        if ($kind === 'individual' && $identityKey) {
-            return SalesCustomer::query()->where('platform_identity_key', $identityKey)->first();
-        }
-        if ($kind === 'enterprise' && $nameKey) {
-            return SalesCustomer::query()->where('customer_kind', 'enterprise')->where('dedupe_name_key', $nameKey)->first();
-        }
-        if ($kind === 'individual' && $nameKey && $addressKey) {
-            return SalesCustomer::query()->where('customer_kind', 'individual')
-                ->where('dedupe_name_key', $nameKey)->where('dedupe_address_key', $addressKey)->first();
-        }
-        return null;
-    }
-
-    private function sourcePlatform(array $payload): ?string
-    {
-        $parts = array_filter([
-            trim((string) ($payload['platform'] ?? '')),
-            trim((string) ($payload['platform2'] ?? '')),
-        ]);
-        return $parts ? implode(':', $parts) : null;
-    }
-
-    private function dedupeKey(?string $value): ?string
-    {
-        $value = preg_replace('/[\s\p{P}\p{S}]+/u', '', mb_strtolower(trim((string) $value)));
-        return $value === '' ? null : mb_substr($value, 0, 191);
-    }
-
-    private function platformIdentityKey(?string $sourcePlatform, ?string $buyerId): ?string
-    {
-        return $sourcePlatform && $buyerId ? hash('sha256', $sourcePlatform."\0".$buyerId) : null;
+        return app(\App\Services\Erp\Crm\CrmOrderCustomerResolver::class)->resolve($payload, $current?->customer_id);
     }
 
     private function contact(SalesCustomer $customer, ?int $id): ?SalesCustomerContact

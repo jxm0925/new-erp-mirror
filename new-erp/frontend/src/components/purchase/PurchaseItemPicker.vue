@@ -7,6 +7,7 @@
     width="1100px"
     append-to-body
     :close-on-click-modal="false"
+    @close="$emit('close')"
   >
     <div class="picker-filters">
       <el-input
@@ -18,12 +19,12 @@
         @keyup.enter.native="search"
         @clear="search"
       />
-      <el-select v-model="query.management_scope" :disabled="!!extraParams.management_scope" size="small" placeholder="管理范围" @change="changeScope">
+      <el-select v-if="!requestPage" v-model="query.management_scope" :disabled="!!extraParams.management_scope" size="small" placeholder="管理范围" @change="changeScope">
         <el-option label="全部范围" value="" />
         <el-option label="工厂物料" value="factory" />
         <el-option label="办公用品" value="office" />
       </el-select>
-      <el-select v-model="query.item_type" size="small" clearable placeholder="物料类型" @change="search">
+      <el-select v-if="!requestPage" v-model="query.item_type" size="small" clearable placeholder="物料类型" @change="search">
         <el-option v-for="type in itemTypes" :key="type.value" :label="type.label" :value="type.value" />
       </el-select>
       <div class="filter-btns">
@@ -42,9 +43,10 @@
           全部分类
         </button>
         <el-tree
+          ref="categoryTree"
           :data="categoryTree"
           node-key="id"
-          :props="{label: 'category_name', children: 'children'}"
+          :props="{label: requestPage ? 'name' : 'category_name', children: 'children'}"
           :expand-on-click-node="false"
           default-expand-all
           highlight-current
@@ -81,35 +83,35 @@
               <el-radio v-else v-model="currentId" :label="row.id" @click.native.stop>&nbsp;</el-radio>
             </template>
           </el-table-column>
-          <el-table-column prop="item_code" label="物料编码" width="140" show-overflow-tooltip>
+          <el-table-column prop="item_code" label="物料编码" width="140" :show-overflow-tooltip="!requestPage">
             <template slot-scope="{row}">
               <span class="item-code-badge">{{ row.item_code }}</span>
             </template>
           </el-table-column>
-          <el-table-column prop="item_name" label="物料名称" min-width="180" show-overflow-tooltip>
+          <el-table-column prop="item_name" label="物料名称" min-width="180" :show-overflow-tooltip="!requestPage">
             <template slot-scope="{row}">
               <span class="item-name-text">{{ row.item_name }}</span>
               <span v-if="selectedById[row.id]" class="row-picked-badge">已选</span>
             </template>
           </el-table-column>
-          <el-table-column label="规格型号" min-width="140" show-overflow-tooltip>
+          <el-table-column label="规格型号" min-width="140" :show-overflow-tooltip="!requestPage">
             <template slot-scope="{row}">{{ specification(row) }}</template>
           </el-table-column>
-          <el-table-column label="物料类型" width="90" align="center">
+          <el-table-column v-if="!requestPage" label="物料类型" width="90" align="center">
             <template slot-scope="{row}">
               <el-tag size="mini" type="info">{{ itemTypeText(row.item_type) }}</el-tag>
             </template>
           </el-table-column>
-          <el-table-column label="管理范围" width="100" align="center">
+          <el-table-column v-if="!requestPage" label="管理范围" width="100" align="center">
             <template slot-scope="{row}">{{ scopeLabel(row.management_scope) }}</template>
           </el-table-column>
-          <el-table-column label="分类" width="120" show-overflow-tooltip>
+          <el-table-column v-if="!requestPage" label="分类" width="120" show-overflow-tooltip>
             <template slot-scope="{row}">{{ categoryName(row) }}</template>
           </el-table-column>
           <el-table-column label="单位" width="70" align="center">
             <template slot-scope="{row}">{{ unitName(row) }}</template>
           </el-table-column>
-          <el-table-column label="状态" width="70" align="center">
+          <el-table-column v-if="!requestPage" label="状态" width="70" align="center">
             <template slot-scope="{row}">
               <el-tag size="mini" type="success">{{ statusText(row.status) }}</el-tag>
             </template>
@@ -155,12 +157,13 @@
         @size-change="changeSize"
       />
       <div class="picker-actions">
+        <span v-if="requestPage && current" class="current-material">已选 {{ current.item_name }} / {{ specification(current) }}</span>
         <el-button size="small" @click="visible = false">取消</el-button>
         <el-button
           size="small"
           type="success"
           icon="el-icon-check"
-          :disabled="multiple ? !selectedRows.length : !current"
+          :disabled="(requestPage && loading) || (multiple ? !selectedRows.length : !current)"
           @click="confirm()"
         >
           {{ multiple ? `确定添加 (${selectedRows.length})` : '确定选择' }}
@@ -194,6 +197,7 @@ export default {
     dialogTitle: '选择采购物料',
     selectedById: {},
     categoryTree: [],
+    requestPage: null,
     extraParams: {},
     query: { keyword: '', item_type: '', category_id: null, management_scope: '', page: 1, per_page: 10 }
   }),
@@ -218,12 +222,13 @@ export default {
     }
   },
   methods: {
-    async open({ currentId = null, params = {}, multiple = false, selected = [], title = '选择采购物料' } = {}) {
+    async open({ currentId = null, params = {}, multiple = false, selected = [], title = '选择采购物料', requestPage = null } = {}) {
       const version = ++this.openVersion
       this.loadVersion += 1
       this.preferredId = currentId
       this.multiple = multiple
       this.dialogTitle = title
+      this.requestPage = requestPage
       // 原已选物料全部保留，不在这里静默剔除；不属于当前管理类型的会标红并在确定时提示移除。
       this.selectedById = Object.fromEntries((selected || []).filter(row => row && row.id).map(row => [row.id, row]))
       this.extraParams = { status: 'enabled', is_purchase_item: 1, ...params }
@@ -233,6 +238,7 @@ export default {
       this.categoryTree = []
       this.total = 0
       this.visible = true
+      if (this.requestPage) return this.load()
       await this.loadCategories()
       if (version !== this.openVersion || !this.visible) return
       await this.load()
@@ -264,6 +270,18 @@ export default {
       const version = ++this.loadVersion
       this.loading = true
       try {
+        if (this.requestPage) {
+          const { keyword, category_id, page, per_page } = this.query
+          const { data } = await this.requestPage({ keyword, category_id, page, per_page })
+          if (version !== this.loadVersion || !this.visible) return
+          this.rows = data.data || []
+          this.total = Number(data.total || 0)
+          this.categoryTree = data.categories || []
+          await this.$nextTick()
+          if (version === this.loadVersion && this.$refs.categoryTree) this.$refs.categoryTree.setCurrentKey(category_id)
+          if (version === this.loadVersion && !this.current) this.current = this.rows.find(row => Number(row.id) === Number(this.preferredId)) || null
+          return
+        }
         const params = { ...this.extraParams, ...this.query, management_scope: this.extraParams.management_scope || this.query.management_scope }
         if (!params.keyword) delete params.keyword
         if (!params.item_type) delete params.item_type
@@ -274,21 +292,26 @@ export default {
         this.total = Number(data.total || 0)
         this.current = this.rows.find(row => Number(row.id) === Number(this.preferredId)) || null
       } catch (error) {
-        if (version === this.loadVersion) this.$message.error(error.userMessage || '采购物料加载失败')
+        if (version === this.loadVersion && this.requestPage) {
+          this.rows = []
+          this.current = null
+          if (this.visible) this.$emit('page-error', error)
+        } else if (version === this.loadVersion) this.$message.error(error.userMessage || '采购物料加载失败')
       } finally {
         if (version === this.loadVersion) this.loading = false
       }
     },
-    search() { this.query.page = 1; this.preferredId = null; this.load() },
+    search() { this.query.page = 1; if (!this.requestPage) this.preferredId = null; this.load() },
     reset() {
       this.query = { keyword: '', item_type: '', category_id: null, management_scope: this.extraParams.management_scope || '', page: 1, per_page: this.query.per_page }
+      if (this.requestPage) return this.load()
       this.preferredId = null
       this.loadCategories()
       this.load()
     },
     changeSize() { this.query.page = 1; this.load() },
     selectCategory(row) {
-      if (row && !row.is_leaf && Array.isArray(row.children) && row.children.length) return
+      if (!this.requestPage && row && !row.is_leaf && Array.isArray(row.children) && row.children.length) return
       this.query.category_id = row ? row.id : null
       this.search()
     },
@@ -326,6 +349,7 @@ export default {
       return Boolean(scope && row && row.management_scope && !purchaseScopeMatches(row, scope))
     },
     confirm(row) {
+      if (this.requestPage && this.loading) return
       const invalid = this.selectedRows.filter(item => this.outOfScope(item))
       if (invalid.length) return this.$message.warning(`已选物料 ${invalid.map(item => item.item_name).join('、')} 不属于当前管理类型，请移除后再确定`)
       if ((row && this.outOfScope(row)) || (!this.multiple && this.current && this.outOfScope(this.current))) return this.$message.warning('只能选择当前管理类型的物料，请重新选择')
@@ -349,7 +373,7 @@ export default {
     categoryName(row) { return row.category?.category_name || row.category_name || '-' },
     unitName(row) {
       const unit = row.unit?.standard_unit || row.unit?.standardUnit || row.unit || row.inventory_unit
-      return unit?.symbol || unit?.unit_name || unit?.unit_code || '-'
+      return unit?.symbol || unit?.unit_name || unit?.unit_code || row.unit_name || '-'
     },
     itemTypeText(value) {
       return ({
@@ -590,7 +614,15 @@ export default {
 }
 .picker-actions {
   display: flex;
+  align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
+}
+.current-material {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: #334155;
+  font-size: 12px;
 }
 
 /* 主题绿按钮与样式穿透 */

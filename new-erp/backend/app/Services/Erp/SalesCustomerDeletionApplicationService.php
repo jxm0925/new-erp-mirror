@@ -22,6 +22,9 @@ class SalesCustomerDeletionApplicationService
             $references = [
                 ['erp_sales_orders', ['customer_id' => $customer->id]],
                 ['erp_sales_returns', ['customer_id' => $customer->id]],
+                ['erp_crm_leads', ['customer_id' => $customer->id]],
+                ['erp_crm_followups', ['customer_id' => $customer->id]],
+                ['erp_crm_duplicate_reviews', ['resolved_customer_id' => $customer->id]],
                 ['erp_skus', ['customer_id' => $customer->id]],
                 ['erp_items', ['customer_id' => $customer->id]],
                 ['erp_customization_records', ['customer_id' => $customer->id]],
@@ -29,9 +32,13 @@ class SalesCustomerDeletionApplicationService
                 ['erp_finance_allocations', ['party_type' => 'customer', 'party_id' => $customer->id]],
                 ['erp_finance_invoices', ['party_type' => 'customer', 'party_id' => $customer->id]],
             ];
+            // 已确认的平台身份是客户唯一识别依据，删客户会让后续咨询无法关联，必须先停用身份。
+            if (DB::table('erp_crm_customer_identities')->where('customer_id', $customer->id)->where('status', 'confirmed')->exists()) {
+                throw ValidationException::withMessages(['customer' => '该客户已绑定平台身份，不能删除；请保持停用或先停用平台身份。']);
+            }
             foreach ($references as [$table, $where]) {
                 if (DB::table($table)->where($where)->exists()) {
-                    throw ValidationException::withMessages(['customer' => '该客户已被订单、定制资料或财务事实引用，不能删除；请保持停用。']);
+                    throw ValidationException::withMessages(['customer' => '该客户已有线索、跟进、核实结果、订单、定制资料或财务记录，不能删除；请保持停用。']);
                 }
             }
 

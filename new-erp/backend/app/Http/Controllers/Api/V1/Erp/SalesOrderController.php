@@ -904,6 +904,27 @@ class SalesOrderController extends Controller
         return response()->json($preview);
     }
 
+    public function productionBomMaterials(Request $request, int $id, \App\Services\Erp\SalesProductionBomService $service)
+    {
+        $this->abortUnlessPermission($request, 'sales_order.production_confirm');
+        $order = SalesOrder::findOrFail($id);
+        $this->abortUnlessOrderVisible($request, $order);
+        $order->assertCurrentBusiness();
+        abort_unless($order->order_status === 'confirmed' && in_array($order->production_confirm_status, ['pending', 'blocked'], true),
+            422, '当前订单不可调整本单生产 BOM。');
+        $input = $request->validate([
+            'sales_order_line_id' => 'required|integer|min:1',
+            'bom_revision' => 'required|string|regex:/^[a-f0-9]{64}$/',
+            'position_key' => 'required|string|max:512',
+            'keyword' => 'nullable|string|max:160',
+            'category_id' => 'nullable|integer|min:1',
+            'page' => 'nullable|integer|min:1',
+            'per_page' => 'nullable|integer|min:1|max:100',
+        ]);
+        $line = $order->lines()->with('item')->findOrFail($input['sales_order_line_id']);
+        return response()->json($service->candidates($line, $input));
+    }
+
     public function lockInventory(Request $request, int $id, SalesOrderInventoryLockService $service)
     {
         $this->abortUnlessPermission($request, 'sales_order.inventory_lock');
@@ -946,6 +967,12 @@ class SalesOrderController extends Controller
             'lines.*.no_delivery_qty' => 'required|numeric|min:0',
             'lines.*.service_completed' => 'sometimes|boolean',
             'lines.*.undetermined_qty' => 'prohibited',
+            'lines.*.bom_revision' => 'nullable|string|regex:/^[a-f0-9]{64}$/',
+            'lines.*.bom_adjustment_reason' => 'nullable|string|max:500',
+            'lines.*.bom_replacements' => 'sometimes|array|max:100',
+            'lines.*.bom_replacements.*' => 'required|array:position_key,replacement_item_id',
+            'lines.*.bom_replacements.*.position_key' => 'required|string|max:512',
+            'lines.*.bom_replacements.*.replacement_item_id' => 'required|integer|min:1',
             'remark' => 'nullable|string',
             'adjustment_reason' => 'nullable|string|max:500',
         ]);
@@ -1412,92 +1439,11 @@ class SalesOrderController extends Controller
         return $payload;
     }
 
+    /** 旧接口与草稿链共用 CRM 客户解析规则，避免两套查重与覆盖逻辑。 */
     private function resolveCustomerFromOrder(array &$payload): void
     {
-        $customerName = trim((string) ($payload['customer_name'] ?? ''));
-        if ($customerName === '') return;
-
-        $kind = in_array($payload['customer_kind'] ?? null, ['enterprise', 'individual'], true)
-            ? $payload['customer_kind']
-            : 'individual';
-        $sourcePlatform = $this->customerSourcePlatform($payload);
-        $buyerId = trim((string) ($payload['platform_buyer_id'] ?? '')) ?: null;
-        $platformIdentityKey = $this->customerPlatformIdentityKey($sourcePlatform, $buyerId);
-        $nameKey = $this->customerDedupeKey($customerName);
-        $address = trim((string) ($payload['full_address'] ?? ''));
-        $addressKey = $this->customerDedupeKey($address);
-
-        $customer = !empty($payload['customer_id'])
-            ? SalesCustomer::findOrFail($payload['customer_id'])
-            : $this->findDuplicateCustomer($kind, $platformIdentityKey, $nameKey, $addressKey);
-        if ($customer && $kind === 'individual' && $platformIdentityKey) {
-            $matchedByBuyerId = SalesCustomer::where('platform_identity_key', $platformIdentityKey)->first();
-            if ($matchedByBuyerId) $customer = $matchedByBuyerId;
-        }
-        abort_if($customer?->status === 'blacklisted', 422, '该客户已在黑名单，不能新增销售订单');
-
-        $contactName = trim((string) ($payload['contact_name'] ?? data_get($payload, 'customer_snapshot.contact_name') ?? ''));
-        if ($contactName === '' && $kind === 'individual') $contactName = $customerName;
-        $contactPhone = trim((string) ($payload['customer_phone'] ?? $payload['contact_phone'] ?? '')) ?: null;
-        $masterData = array_filter([
-            'customer_name' => $customerName,
-            'customer_kind' => $kind,
-            'dedupe_name_key' => $nameKey,
-            'source_platform' => $sourcePlatform,
-            'platform_buyer_id' => $buyerId,
-            'platform_identity_key' => $platformIdentityKey,
-            'status' => 'enabled',
-        ], fn ($value) => $value !== null && $value !== '');
-
-        if ($customer) {
-            $customer->update($masterData);
-        } else {
-            $customer = SalesCustomer::create([
-                'customer_code' => 'CUST-'.now()->format('YmdHis').'-'.random_int(100, 999),
-                ...$masterData,
-            ]);
-        }
-
-        $details = app(SalesCustomerOrderDetailsService::class);
-        if (empty($payload['customer_contact_id'])) {
-            $payload['customer_contact_id'] = $details->contact($customer, $contactName, $contactPhone)?->id;
-        }
-        if (empty($payload['customer_address_id'])) {
-            $payload['customer_address_id'] = $details->address($customer, $address, $contactName, $contactPhone, $addressKey)?->id;
-        }
-        $payload['customer_id'] = $customer->id;
-    }
-
-    private function findDuplicateCustomer(string $kind, ?string $platformIdentityKey, ?string $nameKey, ?string $addressKey): ?SalesCustomer
-    {
-        if ($kind === 'individual' && $platformIdentityKey) {
-            return SalesCustomer::where('platform_identity_key', $platformIdentityKey)->first();
-        }
-        if ($kind === 'enterprise' && $nameKey) {
-            return SalesCustomer::where('dedupe_name_key', $nameKey)->first();
-        }
-        if ($kind === 'individual' && $nameKey && $addressKey) {
-            return SalesCustomer::where('customer_kind', 'individual')
-                ->where('dedupe_name_key', $nameKey)->where('dedupe_address_key', $addressKey)->first();
-        }
-        return null;
-    }
-
-    private function customerSourcePlatform(array $payload): ?string
-    {
-        $parts = array_filter([trim((string) ($payload['platform'] ?? '')), trim((string) ($payload['platform2'] ?? ''))]);
-        return $parts ? implode(':', $parts) : null;
-    }
-
-    private function customerDedupeKey(?string $value): ?string
-    {
-        $value = preg_replace('/[\s\p{P}\p{S}]+/u', '', mb_strtolower(trim((string) $value)));
-        return $value === '' ? null : mb_substr($value, 0, 191);
-    }
-
-    private function customerPlatformIdentityKey(?string $sourcePlatform, ?string $buyerId): ?string
-    {
-        return $sourcePlatform && $buyerId ? hash('sha256', $sourcePlatform."\0".$buyerId) : null;
+        if (trim((string) ($payload['customer_name'] ?? '')) === '' && empty($payload['customer_id'])) return;
+        app(\App\Services\Erp\Crm\CrmOrderCustomerResolver::class)->resolve($payload);
     }
 
     private function lockCustomerSnapshots(array &$payload): void

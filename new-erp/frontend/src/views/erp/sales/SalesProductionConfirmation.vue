@@ -58,7 +58,7 @@
         type="warning"
         :closable="false"
         show-icon
-        title="系统提示：上次确认结果尚未接收完成。请点击“重试原确认”，系统将按幂等性识别同一次操作；核实前暂不能修改分配数量。"
+        title="上次确认结果待核实。请点击“重试原确认”。核实前，分配数量及本单BOM均为只读。"
       />
 
       <!-- 双栏布局 -->
@@ -118,8 +118,8 @@
                     <span v-else class="chip chip-muted">无独立发货包装</span>
                   </div>
                   <div class="route-flow readiness-flow">
-                    <span v-if="row.production_qty > 0" :class="['chip', row.bom_summary ? 'chip-ready' : 'chip-missing']">
-                      {{ row.bom_summary ? `BOM V${row.bom_summary.version} ✓` : '缺少 BOM' }}
+                    <span v-if="row.production_qty > 0" :class="['chip', bomReadiness(row).ready ? 'chip-ready' : 'chip-missing']">
+                      {{ bomReadiness(row).text }}
                     </span>
                     <span v-if="row.routing_summary" class="chip chip-ready">
                       {{ row.routing_summary.routing_name }} V{{ row.routing_summary.version }} ✓
@@ -224,7 +224,37 @@
                 <div v-if="lineAdjusted(row)" class="text-warning small adjusted-tip">
                   已偏离系统推荐方案，提交须注明原因
                 </div>
+                <div v-if="bomInputProblem(row)" class="text-danger small">{{ bomInputProblem(row) }}</div>
               </div>
+
+              <production-confirmation-bom
+                v-if="!row.plan_locked && !confirmed && (row.bom_detail || bomConflict(row))"
+                key="current-bom"
+                :bom="pending && bomConflict(row) ? null : row.bom_detail"
+                :draft="displayBomDraft(row)"
+                :quantity="productionBaseQty(row)"
+                :production-base-qty="productionBaseQty(row)"
+                :unit="row.base_unit || row.sales_unit || ''"
+                :base-unit="row.base_unit || ''"
+                :editable="bomEditable(row)"
+                :conflict="bomConflict(row)"
+                :pending="!!pending"
+                @choose="chooseBomMaterial(row, $event)"
+                @undo="undoBomReplacement(row, $event)"
+                @reset="resetBomDraft(row)"
+                @update-reason="updateBomReason(row, $event)"
+              />
+              <production-confirmation-bom
+                v-for="batch in row.confirmed_production_batches || []"
+                :key="'bom-batch-' + batch.fulfillment_id"
+                :bom="batch.bom_detail"
+                :batch="batch"
+                :quantity="Number(batch.production_base_qty ?? batch.production_qty ?? 0)"
+                :production-base-qty="Number(batch.production_base_qty || 0)"
+                :unit="batch.base_unit || batch.sales_unit || ''"
+                :base-unit="batch.base_unit || ''"
+                historical
+              />
             </div>
 
             <!-- 调整原因表单 -->
@@ -310,18 +340,27 @@
 
       <el-empty v-if="!order && !loading" description="未找到订单生产确认数据" />
     </div>
+    <purchase-item-picker
+      ref="bomPicker"
+      @select="applyBomMaterial"
+      @page-error="bomPickerError"
+      @close="bomTarget = null"
+    />
   </div>
 </template>
 
 <script>
 import { erpDateTime } from '../../../utils/dateTime'
 import cachedPageRoute from '@/utils/cachedPageRoute'
-import { confirmProduction, getProductionPreview } from '@/api/erp/sales'
+import { confirmProduction, getProductionPreview, getProductionBomMaterials } from '@/api/erp/sales'
+import ProductionConfirmationBom from '@/components/sales/ProductionConfirmationBom.vue'
+import PurchaseItemPicker from '@/components/purchase/PurchaseItemPicker.vue'
 import { confirmationAllocationSum, currentConfirmationSuggestion, confirmationIsAdjusted, buildSalesProductionConfirmation } from '../../../utils/sales-production-confirmation.mjs'
 
 export default {
   mixins: [cachedPageRoute],
   name: 'SalesProductionConfirmation',
+  components: { ProductionConfirmationBom, PurchaseItemPicker },
   data: () => ({
     loading: false,
     submitting: false,
@@ -331,6 +370,8 @@ export default {
     adjustmentReason: '',
     pending: null,
     storageKey: '',
+    bomDraftKey: '',
+    bomTarget: null,
     loadSequence: 0
   }),
   computed: {
@@ -341,7 +382,7 @@ export default {
       return this.lines.some(row => this.lineBlocked(row))
     },
     canSubmit () {
-      return this.$can('sales_order.production_confirm') && !this.loading && (!!this.pending || (this.editable && !this.blocked && this.lines.length > 0 && this.lines.some(row => Number(row.confirm_qty || 0) > 0) && this.lines.every(row => this.allocationValid(row)) && (!this.hasManualAdjustment || !!this.adjustmentReason)))
+      return this.$can('sales_order.production_confirm') && !this.loading && (!!this.pending || (this.editable && !this.blocked && this.lines.length > 0 && this.lines.some(row => Number(row.confirm_qty || 0) > 0) && this.lines.every(row => this.allocationValid(row) && !this.bomInputProblem(row)) && (!this.hasManualAdjustment || !!this.adjustmentReason)))
     },
     hasManualAdjustment () {
       return this.lines.some(row => this.lineAdjusted(row))
@@ -389,12 +430,13 @@ export default {
         if (this.lineBlocked(row)) list.push({ block: true, title: `第 ${row.line_no} 行：${this.blockingReason(row)}`, text: '请核准分配数量后再行提交' })
         if (!this.isPhysical(row)) return
         if (!row.routing_summary) list.push({ title: `${row.product_name || row.item_name}未配置工艺路线`, text: row.production_qty > 0 ? '工单将保持计划状态，待工艺路线维护完毕后由生产主管下达' : '仅作前置提醒，不影响当前备货确认' })
-        if (row.production_qty > 0 && !row.bom_summary) list.push({ title: `${row.product_name || row.item_name}缺失有效 BOM`, text: '工单将保持计划状态，待标准BOM补充后由生产主管下达' })
+        if (!row.plan_locked && row.production_qty > 0 && !row.bom_summary) list.push({ title: `${row.product_name || row.item_name}缺失有效 BOM`, text: row.bom_block_reason || '工单将保持计划状态，待标准BOM补充后由生产主管下达' })
       })
       return list
     }
   },
   created () { this.load() },
+  deactivated () { this.closeBomPicker() },
   watch: {
     'pageRoute.params.id' () { this.load() }
   },
@@ -406,14 +448,30 @@ export default {
     async load (notify = false) {
       const sequence = ++this.loadSequence
       const orderId = this.pageRoute.params.id
+      this.closeBomPicker()
+      const drafts = Object.fromEntries(this.lines.filter(row => row.bom_draft).map(row => [row.sales_order_line_id, row.bom_draft]))
       if (Number(this.order?.id) !== Number(orderId)) {
-        this.order = null; this.lines = []; this.preview = {}; this.pending = null; this.storageKey = ''
+        this.order = null; this.lines = []; this.preview = {}; this.pending = null; this.storageKey = ''; this.bomDraftKey = ''
       }
       this.loading = true
       try {
         const { data } = await getProductionPreview(orderId)
         if (sequence !== this.loadSequence) return
         this.preview = data || {}; this.order = data.order || null
+        let actor = 0
+        try { actor = JSON.parse(localStorage.getItem('erp_user') || '{}').legacy_id || 0 } catch (_) { /* Unavailable local profile. */ }
+        const storageKey = `erp_pending_sales_production_${actor}_${orderId}`
+        const draftKey = `erp_sales_production_bom_draft_${actor}_${orderId}`
+        let storedDrafts = {}
+        try { storedDrafts = JSON.parse(localStorage.getItem(draftKey) || '{}') || {} } catch (_) { /* Unavailable draft storage. */ }
+        const availableDrafts = this.bomDraftKey === draftKey ? { ...storedDrafts, ...drafts } : storedDrafts
+        this.storageKey = storageKey
+        this.bomDraftKey = draftKey
+        try { this.pending = JSON.parse(localStorage.getItem(storageKey) || 'null') } catch (_) { this.pending = null }
+        // 原请求可能已经成功，只在相同订单版本上还原待核实数量，防止覆盖后续批次。
+        const pendingLines = Number(this.pending?.expected_version) === Number(this.order?.business_version)
+          ? Object.fromEntries((this.pending?.lines || []).map(row => [row.sales_order_line_id, row]))
+          : {}
         this.lines = (data.lines || []).map(row => ({
           ...row,
           inventory_qty: Number(row.inventory_qty || 0),
@@ -428,13 +486,11 @@ export default {
           system_suggested_inventory_qty: Number(row.system_suggested_inventory_qty || 0),
           system_suggested_production_qty: Number(row.system_suggested_production_qty || 0),
           system_suggested_purchase_qty: Number(row.system_suggested_purchase_qty || 0),
-          service_completed: row.service_completed !== false
+          service_completed: row.service_completed !== false,
+          ...pendingLines[row.sales_order_line_id],
+          bom_draft: row.plan_locked ? null : availableDrafts[row.sales_order_line_id] || null
         }))
-        let actor = 0
-        try { actor = JSON.parse(localStorage.getItem('erp_user') || '{}').legacy_id || 0 } catch (_) { /* Unavailable local profile. */ }
-        this.storageKey = `erp_pending_sales_production_${actor}_${orderId}`
-        try { this.pending = JSON.parse(localStorage.getItem(this.storageKey) || 'null') } catch (_) { this.pending = null }
-        this.adjustmentReason = ''
+        this.adjustmentReason = this.pending?.adjustment_reason || ''
         if (notify) this.$message.success('已按当前真实可用库存重新计算备货方案')
       } catch (error) {
         if (sequence === this.loadSequence) this.$message.error(error.userMessage || '订单生产确认数据加载失败')
@@ -443,6 +499,130 @@ export default {
       }
     },
     recalculate () { return this.load(true) },
+    productionBaseQty (row) {
+      return Number((Number(row.production_qty || 0) * Number(row.fulfillment_factor || 0)).toFixed(8))
+    },
+    bomReadiness (row) {
+      if (row.plan_locked) {
+        const recorded = (row.confirmed_production_batches || []).filter(batch => batch.demand_status !== 'superseded')
+        const ready = recorded.length > 0 && recorded.every(batch => batch.bom_detail)
+        return { ready, text: ready ? '本批BOM已冻结 ✓' : '未记录本批BOM' }
+      }
+      return { ready: !!row.bom_summary, text: row.bom_summary ? `BOM V${row.bom_summary.version} ✓` : '缺少 BOM' }
+    },
+    bomEditable (row) {
+      return !!this.editable && !this.loading && !this.submitting && !row.plan_locked
+    },
+    confirmedBatchKey (row) {
+      const batchIds = (row.confirmed_production_batches || []).map(batch => batch.fulfillment_id).sort()
+      return JSON.stringify([row.confirmed_allocated_qty, ...batchIds])
+    },
+    pendingBomLine (row) {
+      return this.pending?.lines.find(line => Number(line.sales_order_line_id) === Number(row.sales_order_line_id) && line.bom_replacements?.length)
+    },
+    bomConflict (row) {
+      if (this.pending) {
+        const line = this.pendingBomLine(row)
+        if (line && (line.bom_revision !== row.bom_detail?.revision || Number(this.pending.expected_version) !== Number(this.order?.business_version))) {
+          const items = Object.values(this.pendingBomDraft(row, line).replacements)
+          const names = items.map(item => item.item_name).join('、')
+          return `待核实的原确认替换物料：${names}。调整原因：${line.bom_adjustment_reason}`
+        }
+        return ''
+      }
+      const draft = row.bom_draft
+      if (!draft || row.plan_locked) return ''
+      if (draft.revision !== row.bom_detail?.revision || draft.batchKey !== this.confirmedBatchKey(row)
+        || Object.keys(draft.replacements).some(key => !row.bom_detail.items.some(item => item.position_key === key && item.can_replace))) {
+        const names = Object.values(draft.replacements).map(item => item.item_name).join('、')
+        return `标准BOM或本次生产批次已变化，请重新核对。原替换物料为${names}，调整原因为${draft.reason || '未填写'}。`
+      }
+      return ''
+    },
+    pendingBomDraft (row, line) {
+      return {
+        reason: line.bom_adjustment_reason,
+        replacements: Object.fromEntries(line.bom_replacements.map(({ position_key, replacement_item_id }) => {
+          const saved = row.bom_draft?.replacements[position_key]
+          const item = row.bom_draft?.revision === line.bom_revision && Number(saved?.id) === Number(replacement_item_id)
+            ? saved : { id: replacement_item_id, item_name: `物料编号 ${replacement_item_id}` }
+          return [position_key, item]
+        }))
+      }
+    },
+    displayBomDraft (row) {
+      if (this.bomConflict(row)) return null
+      if (!this.pending) return row.bom_draft
+      const line = this.pendingBomLine(row)
+      return line ? this.pendingBomDraft(row, line) : null
+    },
+    bomInputProblem (row) {
+      if (this.pending || row.plan_locked || !row.bom_draft) return ''
+      if (this.bomConflict(row)) return '请先重新核对本单BOM'
+      if (row.production_qty <= 0) return '本次生产量为 0，请撤销替换或调整生产数量'
+      if (!row.bom_draft.reason.trim()) return '请填写本单BOM调整原因'
+      return ''
+    },
+    saveBomDrafts () {
+      const drafts = Object.fromEntries(this.lines.filter(row => row.bom_draft).map(row => [row.sales_order_line_id, row.bom_draft]))
+      try {
+        if (Object.keys(drafts).length) localStorage.setItem(this.bomDraftKey, JSON.stringify(drafts))
+        else localStorage.removeItem(this.bomDraftKey)
+      } catch (_) { /* Keep the in-page draft when browser storage is unavailable. */ }
+    },
+    closeBomPicker () {
+      this.bomTarget = null
+      if (this.$refs.bomPicker) this.$refs.bomPicker.visible = false
+    },
+    chooseBomMaterial (row, positionKey) {
+      if (!this.bomEditable(row) || row.production_qty <= 0 || this.bomConflict(row)) return
+      const item = row.bom_detail?.items.find(item => item.position_key === positionKey && item.can_replace)
+      if (!item) return
+      const target = this.bomTarget = { row, positionKey, revision: row.bom_detail.revision }
+      const orderId = this.order.id
+      this.$refs.bomPicker.open({
+        title: `选择替换物料 · ${item.component_item_name}`,
+        currentId: row.bom_draft?.replacements[positionKey]?.id,
+        requestPage: params => getProductionBomMaterials(orderId, {
+          ...params, sales_order_line_id: row.sales_order_line_id, bom_revision: target.revision, position_key: positionKey
+        })
+      })
+    },
+    applyBomMaterial (item) {
+      const target = this.bomTarget
+      if (!target || !this.isPageRouteActive || !this.lines.includes(target.row)) return
+      const { row, positionKey, revision } = target
+      if (!this.bomEditable(row) || row.production_qty <= 0 || row.bom_detail?.revision !== revision || this.bomConflict(row)) return
+      const previous = row.bom_draft
+      row.bom_draft = {
+        revision,
+        batchKey: this.confirmedBatchKey(row),
+        replacements: { ...previous?.replacements, [positionKey]: item },
+        reason: previous?.reason || ''
+      }
+      this.saveBomDrafts()
+    },
+    bomPickerError (error) {
+      if (!this.bomTarget) return
+      this.$message.error(error.userMessage || '替换物料加载失败')
+      if (error.errorCode === 'bom_revision_conflict') this.load()
+    },
+    undoBomReplacement (row, positionKey) {
+      if (!this.bomEditable(row) || !row.bom_draft || this.bomConflict(row)) return
+      this.$delete(row.bom_draft.replacements, positionKey)
+      if (!Object.keys(row.bom_draft.replacements).length) row.bom_draft = null
+      this.saveBomDrafts()
+    },
+    resetBomDraft (row) {
+      if (!this.bomEditable(row)) return
+      row.bom_draft = null
+      this.saveBomDrafts()
+    },
+    updateBomReason (row, value) {
+      if (!this.bomEditable(row) || !row.bom_draft || this.bomConflict(row)) return
+      row.bom_draft.reason = value
+      this.saveBomDrafts()
+    },
     openWorkOrder (wo) {
       if (this.$can('production.work_order.view')) this.$router.push(`/production/work-orders/${wo.id}`)
     },
@@ -472,7 +652,7 @@ export default {
     },
     money (value) { return '¥' + Number(value || 0).toLocaleString('zh-CN', { maximumFractionDigits: 2 }) },
     validateAll (notify) {
-      const valid = this.lines.every(row => this.allocationValid(row)) && !this.blocked && (!this.hasManualAdjustment || !!this.adjustmentReason)
+      const valid = this.lines.every(row => this.allocationValid(row) && !this.bomInputProblem(row)) && !this.blocked && (!this.hasManualAdjustment || !!this.adjustmentReason)
       if (notify) this.$message[valid ? 'success' : 'warning'](valid ? '检查通过，可以提交确认' : (this.hasManualAdjustment && !this.adjustmentReason ? '手工修改系统建议后必须填写调整原因' : '存在分配数量不一致或库存不足的订单行'))
       return valid
     },
@@ -481,16 +661,17 @@ export default {
         || Number(this.pageRoute.params.id) !== Number(this.order.id)) return
       const orderId = this.order.id
       const storageKey = this.storageKey
+      const draftKey = this.bomDraftKey
       const contextSequence = this.loadSequence
       this.submitting = true
       try {
         let payload = this.pending
         if (!payload) {
-          if (!this.validateAll(false)) return this.$message.warning('请先完成全部订单行的备货数量配置和资料检查')
+          if (!this.canSubmit || !this.validateAll(false)) return this.$message.warning('请先完成全部订单行的备货数量配置和资料检查')
           payload = buildSalesProductionConfirmation(this.order, this.lines, this.adjustmentReason,
             `sales-production-${orderId}-${Date.now()}-${Math.random().toString(36).slice(2, 12)}`)
           await this.$confirm(
-            this.summary.production ? `提交后将自动生成 ${this.summary.production} 张生产工单并下达车间，确认提交？` : '确认保存当前销售订单的备货分配方案？',
+            this.summary.production ? `提交后将${payload.lines.some(line => line.bom_replacements?.length) ? '按本单BOM' : '自动'}生成 ${this.summary.production} 张生产工单并下达车间，确认提交？` : '确认保存当前销售订单的备货分配方案？',
             '提交生产备货确认',
             { type: 'warning', confirmButtonText: '确认提交', cancelButtonText: '取消' }
           )
@@ -500,8 +681,9 @@ export default {
         }
         await confirmProduction(orderId, payload)
         localStorage.removeItem(storageKey)
+        localStorage.removeItem(draftKey)
         if (Number(this.pageRoute.params.id) === Number(orderId)) {
-          this.pending = null
+          this.lines.forEach(row => { row.bom_draft = null })
           this.$message.success('订单生产确认已成功提交')
           await this.load()
         }

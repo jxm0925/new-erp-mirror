@@ -54,6 +54,13 @@ Page({
         icon: '/static/images/needs.png',
         vanIcon: 'contact',
         name: '客户需求单'
+      },
+      {
+        key: 'legacy_stock',
+        url: '/pages/stock/stockin/stockin',
+        icon: '/static/images/outin.png',
+        vanIcon: '/static/images/outin.png',
+        name: '旧出入库'
       }
     ]
   },

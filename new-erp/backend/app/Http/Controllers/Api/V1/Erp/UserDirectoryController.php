@@ -35,6 +35,7 @@ class UserDirectoryController extends Controller
         $selected = $request->validate(['ids' => 'nullable|array|max:1000', 'ids.*' => 'required|integer|min:1|distinct']);
         $result = $service->users([
             'scope' => $scope,
+            'admin_list' => $scope === 'system',
             'capability' => $scope === 'production' && in_array($request->input('capability'), ['collaborate', 'execute'], true) ? $request->input('capability') : null,
             'status' => $request->input('status', 'normal'),
             'department_name' => $request->input('department_name'),

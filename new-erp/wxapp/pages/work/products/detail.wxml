@@ -21,19 +21,17 @@
                             <van-row>
                                 <van-col span="5" class="col-class">状态</van-col>
                                 <van-col span="5" class="col-class">{{info.status_text}}</van-col>
-                                <view wx:if="{{time_count_down}}">
+                                <view wx:if="{{timerStatus}}">
                                     <van-col span="9" class="col-class">
-                                        <van-count-down auto-start="{{false}}" class="control-count-down" use-slot millisecond time="{{ time_count_down }}" format="HH:mm:ss" bind:change="onChangeCountDown">
-                                            <span class="item">{{ timeData.hours }}</span>
-                                            <span class="color">:</span>
-                                            <span class="item">{{ timeData.minutes }}</span>
-                                            <span class="color">:</span>
-                                            <span class="item">{{ timeData.seconds }}</span>
-                                        </van-count-down>
+                                        <text class="item" style="width:auto;min-width:22px;">{{timerClock.hours}}</text>
+                                        <text class="color">:</text>
+                                        <text class="item">{{timerClock.minutes}}</text>
+                                        <text class="color">:</text>
+                                        <text class="item">{{timerClock.seconds}}</text>
                                     </van-col>
-                                    <van-col span="2" class="col-class" >
-                                        <van-button type="danger" wx:if="{{count_down_status==2 || count_down_status==3}}" size="mini" data-id="{{info.id}}" data-type="paused" bind:tap="switchTimeButton">暂停</van-button>
-                                        <van-button type="primary" wx:if="{{count_down_status==1}}" size="mini" data-id="{{info.id}}" data-type="continue" bind:tap="switchTimeButton">继续</van-button>
+                                    <van-col wx:if="{{timerCanControl}}" span="2" class="col-class">
+                                        <van-button type="danger" wx:if="{{timerStatus==2}}" size="mini" disabled="{{timerBusy}}" data-type="paused" bind:tap="switchTimeButton">暂停</van-button>
+                                        <van-button type="primary" wx:if="{{timerStatus==1}}" size="mini" disabled="{{timerBusy}}" data-type="continue" bind:tap="switchTimeButton">继续</van-button>
                                     </van-col>
                                 </view>
                             </van-row>

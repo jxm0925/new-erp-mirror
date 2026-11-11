@@ -5,171 +5,189 @@ namespace App\Http\Controllers\Api\V1\Erp;
 use App\Http\Controllers\Controller;
 use App\Models\Erp\SalesCustomer;
 use App\Models\Erp\SalesCustomerAddress;
-use App\Models\Erp\SalesCustomerContact;
+use App\Models\Erp\CrmLead;
 use App\Services\Erp\AuthContextService;
+use App\Services\Erp\Crm\CrmCustomerAccessService;
+use App\Services\Erp\Crm\CrmCustomerApplicationService;
+use App\Services\Erp\Crm\CrmLeadApplicationService;
 use App\Services\Erp\CustomerRegionService;
-use App\Services\Erp\DocumentNumberService;
 use App\Services\Erp\SalesCustomerDeletionApplicationService;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 
+/**
+ * 客户中心：列表、汇总、负责人选项、详情和增改删全部按 CrmCustomerAccessService 的同一可见范围。
+ * picker=1 时搜索全公司：可见客户正常返回，不可见客户只返回脱敏信息且不可选（用于选择客户/查重）。
+ */
 class SalesCustomerController extends Controller
 {
+    public function __construct(private readonly CrmCustomerAccessService $access) {}
+
     public function regions(Request $request, CustomerRegionService $regions)
     {
-        $this->authorize($request, 'sales.customer');
+        $user = app(AuthContextService::class)->currentUser($request);
+        abort_unless($user, 401, '未登录');
+        abort_unless($this->access->can($user, 'sales.customer') || $this->access->can($user, 'sales.customer.view') || $this->access->can($user, 'crm.lead.view'), 403, '无地区选择权限。');
         $data = $request->validate(['parent_id' => 'required|integer|min:0']);
         return response()->json($regions->children((int) $data['parent_id']));
     }
 
     public function regionPath(Request $request, int $id, CustomerRegionService $regions)
     {
-        $this->authorize($request, 'sales.customer');
+        $user = app(AuthContextService::class)->currentUser($request);
+        abort_unless($user, 401, '未登录');
+        abort_unless($this->access->can($user, 'sales.customer') || $this->access->can($user, 'sales.customer.view') || $this->access->can($user, 'crm.lead.view'), 403, '无地区选择权限。');
         return response()->json($regions->path($id));
     }
 
     public function index(Request $request)
     {
-        $this->authorize($request, 'sales.customer');
-        $selected = $request->validate(['ids' => 'nullable|array|max:1000', 'ids.*' => 'required|integer|min:1|distinct']);
+        $user = $this->user($request, 'sales.customer');
+        $filters = $request->validate([
+            'ids' => 'nullable|array|max:1000', 'ids.*' => 'required|integer|min:1|distinct',
+            'tab' => 'nullable|in:mine,collab,all', 'picker' => 'nullable|boolean',
+            'keyword' => 'nullable|string|max:160', 'status' => 'nullable|string|max:30', 'phone' => 'nullable|string|max:80',
+            'customer_kind' => 'nullable|in:enterprise,individual', 'industry' => 'nullable|string|max:80', 'customer_grade' => 'nullable|string|max:40',
+            'owner_legacy_id' => 'nullable|integer', 'owner_name' => 'nullable|string|max:80',
+            'page' => 'nullable|integer|min:1', 'per_page' => 'nullable|integer|min:1|max:100',
+        ]);
+        $picker = !empty($filters['picker']);
+        $base = SalesCustomer::query();
+        if (!$picker) $this->access->applyVisible($base, $user);
+        $tab = $filters['tab'] ?? 'all';
+        if ($tab === 'mine') $base->where('owner_legacy_id', (int) $user->legacy_id);
+        if ($tab === 'collab') $this->access->applyCollaborating($base, $user);
+
         $summary = [
-            'total' => SalesCustomer::count(),
-            'enabled' => SalesCustomer::where('status', 'enabled')->count(),
-            'potential' => SalesCustomer::where('status', 'potential')->count(),
-            'disabled' => SalesCustomer::where('status', 'disabled')->count(),
-            'blacklisted' => SalesCustomer::where('status', 'blacklisted')->count(),
+            'total' => (clone $base)->count(),
+            'enabled' => (clone $base)->where('status', 'enabled')->count(),
+            'potential' => (clone $base)->where('status', 'potential')->count(),
+            'disabled' => (clone $base)->where('status', 'disabled')->count(),
+            'blacklisted' => (clone $base)->where('status', 'blacklisted')->count(),
         ];
-        $query = SalesCustomer::query()->with([
+        $tabs = $picker ? null : $this->tabCounts($user);
+        $query = (clone $base)->with([
             'contacts' => fn ($q) => $q->where('status', 'enabled')->orderByDesc('is_default')->orderBy('id'),
             'addresses' => fn ($q) => $q->where('status', 'enabled')->orderByDesc('is_default')->orderBy('id'),
         ])->latest('updated_at');
-        if (isset($selected['ids'])) $query->whereIn('id', $selected['ids']);
-        if ($request->filled('keyword')) {
-            $keyword = trim((string) $request->input('keyword'));
-            $query->where(fn ($q) => $q->where('customer_name', 'like', "%{$keyword}%")->orWhere('customer_code', 'like', "%{$keyword}%")->orWhere('contact_phone', 'like', "%{$keyword}%"));
+        if (isset($filters['ids'])) $query->whereIn('id', $filters['ids']);
+        if ($keyword = trim((string) ($filters['keyword'] ?? ''))) {
+            $query->where(fn ($q) => $q->where('customer_name', 'like', "%{$keyword}%")->orWhere('customer_code', 'like', "%{$keyword}%")
+                ->orWhere('contact_name', 'like', "%{$keyword}%")->orWhere('contact_phone', 'like', "%{$keyword}%"));
         }
-        if ($request->filled('status')) $query->where('status', $request->input('status'));
-        if ($request->filled('owner_legacy_id')) $query->where('owner_legacy_id', $request->integer('owner_legacy_id'));
-        if ($request->filled('owner_name')) $query->where('owner_name', $request->input('owner_name'));
-        if ($request->filled('phone')) {
-            $phone = trim((string) $request->input('phone'));
-            $query->where('contact_phone', 'like', "%{$phone}%");
+        foreach (['status', 'customer_kind', 'industry', 'customer_grade', 'owner_name'] as $field) {
+            if (!empty($filters[$field])) $query->where($field, $filters[$field]);
         }
-        if ($request->filled('customer_kind')) {
-            $query->where('customer_kind', $request->input('customer_kind'));
+        if (!empty($filters['owner_legacy_id'])) $query->where('owner_legacy_id', (int) $filters['owner_legacy_id']);
+        if ($phone = trim((string) ($filters['phone'] ?? ''))) $query->where('contact_phone', 'like', "%{$phone}%");
+
+        $page = $query->paginate(isset($filters['ids']) ? max(1, count($filters['ids'])) : min(100, max(5, (int) ($filters['per_page'] ?? 10))));
+        $pools = collect();
+        if (!$picker && $this->access->can($user, 'crm.lead.view')) {
+            $leads = CrmLead::query()->whereIn('customer_id', $page->getCollection()->pluck('id'))->whereNotNull('customer_pool');
+            app(CrmLeadApplicationService::class)->applyVisible($leads, $user);
+            $pools = $leads->select('customer_id', 'customer_pool')->distinct()->get()->groupBy('customer_id');
         }
-        $page = $query->paginate(isset($selected['ids']) ? max(1, count($selected['ids'])) : min(100, max(5, $request->integer('per_page', 10))));
+        $page->through(fn (SalesCustomer $customer) => $this->row($customer, $user, $picker)
+            + ['customer_pools' => $pools->get($customer->id, collect())->pluck('customer_pool')->values()->all()]);
         $payload = $page->toArray();
         $payload['summary'] = $summary;
-        $payload['owner_options'] = SalesCustomer::query()
-            ->whereNotNull('owner_name')->where('owner_name', '<>', '')
+        $payload['tabs'] = $tabs;
+        $ownerBase = SalesCustomer::query();
+        $this->access->applyVisible($ownerBase, $user);
+        $payload['owner_options'] = $ownerBase->whereNotNull('owner_name')->where('owner_name', '<>', '')
             ->distinct()->orderBy('owner_name')->pluck('owner_name')->values();
         return response()->json($payload);
     }
 
     public function show(Request $request, int $id)
     {
-        $this->authorize($request, 'sales.customer');
-        return response()->json(SalesCustomer::with(['contacts' => fn ($q) => $q->orderByDesc('is_default')->orderBy('id'), 'addresses' => fn ($q) => $q->orderByDesc('is_default')->orderBy('id')])->findOrFail($id));
+        $user = $this->user($request, 'sales.customer');
+        $customer = SalesCustomer::with([
+            'contacts' => fn ($q) => $q->orderByDesc('is_default')->orderBy('id'),
+            'addresses' => fn ($q) => $q->orderByDesc('is_default')->orderBy('id'),
+            'identities' => fn ($q) => $q->where('status', '<>', 'disabled')->orderBy('id'),
+            'collaborators' => fn ($q) => $q->where('status', 'active')->orderBy('id'),
+        ])->findOrFail($id);
+        $abilities = $this->access->abilities($customer, $user);
+        abort_unless($abilities['view'], 403, '该客户由其他部门负责，你无权查看详情，可申请协作。');
+        return response()->json($customer->toArray() + [
+            'owner_department_name' => $this->access->departmentName($customer->owner_department_legacy_id),
+            'abilities' => $abilities,
+        ]);
     }
 
-    public function store(Request $request, DocumentNumberService $numbers)
+    public function store(Request $request, CrmCustomerApplicationService $service)
     {
-        $this->authorize($request, 'sales.customer.create');
-        return DB::transaction(function () use ($request, $numbers) {
-            $data = $this->validated($request);
-            $reservationToken = $data['reservation_token'] ?? null;
-            $operatorId = app(AuthContextService::class)->currentUser($request)?->legacy_id;
-            $contacts = $data['contacts'] ?? null;
-            $addresses = $data['addresses'] ?? null;
-            $creationSessionId = $data['creation_session_id'] ?? null;
-            unset($data['contacts'], $data['addresses'], $data['reservation_token'], $data['creation_session_id']);
-            $data = $this->withDedupeIdentity($data);
-            $data['customer_code'] = $reservationToken
-                ? $numbers->reservedNumber($reservationToken, 'customer', $operatorId, $creationSessionId)
-                : ($data['customer_code'] ?? $numbers->next('customer'));
-            $customer = SalesCustomer::create($data);
-            $this->syncChildren($customer, $contacts, $addresses);
-            if ($reservationToken) $numbers->consume($reservationToken, 'customer', $customer->customer_code, $operatorId, 'customer', $customer->id);
-            return response()->json(['message' => '客户已新增', 'data' => $customer->fresh(['contacts', 'addresses'])], 201);
-        });
+        $user = $this->user($request, 'sales.customer.create');
+        $data = $this->validated($request);
+        $customer = $service->create($data, $user, $data['reservation_token'] ?? null, $data['creation_session_id'] ?? null);
+        return response()->json(['message' => '客户已新增', 'data' => $customer], 201);
     }
 
-    public function update(Request $request, int $id)
+    public function update(Request $request, int $id, CrmCustomerApplicationService $service)
     {
-        $this->authorize($request, 'sales.customer.edit');
-        return DB::transaction(function () use ($request, $id) {
-            $customer = SalesCustomer::query()->lockForUpdate()->findOrFail($id);
-            $data = $this->validated($request, $id);
-            $contacts = $data['contacts'] ?? null;
-            $addresses = $data['addresses'] ?? null;
-            unset($data['contacts'], $data['addresses']);
-            $data = $this->withDedupeIdentity($data);
-            $customer->update($data);
-            $this->syncChildren($customer, $contacts, $addresses);
-            return response()->json(['message' => '客户已更新；历史订单快照未被修改', 'data' => $customer->fresh(['contacts', 'addresses'])]);
-        });
+        $user = $this->user($request, 'sales.customer.edit');
+        $customer = $service->update($id, $this->validated($request, $id), $user);
+        return response()->json(['message' => '客户已更新；历史订单快照未被修改', 'data' => $customer]);
     }
 
     public function destroy(Request $request, int $id, SalesCustomerDeletionApplicationService $service)
     {
-        $this->authorize($request, 'sales.customer.delete');
+        $user = $this->user($request, 'sales.customer.delete');
+        $this->access->assert(SalesCustomer::query()->findOrFail($id), $user, 'delete', '无权删除该客户。');
         $service->delete($id);
         return response()->json(['message' => '未被业务引用的客户档案已删除。']);
     }
 
-    private function syncChildren(SalesCustomer $customer, ?array $contacts, ?array $addresses): void
+    private function row(SalesCustomer $customer, object $user, bool $picker): array
     {
-        if ($contacts !== null) $this->sync($customer, $contacts, SalesCustomerContact::class, ['contact_name', 'mobile', 'phone', 'email', 'position', 'is_default', 'status', 'remark']);
-        if ($addresses !== null) $this->sync($customer, $addresses, SalesCustomerAddress::class, ['receiver_name', 'receiver_phone', 'country', 'region_id', 'province', 'city', 'district', 'detail_address', 'full_address', 'is_default', 'status', 'remark']);
-        $defaultContact = $customer->contacts()->where('status', 'enabled')->orderByDesc('is_default')->first();
-        $defaultAddress = $customer->addresses()->where('status', 'enabled')->orderByDesc('is_default')->first();
-        $customer->update([
-            'contact_name' => $defaultContact?->contact_name,
-            'contact_phone' => $defaultContact?->mobile ?: $defaultContact?->phone,
-            'full_address' => $defaultAddress?->full_address,
-            'province' => $defaultAddress?->province,
-            'city' => $defaultAddress?->city,
-            'district' => $defaultAddress?->district,
-            'dedupe_name_key' => $this->dedupeKey($customer->customer_name),
-            'dedupe_address_key' => $this->dedupeKey($defaultAddress?->full_address),
-        ]);
+        $relation = $this->access->relation($customer, $user);
+        if ($relation === null) return $this->access->masked($customer) + ['selectable' => false];
+        return $customer->toArray() + [
+            'visible' => true, 'relation' => $relation,
+            'abilities' => $this->access->abilities($customer, $user),
+            'selectable' => in_array($customer->status, ['enabled', 'potential'], true),
+            'owner_department_name' => $this->access->departmentName($customer->owner_department_legacy_id),
+        ];
     }
 
-    private function sync(SalesCustomer $customer, array $rows, string $model, array $allowed): void
+    private function tabCounts(object $user): array
     {
-        $keep = [];
-        foreach ($rows as $index => $row) {
-            $payload = array_intersect_key($row, array_flip($allowed));
-            $payload['is_default'] = !empty($row['is_default']);
-            $record = !empty($row['id']) ? $model::where('customer_id', $customer->id)->findOrFail($row['id']) : new $model(['customer_id' => $customer->id]);
-            $record->fill($payload)->save();
-            $keep[] = $record->id;
-        }
-        $model::where('customer_id', $customer->id)->whereNotIn('id', $keep)->update(['status' => 'disabled', 'is_default' => false]);
-        $default = $model::where('customer_id', $customer->id)->where('is_default', true)->where('status', 'enabled')->orderBy('id')->first();
-        if ($default) $model::where('customer_id', $customer->id)->whereKeyNot($default->id)->update(['is_default' => false]);
+        $visible = SalesCustomer::query();
+        $this->access->applyVisible($visible, $user);
+        $collab = SalesCustomer::query();
+        $this->access->applyCollaborating($collab, $user);
+        return [
+            'mine' => SalesCustomer::query()->where('owner_legacy_id', (int) $user->legacy_id)->count(),
+            'collab' => $collab->count(),
+            'all' => $visible->count(),
+        ];
     }
 
     private function validated(Request $request, ?int $id = null): array
     {
         $data = $request->validate([
-            'customer_code' => ['nullable', 'string', 'max:80', Rule::unique('erp_sales_customers', 'customer_code')->ignore($id)],
             'reservation_token' => $id ? 'prohibited' : 'nullable|required_with:creation_session_id|uuid',
             'creation_session_id' => $id ? 'prohibited' : 'nullable|required_with:reservation_token|uuid',
+            'crm_version' => $id ? 'required|integer|min:1' : 'prohibited',
             'customer_name' => 'required|string|max:160', 'customer_short_name' => 'nullable|string|max:160', 'customer_type' => 'nullable|string|max:40',
-            'customer_kind' => ['nullable', Rule::in(['enterprise', 'individual'])], 'source_platform' => 'nullable|string|max:160', 'platform_buyer_id' => 'nullable|string|max:160',
-            'owner_legacy_id' => 'nullable|integer', 'owner_name' => 'nullable|string|max:80', 'status' => 'required|in:enabled,disabled,blacklisted,potential', 'remark' => 'nullable|string',
+            'customer_kind' => ['required', Rule::in(['enterprise', 'individual'])],
+            'status' => 'required|in:enabled,disabled,blacklisted,potential', 'remark' => 'nullable|string',
+            'company_background' => 'nullable|string|max:5000', 'customer_grade' => 'nullable|string|max:40', 'industry' => 'nullable|string|max:80',
+            'purchasing_power' => 'nullable|string|max:40', 'business_lines' => 'nullable|array|max:20', 'business_lines.*' => 'string|max:60',
+            'credit_code' => 'nullable|string|max:40', 'region_id' => 'nullable|integer|exists:erp_regions,id',
+            'duplicate_confirmed' => 'nullable|boolean', 'duplicate_reason' => 'nullable|required_if:duplicate_confirmed,true|string|max:500',
             'invoice_type' => 'nullable|in:vat_normal,vat_special', 'invoice_title' => 'nullable|string|max:200', 'invoice_tax_no' => 'nullable|string|max:60',
             'invoice_address_phone' => 'nullable|string|max:300', 'invoice_bank_account' => 'nullable|string|max:300', 'invoice_email' => 'nullable|email|max:160',
-            'contacts' => 'nullable|array', 'contacts.*.id' => 'nullable|integer', 'contacts.*.contact_name' => 'required|string|max:80', 'contacts.*.mobile' => 'nullable|string|max:80', 'contacts.*.phone' => 'nullable|string|max:80', 'contacts.*.email' => 'nullable|email|max:160', 'contacts.*.position' => 'nullable|string|max:80', 'contacts.*.is_default' => 'boolean', 'contacts.*.status' => 'nullable|in:enabled,disabled', 'contacts.*.remark' => 'nullable|string',
+            'contacts' => 'nullable|array', 'contacts.*.id' => 'nullable|integer', 'contacts.*.contact_name' => 'required|string|max:80', 'contacts.*.mobile' => 'nullable|string|max:80', 'contacts.*.phone' => 'nullable|string|max:80', 'contacts.*.email' => 'nullable|email|max:160', 'contacts.*.wechat' => 'nullable|string|max:80', 'contacts.*.position' => 'nullable|string|max:80', 'contacts.*.is_default' => 'boolean', 'contacts.*.status' => 'nullable|in:enabled,disabled', 'contacts.*.remark' => 'nullable|string',
             'addresses' => 'nullable|array', 'addresses.*.id' => 'nullable|integer', 'addresses.*.receiver_name' => 'required|string|max:80', 'addresses.*.receiver_phone' => 'nullable|string|max:80', 'addresses.*.country' => 'nullable|string|max:80', 'addresses.*.region_id' => 'nullable|integer|min:1', 'addresses.*.province' => 'nullable|string|max:80', 'addresses.*.city' => 'nullable|string|max:80', 'addresses.*.district' => 'nullable|string|max:80', 'addresses.*.detail_address' => 'required|string|max:500', 'addresses.*.is_default' => 'boolean', 'addresses.*.status' => 'nullable|in:enabled,disabled', 'addresses.*.remark' => 'nullable|string',
         ], [], [
-            'customer_code' => '客户编码', 'customer_name' => '客户名称', 'customer_short_name' => '客户简称', 'owner_name' => '负责人',
+            'customer_name' => '客户名称', 'customer_short_name' => '客户简称', 'credit_code' => '统一社会信用代码', 'duplicate_reason' => '新建原因',
             'invoice_title' => '发票抬头', 'invoice_tax_no' => '纳税人识别号', 'invoice_address_phone' => '开票地址电话', 'invoice_bank_account' => '开户行及账号', 'invoice_email' => '收票邮箱',
-            'contacts.*.contact_name' => '联系人姓名', 'contacts.*.mobile' => '联系人手机', 'contacts.*.phone' => '联系人电话', 'contacts.*.email' => '联系人邮箱',
+            'contacts.*.contact_name' => '联系人姓名', 'contacts.*.mobile' => '联系人手机', 'contacts.*.phone' => '联系方式2', 'contacts.*.email' => '联系人邮箱', 'contacts.*.wechat' => '微信号',
             'addresses.*.receiver_name' => '收货人', 'addresses.*.receiver_phone' => '收货电话', 'addresses.*.province' => '省份', 'addresses.*.city' => '城市',
             'addresses.*.district' => '区县', 'addresses.*.detail_address' => '详细地址',
         ]);
@@ -193,38 +211,12 @@ class SalesCustomerController extends Controller
         return $data;
     }
 
-    private function withDedupeIdentity(array $data): array
+    private function user(Request $request, string $permission): object
     {
-        $data['customer_kind'] = $data['customer_kind'] ?? 'individual';
-        $data['source_platform'] = trim((string) ($data['source_platform'] ?? '')) ?: null;
-        $data['platform_buyer_id'] = trim((string) ($data['platform_buyer_id'] ?? '')) ?: null;
-        if (!$data['source_platform'] || !$data['platform_buyer_id']) {
-            $data['source_platform'] = $data['source_platform'] ?: null;
-            $data['platform_buyer_id'] = $data['platform_buyer_id'] ?: null;
-        }
-        $data['platform_identity_key'] = $this->platformIdentityKey($data['source_platform'], $data['platform_buyer_id']);
-        $data['dedupe_name_key'] = $this->dedupeKey($data['customer_name'] ?? null);
-        $data['dedupe_address_key'] = $this->dedupeKey($data['full_address'] ?? null);
-        return $data;
-    }
-
-    private function dedupeKey(?string $value): ?string
-    {
-        $value = preg_replace('/[\s\p{P}\p{S}]+/u', '', mb_strtolower(trim((string) $value)));
-        return $value === '' ? null : mb_substr($value, 0, 191);
-    }
-
-    private function platformIdentityKey(?string $sourcePlatform, ?string $buyerId): ?string
-    {
-        return $sourcePlatform && $buyerId ? hash('sha256', $sourcePlatform."\0".$buyerId) : null;
-    }
-
-    private function authorize(Request $request, string $permission): void
-    {
-        $user = app(AuthContextService::class)->currentUser($request);
-        abort_unless($user, 401, '未登录');
         $auth = app(AuthContextService::class);
-        $codes = $auth->permissionCodes($user);
-        abort_unless($auth->isSuperAdmin($user) || in_array($permission, $codes, true), 403, '无客户管理权限');
+        $user = $auth->currentUser($request);
+        abort_unless($user, 401, '未登录');
+        abort_unless($this->access->can($user, $permission), 403, '无客户管理权限');
+        return $user;
     }
 }

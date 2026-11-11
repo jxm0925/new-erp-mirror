@@ -31,6 +31,16 @@ export function buildSalesProductionConfirmation(order, rows, reason, commandId)
     const line = { sales_order_line_id: row.sales_order_line_id, confirm_qty: quantity, ...values }
     // 服务行（如发红包）默认已完成，可在确认页取消勾选
     if (row.line_type === 'service') line.service_completed = row.service_completed !== false
+    const draft = row.bom_draft
+    const replacements = Object.entries(draft?.replacements || {})
+    if (replacements.length) {
+      if (values.production_qty <= 0 || row.plan_locked) throw new Error('本次生产数量必须大于 0 才能提交BOM替换')
+      if (!draft.revision || draft.revision !== row.bom_detail?.revision) throw new Error('标准BOM已变化，请核对后重新选择替换物料')
+      if (!draft.reason?.trim()) throw new Error('请填写本单BOM调整原因')
+      line.bom_revision = draft.revision
+      line.bom_adjustment_reason = draft.reason.trim()
+      line.bom_replacements = replacements.map(([position_key, item]) => ({ position_key, replacement_item_id: item.id }))
+    }
     return line
   })
   return { client_command_id: commandId, expected_version: version, adjustment_reason: String(reason || '').trim() || null, lines }

@@ -7,6 +7,7 @@ Do not change layout without approval.
   <section class="sales-form-page">
     <product-sku-picker ref="productSkuPicker" @select="applyPicker" />
     <customer-picker ref="customerPicker" @select="applyCustomer" />
+    <crm-identity-review-dialog ref="identityReview" />
     <warehouse-manager-picker :visible.sync="salesUserPickerVisible" title="选择销售人员" scope="sales" :current="selectedSalesUser" @selected="applySalesUser" />
     <sales-carrier-picker :visible.sync="carrierPickerVisible" :current="selectedCarrier" @selected="applyCarrier" />
     <order-edit-impact-dialog
@@ -703,6 +704,7 @@ import SalesOrderAttachmentPreviewDialog from '@/components/sales/SalesOrderAtta
 import OrderEditImpactDialog from '@/components/sales/OrderEditImpactDialog.vue'
 import { legacyMediaUrl } from '@/utils/legacyMedia'
 import CustomerPicker from '@/components/sales/CustomerPicker.vue'
+import CrmIdentityReviewDialog from '@/components/crm/CrmIdentityReviewDialog.vue'
 import WarehouseManagerPicker from '@/components/master/WarehouseManagerPicker.vue'
 import SalesCarrierPicker from '@/components/sales/SalesCarrierPicker.vue'
 import SystemRecordPicker from '@/components/system/SystemRecordPicker.vue'
@@ -757,7 +759,7 @@ const emptyLine = () => ({
 
 export default {
   mixins: [cachedPageRoute],
-  components: { ProductSkuPicker, CustomerPicker, WarehouseManagerPicker, SalesCarrierPicker, SystemRecordPicker, SalesOrderAttachmentPreviewDialog, OrderEditImpactDialog },
+  components: { ProductSkuPicker, CustomerPicker, CrmIdentityReviewDialog, WarehouseManagerPicker, SalesCarrierPicker, SystemRecordPicker, SalesOrderAttachmentPreviewDialog, OrderEditImpactDialog },
   data: () => ({
     selectedLine: null,
     salesUserPickerVisible: false,
@@ -1935,6 +1937,7 @@ export default {
         this.impactDialogVisible = false
         this.$router.push(`/sales/orders/${this.pageRoute.params.id}/detail`)
       } catch (error) {
+        if (this.handleCustomerIdentityConflict(error)) this.impactDialogVisible = false
         this.impactSubmitError = error.userMessage || '订单修改提交失败，请检查后重试'
       } finally { this.impactSubmitting = false }
     },
@@ -1958,6 +1961,17 @@ export default {
       } finally {
         this.platformPaymentSaving = false
       }
+    },
+    handleCustomerIdentityConflict(error) {
+      if (!error.response || !error.response.data || !error.response.data.crm_identity_conflict) return false
+      this.$refs.identityReview.openRequest({
+        purpose: 'duplicate', subject_type: this.isConfirmedEdit ? 'customer' : 'order_draft',
+        subject_id: this.isConfirmedEdit ? this.form.customer_id : (this.form.id || null),
+        input_snapshot: { customer_name: this.form.customer_name, customer_kind: this.form.customer_kind,
+          phones: [this.form.customer_phone, this.form.contact_phone].filter(Boolean), full_address: this.form.full_address || null,
+          platform_legacy_id: Number(this.form.platform) || null, platform_buyer_id: this.form.platform_buyer_id || null }
+      })
+      return true
     },
     async save(andConfirm) {
       if (!this.canEditOrder || this.impactRechecking || this.impactSubmitting || this.platformPaymentSaving) return
@@ -2054,7 +2068,12 @@ export default {
           }
         }
         if (!depositChanged || !(this.editOrderMeta.allowed_actions || {}).production_released) delete payload.agreed_deposit_amount
-        const { data } = await previewSalesOrderEditImpact(this.pageRoute.params.id, payload)
+        let response
+        try { response = await previewSalesOrderEditImpact(this.pageRoute.params.id, payload) } catch (error) {
+          if (this.handleCustomerIdentityConflict(error)) return
+          throw error
+        }
+        const { data } = response
         const impact = data.data
         if (!impact || Number(impact.change_count || 0) === 0) {
           this.impactPayload = null
@@ -2074,7 +2093,12 @@ export default {
         this.impactDialogVisible = true
         return
       }
-      const { data } = await saveSalesOrder(payload)
+      let response
+      try { response = await saveSalesOrder(payload) } catch (error) {
+        if (this.handleCustomerIdentityConflict(error)) return
+        throw error
+      }
+      const { data } = response
       const id = data.data.id
       if (!this.isEdit) {
         clearCreatePageReservation(this.numberReservation)

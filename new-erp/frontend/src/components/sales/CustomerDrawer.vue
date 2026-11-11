@@ -1,10 +1,12 @@
 <template>
-  <el-drawer
+  <el-dialog
     :visible.sync="innerVisible"
-    :with-header="false"
-    size="650px"
+    :show-close="false"
+    width="1000px"
+    top="5vh"
     append-to-body
-    custom-class="customer-form-drawer"
+    :close-on-click-modal="false"
+    custom-class="customer-form-dialog"
     @closed="handleClosed"
   >
     <div class="customer-form-shell">
@@ -86,34 +88,72 @@
               </el-col>
             </el-row>
 
-            <el-row :gutter="14">
-              <el-col :xs="24" :sm="12">
-                <el-form-item label="所属行业">
-                  <el-input v-model.trim="form.customer_type" placeholder="例如：工业制造 / 商业餐饮" clearable />
-                </el-form-item>
-              </el-col>
-              <el-col :xs="24" :sm="12">
-                <el-form-item label="平台买家ID">
-                  <el-input v-model.trim="form.platform_buyer_id" placeholder="选填，电商/平台客户买家号" clearable />
+            <el-row v-if="form.customer_kind === 'enterprise'" :gutter="14">
+              <el-col :xs="24" :sm="24">
+                <el-form-item label="信用代码">
+                  <el-input v-model.trim="form.credit_code" maxlength="40" placeholder="统一社会信用代码，选填；填写后用于查重，不能与其他客户重复" clearable />
                 </el-form-item>
               </el-col>
             </el-row>
 
             <el-row :gutter="14">
               <el-col :xs="24" :sm="12">
-                <el-form-item label="负责人">
-                  <el-input v-model.trim="form.owner_name" placeholder="销售负责人姓名" clearable />
+                <el-form-item label="负责销售">
+                  <el-input :value="ownerText" disabled />
                 </el-form-item>
               </el-col>
               <el-col :xs="24" :sm="12">
-                <el-form-item label="负责人ID">
-                  <el-input-number v-model="form.owner_legacy_id" :min="1" controls-position="right" style="width:100%" placeholder="销售人员ID" />
+                <el-form-item label="首次来源">
+                  <el-input :value="form.first_source || '—'" disabled />
                 </el-form-item>
               </el-col>
             </el-row>
 
             <el-form-item label="备注">
               <el-input v-model.trim="form.remark" type="textarea" :rows="2" maxlength="300" show-word-limit placeholder="客户合作注意事项或备注" />
+            </el-form-item>
+          </el-form>
+        </section>
+
+        <!-- 经营画像：除客户类型和名称外均可留空，未填写按“未填写”统计 -->
+        <section class="form-section">
+          <div class="form-section-title">
+            <h3><i class="el-icon-data-analysis" /> 经营画像</h3>
+            <span class="section-sub-tip">均可留空，未填写的资料按“未填写”统计</span>
+          </div>
+          <el-form :model="form" label-width="84px" size="small" class="responsive-form">
+            <el-row :gutter="14">
+              <el-col :xs="24" :sm="12">
+                <el-form-item label="客户等级">
+                  <el-select v-model="form.customer_grade" filterable allow-create clearable placeholder="未填写" style="width:100%">
+                    <el-option v-for="item in gradeOptions" :key="item" :label="item" :value="item" />
+                  </el-select>
+                </el-form-item>
+              </el-col>
+              <el-col :xs="24" :sm="12">
+                <el-form-item label="行业">
+                  <el-select v-model="form.industry" filterable allow-create clearable placeholder="未填写" style="width:100%">
+                    <el-option v-for="item in industryOptions" :key="item" :label="item" :value="item" />
+                  </el-select>
+                </el-form-item>
+              </el-col>
+              <el-col :xs="24" :sm="12">
+                <el-form-item label="年采购力">
+                  <el-select v-model="form.purchasing_power" clearable placeholder="未填写" style="width:100%">
+                    <el-option v-for="item in purchasingOptions" :key="item" :label="item" :value="item" />
+                  </el-select>
+                </el-form-item>
+              </el-col>
+              <el-col :xs="24" :sm="12">
+                <el-form-item label="业务线">
+                  <el-select v-model="form.business_lines" multiple filterable allow-create default-first-option placeholder="未填写，可多选" style="width:100%">
+                    <el-option v-for="item in businessLineOptions" :key="item" :label="item" :value="item" />
+                  </el-select>
+                </el-form-item>
+              </el-col>
+            </el-row>
+            <el-form-item label="公司背景">
+              <el-input v-model.trim="form.company_background" type="textarea" :rows="2" maxlength="5000" placeholder="未填写" />
             </el-form-item>
           </el-form>
         </section>
@@ -140,15 +180,18 @@
                 <el-input v-model.trim="contact.contact_name" size="small" placeholder="姓名（必填）" />
               </el-col>
               <el-col :xs="24" :sm="12">
-                <el-input v-model.trim="contact.position" size="small" placeholder="职位（选填）" />
+                <el-input v-model.trim="contact.position" size="small" placeholder="身份（决策人 / 采购人等，选填）" />
               </el-col>
               <el-col :xs="24" :sm="12">
                 <el-input v-model.trim="contact.mobile" size="small" placeholder="手机号码" />
               </el-col>
               <el-col :xs="24" :sm="12">
-                <el-input v-model.trim="contact.phone" size="small" placeholder="固定电话" />
+                <el-input v-model.trim="contact.phone" size="small" placeholder="联系方式2（电话 / 微信 / 邮箱）" />
               </el-col>
-              <el-col :xs="24" :sm="24">
+              <el-col :xs="24" :sm="12">
+                <el-input v-model.trim="contact.wechat" size="small" placeholder="微信号" />
+              </el-col>
+              <el-col :xs="24" :sm="12">
                 <el-input v-model.trim="contact.email" size="small" placeholder="电子邮箱" />
               </el-col>
             </el-row>
@@ -241,13 +284,46 @@
         </el-button>
       </footer>
     </div>
-  </el-drawer>
+    <el-dialog title="查重结果" :visible.sync="duplicate.visible" width="860px" append-to-body custom-class="customer-duplicate-dialog">
+      <el-alert :closable="false" :type="duplicate.requiresConfirmation ? 'warning' : 'error'" show-icon :title="duplicate.message" />
+      <el-table :data="duplicate.rows" size="small" class="duplicate-table">
+        <el-table-column label="疑似客户" min-width="200">
+          <template slot-scope="{row}">
+            <b>{{ row.visible ? row.customer_name : '其他部门客户' }}</b>
+            <small class="cell-sub">{{ row.visible ? row.customer_code + ' · ' + (row.customer_kind === 'enterprise' ? '企业' : '个人') : '详情无权查看' }}</small>
+          </template>
+        </el-table-column>
+        <el-table-column label="匹配依据" min-width="150">
+          <template slot-scope="{row}"><el-tag v-for="label in row.reason_labels" :key="label" size="mini" type="warning" class="reason-tag">{{ label }}</el-tag></template>
+        </el-table-column>
+        <el-table-column label="所属部门 / 负责销售" min-width="150">
+          <template slot-scope="{row}">{{ row.owner_department_name || '—' }} / {{ row.visible ? (row.owner_name || '暂无') : '无权查看' }}</template>
+        </el-table-column>
+        <el-table-column label="操作" width="120">
+          <template slot-scope="{row}">
+            <el-button v-if="row.visible" type="success" size="mini" :loading="duplicate.picking === row.id" @click="pickDuplicate(row)">是这个客户</el-button>
+            <el-button v-else type="text" size="mini" @click="requestDuplicateReview(row)">申请核实</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+      <div v-if="duplicate.requiresConfirmation" class="duplicate-new">
+        <b>都不是已有客户</b>
+        <el-input v-model.trim="duplicate.reason" type="textarea" :rows="2" maxlength="500" placeholder="请填写新建原因，例如：手机号为家人号码，本人此前未购买" />
+      </div>
+      <span slot="footer">
+        <el-button size="small" @click="duplicate.visible = false">返回修改</el-button>
+        <el-button v-if="duplicate.requiresConfirmation" size="small" type="success" :disabled="!duplicate.reason" :loading="saving" @click="confirmNewCustomer">都不是，新建客户</el-button>
+      </span>
+    </el-dialog>
+    <crm-identity-review-dialog v-if="innerVisible" :key="openSession" ref="identityReview" @saved="duplicate.visible = false" />
+  </el-dialog>
 </template>
 
 <script>
 import { createSalesCustomer, getSalesCustomer, updateSalesCustomer } from '@/api/erp/sales'
 import { clearCreatePageReservation, reserveForCreatePage } from '@/utils/documentNumberReservation'
 import CustomerRegionSelect from './CustomerRegionSelect.vue'
+import CrmIdentityReviewDialog from '@/components/crm/CrmIdentityReviewDialog.vue'
 
 const blankContact = () => ({
   localId: `contact-${Date.now()}-${Math.random().toString(16).slice(2)}`,
@@ -256,6 +332,7 @@ const blankContact = () => ({
   mobile: '',
   phone: '',
   email: '',
+  wechat: '',
   is_default: false,
   status: 'enabled'
 })
@@ -281,10 +358,15 @@ const blankForm = (kind = 'individual') => ({
   customer_name: '',
   customer_short_name: '',
   customer_type: '',
-  source_platform: '',
-  platform_buyer_id: '',
+  customer_grade: '',
+  industry: '',
+  purchasing_power: '',
+  business_lines: [],
+  credit_code: '',
+  company_background: '',
   owner_name: '',
-  owner_legacy_id: undefined,
+  first_source: '',
+  crm_version: null,
   status: 'enabled',
   remark: '',
   invoice_type: 'vat_normal',
@@ -299,7 +381,7 @@ const blankForm = (kind = 'individual') => ({
 
 export default {
   name: 'CustomerDrawer',
-  components: { CustomerRegionSelect },
+  components: { CustomerRegionSelect, CrmIdentityReviewDialog },
   props: {
     visible: {
       type: Boolean,
@@ -318,9 +400,18 @@ export default {
     numberReservation: null,
     rawInputText: '',
     recognizedCustomerName: '',
+    duplicate: { visible: false, rows: [], message: '', requiresConfirmation: false, reason: '', picking: null },
+    gradeOptions: ['A级', 'B级', 'C级', 'D级'],
+    industryOptions: ['水质处理', '连锁洗衣', '外贸出口', '企业自用', '政府单位', '农牧养殖', '商贸公司', '建筑施工', '加工配套', '未知'],
+    purchasingOptions: ['P0 未知', 'P1 0-5万', 'P2 5-20万', 'P3 20-50万', 'P4 50万以上'],
+    businessLineOptions: ['农改水', '供水设备', '净水设备', '家用净水'],
     form: blankForm()
   }),
   computed: {
+    ownerText() {
+      if (this.form.owner_name) return this.form.owner_name
+      return this.form.id ? '暂无（首次录入线索或有效订单的销售自动归属）' : '保存后自动归属：销售本人建档即为负责销售'
+    },
     submitButtonText() {
       if (this.confirmText) return this.confirmText
       return this.form.id ? '保存修改' : '保存客户'
@@ -336,6 +427,21 @@ export default {
     }
   },
   methods: {
+    requestDuplicateReview(row) {
+      const contacts = this.form.contacts || []
+      const addresses = this.form.addresses || []
+      const address = addresses.find(item => item.is_default) || addresses[0] || {}
+      const contact = contacts.find(item => item.is_default) || contacts[0] || {}
+      this.$refs.identityReview.openRequest({
+        purpose: 'duplicate', subject_type: 'customer', subject_id: this.form.id || null, target_customer_id: row.id,
+        input_snapshot: {
+          customer_kind: this.form.customer_kind, customer_name: this.form.customer_name, credit_code: this.form.credit_code || null,
+          phones: contacts.flatMap(item => [item.mobile, item.phone]).filter(Boolean), wechat: contact.wechat || null, email: contact.email || null,
+          region_id: address.region_id || this.form.region_id || null, detail_address: address.detail_address || null,
+          full_address: address.full_address || [address.province, address.city, address.district, address.detail_address].filter(Boolean).join('') || null
+        }, matches: this.duplicate.rows
+      })
+    },
     // 关闭或重开后，晚到请求不能回填或结束新客户会话。
     openForm(defaultKind = 'individual') {
       this.openSession += 1
@@ -374,7 +480,9 @@ export default {
           ...blankForm(data.customer_kind || 'individual'),
           ...data,
           customer_kind: data.customer_kind || 'individual',
-          owner_legacy_id: data.owner_legacy_id ?? undefined,
+          // 旧档案的“所属行业”存于 customer_type；新行业为空时带出原值供确认，customer_type 原样保留。
+          industry: data.industry || data.customer_type || '',
+          business_lines: Array.isArray(data.business_lines) ? data.business_lines : [],
           invoice_type: data.invoice_type || 'vat_normal',
           contacts: (data.contacts || []).filter(item => item.status !== 'disabled').map(item => ({ ...item, localId: `contact-${item.id}` })),
           addresses: (data.addresses || []).filter(item => item.status !== 'disabled').map(item => ({ ...item, localId: `address-${item.id}` }))
@@ -508,7 +616,23 @@ export default {
         }
       }
     },
-    async save() {
+    async pickDuplicate(row) {
+      this.duplicate.picking = row.id
+      try {
+        const { data } = await getSalesCustomer(row.id)
+        this.duplicate.visible = false
+        this.innerVisible = false
+        this.$emit('saved', data)
+      } catch (error) {
+        this.$message.error((error.response && error.response.data && error.response.data.message) || '客户加载失败')
+      } finally {
+        this.duplicate.picking = null
+      }
+    },
+    confirmNewCustomer() {
+      this.save({ duplicate_confirmed: true, duplicate_reason: this.duplicate.reason })
+    },
+    async save(extra = {}) {
       if (this.loading || this.saving || !this.innerVisible) return
       if (!this.form.id && !this.numberReservation) return this.$message.warning('请重新打开新增窗口生成客户编码')
       if (!this.form.customer_name) {
@@ -528,14 +652,20 @@ export default {
       const reservation = this.numberReservation
       this.saving = true
       try {
+        const fields = { ...this.form }
+        ;['owner_name', 'owner_legacy_id', 'owner_department_legacy_id', 'owner_department_name', 'first_source', 'identities', 'collaborators', 'abilities',
+          'source_platform', 'platform_buyer_id', 'platform_identity_key', 'legacy_snapshot', 'created_at', 'updated_at'].forEach(key => delete fields[key])
         const payload = {
-          ...this.form,
+          ...fields,
+          ...(extra && extra.duplicate_confirmed ? extra : {}),
           customer_kind: this.form.customer_kind || 'individual',
-          owner_legacy_id: this.form.owner_legacy_id ?? null,
+          credit_code: this.form.customer_kind === 'enterprise' ? (this.form.credit_code || null) : null,
           contacts: this.normalizeDefaults(this.form.contacts).map(({ localId, ...item }) => item),
           addresses: this.normalizeDefaults(this.form.addresses).map(({ localId, ...item }) => item)
         }
+        if (payload.id) delete payload.customer_code
         if (!payload.id) {
+          delete payload.crm_version
           payload.reservation_token = reservation.reservation_token
           payload.creation_session_id = reservation.creation_session_id
         }
@@ -547,11 +677,17 @@ export default {
         if (!payload.id) clearCreatePageReservation(reservation)
         if (session !== this.openSession || !this.innerVisible) return
         const savedData = res.data.data
+        this.duplicate.visible = false
         this.$message.success(res.data.message || '客户资料已保存')
         this.innerVisible = false
         this.$emit('saved', savedData)
       } catch (error) {
         if (session !== this.openSession || !this.innerVisible) return
+        const body = (error.response && error.response.data) || {}
+        if (error.response && error.response.status === 422 && Array.isArray(body.duplicates)) {
+          this.duplicate = { visible: true, rows: body.duplicates, message: body.message, requiresConfirmation: !!body.requires_confirmation, reason: (extra && extra.duplicate_reason) || '', picking: null }
+          return
+        }
         const errors = error.response && error.response.data && error.response.data.errors
         this.$message.error(errors ? Object.values(errors)[0][0] : ((error.response && error.response.data && error.response.data.message) || '客户保存失败'))
       } finally {
@@ -564,7 +700,7 @@ export default {
 
 <style scoped>
 .customer-form-shell {
-  height: 100%;
+  max-height: 85vh;
   display: grid;
   grid-template-rows: auto 1fr auto;
   background: #f7f8fa;
@@ -709,12 +845,45 @@ export default {
   color: #dc2626 !important;
 }
 
+.duplicate-table {
+  margin-top: 12px;
+}
+.reason-tag {
+  margin: 0 4px 2px 0;
+}
+.cell-sub {
+  display: block;
+  color: #64748b;
+  font-size: 12px;
+}
+.muted {
+  color: #94a3b8;
+}
+.duplicate-new {
+  margin-top: 14px;
+  display: grid;
+  gap: 8px;
+}
 @media (max-width: 768px) {
-  .customer-form-drawer :deep(.el-drawer) {
-    width: 100% !important;
+  .customer-form-shell {
+    max-height: 90vh;
   }
   .customer-form-body {
     padding: 10px;
+  }
+}
+</style>
+
+<style>
+.customer-form-dialog .el-dialog__header {
+  display: none;
+}
+.customer-form-dialog .el-dialog__body {
+  padding: 0;
+}
+@media (max-width: 1060px) {
+  .customer-form-dialog {
+    width: 95% !important;
   }
 }
 </style>

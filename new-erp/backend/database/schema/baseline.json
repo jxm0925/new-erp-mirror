@@ -244,7 +244,17 @@
     "erp_aftersales_attachments": "2026_11_09_000007_create_erp_aftersales_attachments_table",
     "erp_aftersales_reships": "2026_11_09_000008_create_erp_aftersales_reships_table",
     "erp_aftersales_reship_items": "2026_11_09_000009_create_erp_aftersales_reship_items_table",
-    "erp_shipment_outbound_applications": "2026_11_09_000010_create_erp_shipment_outbound_applications_table"
+    "erp_shipment_outbound_applications": "2026_11_09_000010_create_erp_shipment_outbound_applications_table",
+    "erp_crm_customer_identities": "2026_11_11_000001_create_erp_crm_customer_identities_table",
+    "erp_crm_customer_collaborators": "2026_11_11_000002_create_erp_crm_customer_collaborators_table",
+    "erp_crm_customer_logs": "2026_11_11_000003_create_erp_crm_customer_logs_table",
+    "erp_crm_leads": "2026_11_11_000004_create_erp_crm_leads_table",
+    "erp_crm_lead_logs": "2026_11_11_000005_create_erp_crm_lead_logs_table",
+    "erp_crm_followups": "2026_11_11_000006_create_erp_crm_followups_table",
+    "erp_crm_assign_grants": "2026_11_11_000007_create_erp_crm_assign_grants_table",
+    "erp_crm_staff_profiles": "2026_11_11_000008_create_erp_crm_staff_profiles_table",
+    "erp_crm_duplicate_reviews": "2026_11_11_000009_create_erp_crm_duplicate_reviews_table",
+    "erp_crm_attachments": "2026_11_11_000010_create_erp_crm_attachments_table"
   },
   "legacy_migrations": {
     "2026_07_09_000002_remove_legacy_scan_questions_table": "89a9fd386c9acd658007b681a9b8e13c5c1e346f97577c63ab78d34e1fe1cb04",

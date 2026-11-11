@@ -1,6 +1,7 @@
 {
   "pages": [
     "pages/index/index",
+    "pages/stock/stockin/stockin",
     "pages/work/index/index",
     "pages/work/detail/index",
     "pages/work/my/index",

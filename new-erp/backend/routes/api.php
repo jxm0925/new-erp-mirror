@@ -386,6 +386,42 @@ Route::prefix('v1/erp/bom')->group(function () {
 });
 
 Route::get('v1/erp/sales-orders/{id}/change-production-units', [SalesOrderController::class, 'changeProductionUnits'])->whereNumber('id');
+Route::prefix('v1/erp/crm')->group(function () {
+    Route::get('leads/metadata', [\App\Http\Controllers\Api\V1\Erp\CrmLeadController::class, 'metadata']);
+    Route::get('leads', [\App\Http\Controllers\Api\V1\Erp\CrmLeadController::class, 'index']);
+    Route::post('leads', [\App\Http\Controllers\Api\V1\Erp\CrmLeadController::class, 'store']);
+    Route::get('leads/{id}', [\App\Http\Controllers\Api\V1\Erp\CrmLeadController::class, 'show'])->whereNumber('id');
+    Route::put('leads/{id}', [\App\Http\Controllers\Api\V1\Erp\CrmLeadController::class, 'update'])->whereNumber('id');
+    Route::get('leads/{id}/logs', [\App\Http\Controllers\Api\V1\Erp\CrmLeadController::class, 'logs'])->whereNumber('id');
+    Route::get('leads/{id}/assignees', [\App\Http\Controllers\Api\V1\Erp\CrmLeadController::class, 'assignees'])->whereNumber('id');
+    Route::post('leads/{id}/assign', [\App\Http\Controllers\Api\V1\Erp\CrmLeadController::class, 'assign'])->whereNumber('id');
+    Route::post('leads/{id}/accept', [\App\Http\Controllers\Api\V1\Erp\CrmLeadController::class, 'accept'])->whereNumber('id');
+    Route::post('leads/{id}/return', [\App\Http\Controllers\Api\V1\Erp\CrmLeadController::class, 'returnLead'])->whereNumber('id');
+    Route::post('leads/{id}/transfer', [\App\Http\Controllers\Api\V1\Erp\CrmLeadController::class, 'transfer'])->whereNumber('id');
+    Route::post('leads/{id}/recycle', [\App\Http\Controllers\Api\V1\Erp\CrmLeadController::class, 'recycle'])->whereNumber('id');
+    Route::post('leads/{id}/claim', [\App\Http\Controllers\Api\V1\Erp\CrmLeadController::class, 'claim'])->whereNumber('id');
+    Route::post('leads/{id}/pool', [\App\Http\Controllers\Api\V1\Erp\CrmLeadController::class, 'changePool'])->whereNumber('id');
+    Route::post('leads/{id}/invalidate', [\App\Http\Controllers\Api\V1\Erp\CrmLeadController::class, 'invalidate'])->whereNumber('id');
+    Route::post('leads/{id}/confirm', [\App\Http\Controllers\Api\V1\Erp\CrmLeadController::class, 'confirm'])->whereNumber('id');
+    Route::get('followups', [\App\Http\Controllers\Api\V1\Erp\CrmLeadController::class, 'followups']);
+    Route::post('followups', [\App\Http\Controllers\Api\V1\Erp\CrmLeadController::class, 'storeFollowup']);
+    Route::put('followups/{id}', [\App\Http\Controllers\Api\V1\Erp\CrmLeadController::class, 'updateFollowup'])->whereNumber('id');
+    Route::post('attachments', [\App\Http\Controllers\Api\V1\Erp\CrmLeadController::class, 'uploadAttachment']);
+    Route::get('attachments/{id}/download', [\App\Http\Controllers\Api\V1\Erp\CrmLeadController::class, 'downloadAttachment'])->whereNumber('id');
+    Route::get('team/metadata', [\App\Http\Controllers\Api\V1\Erp\CrmTeamController::class, 'metadata']);
+    Route::get('team/staff', [\App\Http\Controllers\Api\V1\Erp\CrmTeamController::class, 'staff']);
+    Route::get('team/staff/{userId}', [\App\Http\Controllers\Api\V1\Erp\CrmTeamController::class, 'showStaff'])->whereNumber('userId');
+    Route::put('team/staff/{userId}/capability', [\App\Http\Controllers\Api\V1\Erp\CrmTeamController::class, 'saveCapability'])->whereNumber('userId');
+    Route::get('team/users', [\App\Http\Controllers\Api\V1\Erp\CrmTeamController::class, 'users']);
+    Route::get('team/grants', [\App\Http\Controllers\Api\V1\Erp\CrmTeamController::class, 'grants']);
+    Route::post('team/grants', [\App\Http\Controllers\Api\V1\Erp\CrmTeamController::class, 'saveGrant']);
+    Route::put('team/grants/{id}', [\App\Http\Controllers\Api\V1\Erp\CrmTeamController::class, 'saveGrant'])->whereNumber('id');
+    Route::get('duplicate-reviews', [\App\Http\Controllers\Api\V1\Erp\CrmDuplicateReviewController::class, 'index']);
+    Route::post('duplicate-reviews', [\App\Http\Controllers\Api\V1\Erp\CrmDuplicateReviewController::class, 'store']);
+    Route::get('duplicate-reviews/{id}', [\App\Http\Controllers\Api\V1\Erp\CrmDuplicateReviewController::class, 'show'])->whereNumber('id');
+    Route::post('duplicate-reviews/{id}/resolve', [\App\Http\Controllers\Api\V1\Erp\CrmDuplicateReviewController::class, 'resolve'])->whereNumber('id');
+});
+
 Route::prefix('v1/erp/sales')->group(function () {
     Route::get('orders/{id}/legacy-history', [SalesOrderController::class, 'legacyHistory'])->whereNumber('id');
     Route::get('customers', [SalesCustomerController::class, 'index']);
@@ -395,6 +431,17 @@ Route::prefix('v1/erp/sales')->group(function () {
     Route::get('customers/{id}', [SalesCustomerController::class, 'show'])->whereNumber('id');
     Route::put('customers/{id}', [SalesCustomerController::class, 'update'])->whereNumber('id');
     Route::delete('customers/{id}', [SalesCustomerController::class, 'destroy'])->whereNumber('id');
+    Route::post('customers/dedupe', [\App\Http\Controllers\Api\V1\Erp\CrmCustomerController::class, 'dedupe']);
+    Route::get('customers/crm-platforms', [\App\Http\Controllers\Api\V1\Erp\CrmCustomerController::class, 'platforms']);
+    Route::get('customers/staff-options', [\App\Http\Controllers\Api\V1\Erp\CrmCustomerController::class, 'staffOptions']);
+    Route::get('customers/{id}/logs', [\App\Http\Controllers\Api\V1\Erp\CrmCustomerController::class, 'logs'])->whereNumber('id');
+    Route::post('customers/{id}/transfer', [\App\Http\Controllers\Api\V1\Erp\CrmCustomerController::class, 'transfer'])->whereNumber('id');
+    Route::get('customers/{id}/collaborators', [\App\Http\Controllers\Api\V1\Erp\CrmCustomerController::class, 'collaborators'])->whereNumber('id');
+    Route::post('customers/{id}/collaborators', [\App\Http\Controllers\Api\V1\Erp\CrmCustomerController::class, 'addCollaborator'])->whereNumber('id');
+    Route::post('customers/{id}/collaborators/{collabId}/end', [\App\Http\Controllers\Api\V1\Erp\CrmCustomerController::class, 'endCollaborator'])->whereNumber(['id', 'collabId']);
+    Route::post('customers/{id}/identities', [\App\Http\Controllers\Api\V1\Erp\CrmCustomerController::class, 'bindIdentity'])->whereNumber('id');
+    Route::post('customers/{id}/identities/{identityId}/verify', [\App\Http\Controllers\Api\V1\Erp\CrmCustomerController::class, 'verifyIdentity'])->whereNumber(['id', 'identityId']);
+    Route::post('customers/{id}/identities/{identityId}/disable', [\App\Http\Controllers\Api\V1\Erp\CrmCustomerController::class, 'disableIdentity'])->whereNumber(['id', 'identityId']);
     Route::get('orders/{id}/invoice-requests', [\App\Http\Controllers\Api\V1\Erp\SalesInvoiceRequestController::class, 'orderIndex'])->whereNumber('id');
     Route::get('orders/{id}/invoice-accounts', [\App\Http\Controllers\Api\V1\Erp\SalesInvoiceRequestController::class, 'accounts'])->whereNumber('id');
     Route::post('orders/{id}/invoice-requests', [\App\Http\Controllers\Api\V1\Erp\SalesInvoiceRequestController::class, 'store'])->whereNumber('id');
@@ -425,6 +472,7 @@ Route::prefix('v1/erp/sales')->group(function () {
     Route::post('orders/{id}/formal-confirm', [SalesOrderController::class, 'confirm'])->whereNumber('id');
     Route::post('orders/{id}/lock-inventory', [SalesOrderController::class, 'lockInventory'])->whereNumber('id');
     Route::get('orders/{id}/production-confirmation-preview', [SalesOrderController::class, 'productionConfirmationPreview'])->whereNumber('id');
+    Route::get('orders/{id}/production-bom-materials', [SalesOrderController::class, 'productionBomMaterials'])->whereNumber('id');
     Route::post('orders/{id}/production-confirmation', [SalesOrderController::class, 'confirmProduction'])->whereNumber('id');
     Route::post('orders/{id}/cancel', [SalesOrderController::class, 'cancelWithReason'])->whereNumber('id');
     Route::get('orders/{id}/cancellation-preview', [SalesOrderController::class, 'cancellationPreview'])->whereNumber('id');

@@ -52,6 +52,8 @@ import BomDetail from './views/erp/bom/BomDetail.vue'
 import BomExpand from './views/erp/bom/BomExpand.vue'
 import SalesOrderList from './views/erp/sales/SalesOrderList.vue'
 import SalesCustomerList from './views/erp/sales/SalesCustomerList.vue'
+import CrmLeadList from './views/erp/crm/CrmLeadList.vue'
+import CrmTeam from './views/erp/crm/CrmTeam.vue'
 import SalesOrderForm from './views/erp/sales/SalesOrderForm.vue'
 import SalesOrderDetail from './views/erp/sales/SalesOrderDetail.vue'
 import SalesProductionConfirmation from './views/erp/sales/SalesProductionConfirmation.vue'
@@ -188,6 +190,8 @@ const router = new VueRouter({
     { path: '/bom/expand', component: BomExpand, meta: { permission: 'bom.expand' } },
     { path: '/sales', redirect: '/sales/orders' },
     { path: '/sales/customers', component: SalesCustomerList },
+    { path: '/sales/leads', component: CrmLeadList, meta: { permission: 'crm.lead.view' } },
+    { path: '/sales/crm-team', component: CrmTeam, meta: { permission: 'crm.team.view' } },
     { path: '/sales/orders', component: SalesOrderList },
     { path: '/sales/orders/create', component: SalesOrderForm },
     { path: '/sales/orders/:id/edit', component: SalesOrderForm },

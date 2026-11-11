@@ -648,8 +648,9 @@ final class WorkOrderQueryService
     /** 统一提取工序用料的规格型号、材质、下料尺寸。 */
     public static function materialSpecInfo(?Item $item, ?array $bomLine = null): array
     {
-        $spec = trim((string) ($item?->spec ?: $item?->model ?: ($bomLine['component_spec'] ?? '')));
-        $grade = trim((string) ($item?->material_grade ?: ''));
+        $frozen = $bomLine['component_snapshot'] ?? null;
+        $spec = trim((string) (is_array($frozen) ? (($frozen['spec'] ?? null) ?: ($frozen['model'] ?? '')) : ($item?->spec ?: $item?->model ?: ($bomLine['component_spec'] ?? ''))));
+        $grade = trim((string) (is_array($frozen) ? ($frozen['material_grade'] ?? '') : ($item?->material_grade ?: '')));
         $cutSpec = self::cutSpecFromLine($bomLine);
         $parts = array_values(array_filter([$spec ?: null, $grade ?: null, $cutSpec]));
         return [

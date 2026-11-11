@@ -26,6 +26,7 @@ CREATE TABLE `erp_sales_customer_contacts` (
   `remark` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci,
   `created_at` timestamp NULL DEFAULT NULL,
   `updated_at` timestamp NULL DEFAULT NULL,
+  `wechat` varchar(80) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '微信号',
   PRIMARY KEY (`id`),
   KEY `erp_sales_customer_contacts_customer_id_status_index` (`customer_id`,`status`),
   CONSTRAINT `erp_sales_customer_contacts_customer_id_foreign` FOREIGN KEY (`customer_id`) REFERENCES `erp_sales_customers` (`id`) ON DELETE CASCADE

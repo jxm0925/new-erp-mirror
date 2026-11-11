@@ -442,6 +442,7 @@ class SalesOrderEditImpactService
         $impact = $this->analyse($order, $candidate);
         // 审核期间可能新增了收款核销或附件被删，生效前按最新事实再校验一次。
         if (array_key_exists('customer_id', $candidate['header'])) $this->assertCustomerChangeAllowed($order, $candidate['header']['customer_id']);
+        $this->validateCustomerIdentity($order, $candidate['header'], true, $actor);
         $this->assertSpecialCustomRequirements($order, $candidate);
         if (!empty($candidate['header']['is_share'])) {
             $candidate['header']['share_user'] = app(SalesOrderVisibilityService::class)->normalizeShareUsers($candidate['header']['share_user'] ?? null);
@@ -765,6 +766,11 @@ class SalesOrderEditImpactService
             if (!$customer || in_array($customer->status, ['disabled', 'blacklisted'], true)) {
                 throw ValidationException::withMessages(['customer_id' => '所选客户已停用或在黑名单，不能用于订单。']);
             }
+            // 改单换客户与新建订单共用客户可见范围：其他部门负责的客户需先申请协作。
+            $actor = request() ? app(AuthContextService::class)->currentUser(request()) : null;
+            if ($actor && app(\App\Services\Erp\Crm\CrmCustomerAccessService::class)->relation($customer, $actor) === null) {
+                throw ValidationException::withMessages(['customer_id' => '该客户由其他部门负责，不在你的可见范围内，请先申请协作。']);
+            }
             $header['customer_name'] = $customer->customer_name;
         }
         if (filled($header['customer_contact_id'] ?? null) && (int) $header['customer_contact_id'] !== (int) $order->customer_contact_id
@@ -856,7 +862,28 @@ class SalesOrderEditImpactService
                 ? DB::table('erp_sales_order_deliveries')->where('legacy_id', $carrierId)->value('name') : null;
             $header['shipping_snapshot'] = $shipping;
         }
+        $this->validateCustomerIdentity($order, $header);
         return $header;
+    }
+
+    private function validateCustomerIdentity(SalesOrder $order, array $header, bool $bind = false, ?object $actor = null): void
+    {
+        $changed = false;
+        foreach (['customer_id', 'platform', 'platform_buyer_id'] as $field) {
+            if (array_key_exists($field, $header) && trim((string) $header[$field]) !== trim((string) $order->getAttribute($field))) $changed = true;
+        }
+        if (!$changed) return;
+        $customerId = (int) ($header['customer_id'] ?? $order->customer_id);
+        $platform = (int) ($header['platform'] ?? $order->platform);
+        $buyerId = trim((string) (array_key_exists('platform_buyer_id', $header) ? $header['platform_buyer_id'] : $order->platform_buyer_id));
+        $identities = app(\App\Services\Erp\Crm\CrmPlatformIdentityService::class);
+        $resolved = $identities->assertCustomer($customerId, $platform ?: null, $buyerId, $bind);
+        // 预览只检查，审批生效时重新加锁检查并登记；回滚订单时身份一并回滚。
+        if ($bind && $resolved['key']) {
+            $customer = SalesCustomer::query()->lockForUpdate()->findOrFail($customerId);
+            abort_if(in_array($customer->status, ['disabled', 'blacklisted'], true), 422, '该客户已停用或在黑名单，不能登记订单平台身份。');
+            $identities->bind($customer, $platform, $buyerId, 'order', $actor, '订单变更生效时登记');
+        }
     }
 
     /** 特殊定制行（新增、换SKU或新开特殊定制）必须带技术协议和定制说明，与正式确认口径一致。 */

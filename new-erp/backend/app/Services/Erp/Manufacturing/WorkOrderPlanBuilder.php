@@ -34,14 +34,8 @@ final class WorkOrderPlanBuilder
         // 已保存工单的用量依据来自自身快照，换路线不能重新解析已修改的 BOM 主档。
         if ($item->isPhantom()) $blocks[] = '这个物料是虚拟件，不单独建工单，用料会在上级工单里直接展开';
         $bom = $bomSnapshot ?? $this->bom($item, $productId, $skuId, $configuration, $bomId, $blocks);
-        // 虚拟件在冻结 BOM 时展开成其下层用料；已保存工单沿用自身快照，不再重新展开。
         if ($bom && $bomSnapshot === null) {
-            $expansionBlocks = [];
-            $expanded = $this->explodePhantoms($bom['items'], [(int) $item->id], $expansionBlocks);
-            $bom['phantom_expansion_complete'] = ! $expansionBlocks;
-            // 失败时保留原始行与原因，不能把缺少分支的部分结果冻结为完整用料。
-            if (! $expansionBlocks) $bom['items'] = $expanded;
-            else $bom['phantom_expansion_block_reasons'] = $expansionBlocks;
+            $bom = $this->freezeBom($bom, (int) $item->id);
         }
         if (($bom['phantom_expansion_complete'] ?? null) === false) {
             $blocks = array_merge($blocks, $bom['phantom_expansion_block_reasons'] ?? ['虚拟件用料尚未完整展开，请调整工单重新选择 BOM 后保存。']);
@@ -60,6 +54,25 @@ final class WorkOrderPlanBuilder
         $materials = $bom && ($bom['phantom_expansion_complete'] ?? null) !== false ? $this->materials($bom['items'], $operations, $qty, $blocks) : [];
 
         return ['bom' => $bom, 'routing' => $routing, 'operations' => $operations, 'materials' => $materials, 'block_reasons' => $blocks];
+    }
+
+    public function freezeBom(array $bom, int $itemId, bool $lock = false): array
+    {
+        $blocks = [];
+        $expanded = $this->explodePhantoms($bom['items'], [$itemId], $blocks, $lock);
+        $bom['phantom_expansion_complete'] = ! $blocks;
+        // 展开失败时保留基准行和原因，防止把部分用料当成完整生产依据。
+        if ($blocks) $bom['phantom_expansion_block_reasons'] = $blocks;
+        else $bom['items'] = $expanded;
+        return $bom;
+    }
+
+    public function applyConfirmedMaterials(array $plan, array $bom, float $qty): array
+    {
+        $plan['bom'] = $bom;
+        $plan['materials'] = $this->materials($bom['items'], $plan['operations'], $qty, $plan['block_reasons']);
+        $plan['block_reasons'] = array_values(array_unique($plan['block_reasons']));
+        return $plan;
     }
 
     public function isBomEligible(int $bomId, int $itemId): bool
@@ -187,7 +200,7 @@ final class WorkOrderPlanBuilder
     private function routing(Item $item, ?int $productId, ?int $skuId, ?int $routingId, array &$blocks): ?array
     {
         if ($routingId) {
-            $routing = ProductionRouting::query()->where('status', 'active')->applicableToItem((int) $item->id)->find($routingId);
+            $routing = ProductionRouting::query()->where('status', 'active')->applicableToItem((int) $item->id)->lockForUpdate()->find($routingId);
             if (! $routing) { $blocks[] = '所选工艺路线已失效或不是这个产品的路线'; return null; }
         } else {
             $matches = $this->masterData->defaultRoutingMatches((int) $item->id, $productId, $skuId);
@@ -195,6 +208,8 @@ final class WorkOrderPlanBuilder
             if ($matches->count() > 1) { $blocks[] = '适用工艺路线不唯一且没有唯一默认，请指定路线'; return null; }
             $routing = $matches->first();
         }
+        $routing->load(['operations' => fn ($q) => $q->lockForUpdate(), 'operations.operation' => fn ($q) => $q->lockForUpdate(),
+            'operations.materialSupplyRules' => fn ($q) => $q->lockForUpdate()]);
         $snapshot = $this->masterData->snapshot($routing, (int) $item->id);
         $snapshot['is_default'] = (bool) $routing->is_default;
         $snapshot['operations'] = array_map(fn ($op) => $op + ['key' => 'r'.$op['routing_operation_id']], $snapshot['operations']);
@@ -206,10 +221,11 @@ final class WorkOrderPlanBuilder
      * 下层总需求 = (c×Q×(1+lc)+fc)×q×(1+l)+f，即单件用量 c×(1+lc)×q、损耗 l、固定 fc×q×(1+l)+f。
      * 下层行未指定用料工序时沿用虚拟件行的工序。
      */
-    private function explodePhantoms(array $lines, array $path, array &$blocks): array
+    private function explodePhantoms(array $lines, array $path, array &$blocks, bool $lock): array
     {
         $ids = array_values(array_unique(array_map(fn ($line) => (int) $line['component_item_id'], $lines)));
-        $phantoms = $ids ? Item::query()->whereIn('id', $ids)->where('manufacturing_strategy', 'phantom')->get()->keyBy('id') : collect();
+        $phantoms = $ids ? Item::query()->whereIn('id', $ids)->where('manufacturing_strategy', 'phantom')
+            ->when($lock, fn ($q) => $q->lockForUpdate())->get()->keyBy('id') : collect();
         if ($phantoms->isEmpty()) return $lines;
         $out = [];
         foreach ($lines as $line) {
@@ -218,15 +234,17 @@ final class WorkOrderPlanBuilder
             $name = $phantom->item_name ?: $phantom->item_code;
             if (in_array((int) $phantom->id, $path, true) || count($path) > 8) { $blocks[] = '虚拟件 '.$name.' 的 BOM 层级循环或过深，请检查 BOM'; continue; }
             if (! empty($line['child_bom_id'])) {
-                $childBom = $this->bomMatcher->eligibleQuery()->whereKey((int) $line['child_bom_id'])->where('output_item_id', $phantom->id)->first();
+                $childBom = $this->bomMatcher->eligibleQuery()->whereKey((int) $line['child_bom_id'])->where('output_item_id', $phantom->id)
+                    ->when($lock, fn ($q) => $q->lockForUpdate())->first();
                 if (! $childBom) { $blocks[] = '虚拟件 '.$name.' 指定的子 BOM 不可用，无法展开用料'; continue; }
+                if ($lock) $this->bomMatcher->loadLockedLines($childBom);
                 $childItems = $this->lengthCut->resolveBomLines($childBom, null)->all();
             } else {
-                $match = $this->bomMatcher->match(null, null, (int) $phantom->id, null);
+                $match = $this->bomMatcher->match(null, null, (int) $phantom->id, null, null, $lock);
                 if (($match['status'] ?? null) !== 'matched') { $blocks[] = '虚拟件 '.$name.' 没有唯一可用的已审核 BOM（物料级），无法展开用料'; continue; }
                 $childItems = $match['bom_snapshot']['items'];
             }
-            $children = $this->explodePhantoms($childItems, [...$path, (int) $phantom->id], $blocks);
+            $children = $this->explodePhantoms($childItems, [...$path, (int) $phantom->id], $blocks, $lock);
             $multiplier = (float) $line['qty'] * (1 + (float) ($line['loss_rate'] ?? 0) / 100);
             $parentFixed = (float) ($line['fixed_qty'] ?? 0);
             foreach ($children as $child) {
@@ -285,7 +303,8 @@ final class WorkOrderPlanBuilder
             $loss = (float) ($line['loss_rate'] ?? 0);
             $fixed = (float) ($line['fixed_qty'] ?? 0);
             $total = self::requiredQuantity($line, $qty);
-            $componentRules = $rules->where('component_item_id', $componentId);
+            // 销售替换只改变此位置领用的物料，供料规则仍按该位置的标准物料匹配。
+            $componentRules = $rules->where('component_item_id', (int) ($line['original_component']['id'] ?? $componentId));
             // 定制 BOM 行可直接指定用在哪道工序。
             $lineTarget = (int) ($line['target_routing_operation_id'] ?? 0);
             if ($lineTarget && (! $byRouting->has($lineTarget) || $byRouting->get($lineTarget)['execution_context'] !== 'production')) {
@@ -315,7 +334,7 @@ final class WorkOrderPlanBuilder
                     'component_item_id' => $componentId,
                     'component_item_code' => $line['component_item_code'] ?? $item?->item_code,
                     'component_item_name' => $line['component_item_name'] ?? $item?->item_name,
-                    'unit_name' => $item?->unit?->unit_name,
+                    'unit_name' => $line['component_snapshot']['unit_name'] ?? $item?->unit?->unit_name,
                     'unit_qty' => $unitQty, 'loss_rate' => $loss, 'fixed_qty' => $fixed, 'qty_ratio' => $target['ratio'],
                     'required_qty' => round($total * $target['ratio'], 4), 'issued_qty' => 0,
                     'supply_mode' => $target['supply_mode'], 'participates_in_kitting' => $target['kitting'],

@@ -212,6 +212,13 @@ final class TechService
             [$wo, $tech] = $this->lock($workOrderId);
             if ($tech->status !== 'pending' || $wo->status !== 'planned') $this->fail('released', '已下发车间，定制 BOM 不能再改；要改请找生产主管调整工单。');
             $base = $this->baseItems($tech, $wo);
+            $salesPositions = collect((array) data_get($wo->bom_snapshot, 'items', []))->filter(fn ($line) => ! empty($line['original_component']))->keyBy('id');
+            foreach ($salesPositions as $id => $position) {
+                $submitted = collect($rows)->first(fn ($row) => (int) ($row['base_line_id'] ?? 0) === (int) $id);
+                if (! $submitted || (int) $submitted['component_item_id'] !== (int) $position['component_item_id']) {
+                    $this->fail('sales_bom_locked', '销售已确认的替换物料须保留在原位置；需要改用其他物料时，请先办理订单变更。');
+                }
+            }
             $baseIds = array_column($base, 'id');
             $routingOps = $wo->operations()->where('execution_context', 'production')->pluck('routing_operation_id')->map(fn ($v) => (int) $v)->all();
             $items = Item::query()->with('unit')->whereIn('id', array_map(fn ($r) => (int) ($r['component_item_id'] ?? 0), $rows) ?: [0])->get()->keyBy('id');
@@ -360,6 +367,16 @@ final class TechService
                         // 位置标识只认被替换的基线行；新增定制行没有 BOM 位置，留空由后续按未配置处理。
                         'position_uid' => $b['position_uid'] ?? null, 'position_path' => $b['position_path'] ?? $b['position_uid'] ?? null,
                     ]);
+                    if ($sameItem && isset($orig['component_snapshot'])) {
+                        $out['component_item_code'] = $orig['component_item_code'];
+                        $out['component_item_name'] = $orig['component_item_name'];
+                    }
+                    if (! empty($orig['original_component'])) {
+                        // 技术未调整用料工序时，继续按销售确认位置的原供料规则分配。
+                        if (($line['target_routing_operation_id'] ?? null) === ($b['target_routing_operation_id'] ?? null)) {
+                            $out['target_routing_operation_id'] = $orig['target_routing_operation_id'] ?? null;
+                        }
+                    }
                     if (isset($out['cutting_quantity_snapshot']) && is_array($out['cutting_quantity_snapshot'])) $out['cutting_quantity_snapshot']['theoretical_qty'] = $line['qty'];
                     return $out;
                 }, $tech->custom_bom['lines'] ?? []);
