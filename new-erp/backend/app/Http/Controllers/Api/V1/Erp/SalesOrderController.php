@@ -44,6 +44,7 @@ use App\Services\Erp\SalesOrderVisibilityService;
 use App\Services\Erp\Sales\SalesOrderProgressQueryService;
 use App\Services\Erp\ErpUserProjectionService;
 use App\Services\Erp\SalesCostVisibilityService;
+use App\Services\Erp\Crm\CrmOpportunityOrderService;
 use App\Services\Erp\SkuItemMatcher;
 use App\Services\Erp\UnitConversionDomainService;
 use Illuminate\Database\Eloquent\Builder;
@@ -346,7 +347,7 @@ class SalesOrderController extends Controller
         $this->abortUnlessPermission($request, 'sales_order.delete_draft');
         $order = SalesOrder::findOrFail($id);
         $this->abortUnlessOrderVisible($request, $order);
-        app(SalesOrderDraftService::class)->delete($order, $this->operatorName($request));
+        app(SalesOrderDraftService::class)->delete($order, $this->operatorName($request), app(AuthContextService::class)->currentUser($request));
 
         return response()->json(['message' => '销售订单草稿已删除']);
     }
@@ -369,7 +370,7 @@ class SalesOrderController extends Controller
         }
 
         if ($order->confirm_status !== 'pending_confirmation') {
-            $service->submitForConfirmation($order, $this->operatorName($request));
+            $service->submitForConfirmation($order, $this->operatorName($request), app(AuthContextService::class)->currentUser($request));
         }
         $confirmed = $this->performFormalConfirm($request, $id);
         $result['order'] = $confirmed;
@@ -630,11 +631,13 @@ class SalesOrderController extends Controller
         $this->assertTradePlatform($payload, null, true);
         $payload = $this->attachCurrentOperator($payload, $request, true);
 
-        return DB::transaction(function () use ($payload) {
+        return DB::transaction(function () use ($payload, $request) {
             $lines = $payload['lines'];
+            $opportunityId = $payload['opportunity_id'] ?? null;
             $draftToken = $payload['draft_token'] ?? null;
             unset($payload['lines']);
             unset($payload['draft_token'], $payload['deleted_line_ids']);
+            unset($payload['opportunity_id']);
             $payload = $this->normalizeOrderPayload($payload);
             $payload['sales_order_no'] = $payload['sales_order_no'] ?? $this->nextNo('SO');
             $payload['order_status'] = 'draft';
@@ -644,6 +647,7 @@ class SalesOrderController extends Controller
             $payload['shipment_status'] = 'not_shipped';
 
             $order = SalesOrder::create($payload);
+            app(CrmOpportunityOrderService::class)->attachNew($order, $opportunityId, app(AuthContextService::class)->currentUser($request));
             $this->saveLines($order, $lines, $draftToken);
             $this->bindDraftOrderAttachments($order, $draftToken);
             $this->refreshOrderTotals($order->id);
@@ -713,9 +717,11 @@ class SalesOrderController extends Controller
             'shipments.lines',
             'shipments.packages',
             'salesReturns',
+            'crmOpportunityOrder',
         ]);
         $this->applySalesOrderVisibility($query, $request, true);
         $order = $query->findOrFail($id);
+        $order->setAttribute('opportunity_id', $order->crmOpportunityOrder?->opportunity_id);
         if ($order->isLegacyHistory()) {
             $shipping = (array) data_get($order->legacy_payload, 'shipping', []);
             $order->setAttribute('legacy_shipping', [
@@ -826,6 +832,7 @@ class SalesOrderController extends Controller
             unset($payload['lines']);
             unset($payload['draft_token'], $payload['deleted_line_ids']);
             $payload = $this->normalizeOrderPayload($payload);
+            app(CrmOpportunityOrderService::class)->guardOrderUpdate($order, $payload);
             $payload = app(SalesCostVisibilityService::class)->preserveStoredCosts($payload, $order->attributesToArray());
             $order->update($payload);
             $this->syncDraftLines($order, $lines, $deletedLineIds, $draftToken);
@@ -881,7 +888,7 @@ class SalesOrderController extends Controller
             $operator = app(AuthContextService::class)->currentUser($request);
             abort_unless($operator, 401, '请先登录 ERP');
             return app(\App\Services\Erp\SalesOrderFulfillmentApplicationService::class)
-                ->confirmOrder($order->id, $this->operatorName($request));
+                ->confirmOrder($order->id, $this->operatorName($request), $operator);
         }, 5);
     }
 
@@ -1297,6 +1304,7 @@ class SalesOrderController extends Controller
             'pay_type' => 'nullable|string|max:80',
             'sales_user_legacy_id' => 'nullable|integer|min:1',
             'customer_id' => 'nullable|integer|exists:erp_sales_customers,id',
+            'opportunity_id' => 'nullable|integer|min:1',
             'customer_contact_id' => 'nullable|integer|min:1',
             'customer_address_id' => 'nullable|integer|min:1',
             'customer_name' => 'required_without:customer_id|nullable|string|max:160',

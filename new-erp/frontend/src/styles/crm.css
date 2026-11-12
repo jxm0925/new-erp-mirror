@@ -250,7 +250,85 @@
 .crm-copy-btn:hover {
   color: #008b4b;
 }
+.crm-opportunity-stages {
+  display: flex;
+  align-items: stretch;
+  gap: 5px;
+  margin: 12px 0;
+  min-width: 0;
+}
+.crm-opportunity-stage {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  padding: 10px 16px;
+  background: #f1f5f9;
+  color: #64748b;
+  font-size: 12px;
+  text-align: center;
+  clip-path: polygon(0 0, 95% 0, 100% 50%, 95% 100%, 0 100%, 5% 50%);
+}
+button.crm-opportunity-stage {
+  cursor: pointer;
+}
+.crm-opportunity-stage:first-child {
+  clip-path: polygon(0 0, 95% 0, 100% 50%, 95% 100%, 0 100%);
+}
+.crm-opportunity-stage.current {
+  background: #008b4b;
+  color: #fff;
+  font-weight: 600;
+}
+.crm-opportunity-stage.done {
+  background: #dcfce7;
+  color: #00763f;
+}
+.crm-opportunity-metrics {
+  display: grid;
+  grid-template-columns: repeat(4,minmax(0,1fr));
+  gap: 12px;
+  margin: 14px 0;
+}
+.crm-opportunity-metrics > div {
+  padding: 12px 16px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  min-width: 0;
+}
+.crm-opportunity-metrics span {
+  display: block;
+  color: #64748b;
+  font-size: 12px;
+  margin-bottom: 5px;
+}
+.crm-opportunity-metrics b {
+  font-size: 22px;
+  overflow-wrap: anywhere;
+}
+.crm-opportunity-section {
+  margin: 12px 0;
+}
+.crm-opportunity-section h3 {
+  margin: 0;
+}
+.crm-opportunity-empty {
+  text-align: center;
+  padding: 18px;
+}
+.crm-opportunity-content {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 @media (max-width: 780px) {
+  .crm-opportunity-stages {
+    flex-wrap: wrap;
+  }
+  .crm-opportunity-stage {
+    flex-basis: 30%;
+  }
+  .crm-opportunity-metrics {
+    grid-template-columns: repeat(2,minmax(0,1fr));
+  }
   .crm-page {
     padding: 12px;
   }

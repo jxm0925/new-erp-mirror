@@ -3,6 +3,7 @@
 namespace App\Services\Erp\Crm;
 
 use App\Models\Erp\CrmCustomerCollaborator;
+use App\Models\Erp\CrmOpportunity;
 use App\Models\Erp\SalesCustomer;
 use App\Services\Erp\AuthContextService;
 use Illuminate\Database\QueryException;
@@ -41,6 +42,14 @@ final class CrmCustomerCollaborationService
                 'order_amount' => !empty($data['scope']['order_amount']),
                 'finance' => !empty($data['scope']['finance']),
             ];
+            if ($scope['opportunity_ids']) {
+                abort_unless($this->access->can($actor, 'crm.opportunity.view'), 403, '没有商机查看权限，不能授予商机协作。');
+                $opportunities = CrmOpportunity::query()->where('customer_id', $customer->id)->whereIn('id', $scope['opportunity_ids'])->orderBy('id')->lockForUpdate()->get();
+                abort_unless($opportunities->count() === count($scope['opportunity_ids']), 422, '指定商机须属于当前客户。');
+                foreach ($opportunities as $opportunity) {
+                    abort_unless(app(CrmOpportunityApplicationService::class)->canManage($opportunity, $actor), 403, '只能授权本人负责或管理范围内的商机。');
+                }
+            }
             if ($scope['order_amount'] || $scope['finance']) {
                 $target = DB::table('erp_legacy_admin_users')->where('legacy_id', $userId)->first();
                 if (!$target || !($this->auth->isSuperAdmin($target) || in_array('sales_order.amount.view', $this->auth->permissionCodes($target), true))) {

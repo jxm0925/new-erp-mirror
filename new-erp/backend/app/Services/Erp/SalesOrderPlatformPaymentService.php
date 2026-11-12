@@ -47,8 +47,18 @@ final class SalesOrderPlatformPaymentService
                 'confirmed_by' => $record['confirmed_by'],
                 'confirmed_at' => $record['confirmed_at'],
             ] : null,
+            'platform_payment_receipt' => ($receipt = self::receiptSnapshot($order)) === null ? null : [
+                'confirmed_by' => $receipt['confirmed_by'] ?? null,
+                'confirmed_at' => $receipt['confirmed_at'] ?? null,
+            ],
             'platform_payment_token' => $basis === null ? null : hash('sha256', json_encode([$basis, $record['revision'] ?? null], JSON_THROW_ON_ERROR)),
         ];
+    }
+
+    /** 收款核对事实与当前发货放行分开；旧记录只读兼容，不回填历史数据。 */
+    public static function receiptSnapshot(SalesOrder $order): ?array
+    {
+        return self::receiptFromRecord((array) ($order->order_flags[self::FLAG] ?? []));
     }
 
     /** 调用方先锁定订单；确认事实和发货状态在同一事务内更新。 */
@@ -59,8 +69,8 @@ final class SalesOrderPlatformPaymentService
         abort_unless(self::canConfirm($order, (int) $actor->legacy_id), 422, '只有已填写原始单号的线上平台订单可以确认平台收款。');
         $settlement = $this->settlements->status($order);
         $status = $this->status($order, $settlement);
-        abort_if($token !== null && !hash_equals($status['platform_payment_token'], $token), 409, '平台订单或收款确认已变化，请刷新后重新核对。');
-        if ($confirmed === ($status['platform_payment'] !== null)) return;
+        abort_if($token !== null && (!is_string($status['platform_payment_token']) || !hash_equals($status['platform_payment_token'], $token)), 409, '平台订单或收款确认已变化，请刷新后重新核对。');
+        if ($confirmed ? $status['platform_payment'] !== null : $status['platform_payment_receipt'] === null) return;
 
         $flags = (array) $order->order_flags;
         $operator = (string) ($actor->nickname ?: $actor->username);
@@ -71,6 +81,7 @@ final class SalesOrderPlatformPaymentService
             'confirmed_by' => $operator,
             'confirmed_at' => now()->toISOString(),
         ];
+        if ($confirmed) $record['receipt_snapshot'] = $record;
         $flags[self::FLAG] = $record;
         $order->update(['order_flags' => $flags]);
         SalesOrderLog::create([
@@ -90,8 +101,17 @@ final class SalesOrderPlatformPaymentService
 
     public function invalidate(array $flags): array
     {
+        $receipt = self::receiptFromRecord((array) ($flags[self::FLAG] ?? []));
         $flags[self::FLAG] = ['revision' => (string) Str::uuid()];
+        // 应收/退款变化仍取消原发货放行，但不能抹掉已经核对过的买家付款事实。
+        if ($receipt !== null) $flags[self::FLAG]['receipt_snapshot'] = $receipt;
         return $flags;
+    }
+
+    private static function receiptFromRecord(array $record): ?array
+    {
+        $receipt = $record['receipt_snapshot'] ?? $record;
+        return is_array($receipt) && isset($receipt['basis'], $receipt['confirmed_at']) ? $receipt : null;
     }
 
     private function basis(SalesOrder $order, array $settlement): ?array

@@ -23,6 +23,7 @@ class SalesCustomerDeletionApplicationService
                 ['erp_sales_orders', ['customer_id' => $customer->id]],
                 ['erp_sales_returns', ['customer_id' => $customer->id]],
                 ['erp_crm_leads', ['customer_id' => $customer->id]],
+                ['erp_crm_opportunities', ['customer_id' => $customer->id]],
                 ['erp_crm_followups', ['customer_id' => $customer->id]],
                 ['erp_crm_duplicate_reviews', ['resolved_customer_id' => $customer->id]],
                 ['erp_skus', ['customer_id' => $customer->id]],
@@ -38,7 +39,7 @@ class SalesCustomerDeletionApplicationService
             }
             foreach ($references as [$table, $where]) {
                 if (DB::table($table)->where($where)->exists()) {
-                    throw ValidationException::withMessages(['customer' => '该客户已有线索、跟进、核实结果、订单、定制资料或财务记录，不能删除；请保持停用。']);
+                    throw ValidationException::withMessages(['customer' => '该客户已有线索、商机、跟进、核实结果、订单、定制资料或财务记录，不能删除；请保持停用。']);
                 }
             }
 

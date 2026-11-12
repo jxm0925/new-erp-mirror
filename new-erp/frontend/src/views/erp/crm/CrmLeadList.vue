@@ -17,6 +17,7 @@
         </div>
       </div>
       <div class="crm-actions">
+        <crm-list-view-controls ref="views" resource="leads" title="线索" :configuration="viewConfiguration" :filters="query" :column-groups="columnGroups" :filter-options="viewFilterOptions" @apply="applyView" />
         <el-button size="small" icon="el-icon-refresh" :loading="loading" @click="load">刷新</el-button>
         <el-button v-if="abilities.create" size="small" type="success" icon="el-icon-plus" @click="$refs.form.open()">新增线索</el-button>
       </div>
@@ -91,6 +92,7 @@
     </div>
 
     <section class="crm-filters filter-card">
+      <el-tag v-if="query.customer_id" size="small" type="info" closable @close="clearCustomerFilter">本客户线索</el-tag>
       <el-input
         v-model.trim="query.keyword"
         size="small"
@@ -131,6 +133,18 @@
           <el-option v-for="item in metadata.customer_pools || []" :key="item" :value="item" :label="item" />
         </el-select>
       </label>
+      <label>
+        <span>客户标签</span>
+        <el-select popper-class="crm-select-popper" v-model="query.customer_tag" size="small" filterable clearable placeholder="全部标签" @change="search">
+          <el-option v-for="item in metadata.customer_tags || []" :key="item" :value="item" :label="item" />
+        </el-select>
+      </label>
+      <label>
+        <span>我的标签</span>
+        <el-select popper-class="crm-select-popper" v-model="query.custom_tag" size="small" filterable clearable placeholder="全部标签" @change="search">
+          <el-option v-for="item in metadata.custom_tags || []" :key="item" :value="item" :label="item" />
+        </el-select>
+      </label>
       <label v-if="query.tab === 'public_pool'">
         <span>回收原因</span>
         <el-select
@@ -156,19 +170,21 @@
     <el-alert v-if="error" :title="error" type="error" :closable="false" show-icon />
 
     <section class="crm-card table-card">
-      <el-table v-loading="loading" :data="rows" size="small" class="lead-table">
-        <el-table-column label="客户 / 线索编号" min-width="210">
+      <el-table :key="viewTableKey" v-loading="loading" :span-method="viewGroupSpan" :data="rows" size="small" class="lead-table">
+        <el-table-column v-if="viewConfiguration.group_by" prop="__view_group" :label="groupTitle" min-width="130"><template slot-scope="{row}">{{ groupValue(row) }}</template></el-table-column>
+        <template v-for="column in viewColumns">
+        <el-table-column v-if="column.key === 'identity'" :key="column.key" label="客户 / 线索编号" min-width="210">
           <template slot-scope="{row}">
             <div class="cell-primary-line">
-              <el-button type="text" class="lead-name-link" @click="$refs.detail.open(row.id)">
+              <el-button v-if="hasField('customer_name')" type="text" class="lead-name-link" @click="$refs.detail.open(row.id)">
                 {{ row.customer_name || '未命名客户' }}
               </el-button>
-              <span class="kind-pill" :class="row.customer_kind === 'enterprise' ? 'is-ent' : 'is-ind'">
+              <span v-if="hasField('customer_kind')" class="kind-pill" :class="row.customer_kind === 'enterprise' ? 'is-ent' : 'is-ind'">
                 {{ row.customer_kind === 'enterprise' ? '企业' : '个人' }}
               </span>
               <span v-if="row.is_new_inquiry" class="new-badge">新咨询</span>
             </div>
-            <div class="cell-sub-line">
+            <div v-if="hasField('lead_no')" class="cell-sub-line">
               <span class="mono-no">{{ row.lead_no }}</span>
               <i class="el-icon-document-copy crm-copy-btn" title="复制线索编号" @click.stop="copyText(row.lead_no, '线索编号')" />
               <template v-if="row.customer && row.customer.customer_code">
@@ -186,52 +202,52 @@
           </template>
         </el-table-column>
 
-        <el-table-column label="联系人 / 地区" min-width="155">
+        <el-table-column v-if="column.key === 'contact'" :key="column.key" label="联系人 / 地区" min-width="155">
           <template slot-scope="{row}">
             <div class="cell-primary-line">
-              <span class="text-strong">{{ row.contact_name || row.customer_name || '—' }}</span>
-              <span v-if="row.contact_role" class="role-text">（{{ row.contact_role }}）</span>
+              <span v-if="hasField('contact_name')" class="text-strong">{{ row.contact_name || row.customer_name || '—' }}</span>
+              <span v-if="hasField('contact_name') && row.contact_role" class="role-text">（{{ row.contact_role }}）</span>
             </div>
-            <div class="cell-sub-line">
+            <div v-if="hasField('mobile')" class="cell-sub-line">
               <span v-if="row.mobile || row.contact_value2">{{ row.mobile || row.contact_value2 }}</span>
               <span v-else-if="row.wechat">微信：{{ row.wechat }}</span>
               <span v-else>未填联系方式</span>
             </div>
-            <div v-if="regionText(row)" class="cell-sub-line muted-addr">
+            <div v-if="hasField('region') && regionText(row)" class="cell-sub-line muted-addr">
               <i class="el-icon-location-outline" /> {{ regionText(row) }}
             </div>
           </template>
         </el-table-column>
 
-        <el-table-column label="需求摘要 / 业务" min-width="215">
+        <el-table-column v-if="column.key === 'demand'" :key="column.key" label="需求摘要 / 业务" min-width="215">
           <template slot-scope="{row}">
-            <div class="demand-text">{{ row.demand_summary || row.content || '暂未填写需求描述' }}</div>
+            <div v-if="hasField('demand_summary')" class="demand-text">{{ row.demand_summary || row.content || '暂未填写需求描述' }}</div>
             <div class="cell-tags-line">
-              <span v-if="row.expected_amount !== null && row.expected_amount !== undefined" class="amount-pill">
+              <span v-if="hasField('expected_amount') && row.expected_amount !== null && row.expected_amount !== undefined" class="amount-pill">
                 {{ formatMoney(row.expected_amount, row.currency) }}
               </span>
-              <span v-if="row.trade_type" class="meta-chip">{{ row.trade_type }}</span>
-              <span v-if="row.lead_type && row.lead_type !== '普通咨询'" class="meta-chip">{{ row.lead_type }}</span>
-              <span v-for="line in (row.business_lines || []).slice(0, 2)" :key="line" class="meta-chip is-green">{{ line }}</span>
-              <span v-if="(row.business_lines || []).length > 2" class="meta-chip">+{{ row.business_lines.length - 2 }}</span>
+              <span v-if="hasField('trade_type') && row.trade_type" class="meta-chip">{{ row.trade_type }}</span>
+              <span v-if="hasField('trade_type') && row.lead_type && row.lead_type !== '普通咨询'" class="meta-chip">{{ row.lead_type }}</span>
+              <span v-for="line in hasField('business_lines') ? (row.business_lines || []).slice(0, 2) : []" :key="line" class="meta-chip is-green">{{ line }}</span>
+              <span v-if="hasField('business_lines') && (row.business_lines || []).length > 2" class="meta-chip">+{{ row.business_lines.length - 2 }}</span>
             </div>
           </template>
         </el-table-column>
 
-        <el-table-column label="来源渠道 / 录入" min-width="155">
+        <el-table-column v-if="column.key === 'source'" :key="column.key" label="来源渠道 / 录入" min-width="155">
           <template slot-scope="{row}">
             <div class="cell-primary-line">
-              <span class="text-strong">{{ row.source_channel || '—' }}</span>
-              <span class="entry-pill" :class="row.entry_method === 'self' ? 'is-self' : 'is-ops'">
+              <span v-if="hasField('source_channel')" class="text-strong">{{ row.source_channel || '—' }}</span>
+              <span v-if="hasField('entry_method')" class="entry-pill" :class="row.entry_method === 'self' ? 'is-self' : 'is-ops'">
                 {{ row.entry_method === 'self' ? '销售自录' : '运营代录' }}
               </span>
             </div>
-            <div v-if="row.platform_name || row.platform_buyer_id" class="cell-sub-line">
+            <div v-if="hasField('platform_name') && (row.platform_name || row.platform_buyer_id)" class="cell-sub-line">
               <span>{{ row.platform_name || '线上店铺' }}</span>
               <span v-if="row.platform_buyer_id" class="sep">·</span>
               <span v-if="row.platform_buyer_id">ID: {{ row.platform_buyer_id }}</span>
             </div>
-            <div class="cell-sub-line">
+            <div v-if="hasField('entry_method')" class="cell-sub-line">
               <span>{{ row.created_by_name || '—' }}</span>
               <span v-if="row.created_at" class="sep">·</span>
               <span v-if="row.created_at">{{ shortDate(row.created_at) }}</span>
@@ -239,55 +255,55 @@
           </template>
         </el-table-column>
 
-        <el-table-column v-if="query.tab !== 'public_pool'" label="负责人 / 部门" min-width="140">
+        <el-table-column v-if="column.key === 'owner' && query.tab !== 'public_pool'" :key="column.key" label="负责人 / 部门" min-width="140">
           <template slot-scope="{row}">
             <div class="cell-primary-line">
-              <template v-if="row.pending_user_name">
+              <template v-if="hasField('owner_name') && row.pending_user_name">
                 <span class="text-strong">{{ row.pending_user_name }}</span>
                 <span class="pending-pill">待接收</span>
               </template>
-              <template v-else-if="row.owner_name">
+              <template v-else-if="hasField('owner_name') && row.owner_name">
                 <span class="text-strong">{{ row.owner_name }}</span>
               </template>
-              <span v-else class="crm-muted">待分配</span>
+              <span v-else-if="hasField('owner_name')" class="crm-muted">待分配</span>
             </div>
             <div class="cell-sub-line">
-              <span>{{ row.department_name || '未指定部门' }}</span>
-              <span v-if="row.assigned_by_name && (row.pending_user_name || row.owner_name)" class="sep">·</span>
-              <span v-if="row.assigned_by_name && (row.pending_user_name || row.owner_name)">{{ row.assigned_by_name }}分配</span>
+              <span v-if="hasField('department_name')">{{ row.department_name || '未指定部门' }}</span>
+              <span v-if="hasField('owner_name') && row.assigned_by_name && (row.pending_user_name || row.owner_name)" class="sep">·</span>
+              <span v-if="hasField('owner_name') && row.assigned_by_name && (row.pending_user_name || row.owner_name)">{{ row.assigned_by_name }}分配</span>
             </div>
           </template>
         </el-table-column>
 
-        <el-table-column v-if="query.tab !== 'public_pool'" label="状态 / 客户池" min-width="145">
+        <el-table-column v-if="column.key === 'state' && query.tab !== 'public_pool'" :key="column.key" label="状态 / 客户池" min-width="145">
           <template slot-scope="{row}">
             <div class="cell-primary-line">
-              <el-tag size="mini" :type="statusType(row.status)" class="status-tag">
+              <el-tag v-if="hasField('status')" size="mini" :type="statusType(row.status)" class="status-tag">
                 {{ row.status_label || (metadata.statuses || {})[row.status] || row.status }}
               </el-tag>
-              <span v-if="row.confirmed_at" class="confirmed-pill" title="已完成基础线索确认">
+              <span v-if="hasField('status') && row.confirmed_at" class="confirmed-pill" title="已完成基础线索确认">
                 <i class="el-icon-check" /> 已确认
               </span>
             </div>
-            <div v-if="row.customer_pool" class="cell-sub-line">
+            <div v-if="hasField('customer_pool') && row.customer_pool" class="cell-sub-line">
               <span class="pool-badge">{{ row.customer_pool }}</span>
             </div>
-            <div v-else-if="row.status === 'invalid' && row.invalid_reason" class="cell-sub-line crm-overdue">
+            <div v-else-if="hasField('status') && row.status === 'invalid' && row.invalid_reason" class="cell-sub-line crm-overdue">
               原因：{{ row.invalid_reason }}
             </div>
-            <div v-else class="cell-sub-line">
+            <div v-else-if="hasField('customer_pool')" class="cell-sub-line">
               <span class="crm-muted">未入客户池</span>
             </div>
           </template>
         </el-table-column>
 
-        <el-table-column v-if="query.tab !== 'public_pool'" label="最近联系 / 下次计划" min-width="175">
+        <el-table-column v-if="column.key === 'schedule' && query.tab !== 'public_pool'" :key="column.key" label="最近联系 / 下次计划" min-width="175">
           <template slot-scope="{row}">
-            <div class="cell-sub-line">
+            <div v-if="hasField('last_contact_at')" class="cell-sub-line">
               <span class="schedule-lbl">最近：</span>
               <span class="text-strong">{{ date(row.last_contact_at) }}</span>
             </div>
-            <div class="cell-sub-line">
+            <div v-if="hasField('next_contact_at')" class="cell-sub-line">
               <span class="schedule-lbl">下次：</span>
               <span :class="{ 'crm-overdue text-strong': isOverdue(row), 'due-today text-strong': isDueToday(row) }">
                 {{ date(row.next_contact_at) }}
@@ -295,28 +311,29 @@
               <span v-if="isOverdue(row)" class="overdue-pill">已逾期</span>
               <span v-else-if="isDueToday(row)" class="today-pill">今日</span>
             </div>
-            <div v-if="row.next_plan" class="cell-sub-line plan-summary">
+            <div v-if="hasField('next_plan') && row.next_plan" class="cell-sub-line plan-summary">
               计划：{{ row.next_plan }}
             </div>
           </template>
         </el-table-column>
 
-        <el-table-column v-if="query.tab === 'public_pool'" prop="department_name" label="所属部门" min-width="105" />
-        <el-table-column v-if="query.tab === 'public_pool'" label="回收时间 / 原因" min-width="175">
+        <el-table-column v-if="column.key === 'owner' && query.tab === 'public_pool' && hasField('department_name')" :key="column.key" prop="department_name" label="所属部门" min-width="105" />
+        <el-table-column v-if="column.key === 'recycle' && query.tab === 'public_pool'" :key="column.key" label="回收时间 / 原因" min-width="175">
           <template slot-scope="{row}">
             <div class="cell-primary-line">
-              <span class="pool-badge is-amber">{{ row.recycle_reason || '人工回收' }}</span>
+              <span v-if="hasField('recycle_reason')" class="pool-badge is-amber">{{ row.recycle_reason || '人工回收' }}</span>
             </div>
-            <div class="cell-sub-line">{{ date(row.recycled_at) }}</div>
+            <div v-if="hasField('recycled_at')" class="cell-sub-line">{{ date(row.recycled_at) }}</div>
           </template>
         </el-table-column>
-        <el-table-column v-if="query.tab === 'public_pool'" label="原负责人 / 回收人" min-width="145">
+        <el-table-column v-if="column.key === 'recycle_owner' && query.tab === 'public_pool'" :key="column.key" label="原负责人 / 回收人" min-width="145">
           <template slot-scope="{row}">
-            <div class="cell-sub-line">原负责：<span class="text-strong">{{ row.previous_owner_name || '—' }}</span></div>
-            <div class="cell-sub-line">回收人：{{ row.recycled_by_name || '—' }}</div>
+            <div v-if="hasField('previous_owner_name')" class="cell-sub-line">原负责：<span class="text-strong">{{ row.previous_owner_name || '—' }}</span></div>
+            <div v-if="hasField('recycled_by_name')" class="cell-sub-line">回收人：{{ row.recycled_by_name || '—' }}</div>
           </template>
         </el-table-column>
 
+        </template>
         <el-table-column label="操作" :min-width="query.tab === 'public_pool' ? 140 : 225" fixed="right">
           <template slot-scope="{row}">
             <div class="crm-inline row-ops">
@@ -387,6 +404,8 @@
     <crm-lead-action-dialog ref="action" @changed="load" />
     <crm-followup-dialog ref="follow" @saved="load" />
     <crm-identity-review-dialog ref="review" @saved="load" />
+    <crm-opportunity-form-dialog ref="opportunityForm" @saved="opportunitySaved" />
+    <crm-opportunity-detail-dialog ref="opportunityDetail" @changed="load" />
     <customer-detail-dialog ref="customer" @changed="load" />
   </div>
 </template>
@@ -398,6 +417,10 @@ import CrmLeadDetailDialog from '@/components/crm/CrmLeadDetailDialog.vue'
 import CrmLeadActionDialog from '@/components/crm/CrmLeadActionDialog.vue'
 import CrmFollowupDialog from '@/components/crm/CrmFollowupDialog.vue'
 import CrmIdentityReviewDialog from '@/components/crm/CrmIdentityReviewDialog.vue'
+import CrmOpportunityFormDialog from '@/components/crm/CrmOpportunityFormDialog.vue'
+import CrmOpportunityDetailDialog from '@/components/crm/CrmOpportunityDetailDialog.vue'
+import CrmListViewControls from '@/components/crm/CrmListViewControls.vue'
+import { leadColumnGroups, orderedColumnGroups, listViewQuery, listViewGroupSpan } from '@/components/crm/listViewColumns'
 import '@/styles/crm.css'
 
 const blankQuery = (perPage = 10, tab = 'mine') => ({
@@ -409,12 +432,17 @@ const blankQuery = (perPage = 10, tab = 'mine') => ({
   recycle_reason: '',
   status: '',
   customer_pool: '',
+  customer_id: '',
+  customer_tag: '',
+  custom_tag: '',
   due: '',
   page: 1,
   per_page: perPage
 })
 
 const ACTION_META = [
+  { key: 'opportunity', label: '查看商机', icon: 'el-icon-connection', cls: '' },
+  { key: 'convert', label: '转商机', icon: 'el-icon-aim', cls: '' },
   { key: 'follow', label: '跟进', icon: 'el-icon-chat-line-round', cls: '' },
   { key: 'accept', label: '接收', icon: 'el-icon-check', cls: '' },
   { key: 'assign', label: '分配', icon: 'el-icon-s-promotion', cls: '' },
@@ -432,14 +460,19 @@ const ACTION_META = [
 export default {
   name: 'CrmLeadList',
   components: {
+    CrmListViewControls,
     CrmLeadFormDialog,
     CrmLeadDetailDialog,
     CrmLeadActionDialog,
     CrmFollowupDialog,
     CrmIdentityReviewDialog,
+    CrmOpportunityFormDialog,
+    CrmOpportunityDetailDialog,
     CustomerDetailDialog: () => import('@/components/sales/CustomerDetailDialog.vue')
   },
   data: () => ({
+    columnGroups: leadColumnGroups,
+    viewConfiguration: { columns: leadColumnGroups.flatMap(group => group.fields), filters: {}, sort: { field: '', direction: 'desc' }, group_by: '' },
     metadata: {},
     rows: [],
     total: 0,
@@ -448,6 +481,7 @@ export default {
     loading: false,
     sequence: 0,
     error: '',
+    metadataReady: false,
     recycleReasonOptions: ['超期未跟进', '暂缓采购', '原负责人停用', '客户无需求', '其他'],
     dueOptions: [
       { value: '', label: '全部' },
@@ -457,15 +491,19 @@ export default {
     ]
   }),
   computed: {
+    viewColumns() { return orderedColumnGroups(this.viewConfiguration.columns,this.columnGroups) },
+    viewTableKey() { return this.viewConfiguration.columns.join(',') + ':' + this.viewConfiguration.group_by },
+    groupTitle() { const field = ((this.$refs.views && this.$refs.views.metadata.group_fields) || []).find(field => field.key === this.viewConfiguration.group_by); return field ? field.label : '分组' },
+    viewFilterOptions() { return { tab: Object.fromEntries(this.visibleTabs.map(item => [item.value,item.label])), status: this.metadata.statuses || {}, department_legacy_id: Object.fromEntries((this.metadata.departments || []).map(item => [item.id,item.name])), entry_method: this.metadata.entry_methods || {}, due: Object.fromEntries(this.dueOptions.map(item => [item.value,item.label])) } },
     currentUser() { return this.metadata.current_user || {} },
     abilities() { return this.metadata.abilities || {} },
     visibleTabs() {
       return [
         { value: 'mine', label: '我负责的', icon: 'el-icon-user-solid', desc: '本人跟进中的线索', tone: 'is-green' },
         { value: 'collaborating', label: '我协作的', icon: 'el-icon-connection', desc: '跨部门协作客户线索', tone: '' },
+        { value: 'all', label: '授权范围', icon: 'el-icon-Menu', desc: '授权范围内全部可见线索', tone: '' },
         ...(this.abilities.assign || this.abilities.review
           ? [
-            { value: 'all', label: '授权范围', icon: 'el-icon-Menu', desc: '授权部门与渠道全部线索', tone: '' },
             { value: 'pending_assignment', label: '待分配', icon: 'el-icon-s-promotion', desc: '等待指派负责销售', tone: 'is-amber' }
           ]
           : []),
@@ -494,6 +532,9 @@ export default {
         this.query.recycle_reason ||
         this.query.status ||
         this.query.customer_pool ||
+        this.query.customer_id ||
+        this.query.customer_tag ||
+        this.query.custom_tag ||
         this.query.due
       )
     },
@@ -521,14 +562,57 @@ export default {
     try {
       const { data } = await getCrmLeadMetadata()
       this.metadata = data.data || data
-      this.query.tab = this.abilities.assign && !this.currentUser.is_sales ? 'all' : 'mine'
+      this.metadataReady = true
+      await this.$nextTick()
+      const configuration = await this.$refs.views.initialize()
+      if (configuration) this.applyView(configuration, false)
+      this.readRouteQuery(true)
       await this.load()
     } catch (error) {
       this.error = crmError(error, '线索中心加载失败')
     }
   },
   beforeDestroy() { this.sequence += 1 },
+  watch: {
+    '$route.query'() {
+      if (!this.metadataReady || this.$route.path !== '/sales/leads') return
+      const previous = this.query
+      this.readRouteQuery()
+      if (Object.keys(this.query).every(key => String(previous[key] || '') === String(this.query[key] || ''))) return
+      this.load()
+    }
+  },
   methods: {
+    viewGroupSpan: listViewGroupSpan,
+    hasField(key) { return this.viewConfiguration.columns.includes(key) },
+    applyView(configuration, reload = true) {
+      this.viewConfiguration = configuration
+      this.query = { ...blankQuery(this.query.per_page,this.abilities.assign && !this.currentUser.is_sales ? 'all' : 'mine'), ...configuration.filters, page: 1 }
+      if (!this.visibleTabs.some(item => item.value === this.query.tab)) this.query.tab = 'all'
+      if (reload) this.load()
+    },
+    groupValue(row) { return this.viewConfiguration.group_by === 'status' ? (row.status_label || (this.metadata.statuses || {})[row.status] || '—') : (row[this.viewConfiguration.group_by] || '未填写') },
+    clearCustomerFilter() { this.query.customer_id = ''; this.search() },
+    readRouteQuery(preserveCurrent = false) {
+      const route = this.$route.query
+      const query = preserveCurrent ? { ...this.query } : blankQuery(10, this.abilities.assign && !this.currentUser.is_sales ? 'all' : 'mine')
+      Object.keys(query).forEach(key => {
+        if (typeof route[key] === 'string') query[key] = route[key]
+      })
+      query.page = Math.max(1, Number.parseInt(query.page, 10) || 1)
+      query.per_page = [10, 20, 50, 100].includes(Number(query.per_page)) ? Number(query.per_page) : 10
+      if (!this.visibleTabs.some(item => item.value === query.tab)) query.tab = 'all'
+      this.query = query
+    },
+    syncRouteQuery() {
+      const query = {}
+      Object.entries(this.query).forEach(([key, value]) => {
+        if (value !== '' && value !== null && value !== undefined) query[key] = String(value)
+      })
+      const current = this.$route.query
+      if (Object.keys(query).length === Object.keys(current).length && Object.keys(query).every(key => current[key] === query[key])) return
+      this.$router.replace({ path: '/sales/leads', query }).catch(() => {})
+    },
     date: crmDate,
     shortDate(val) {
       const formatted = crmDate(val)
@@ -559,10 +643,12 @@ export default {
     },
     rowActions(row) {
       const allowed = row.abilities || {}
-      return ACTION_META.filter(action => (action.key === 'review' ? row.review && row.review.can_resolve : allowed[action.key]))
+      return ACTION_META.filter(action => action.key === 'opportunity' ? !!row.opportunity_id : (action.key === 'review' ? row.review && row.review.can_resolve : allowed[action.key]))
     },
     handleAction(row, action) {
-      if (action === 'edit') this.$refs.form.open(row.id)
+      if (action === 'opportunity') this.$refs.opportunityDetail.open(row.opportunity_id)
+      else if (action === 'convert') this.$refs.opportunityForm.open({ lead: row })
+      else if (action === 'edit') this.$refs.form.open(row.id)
       else if (action === 'review') this.$refs.review.openReview(row.review)
       else if (action === 'follow') {
         this.$refs.follow.open({
@@ -581,6 +667,10 @@ export default {
       if (customerId && this.$refs.customer) {
         this.$refs.customer.open(customerId)
       }
+    },
+    opportunitySaved(row) {
+      this.load()
+      if (row && row.id) this.$refs.opportunityDetail.open(row.id)
     },
     copyText(text, label = '内容') {
       if (!text) return
@@ -618,17 +708,23 @@ export default {
       this.search()
     },
     async load() {
+      this.syncRouteQuery()
       const sequence = ++this.sequence
       this.loading = true
       this.error = ''
       try {
-        const { data } = await listCrmLeads({ ...this.query })
+        const { data } = await listCrmLeads({ ...this.query, ...listViewQuery(this.viewConfiguration) })
         if (sequence !== this.sequence) return
         this.rows = data.data || []
         this.total = data.total || 0
         this.counts = data.tabs || {}
       } catch (error) {
-        if (sequence === this.sequence) this.error = crmError(error, '线索列表加载失败')
+        if (sequence === this.sequence) {
+          this.rows = []
+          this.total = 0
+          this.counts = {}
+          this.error = crmError(error, '线索列表加载失败')
+        }
       } finally {
         if (sequence === this.sequence) this.loading = false
       }

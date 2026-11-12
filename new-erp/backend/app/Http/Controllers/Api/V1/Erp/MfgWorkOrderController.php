@@ -208,7 +208,11 @@ class MfgWorkOrderController extends Controller
         if (! $user) throw new WorkOrderDomainException('unauthenticated', '请先登录 ERP。', 401);
         $super = $auth->isSuperAdmin($user);
         $codes = $auth->permissionCodes($user);
-        if (! $super && ! array_intersect((array) $permission, $codes)) throw new WorkOrderDomainException('permission_denied', '当前账号没有这项工单权限。', 403);
+        if ($permission === 'production.work_order.view' || $permission === ['production.work_order.view', 'production.task.execute']) {
+            app(\App\Services\Erp\Manufacturing\WorkOrderReadAccessService::class)->assertView($user, is_array($permission));
+        } elseif (! $super && ! array_intersect((array) $permission, $codes)) {
+            throw new WorkOrderDomainException('permission_denied', '当前账号没有这项工单权限。', 403);
+        }
         return [$user, $super || in_array('sales_order.amount.view', $codes, true) || in_array('production.performance.manage', $codes, true)];
     }
 }

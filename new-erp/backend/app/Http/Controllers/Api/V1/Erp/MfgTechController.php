@@ -7,7 +7,9 @@ use App\Http\Controllers\Controller;
 use App\Services\Erp\AuthContextService;
 use App\Services\Erp\Manufacturing\TechService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
+use Throwable;
 
 /** 定制技术：定制工单的设计图、定制 BOM、下发车间。 */
 class MfgTechController extends Controller
@@ -54,10 +56,15 @@ class MfgTechController extends Controller
         $ext = strtolower($file->getClientOriginalExtension());
         if (! in_array($ext, self::DRAWING_EXT, true)) throw new WorkOrderDomainException('file_type', '图纸只支持 PDF、图片、DWG/DXF、STEP 或 ZIP。');
         $path = $file->storeAs('erp/production/drawings/'.date('Ymd'), Str::uuid().'.'.$ext, 'public');
-        $drawing = $tech->uploadDrawing($id, [
-            'original_name' => mb_substr($file->getClientOriginalName(), 0, 255), 'storage_path' => $path, 'url' => MfgTaskController::publicUrl($request, $path),
-            'mime_type' => $file->getMimeType(), 'file_size' => (int) $file->getSize(), 'file_hash' => hash_file('sha256', $file->getRealPath()) ?: null,
-        ], $data['drawing_name'] ?? null, isset($data['replace_drawing_id']) ? (int) $data['replace_drawing_id'] : null, $user);
+        try {
+            $drawing = $tech->uploadDrawing($id, [
+                'original_name' => mb_substr($file->getClientOriginalName(), 0, 255), 'storage_path' => $path, 'url' => MfgTaskController::publicUrl($request, $path),
+                'mime_type' => $file->getMimeType(), 'file_size' => (int) $file->getSize(), 'file_hash' => hash_file('sha256', $file->getRealPath()) ?: null,
+            ], $data['drawing_name'] ?? null, isset($data['replace_drawing_id']) ? (int) $data['replace_drawing_id'] : null, $user);
+        } catch (Throwable $error) {
+            if ($path) Storage::disk('public')->delete($path);
+            throw $error;
+        }
         return response()->json(['message' => '图纸已上传（V'.$drawing->version_no.'）。', 'data' => $tech->detail($id, ...$this->perfPerms($user))]);
     }
 

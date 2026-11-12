@@ -54,6 +54,9 @@ import SalesOrderList from './views/erp/sales/SalesOrderList.vue'
 import SalesCustomerList from './views/erp/sales/SalesCustomerList.vue'
 import CrmLeadList from './views/erp/crm/CrmLeadList.vue'
 import CrmTeam from './views/erp/crm/CrmTeam.vue'
+import CrmOpportunityList from './views/erp/crm/CrmOpportunityList.vue'
+import CrmWorkbench from './views/erp/crm/CrmWorkbench.vue'
+import CrmDashboard from './views/erp/crm/CrmDashboard.vue'
 import SalesOrderForm from './views/erp/sales/SalesOrderForm.vue'
 import SalesOrderDetail from './views/erp/sales/SalesOrderDetail.vue'
 import SalesProductionConfirmation from './views/erp/sales/SalesProductionConfirmation.vue'
@@ -190,7 +193,10 @@ const router = new VueRouter({
     { path: '/bom/expand', component: BomExpand, meta: { permission: 'bom.expand' } },
     { path: '/sales', redirect: '/sales/orders' },
     { path: '/sales/customers', component: SalesCustomerList },
+    { path: '/sales/workbench', component: CrmWorkbench, meta: { permission: 'crm.workbench.view' } },
+    { path: '/sales/crm-dashboard', component: CrmDashboard, meta: { permission: 'crm.dashboard.view' } },
     { path: '/sales/leads', component: CrmLeadList, meta: { permission: 'crm.lead.view' } },
+    { path: '/sales/opportunities', component: CrmOpportunityList, meta: { permission: 'crm.opportunity.view' } },
     { path: '/sales/crm-team', component: CrmTeam, meta: { permission: 'crm.team.view' } },
     { path: '/sales/orders', component: SalesOrderList },
     { path: '/sales/orders/create', component: SalesOrderForm },
@@ -214,6 +220,7 @@ const router = new VueRouter({
     { path: '/production/performance/orders', component: ProductionPerformanceStats, meta: { permission: 'production.performance_stats' } },
     { path: '/production/board', component: ProductionBoard, meta: { permission: 'production.board' } },
     { path: '/production/tech', component: ProductionTechList, meta: { permission: ['production.tech', 'production.tech.manage'] } },
+    { path: '/production/drawing-statistics', component: () => import('./views/erp/production/TechnicalDrawingStatistics.vue'), meta: { permission: 'production.drawing_stats' } },
     { path: '/production/tech/:id(\\d+)', component: ProductionTechDetail, meta: { permission: ['production.tech', 'production.tech.manage'] } },
     { path: '/approvals', redirect: '/approvals/tasks' },
     { path: '/approvals/tasks', component: ApprovalWorkbench, meta: { permission: 'approval.task.view' } },

@@ -4,6 +4,7 @@ namespace App\Services\Erp\Crm;
 
 use App\Models\Erp\CrmFollowup;
 use App\Models\Erp\CrmLead;
+use App\Models\Erp\CrmOpportunity;
 use App\Models\Erp\SalesCustomer;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -22,15 +23,22 @@ final class CrmFollowupApplicationService
 
     public function subject(string $type, int $id, object $actor, bool $write = false, bool $lock = false): array
     {
+        if ($type === 'opportunity') {
+            $this->leads->permission($actor, 'crm.opportunity.view');
+            $opportunities = app(CrmOpportunityApplicationService::class);
+            $opportunity = $opportunities->visible($id, $actor, $lock);
+            if ($write) abort_unless($opportunities->abilities($opportunity, $actor)['follow'], 403, '无权为该商机填写跟进。');
+            return [SalesCustomer::query()->when($lock, fn ($q) => $q->lockForUpdate())->findOrFail($opportunity->customer_id), null, $opportunity];
+        }
         if ($type === 'lead') {
             $this->leads->permission($actor, 'crm.lead.view');
             $lead = $this->leads->visible($id, $actor, $lock);
             if ($write) abort_unless($this->leads->abilities($lead, $actor)['follow'], 403, '无权为该线索填写跟进。');
-            if (!$lead->customer_id && !$write) return [null, $lead];
+            if (!$lead->customer_id && !$write) return [null, $lead, null];
             abort_unless($lead->customer_id, 422, '草稿和待核实线索不能填写正式跟进。');
-            return [SalesCustomer::query()->when($lock, fn ($q) => $q->lockForUpdate())->findOrFail($lead->customer_id), $lead];
+            return [SalesCustomer::query()->when($lock, fn ($q) => $q->lockForUpdate())->findOrFail($lead->customer_id), $lead, null];
         }
-        abort_unless($type === 'customer', 422, '当前支持客户和线索跟进。');
+        abort_unless($type === 'customer', 422, '跟进对象无效。');
         $this->leads->permission($actor, 'sales.customer');
         $customer = SalesCustomer::query()->when($lock, fn ($q) => $q->lockForUpdate())->findOrFail($id);
         abort_unless($this->access->relation($customer, $actor) !== null, 403, '无权查看该客户。');
@@ -38,37 +46,59 @@ final class CrmFollowupApplicationService
             $this->leads->permission($actor, 'crm.lead.follow');
             $this->access->assert($customer, $actor, 'follow', '无权为该客户填写跟进。');
         }
-        return [$customer, null];
+        return [$customer, null, null];
     }
 
     public function listing(array $filters, object $actor)
     {
-        [$customer, $lead] = $this->subject($filters['subject_type'], (int) $filters['subject_id'], $actor);
+        return $this->listingQuery($filters, $actor)->orderByDesc('contacted_at')->orderByDesc('id')
+            ->paginate((int) ($filters['per_page'] ?? 10))->through(fn ($followup) => $this->present($followup, $actor));
+    }
+
+    public function latestForCustomer(int $customerId, object $actor): array
+    {
+        $query = $this->listingQuery(['subject_type' => 'customer', 'subject_id' => $customerId], $actor);
+        return [
+            'data' => (clone $query)->orderByDesc('contacted_at')->orderByDesc('id')->limit(3)->get()
+                ->map(fn ($followup) => $this->present($followup, $actor))->all(),
+            'total' => $query->count(), 'per_page' => 3, 'current_page' => 1,
+        ];
+    }
+
+    private function listingQuery(array $filters, object $actor): \Illuminate\Database\Eloquent\Builder
+    {
+        [$customer, $lead, $opportunity] = $this->subject($filters['subject_type'], (int) $filters['subject_id'], $actor);
         $query = CrmFollowup::query()->with('attachments');
-        if ($lead) {
+        if ($opportunity) {
+            $query->where('subject_type', 'opportunity')->where('subject_id', $opportunity->id);
+        } elseif ($lead) {
             $query->where('lead_id', $lead->id);
         } else {
             $visibleLeads = CrmLead::query()->select('id');
             $this->leads->applyVisible($visibleLeads, $actor);
             $canSeeLeads = $this->access->can($actor, 'crm.lead.view');
-            $query->where('customer_id', $customer->id)->where(function ($q) use ($visibleLeads, $canSeeLeads) {
-                $q->whereNull('lead_id');
+            $visibleOpportunities = CrmOpportunity::query()->select('id');
+            app(CrmOpportunityApplicationService::class)->applyVisible($visibleOpportunities, $actor);
+            $canSeeOpportunities = $this->access->can($actor, 'crm.opportunity.view');
+            $query->where('customer_id', $customer->id)->where(function ($q) use ($visibleLeads, $canSeeLeads, $visibleOpportunities, $canSeeOpportunities) {
+                // 商机跟进没有 lead_id，不能把它当作客户直接跟进绕过指定商机协作范围。
+                $q->where('subject_type', 'customer');
                 if ($canSeeLeads) $q->orWhereIn('lead_id', $visibleLeads);
+                if ($canSeeOpportunities) $q->orWhere(fn ($o) => $o->where('subject_type', 'opportunity')->whereIn('subject_id', $visibleOpportunities));
             });
         }
-        return $query->orderByDesc('contacted_at')->orderByDesc('id')->paginate((int) ($filters['per_page'] ?? 10))
-            ->through(fn ($followup) => $this->present($followup, $actor));
+        return $query;
     }
 
     public function save(?int $id, array $data, object $actor): CrmFollowup
     {
-        $this->leads->permission($actor, $id ? 'crm.followup.edit' : 'crm.lead.follow');
         return DB::transaction(function () use ($id, $data, $actor) {
             // 对象先上锁，所有跟进共用同一顺序，更新记录与重新汇总计划属于一个事务。
             $existing = $id ? CrmFollowup::query()->findOrFail($id) : null;
             $type = $existing?->subject_type ?? $data['subject_type'];
             $subjectId = $existing?->subject_id ?? (int) $data['subject_id'];
-            [$customer, $lead] = $this->subject($type, (int) $subjectId, $actor, true, true);
+            $this->leads->permission($actor, $id ? 'crm.followup.edit' : ($type === 'opportunity' ? 'crm.opportunity.follow' : 'crm.lead.follow'));
+            [$customer, $lead, $opportunity] = $this->subject($type, (int) $subjectId, $actor, true, true);
             abort_if(in_array($customer->status, ['disabled', 'blacklisted'], true), 422, '该客户已停用或列入黑名单。');
             $followup = $id ? CrmFollowup::query()->lockForUpdate()->findOrFail($id) : new CrmFollowup;
             if ($id) {
@@ -104,13 +134,15 @@ final class CrmFollowupApplicationService
             $followup->save();
             if (array_key_exists('attachment_ids', $data)) app(CrmAttachmentApplicationService::class)->bind($data['attachment_ids'] ?? [], 'followup', $followup->id, $actor);
             $after = $followup->fresh()->attributesToArray() + ['attachment_ids' => app(CrmAttachmentApplicationService::class)->ids('followup', $followup->id)];
-            $summary = $id ? '修改跟进记录 #'.$followup->id : '记录客户跟进 #'.$followup->id;
-            if ($lead) {
+            $summary = $id ? '修改跟进记录 #'.$followup->id : '记录跟进 #'.$followup->id;
+            if ($opportunity) {
+                app(CrmOpportunityApplicationService::class)->log($opportunity, $id ? 'followup_edit' : 'followup_create', $summary, $before, $after, $data['reason'] ?? null, $actor);
+            } elseif ($lead) {
                 $this->leads->log($lead, $id ? 'followup_edit' : 'followup_create', $summary, $before, $after, $data['reason'] ?? null, $actor);
             } else {
                 $this->logs->write($customer->id, $id ? 'followup_edit' : 'followup_create', $summary, $before, $after, $data['reason'] ?? null, $actor);
             }
-            $this->refreshContactFacts($customer->id, $lead?->id);
+            $this->refreshContactFacts($customer->id, $lead?->id, true, $opportunity?->id);
             return $followup->fresh(['attachments']);
         }, 3);
     }
@@ -121,23 +153,38 @@ final class CrmFollowupApplicationService
         unset($row['legacy_payload']);
         $row['attachments'] = $followup->attachments->map(fn ($file) => app(CrmAttachmentApplicationService::class)->present($file))->all();
         $canFollow = false;
-        if ($followup->lead_id && $this->access->can($actor, 'crm.lead.view')) {
+        if ($followup->subject_type === 'opportunity' && $this->access->can($actor, 'crm.opportunity.view')) {
+            $query = CrmOpportunity::query()->whereKey($followup->subject_id);
+            $opportunities = app(CrmOpportunityApplicationService::class);
+            $opportunities->applyVisible($query, $actor);
+            $opportunity = $query->first();
+            $canFollow = $opportunity && $opportunities->abilities($opportunity, $actor)['follow'];
+        } elseif ($followup->lead_id && $this->access->can($actor, 'crm.lead.view')) {
             $query = CrmLead::query()->whereKey($followup->lead_id);
             $this->leads->applyVisible($query, $actor);
             $lead = $query->first();
             $canFollow = $lead && $this->leads->abilities($lead, $actor)['follow'];
-        } elseif (!$followup->lead_id) {
+        } elseif ($followup->subject_type === 'customer') {
             $customer = SalesCustomer::query()->find($followup->customer_id);
             $canFollow = $customer && $this->access->abilities($customer, $actor)['follow'];
         }
         $row['can_edit'] = (int) $followup->operator_legacy_id === (int) $actor->legacy_id && $this->access->can($actor, 'crm.followup.edit')
-            && $this->access->can($actor, 'crm.lead.follow') && $canFollow;
+            && $this->access->can($actor, $followup->subject_type === 'opportunity' ? 'crm.opportunity.follow' : 'crm.lead.follow') && $canFollow;
         return $row;
     }
 
-    /** 不同线索各自保留待办；完成某条线索联系，不能消掉同客户另一条需求的计划。 */
-    public function refreshContactFacts(int $customerId, ?int $leadId = null, bool $recomputeLead = true): void
+    /** 线索和商机各自保留待办；完成一条需求的联系，不能消掉同客户其他需求的计划。 */
+    public function refreshContactFacts(int $customerId, ?int $leadId = null, bool $recomputeLead = true, ?int $opportunityId = null): void
     {
+        if ($opportunityId) {
+            $opportunity = CrmOpportunity::query()->lockForUpdate()->findOrFail($opportunityId);
+            $contacts = CrmFollowup::query()->where('subject_type', 'opportunity')->where('subject_id', $opportunityId);
+            $latest = (clone $contacts)->orderByDesc('contacted_at')->orderByDesc('id')->first();
+            if ($latest) $opportunity->update([
+                'first_contact_at' => (clone $contacts)->min('contacted_at'), 'last_contact_at' => (clone $contacts)->max('contacted_at'),
+                'next_contact_at' => $latest->next_contact_at, 'next_plan' => $latest->next_plan, 'version' => $opportunity->version + 1,
+            ]);
+        }
         if ($leadId && $recomputeLead) {
             $lead = CrmLead::query()->findOrFail($leadId);
             $contacts = CrmFollowup::query()->where('lead_id', $leadId);
@@ -149,9 +196,10 @@ final class CrmFollowupApplicationService
         }
         $customer = SalesCustomer::query()->lockForUpdate()->findOrFail($customerId);
         $contacts = CrmFollowup::query()->where('customer_id', $customerId);
-        $direct = (clone $contacts)->whereNull('lead_id')->orderByDesc('contacted_at')->orderByDesc('id')->first();
+        $direct = (clone $contacts)->where('subject_type', 'customer')->orderByDesc('contacted_at')->orderByDesc('id')->first();
         $leadNext = CrmLead::query()->where('customer_id', $customerId)->where('status', 'active')->min('next_contact_at');
-        $next = collect([$direct?->next_contact_at?->toDateTimeString(), $leadNext])->filter()->sort()->first();
+        $opportunityNext = CrmOpportunity::query()->where('customer_id', $customerId)->where('status', 'open')->min('next_contact_at');
+        $next = collect([$direct?->next_contact_at?->toDateTimeString(), $leadNext, $opportunityNext])->filter()->sort()->first();
         $customer->update(['first_contact_at' => (clone $contacts)->min('contacted_at'), 'last_contact_at' => (clone $contacts)->max('contacted_at'), 'next_contact_at' => $next]);
     }
 }

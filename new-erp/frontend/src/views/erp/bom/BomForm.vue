@@ -552,6 +552,7 @@
           </div>
         </div>
       </section>
+      <section v-if="form.id" class="form-card"><div class="card-body"><technical-drawing-source-panel :source="{type:'bom',id:form.id,version:drawingSourceVersion,position_uid:''}" :source-label="'BOM · ' + form.bom_no" :editable="canEdit && ['draft','inactive'].includes(form.status) && !form.submitted_at" /></div></section>
     </div>
 
     <!-- 底部固定吸底操作栏 (全局唯一持久保存入口，完全对标 ItemForm.vue 规范) -->
@@ -817,6 +818,7 @@
 
 <script>
 import PagedRecordSelect from '@/components/common/PagedRecordSelect.vue'
+import TechnicalDrawingSourcePanel from '@/components/technical-drawings/TechnicalDrawingSourcePanel.vue'
 import { listEntity } from '@/api/erp/master'
 import { listBoms, getBom, saveBom, submitBom, getBomOperationOptions } from '@/api/erp/bom'
 import { listProductionRoutings, getProductionRouting } from '@/api/erp/production'
@@ -851,9 +853,10 @@ const emptyLine = i => ({
 })
 
 export default {
-  components: { PagedRecordSelect },
+  components: { PagedRecordSelect, TechnicalDrawingSourcePanel },
   name: 'BomForm',
   data: () => ({
+    drawingSourceVersion: null,
     operationOptions: [],
     operationNames: {},
     operationOptionsSeq: 0,
@@ -1330,6 +1333,7 @@ export default {
     },
     async loadDetail() {
       const { data } = await getBom(this.$route.params.id)
+      this.drawingSourceVersion = data.version
       this.rememberOperations((data.items || []).map(item => item.operation_binding && item.operation_binding.operation).filter(Boolean))
       this.form = {
         ...data,

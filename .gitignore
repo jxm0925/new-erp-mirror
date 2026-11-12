@@ -1,0 +1,43 @@
+# Backend runtime and dependencies
+backend/.env
+backend/vendor/
+backend/node_modules/
+backend/storage/logs/
+backend/storage/framework/
+backend/bootstrap/cache/
+backend/public/build/
+backend/public/hot
+backend/.phpunit.result.cache
+backend/*.log
+backend/*.out.log
+backend/*.err.log
+backend/*.rar
+
+# Frontend dependencies, build products and local runtime output
+frontend/node_modules/
+frontend/dist/
+frontend/dist-*/
+frontend/*.log
+frontend/*.out.log
+frontend/*.err.log
+frontend/*.rar
+
+# Mini program: npm sources are local only; the built miniprogram_npm stays tracked
+# so WeChat DevTools can compile a fresh clone without running "构建 npm".
+wxapp/node_modules/
+
+# Codex development evidence lives in D:\codex-introduce\new_erp
+backend/docs/
+design-qa.md
+backend/design-qa.md
+frontend/design-qa.md
+backend/SKILL.md
+
+# Local editor and operating-system files
+.idea/
+.qa-sales-order-change-chrome/
+.vscode/
+.codex-artifacts/
+.codex-remote-attachments/
+.DS_Store
+Thumbs.db

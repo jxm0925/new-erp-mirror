@@ -1044,11 +1044,13 @@ final class AssemblyDisplayQueryService
         return MfgDrawing::query()
             ->whereIn('work_order_id', $ids)
             ->where('status', 'active')
+            // 公共大屏没有员工身份，CRM 私有图纸只在已登录的工单、任务资料中读取。
+            ->where('storage_disk', 'public')
             ->get(['id', 'work_order_id', 'drawing_name', 'original_name', 'url', 'storage_path', 'mime_type', 'version_no', 'uploaded_by', 'uploaded_at'])
             ->groupBy('work_order_id')
             ->map(function ($rows) {
                 return $rows->map(function ($d) {
-                    $url = $this->normalizeFileUrl($d->url, $d->storage_path);
+                    $url = $this->normalizeFileUrl(str_starts_with((string) $d->url, '/api/v1/erp/production/technical-drawings/') ? null : $d->url, $d->storage_path);
                     if (! $url) {
                         return null;
                     }

@@ -654,9 +654,13 @@ final class WorkOrderService
         // 定制产品：技术资料和图纸跟着原工单走，不用技术重新处理。
         $tech = MfgWorkOrderTech::query()->where('work_order_id', $wo->id)->first();
         if ($tech) $tech->replicate()->fill(['work_order_id' => $child->id])->save();
+        $drawingIds = [];
         foreach (\App\Models\Erp\MfgDrawing::query()->where('work_order_id', $wo->id)->where('status', 'active')->orderBy('id')->get() as $drawing) {
-            $drawing->replicate()->fill(['work_order_id' => $child->id, 'replaced_drawing_id' => null])->save();
+            $copy = $drawing->replicate()->fill(['work_order_id' => $child->id, 'replaced_drawing_id' => null]);
+            $copy->save();
+            $drawingIds[$drawing->id] = $copy->id;
         }
+        app(\App\Services\Erp\TechnicalDrawingSourceService::class)->copyWorkOrder($wo, $child, $drawingIds, $actor);
         $child = $child->fresh();
         try {
             $this->applyPlan($child, $item, $wo->bom_id, $wo->routing_id, true);
@@ -905,6 +909,7 @@ final class WorkOrderService
         // 整套提成冻结：子工单工序计酬一律回到这张工单的 performance_plan 按位置路径查（见 PerformancePlanRateService）。
         $planBomId = (int) ($bom['id'] ?? 0);
         $planBom = $planBomId ? \App\Models\Erp\Bom::query()->find($planBomId) : null;
+        $bom = app(\App\Services\Erp\TechnicalDrawingSourceService::class)->freezeForWorkOrder($wo, $bom, ! $replace || $refreshBom || $planBomId !== (int) $wo->bom_id);
         $wo->update([
             'bom_id' => $bom['id'] ?? $bomId, 'bom_no' => $bom['bom_no'] ?? null, 'bom_version' => isset($bom['version']) ? (string) $bom['version'] : null,
             'bom_snapshot' => $bom, 'routing_id' => $routing['routing_id'] ?? $routingId, 'routing_no' => $routing['routing_no'] ?? null,

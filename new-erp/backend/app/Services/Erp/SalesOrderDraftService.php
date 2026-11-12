@@ -6,6 +6,7 @@ use App\Models\Erp\SalesOrder;
 use App\Models\Erp\SalesOrderAttachment;
 use App\Models\Erp\SalesOrderLog;
 use App\Models\Erp\SalesOrderVersion;
+use App\Services\Erp\Crm\CrmOpportunityOrderService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 
@@ -25,6 +26,8 @@ class SalesOrderDraftService
     {
         return DB::transaction(function () use ($payload, $operator, $actor) {
             [$header, $lines, $deletedLineIds, $draftToken, $platformPaid] = $this->split($payload);
+            $opportunityId = $header['opportunity_id'] ?? null;
+            unset($header['opportunity_id']);
             $reservationToken = $header['reservation_token'] ?? null;
             $creationSessionId = $header['creation_session_id'] ?? null;
             unset($header['reservation_token'], $header['creation_session_id']);
@@ -41,6 +44,7 @@ class SalesOrderDraftService
             $header['shipment_status'] = 'not_shipped';
 
             $order = SalesOrder::create($header);
+            app(CrmOpportunityOrderService::class)->attachNew($order, $opportunityId, $actor);
             if ($reservationToken) {
                 $this->numbers->consume(
                     $reservationToken,
@@ -80,6 +84,7 @@ class SalesOrderDraftService
             // and must never be persisted while editing an existing draft.
             unset($header['reservation_token'], $header['creation_session_id'], $header['created_by_legacy_id'], $header['created_by']);
             $header = $this->normalize($header, $order);
+            app(CrmOpportunityOrderService::class)->guardOrderUpdate($order, $header);
             unset($header['sales_order_no']);
             // 草稿也可能已有预收核销，换客户同样要先由财务撤销核销。
             app(SalesOrderEditImpactService::class)->assertCustomerChangeAllowed($order, $header['customer_id'] ?? null);
@@ -104,15 +109,16 @@ class SalesOrderDraftService
         });
     }
 
-    public function delete(SalesOrder $order, string $operator): void
+    public function delete(SalesOrder $order, string $operator, ?object $actor = null): void
     {
         abort_if($order->order_status !== 'draft', 422, '只有草稿订单允许删除');
         abort_if($order->fulfillments()->exists(), 422, '订单已产生库存、生产或交付记录，不能删除');
         abort_if(DB::table('erp_inventory_reservations')->where('source_order_id', $order->id)->exists(), 422, '订单已产生库存占用，不能删除');
 
-        DB::transaction(function () use ($order, $operator) {
+        DB::transaction(function () use ($order, $operator, $actor) {
             $order = SalesOrder::query()->lockForUpdate()->findOrFail($order->id);
             $this->assertDraftDeletable($order);
+            app(CrmOpportunityOrderService::class)->deleteDraftLink($order, $actor);
             $attachments = SalesOrderAttachment::query()
                 ->where('sales_order_id', $order->id)
                 ->lockForUpdate()
@@ -138,7 +144,7 @@ class SalesOrderDraftService
         });
     }
 
-    public function submitForConfirmation(SalesOrder $order, string $operator): SalesOrder
+    public function submitForConfirmation(SalesOrder $order, string $operator, ?object $actor = null): SalesOrder
     {
         abort_if($order->order_status !== 'draft', 422, '只有草稿订单可以提交确认');
         abort_if($order->confirm_status === 'pending_confirmation', 422, '订单已提交确认，请勿重复提交');
@@ -177,9 +183,10 @@ class SalesOrderDraftService
             }
         }
 
-        return DB::transaction(function () use ($order, $operator) {
+        return DB::transaction(function () use ($order, $operator, $actor) {
             $order = SalesOrder::query()->lockForUpdate()->findOrFail($order->id);
             $this->assertDraftConfirmationGate($order);
+            app(CrmOpportunityOrderService::class)->beforeSubmit($order, $actor);
             $before = $order->fresh('lines')->toArray();
             $order->update(['confirm_status' => 'pending_confirmation']);
             $after = $order->fresh('lines')->toArray();
@@ -362,6 +369,7 @@ class SalesOrderDraftService
             'attachments' => fn ($query) => $query->where('status', 'active')->where('attachment_scope', 'order')->latest('version_no'),
             'versions',
             'logs',
+            'crmOpportunityOrder',
         ];
     }
 }

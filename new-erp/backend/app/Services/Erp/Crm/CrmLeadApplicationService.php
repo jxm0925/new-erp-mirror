@@ -3,6 +3,7 @@
 namespace App\Services\Erp\Crm;
 
 use App\Models\Erp\CrmLead;
+use App\Models\Erp\CrmOpportunity;
 use App\Models\Erp\SalesCustomer;
 use App\Services\Erp\AuthContextService;
 use App\Services\Erp\CustomerRegionService;
@@ -18,7 +19,7 @@ final class CrmLeadApplicationService
 {
     public const CHANNELS = ['线上平台' => '线上平台', '线下咨询' => '线下咨询', '客户介绍' => '客户介绍', '展会活动' => '展会活动', '主动开发' => '主动开发', '其他' => '其他'];
     public const POOLS = ['明日成交池', '补位池', '48小时推进池', '老客户转介绍/复购', '老线索补位池', '新线索快转池', '发货池', '观察池', '本周跟进池', '本月跟进池', '农改水客户池'];
-    public const STATUSES = ['draft' => '草稿', 'pending_review' => '待核实', 'pending_assignment' => '待分配', 'pending_acceptance' => '待接收', 'active' => '跟进中', 'public_pool' => '公海', 'invalid' => '无效'];
+    public const STATUSES = ['draft' => '草稿', 'pending_review' => '待核实', 'pending_assignment' => '待分配', 'pending_acceptance' => '待接收', 'active' => '跟进中', 'converted' => '已转商机', 'public_pool' => '公海', 'invalid' => '无效'];
     public const EDITABLE = [
         'customer_id', 'customer_kind', 'customer_name', 'contact_id', 'contact_name', 'contact_role', 'mobile', 'contact_value2', 'wechat', 'email', 'credit_code',
         'region_id', 'province', 'city', 'district', 'detail_address', 'full_address', 'trade_type', 'department_legacy_id', 'source_channel', 'lead_type',
@@ -101,10 +102,11 @@ final class CrmLeadApplicationService
             'transfer' => $can('transfer') && $lead->status === 'active' && $scope('transfer'),
             'recycle' => $can('recycle') && in_array($lead->status, ['active', 'pending_acceptance', 'pending_assignment'], true) && $scope('recycle'),
             'claim' => $can('claim') && $lead->status === 'public_pool' && $scope('claim', (int) $actor->legacy_id),
-            'pool' => $can('pool') && $lead->status === 'active' && $own,
+            'pool' => $can('pool') && in_array($lead->status, ['active', 'converted'], true) && $own,
             'invalidate' => $can('invalidate') && in_array($lead->status, ['active', 'pending_assignment'], true) && $manages,
             'confirm' => $can('confirm') && $lead->status === 'active' && !$lead->confirmed_at && $own,
             'follow' => $can('follow') && $lead->status === 'active' && ($own || ($lead->customer_id && $this->canFollowCustomer($lead->customer_id, $actor))),
+            'convert' => $this->customers->can($actor, 'crm.opportunity.create') && app(CrmOpportunityApplicationService::class)->canConvert($lead, $actor),
         ];
     }
 
@@ -120,6 +122,16 @@ final class CrmLeadApplicationService
         $row['department_name'] = $this->customers->departmentName($lead->department_legacy_id);
         $row['status_label'] = self::STATUSES[$lead->status] ?? $lead->status;
         $row['abilities'] = $this->abilities($lead, $actor);
+        $opportunity = CrmOpportunity::query()->where('source_lead_id', $lead->id)->first();
+        $row['has_opportunity'] = $opportunity !== null;
+        $row['source_opportunity'] = null;
+        if ($opportunity && $this->customers->can($actor, 'crm.opportunity.view')) {
+            $query = CrmOpportunity::query()->whereKey($opportunity->id);
+            app(CrmOpportunityApplicationService::class)->applyVisible($query, $actor);
+            if ($query->exists()) $row['source_opportunity'] = $opportunity->only(['id', 'opportunity_no', 'name']);
+        }
+        $row['opportunity_id'] = $row['source_opportunity']['id'] ?? null;
+        $row['opportunity_no'] = $row['source_opportunity']['opportunity_no'] ?? null;
         if ($lead->customer_id) {
             $customer = $lead->customer;
             $row['customer'] = $customer && $this->customers->relation($customer, $actor) !== null

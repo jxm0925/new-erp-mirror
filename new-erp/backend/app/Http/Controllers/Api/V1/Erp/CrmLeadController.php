@@ -8,9 +8,11 @@ use App\Services\Erp\AuthContextService;
 use App\Services\Erp\Crm\CrmAssignmentAccessService;
 use App\Services\Erp\Crm\CrmAttachmentApplicationService;
 use App\Services\Erp\Crm\CrmCustomerAccessService;
+use App\Services\Erp\Crm\CrmContactPlanQueryService;
 use App\Services\Erp\Crm\CrmDuplicateReviewApplicationService;
 use App\Services\Erp\Crm\CrmFollowupApplicationService;
 use App\Services\Erp\Crm\CrmLeadApplicationService;
+use App\Services\Erp\Crm\CrmListViewQueryService;
 use App\Services\Erp\Crm\CrmSalesStaffService;
 use App\Services\Erp\Crm\CrmTeamApplicationService;
 use App\Services\Erp\TradePlatformApplicationService;
@@ -64,12 +66,19 @@ final class CrmLeadController extends Controller
             'status' => ['nullable', Rule::in(array_keys(CrmLeadApplicationService::STATUSES))],
             'source_channel' => 'nullable|string|max:120', 'department_legacy_id' => 'nullable|integer|min:1', 'customer_id' => 'nullable|integer|min:1',
             'recycle_reason' => 'nullable|string|max:500',
+            'base_confirmed' => 'nullable|boolean', 'unconverted' => 'nullable|boolean', 'convertible' => 'nullable|boolean',
             'customer_pool' => ['nullable', Rule::in(CrmLeadApplicationService::POOLS)], 'entry_method' => 'nullable|in:self,operations',
+            'customer_tag' => 'nullable|string|max:80', 'custom_tag' => 'nullable|string|max:80',
             'due' => 'nullable|in:today,overdue,pending', 'per_page' => 'nullable|integer|min:1|max:100', 'page' => 'nullable|integer|min:1',
-        ]);
+        ] + CrmListViewQueryService::rules('leads'));
         $query = CrmLead::query()->with(['customer', 'attachments']);
         $this->leads->applyVisible($query, $actor);
+        if (!empty($data['base_confirmed'])) $query->whereNotNull('confirmed_at');
+        if (!empty($data['unconverted'])) $query->whereNotExists(fn ($o) => $o->from('erp_crm_opportunities')->whereColumn('source_lead_id', 'erp_crm_leads.id'));
+        if (!empty($data['convertible'])) app(\App\Services\Erp\Crm\CrmOpportunityApplicationService::class)->applyConvertible($query, $actor);
         foreach (['status', 'source_channel', 'department_legacy_id', 'customer_id', 'customer_pool', 'entry_method'] as $field) if (!empty($data[$field])) $query->where($field, $data[$field]);
+        if (isset($data['customer_tag']) && $data['customer_tag'] !== '') $query->whereJsonContains('customer_tags', $data['customer_tag']);
+        if (isset($data['custom_tag']) && $data['custom_tag'] !== '') $query->where('created_by_legacy_id', $actor->legacy_id)->whereJsonContains('custom_tags', $data['custom_tag']);
         if (!empty($data['recycle_reason'])) $query->where('recycle_reason', 'like', '%'.trim($data['recycle_reason']).'%');
         if (!empty($data['keyword'])) {
             $keyword = '%'.trim($data['keyword']).'%';
@@ -77,9 +86,8 @@ final class CrmLeadController extends Controller
                 ->orWhere('mobile', 'like', $keyword)->orWhere('demand_summary', 'like', $keyword)->orWhere('content', 'like', $keyword));
         }
         if (!empty($data['due'])) {
-            $query->where('status', 'active')->where('owner_legacy_id', $actor->legacy_id)->whereNotNull('next_contact_at');
-            if ($data['due'] === 'today') $query->whereDate('next_contact_at', today()->toDateString());
-            elseif ($data['due'] === 'overdue') $query->where('next_contact_at', '<', now());
+            $query->where('status', 'active')->where('owner_legacy_id', $actor->legacy_id);
+            CrmContactPlanQueryService::applyDue($query, 'next_contact_at', $data['due']);
         }
         // 数量与列表共用已授权、已筛选的范围，只排除当前页签与分页，不能统计不可见线索。
         $statusCounts = (clone $query)->selectRaw('status, COUNT(*) AS total')->groupBy('status')->pluck('total', 'status');
@@ -93,7 +101,9 @@ final class CrmLeadController extends Controller
         elseif ($tab === 'collaborating') $this->leads->applyCollaborating($query, $actor);
         elseif ($tab === 'pending_acceptance') $query->where('status', $tab)->where('pending_user_legacy_id', $actor->legacy_id);
         elseif (in_array($tab, ['pending_assignment', 'pending_review', 'public_pool', 'draft'], true)) $query->where('status', $tab);
-        $page = $query->orderByDesc('id')->paginate((int) ($data['per_page'] ?? 10))->through(fn ($lead) => $this->leads->present($lead, $actor));
+        $query->orderByDesc('id');
+        CrmListViewQueryService::apply($query, $data);
+        $page = $query->paginate((int) ($data['per_page'] ?? 10))->through(fn ($lead) => $this->leads->present($lead, $actor));
         return response()->json($page->toArray() + ['tabs' => $tabs]);
     }
 
@@ -151,14 +161,14 @@ final class CrmLeadController extends Controller
     public function followups(Request $request, CrmFollowupApplicationService $followups)
     {
         $actor = $this->user($request);
-        $data = $request->validate(['subject_type' => 'required|in:customer,lead', 'subject_id' => 'required|integer|min:1',
+        $data = $request->validate(['subject_type' => 'required|in:customer,lead,opportunity', 'subject_id' => 'required|integer|min:1',
             'per_page' => 'nullable|integer|min:1|max:100', 'page' => 'nullable|integer|min:1']);
         return response()->json($followups->listing($data, $actor));
     }
 
     public function storeFollowup(Request $request, CrmFollowupApplicationService $followups)
     {
-        $actor = $this->user($request, 'crm.lead.follow');
+        $actor = $this->user($request);
         $followup = $followups->save(null, $this->followupData($request, false), $actor);
         return response()->json(['message' => '跟进已保存，下次联系计划已更新', 'data' => $followups->present($followup, $actor)], 201);
     }
@@ -173,7 +183,8 @@ final class CrmLeadController extends Controller
     public function uploadAttachment(Request $request, CrmAttachmentApplicationService $files, CrmCustomerAccessService $access)
     {
         $actor = $this->user($request);
-        abort_unless($access->can($actor, 'crm.lead.create') || $access->can($actor, 'crm.lead.follow') || $access->can($actor, 'crm.lead.edit') || $access->can($actor, 'crm.lead.assign'), 403, '没有上传附件的权限。');
+        abort_unless($access->can($actor, 'crm.lead.create') || $access->can($actor, 'crm.lead.follow') || $access->can($actor, 'crm.lead.edit') || $access->can($actor, 'crm.lead.assign')
+            || $access->can($actor, 'crm.opportunity.file') || $access->can($actor, 'crm.opportunity.follow'), 403, '没有上传附件的权限。');
         $data = $request->validate(['file' => 'required|file|max:20480|mimes:jpg,jpeg,png,gif,webp,bmp,pdf,doc,docx,xls,xlsx,ppt,pptx,txt,csv,zip']);
         return response()->json(['message' => '附件已上传', 'data' => $files->present($files->upload($data['file'], $actor))], 201);
     }
@@ -216,7 +227,7 @@ final class CrmLeadController extends Controller
 
     private function followupData(Request $request, bool $editing): array
     {
-        return $request->validate(['subject_type' => ($editing ? 'nullable' : 'required').'|in:customer,lead', 'subject_id' => ($editing ? 'nullable' : 'required').'|integer|min:1',
+        return $request->validate(['subject_type' => ($editing ? 'nullable' : 'required').'|in:customer,lead,opportunity', 'subject_id' => ($editing ? 'nullable' : 'required').'|integer|min:1',
             'version' => ($editing ? 'required' : 'nullable').'|integer|min:1', 'reason' => ($editing ? 'required' : 'nullable').'|string|max:500',
             'contact_id' => 'nullable|integer|min:1', 'contact_name' => 'required|string|max:100', 'method' => 'required|string|max:80',
             'contacted_at' => 'required|date|before_or_equal:now', 'content' => 'required|string|max:100000', 'result' => 'required|string|max:120',

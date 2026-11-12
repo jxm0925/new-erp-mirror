@@ -254,7 +254,15 @@
     "erp_crm_assign_grants": "2026_11_11_000007_create_erp_crm_assign_grants_table",
     "erp_crm_staff_profiles": "2026_11_11_000008_create_erp_crm_staff_profiles_table",
     "erp_crm_duplicate_reviews": "2026_11_11_000009_create_erp_crm_duplicate_reviews_table",
-    "erp_crm_attachments": "2026_11_11_000010_create_erp_crm_attachments_table"
+    "erp_crm_attachments": "2026_11_11_000010_create_erp_crm_attachments_table",
+    "erp_crm_opportunities": "2026_11_12_000001_create_erp_crm_opportunities_table",
+    "erp_crm_opportunity_stage_logs": "2026_11_12_000002_create_erp_crm_opportunity_stage_logs_table",
+    "erp_crm_opportunity_files": "2026_11_12_000003_create_erp_crm_opportunity_files_table",
+    "erp_crm_opportunity_orders": "2026_11_12_000004_create_erp_crm_opportunity_orders_table",
+    "erp_technical_drawings": "2026_11_12_000005_create_erp_technical_drawings_table",
+    "erp_technical_drawing_revisions": "2026_11_12_000006_create_erp_technical_drawing_revisions_table",
+    "erp_technical_drawing_usages": "2026_11_12_000007_create_erp_technical_drawing_usages_table",
+    "erp_crm_saved_views": "2026_11_12_000008_create_erp_crm_saved_views_table"
   },
   "legacy_migrations": {
     "2026_07_09_000002_remove_legacy_scan_questions_table": "89a9fd386c9acd658007b681a9b8e13c5c1e346f97577c63ab78d34e1fe1cb04",

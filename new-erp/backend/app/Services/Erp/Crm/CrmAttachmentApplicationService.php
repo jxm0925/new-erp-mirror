@@ -4,6 +4,7 @@ namespace App\Services\Erp\Crm;
 
 use App\Models\Erp\CrmAttachment;
 use App\Models\Erp\CrmFollowup;
+use App\Models\Erp\CrmOpportunityFile;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
@@ -61,6 +62,11 @@ final class CrmAttachmentApplicationService
         } elseif ($file->subject_type === 'followup') {
             $followup = CrmFollowup::query()->findOrFail($file->subject_id);
             app(CrmFollowupApplicationService::class)->subject($followup->subject_type, $followup->subject_id, $actor);
+        } elseif ($file->subject_type === 'opportunity_file') {
+            app(CrmLeadApplicationService::class)->permission($actor, 'crm.opportunity.view');
+            $version = CrmOpportunityFile::query()->findOrFail($file->subject_id);
+            abort_unless((int) $version->attachment_id === (int) $file->id, 403, '附件归属无效。');
+            app(CrmOpportunityApplicationService::class)->visible((int) $version->opportunity_id, $actor);
         } else {
             abort(403, '附件归属无效。');
         }

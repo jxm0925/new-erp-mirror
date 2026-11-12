@@ -614,6 +614,7 @@ class SalesOrderEditImpactService
         if (isset($payload['expected_version']) && (int) $payload['expected_version'] !== (int) $order->business_version) {
             throw ValidationException::withMessages(['expected_version' => '订单已被修改，请刷新后按最新内容重新编辑。']);
         }
+        app(\App\Services\Erp\Crm\CrmOpportunityOrderService::class)->guardOrderUpdate($order, $payload);
         $payload = app(SalesCostVisibilityService::class)->redact($payload);
         $lines = array_values($payload['lines'] ?? []);
         $sentIds = collect($lines)->pluck('id')->map(fn ($id) => (int) $id)->filter()->all();
@@ -725,6 +726,7 @@ class SalesOrderEditImpactService
     /** 已有收款核销的订单不能直接换客户，否则收款单客户与订单客户不一致。 */
     public function assertCustomerChangeAllowed(SalesOrder $order, mixed $customerId): void
     {
+        app(\App\Services\Erp\Crm\CrmOpportunityOrderService::class)->assertCustomer($order, $customerId ?: $order->customer_id);
         if (blank($customerId) || (int) $customerId === (int) $order->customer_id) return;
         if (array_sum(SalesOrderFulfillmentPolicy::protectedLineQuantities($order)) > 0.00000001)
             throw ValidationException::withMessages(['customer_id' => '该订单已有实际发货，须保留原客户主体；其他客户的新增需求请另建订单。']);

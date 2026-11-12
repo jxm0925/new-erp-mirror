@@ -616,6 +616,8 @@
               </div>
             </el-tab-pane>
 
+            <el-tab-pane v-if="!detailDialog.deleted" label="技术图纸" name="drawings"><div class="detail-pane-content"><technical-drawing-source-panel :source="{type:'bom',id:detailDialog.data.id,version:detailDialog.data.version,position_uid:''}" :source-label="'BOM · ' + detailDialog.data.bom_no" :editable="canEditBom(detailDialog.data) && ['draft','inactive'].includes(detailDialog.data.status) && !detailDialog.data.submitted_at" /></div></el-tab-pane>
+
             <el-tab-pane label="物料组成清单" name="items">
               <div class="detail-pane-content">
                 <div class="items-head-bar">
@@ -856,13 +858,14 @@
 
 <script>
 import PagedRecordSelect from '@/components/common/PagedRecordSelect.vue'
+import TechnicalDrawingSourcePanel from '@/components/technical-drawings/TechnicalDrawingSourcePanel.vue'
 import { listEntity } from '@/api/erp/master'
 import { listBoms, getBom, deleteBom, restoreBom, submitBom, approveBom, rejectBom, activateBom, deactivateBom, setDefaultBom, copyBomVersion, exportBomOperationStandards, batchPreviewBomOperationStandards, batchApplyBomOperationStandards, importPreviewBomOperationStandards, importApplyBomOperationStandards } from '@/api/erp/bom'
 import { listPerformanceTemplates } from '@/api/erp/production'
 import { cuttingQuantityBasis, totalLengthMetres } from '@/utils/cutting-quantity.mjs'
 
 export default {
-  components: { PagedRecordSelect },
+  components: { PagedRecordSelect, TechnicalDrawingSourcePanel },
   name: 'BomList',
   data: () => ({
     loading: false,

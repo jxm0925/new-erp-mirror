@@ -302,6 +302,8 @@
       <el-button v-if="allowed.claim" size="small" type="success" icon="el-icon-thumb" @click="act('claim')">领取线索</el-button>
       <el-button v-if="allowed.follow" size="small" type="success" icon="el-icon-chat-line-round" @click="editFollowup()">记录跟进</el-button>
       <el-button v-if="allowed.confirm" size="small" icon="el-icon-circle-check" @click="act('confirm')">基础线索确认</el-button>
+      <el-button v-if="allowed.convert" size="small" type="success" icon="el-icon-aim" @click="$refs.opportunityForm.open({lead})">转为商机</el-button>
+      <el-button v-if="lead.opportunity_id" size="small" icon="el-icon-connection" @click="$refs.opportunityDetail.open(lead.opportunity_id)">查看商机</el-button>
       <el-dropdown v-if="allowed.transfer || allowed.recycle || allowed.pool || allowed.invalidate" @command="act">
         <el-button size="small">更多<i class="el-icon-arrow-down el-icon--right" /></el-button>
         <el-dropdown-menu slot="dropdown" class="crm-select-popper">
@@ -319,6 +321,8 @@
       <crm-followup-dialog ref="follow" :key="`follow-${session}`" @saved="changed" />
       <crm-lead-form-dialog ref="form" :key="`form-${session}`" @saved="changed" />
       <crm-identity-review-dialog ref="review" :key="`review-${session}`" @saved="changed" />
+      <crm-opportunity-form-dialog ref="opportunityForm" :key="`opportunity-form-${session}`" @saved="opportunitySaved" />
+      <crm-opportunity-detail-dialog ref="opportunityDetail" :key="`opportunity-detail-${session}`" @changed="changed" />
       <customer-detail-dialog ref="customer" :key="`customer-${session}`" />
     </template>
   </el-dialog>
@@ -341,6 +345,8 @@ export default {
     CrmLeadFormDialog,
     CrmFollowupDialog,
     CrmIdentityReviewDialog,
+    CrmOpportunityFormDialog: () => import('./CrmOpportunityFormDialog.vue'),
+    CrmOpportunityDetailDialog: () => import('./CrmOpportunityDetailDialog.vue'),
     CustomerDetailDialog: () => import('@/components/sales/CustomerDetailDialog.vue')
   },
   data: () => ({
@@ -473,6 +479,10 @@ export default {
     changed() {
       this.$emit('changed')
       if (this.visible) this.load(this.lead.id)
+    },
+    opportunitySaved(row) {
+      this.changed()
+      if (row && row.id && this.visible) this.$refs.opportunityDetail.open(row.id)
     }
   }
 }

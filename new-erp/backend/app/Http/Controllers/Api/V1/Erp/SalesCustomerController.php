@@ -10,6 +10,8 @@ use App\Services\Erp\AuthContextService;
 use App\Services\Erp\Crm\CrmCustomerAccessService;
 use App\Services\Erp\Crm\CrmCustomerApplicationService;
 use App\Services\Erp\Crm\CrmLeadApplicationService;
+use App\Services\Erp\Crm\CrmListViewQueryService;
+use App\Services\Erp\Crm\CrmOrderAmountQueryService;
 use App\Services\Erp\CustomerRegionService;
 use App\Services\Erp\SalesCustomerDeletionApplicationService;
 use Illuminate\Database\Eloquent\Builder;
@@ -52,7 +54,7 @@ class SalesCustomerController extends Controller
             'customer_kind' => 'nullable|in:enterprise,individual', 'industry' => 'nullable|string|max:80', 'customer_grade' => 'nullable|string|max:40',
             'owner_legacy_id' => 'nullable|integer', 'owner_name' => 'nullable|string|max:80',
             'page' => 'nullable|integer|min:1', 'per_page' => 'nullable|integer|min:1|max:100',
-        ]);
+        ] + CrmListViewQueryService::rules('customers'));
         $picker = !empty($filters['picker']);
         $base = SalesCustomer::query();
         if (!$picker) $this->access->applyVisible($base, $user);
@@ -83,15 +85,24 @@ class SalesCustomerController extends Controller
         if (!empty($filters['owner_legacy_id'])) $query->where('owner_legacy_id', (int) $filters['owner_legacy_id']);
         if ($phone = trim((string) ($filters['phone'] ?? ''))) $query->where('contact_phone', 'like', "%{$phone}%");
 
+        CrmListViewQueryService::apply($query, $filters);
         $page = $query->paginate(isset($filters['ids']) ? max(1, count($filters['ids'])) : min(100, max(5, (int) ($filters['per_page'] ?? 10))));
-        $pools = collect();
+        $pools = $tags = [];
         if (!$picker && $this->access->can($user, 'crm.lead.view')) {
-            $leads = CrmLead::query()->whereIn('customer_id', $page->getCollection()->pluck('id'))->whereNotNull('customer_pool');
+            $leads = CrmLead::query()->whereIn('customer_id', $page->getCollection()->pluck('id'));
             app(CrmLeadApplicationService::class)->applyVisible($leads, $user);
-            $pools = $leads->select('customer_id', 'customer_pool')->distinct()->get()->groupBy('customer_id');
+            foreach ($leads->select('id', 'customer_id', 'customer_pool', 'customer_tags')->lazyById(200) as $lead) {
+                if ($lead->customer_pool) $pools[$lead->customer_id][$lead->customer_pool] = $lead->customer_pool;
+                foreach ($lead->customer_tags ?? [] as $tag) $tags[$lead->customer_id][$tag] = $tag;
+            }
         }
+        $money = $picker ? [] : app(CrmOrderAmountQueryService::class)->forCustomers($page->getCollection(), $user);
+        $opportunities = $picker ? [] : app(\App\Services\Erp\Crm\CrmCustomerLifecycleQueryService::class)->opportunitySummaries($page->getCollection()->pluck('id')->all(), $user);
         $page->through(fn (SalesCustomer $customer) => $this->row($customer, $user, $picker)
-            + ['customer_pools' => $pools->get($customer->id, collect())->pluck('customer_pool')->values()->all()]);
+            + ['customer_pools' => array_values($pools[$customer->id] ?? []),
+                'customer_tags' => array_values($tags[$customer->id] ?? []),
+                'opportunity_summary' => $opportunities[$customer->id] ?? null]
+            + ($money[$customer->id] ?? []));
         $payload = $page->toArray();
         $payload['summary'] = $summary;
         $payload['tabs'] = $tabs;
@@ -113,10 +124,12 @@ class SalesCustomerController extends Controller
         ])->findOrFail($id);
         $abilities = $this->access->abilities($customer, $user);
         abort_unless($abilities['view'], 403, '该客户由其他部门负责，你无权查看详情，可申请协作。');
+        $money = app(CrmOrderAmountQueryService::class)->forCustomers(collect([$customer]), $user);
         return response()->json($customer->toArray() + [
             'owner_department_name' => $this->access->departmentName($customer->owner_department_legacy_id),
             'abilities' => $abilities,
-        ]);
+            'overview' => app(\App\Services\Erp\Crm\CrmCustomerLifecycleQueryService::class)->overview($customer, $user),
+        ] + $money[$customer->id]);
     }
 
     public function store(Request $request, CrmCustomerApplicationService $service)

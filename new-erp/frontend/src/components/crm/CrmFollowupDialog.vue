@@ -4,6 +4,7 @@
       <div class="crm-form-grid">
         <el-form-item label="关联客户"><el-input :value="subject.customer_name" disabled /></el-form-item>
         <el-form-item v-if="subject.subject_type === 'lead'" label="关联线索"><el-input :value="subject.lead_no || subject.subject_id" disabled /></el-form-item>
+        <el-form-item v-if="subject.subject_type === 'opportunity'" label="关联商机"><el-input :value="subject.opportunity_name || subject.subject_id" disabled /></el-form-item>
         <el-form-item label="对接人" required>
           <el-select popper-class="crm-select-popper" v-if="contacts.length" v-model="form.contact_id" @change="contactChanged"><el-option v-for="item in contacts" :key="item.id" :value="item.id" :label="`${item.contact_name} ${item.position || ''}`" /></el-select>
           <el-input v-else v-model.trim="form.contact_name" maxlength="80" />
@@ -68,9 +69,11 @@ export default {
       if (new Date(this.form.contacted_at).getTime() > Date.now()) return this.$message.warning('实际联系时间不能晚于当前时间')
       if (new Date(this.form.next_contact_at).getTime() <= new Date(this.form.contacted_at).getTime()) return this.$message.warning('下次联系时间必须晚于实际联系时间')
       const session = this.session
+      const subject = { ...this.subject }
+      const payload = { ...this.form, subject_type: subject.subject_type, subject_id: subject.subject_id, attachment_ids: this.attachments.map(file => file.id) }
       this.saving = true
       try {
-        const { data } = await saveCrmFollowup({ ...this.form, subject_type: this.subject.subject_type, subject_id: this.subject.subject_id, attachment_ids: this.attachments.map(file => file.id) })
+        const { data } = await saveCrmFollowup(payload)
         if (session !== this.session) return
         this.visible = false
         this.$message.success('跟进已保存')

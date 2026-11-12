@@ -1,0 +1,370 @@
+.dashboard-head-actions,
+.dashboard-config-identity,
+.dashboard-config-footer,
+.dashboard-config-footer > div,
+.dashboard-config-order {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.dashboard-head-actions {
+  margin-left: auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.dashboard-head-actions .el-button + .el-button,
+.dashboard-config-footer .el-button + .el-button,
+.dashboard-config-order .el-button + .el-button {
+  margin-left: 0;
+}
+.dashboard-view-name {
+  font-size: 12px;
+  color: #475569;
+  overflow-wrap: anywhere;
+}
+.dashboard-configured-grid {
+  display: grid;
+  grid-template-columns: repeat(24, minmax(0, 1fr));
+  gap: 14px;
+  align-items: start;
+}
+.dashboard-configured-widget {
+  min-width: 0;
+  box-sizing: border-box;
+}
+.dashboard-configured-widget .dashboard-metric {
+  height: 100%;
+}
+.dashboard-config-full {
+  grid-column: 1 / -1;
+  order: 90;
+}
+.dashboard-configuration * {
+  min-width: 0;
+  box-sizing: border-box;
+}
+.dashboard-configuration > .el-dialog {
+  width: min(1100px, calc(100vw - 36px)) !important;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  border-radius: 10px;
+}
+.dashboard-configuration > .el-dialog > .el-dialog__header {
+  padding: 18px 26px 12px;
+  border-bottom: 1px solid #e2e8f0;
+}
+.dashboard-configuration .el-dialog__title {
+  font-size: 22px;
+  font-weight: 700;
+  color: #101c29;
+}
+.dashboard-configuration > .el-dialog > .el-dialog__body {
+  padding: 12px 18px;
+  overflow-y: auto;
+  color: #1e293b;
+}
+.dashboard-configuration > .el-dialog > .el-dialog__footer {
+  padding: 12px 18px 16px;
+  border-top: 1px solid #e2e8f0;
+}
+.dashboard-config-identity {
+  gap: 20px;
+  margin: 0 12px 14px;
+}
+.dashboard-config-identity > label {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex: 1;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.dashboard-config-identity .el-input,
+.dashboard-config-identity .el-select {
+  flex: 1;
+  width: 100%;
+}
+.dashboard-config-columns {
+  display: grid;
+  grid-template-columns: minmax(135px, .42fr) minmax(260px, .9fr) minmax(340px, 1.2fr);
+  gap: 10px;
+}
+.dashboard-config-columns > section,
+.dashboard-config-columns > nav {
+  border: 1px solid #e2e8f0;
+  border-radius: 7px;
+  background: #fff;
+  padding: 10px 9px;
+}
+.dashboard-config-columns h3 {
+  margin: 0 4px 13px;
+  color: #101c29;
+  font-size: 17px;
+  line-height: 1.5;
+}
+.dashboard-config-categories button {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 12px 10px;
+  border: 0;
+  border-radius: 5px;
+  background: #fff;
+  color: #17212f;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: left;
+}
+.dashboard-config-categories button.active {
+  background: #dcfce7;
+  color: #00763f;
+}
+.dashboard-config-categories button i {
+  font-size: 20px;
+}
+.dashboard-config-library-scroll {
+  max-height: 540px;
+  overflow-y: auto;
+  padding-right: 5px;
+}
+.dashboard-config-library-scroll > section {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px 7px;
+  border-bottom: 1px solid #e2e8f0;
+  padding-bottom: 7px;
+  margin-bottom: 7px;
+}
+.dashboard-config-library-scroll > section:last-child {
+  border-bottom: 0;
+}
+.dashboard-config-library h4 {
+  flex-basis: 100%;
+  border-left: 4px solid #008b4b;
+  margin: 0 0 5px;
+  padding-left: 8px;
+  color: #00763f;
+  font-size: 14px;
+}
+.dashboard-config-library-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  flex: 1 1 44%;
+  border-radius: 4px;
+  padding: 2px 4px;
+}
+.dashboard-config-library-item.selected {
+  background: #dcfce7;
+}
+.dashboard-config-library-item .el-checkbox {
+  margin-right: 0;
+}
+.dashboard-config-library-item button {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #17212f;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.6;
+  text-align: left;
+  cursor: pointer;
+}
+.dashboard-config-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-bottom: 8px;
+}
+.dashboard-config-fields > label {
+  display: grid;
+  grid-template-columns: 77px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  color: #17212f;
+  font-size: 12px;
+}
+.dashboard-config-fields .el-select,
+.dashboard-config-fields .el-date-editor,
+.dashboard-config-fields .el-popover__reference-wrapper,
+.dashboard-config-filter-button {
+  width: 100%;
+}
+.dashboard-config-fields .el-input__inner {
+  padding-right: 22px;
+}
+.dashboard-config-fields .el-input__inner[readonly] {
+  color: #334155;
+}
+.dashboard-config-filter-button {
+  display: flex;
+  justify-content: space-between;
+  padding: 6px 10px;
+  color: #334155;
+}
+.dashboard-config-settings > .el-checkbox {
+  font-size: 12px;
+  margin: 1px 0 9px;
+}
+.dashboard-config-setting-note {
+  margin: 0 0 8px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: #64748b;
+}
+.dashboard-config-settings > .el-checkbox .el-checkbox__label {
+  font-size: 12px;
+}
+.dashboard-config-preview > strong {
+  display: block;
+  font-size: 12px;
+  margin-bottom: 5px;
+}
+.dashboard-config-preview-content {
+  margin-bottom: 12px;
+  min-height: 110px;
+  overflow-x: auto;
+}
+.dashboard-config-preview-content .dashboard-empty {
+  min-height: 110px;
+}
+.dashboard-config-preview-content .el-table {
+  font-size: 11px;
+}
+.dashboard-config-preview-content .el-table th,
+.dashboard-config-preview-content .el-table td {
+  padding: 3px 0;
+}
+.dashboard-config-preview-content .el-table th {
+  background: #f1f5f9;
+  color: #1e293b;
+}
+.dashboard-config-preview-content .el-table .cell {
+  padding: 0 5px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.dashboard-config-preview-content .dashboard-chart-accessible {
+  display: none;
+}
+.dashboard-config-placement {
+  margin-top: 8px;
+}
+.dashboard-config-order {
+  flex-wrap: wrap;
+  gap: 5px;
+  color: #64748b;
+  font-size: 11px;
+}
+.dashboard-config-order > i {
+  font-size: 16px;
+}
+.dashboard-config-order .el-button {
+  padding: 4px;
+}
+.dashboard-config-footer {
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.dashboard-config-footer > span {
+  color: #64748b;
+  font-size: 12px;
+  text-align: left;
+}
+.dashboard-config-footer > div {
+  margin-left: auto;
+  flex-wrap: wrap;
+}
+.dashboard-config-footer .el-button--success {
+  background: #008b4b;
+  border-color: #008b4b;
+}
+.dashboard-config-global-fields {
+  display: grid;
+  gap: 10px;
+  padding: 4px;
+}
+.dashboard-config-global-fields > label {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  font-size: 12px;
+}
+.dashboard-config-global-fields .el-select,
+.dashboard-config-global-fields .el-date-editor {
+  width: 100%;
+}
+.dashboard-view-picker .dashboard-table-tools .el-input {
+  max-width: 300px;
+}
+.dashboard-widget-no-drill .dashboard-chart,
+.dashboard-widget-no-drill .dashboard-chart button,
+.dashboard-widget-no-drill .el-button--text,
+.dashboard-widget-no-drill .dashboard-reminders button {
+  cursor: default;
+}
+.dashboard-configuration .el-checkbox__input.is-checked .el-checkbox__inner,
+.dashboard-configuration .el-pagination.is-background .el-pager li:not(.disabled).active {
+  background: #008b4b;
+  border-color: #008b4b;
+}
+.dashboard-configuration .el-checkbox__input.is-checked + .el-checkbox__label {
+  color: #17212f;
+}
+@media (max-width: 1180px) {
+  .dashboard-configured-widget {
+    grid-column: 1 / -1 !important;
+  }
+  .dashboard-configured-metric {
+    grid-column: span 6 !important;
+  }
+  .dashboard-config-columns {
+    grid-template-columns: minmax(130px, .6fr) minmax(0, 1.4fr);
+  }
+  .dashboard-config-settings {
+    grid-column: 1 / -1;
+  }
+  .dashboard-config-library-scroll {
+    max-height: 300px;
+  }
+}
+@media (max-width: 780px) {
+  .dashboard-head {
+    flex-wrap: wrap;
+  }
+  .dashboard-head-actions {
+    flex-basis: 100%;
+  }
+  .dashboard-configured-metric {
+    grid-column: span 12 !important;
+  }
+  .dashboard-config-identity {
+    flex-direction: column;
+    align-items: stretch;
+    margin: 0 0 12px;
+    gap: 10px;
+  }
+  .dashboard-config-columns {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .dashboard-config-categories {
+    display: flex;
+    flex-wrap: wrap;
+  }
+  .dashboard-config-categories h3 {
+    width: 100%;
+  }
+  .dashboard-config-categories button {
+    width: 50%;
+  }
+  .dashboard-global-filter-popover {
+    max-width: calc(100vw - 30px);
+  }
+}

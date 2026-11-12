@@ -245,6 +245,7 @@ final class TaskQueryService
                     ->where('lane', $lane)->where('employee_legacy_id', $me)->where('status', '!=', 'active')->sum('labor_minutes'), 2)],
             'share_mode' => collect($participants)->contains(fn ($p) => $p['share_percent'] !== null) ? 'fixed' : 'labor',
             'drawings' => $drawings->map(fn ($d) => ['id' => $d->id, 'drawing_name' => $d->drawing_name, 'version_no' => $d->version_no, 'url' => $d->url,
+                'original_name' => $d->original_name, 'technical_drawing' => app(\App\Services\Erp\TechnicalDrawingSourceService::class)->forFile('work_order', $d->id),
                 'mime_type' => $d->mime_type, 'uploaded_at' => $d->uploaded_at?->toDateTimeString()])->values()->all(),
             'drawings_updated_at' => $tech?->drawings_updated_at && $myLast && $tech->drawings_updated_at->gt($myLast) ? $tech->drawings_updated_at->toDateTimeString() : null,
             'materials' => $opMaterials->map(function ($m) use ($compItems, $bomLines) {

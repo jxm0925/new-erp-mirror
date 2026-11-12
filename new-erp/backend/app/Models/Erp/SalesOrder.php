@@ -85,4 +85,5 @@ class SalesOrder extends MasterModel
     public function salesChannel() { return $this->belongsTo(SalesChannel::class); }
     public function fundingPolicy() { return $this->belongsTo(SalesFundingPolicy::class); }
     public function paymentMethod() { return $this->belongsTo(PaymentMethod::class); }
+    public function crmOpportunityOrder() { return $this->hasOne(CrmOpportunityOrder::class, 'order_id'); }
 }

@@ -8,6 +8,7 @@ Do not change layout without approval.
     <product-sku-picker ref="productSkuPicker" @select="applyPicker" />
     <customer-picker ref="customerPicker" @select="applyCustomer" />
     <crm-identity-review-dialog ref="identityReview" />
+    <crm-opportunity-detail-dialog v-if="form.opportunity_id && (!$can || $can('crm.opportunity.view'))" ref="sourceOpportunityDetail" />
     <warehouse-manager-picker :visible.sync="salesUserPickerVisible" title="选择销售人员" scope="sales" :current="selectedSalesUser" @selected="applySalesUser" />
     <sales-carrier-picker :visible.sync="carrierPickerVisible" :current="selectedCarrier" @selected="applyCarrier" />
     <order-edit-impact-dialog
@@ -120,11 +121,13 @@ Do not change layout without approval.
                 </div>
                 <div v-if="!platformPaymentOnly" class="field">
                   <label class="required">订单来源</label>
-                  <el-select v-model="form.order_source" size="small">
+                  <el-select v-model="form.order_source" size="small" :disabled="!!form.opportunity_id">
                     <el-option label="销售订单" value="manual" />
                     <el-option label="历史迁移" value="legacy_sync" />
                     <el-option label="线索转单" value="crm_clue" />
                   </el-select>
+                  <el-button v-if="sourceOpportunity.id && (!$can || $can('crm.opportunity.view'))" type="text" size="mini" class="source-opportunity-link" @click="$refs.sourceOpportunityDetail.open(form.opportunity_id)">来源商机：{{ sourceOpportunity.name || sourceOpportunity.opportunity_no }}</el-button>
+                  <span v-else-if="form.opportunity_id" class="platform-inline-meta">来源商机 #{{ form.opportunity_id }}</span>
                 </div>
                 <div v-if="!platformPaymentOnly" class="field">
                   <label>贸易类型</label>
@@ -149,7 +152,7 @@ Do not change layout without approval.
                       <el-checkbox v-model="platformPaymentChecked" :disabled="!canCheckPlatformPayment || platformPaymentSaving">已核对买家在平台付清</el-checkbox>
                       <span v-if="platformPaymentDisabledReason" class="platform-inline-meta" :title="platformPaymentDisabledReason">· {{ platformPaymentDisabledReason }}</span>
                       <span v-else class="platform-inline-meta">· 应收 <strong class="platform-amount">{{ money(platformPaymentAmount) }}</strong> {{ form.currency || 'CNY' }}</span>
-                      <el-button v-if="standalonePlatformPayment && canCheckPlatformPayment" size="mini" type="success" class="btn-emerald-primary platform-save-btn" :loading="platformPaymentSaving" :disabled="platformPaymentChecked === savedPlatformPayment" @click="savePlatformPayment">保存核对</el-button>
+                      <el-button v-if="standalonePlatformPayment && canCheckPlatformPayment" size="mini" type="success" class="btn-emerald-primary platform-save-btn" :loading="platformPaymentSaving" :disabled="!platformPaymentChoiceChanged" @click="savePlatformPayment">{{ !platformPaymentChecked && savedPlatformReceipt ? '撤销原核对' : '保存核对' }}</el-button>
                     </div>
                   </div>
                 </div>
@@ -221,7 +224,7 @@ Do not change layout without approval.
             <div class="panel-title-wrap">
               <h3>客户与收货档案</h3>
             </div>
-            <el-button size="mini" plain type="success" icon="el-icon-user" class="btn-emerald-plain" @click="$refs.customerPicker.open()">选择客户</el-button>
+            <el-button size="mini" plain type="success" icon="el-icon-user" class="btn-emerald-plain" @click="openCustomerPicker">选择客户</el-button>
           </div>
           <div class="customer-body">
             <div class="smart-parse-cabin">
@@ -235,8 +238,8 @@ Do not change layout without approval.
               <div class="field span-2">
                 <label class="required">客户名称</label>
                 <div class="inline-pair">
-                  <el-input v-model="form.customer_name" size="small" placeholder="点击右侧按钮选择客户" readonly @click.native="$refs.customerPicker.open()" />
-                  <el-button size="small" plain type="success" class="btn-emerald-plain" @click="$refs.customerPicker.open()">选择客户</el-button>
+                  <el-input v-model="form.customer_name" size="small" placeholder="点击右侧按钮选择客户" readonly @click.native="openCustomerPicker" />
+                  <el-button size="small" plain type="success" class="btn-emerald-plain" @click="openCustomerPicker">选择客户</el-button>
                 </div>
               </div>
               <div class="field">
@@ -705,6 +708,7 @@ import OrderEditImpactDialog from '@/components/sales/OrderEditImpactDialog.vue'
 import { legacyMediaUrl } from '@/utils/legacyMedia'
 import CustomerPicker from '@/components/sales/CustomerPicker.vue'
 import CrmIdentityReviewDialog from '@/components/crm/CrmIdentityReviewDialog.vue'
+import { getCrmOpportunity, getCrmOpportunityOrderContext, crmError } from '@/api/erp/crm'
 import WarehouseManagerPicker from '@/components/master/WarehouseManagerPicker.vue'
 import SalesCarrierPicker from '@/components/sales/SalesCarrierPicker.vue'
 import SystemRecordPicker from '@/components/system/SystemRecordPicker.vue'
@@ -759,7 +763,7 @@ const emptyLine = () => ({
 
 export default {
   mixins: [cachedPageRoute],
-  components: { ProductSkuPicker, CustomerPicker, CrmIdentityReviewDialog, WarehouseManagerPicker, SalesCarrierPicker, SystemRecordPicker, SalesOrderAttachmentPreviewDialog, OrderEditImpactDialog },
+  components: { ProductSkuPicker, CustomerPicker, CrmIdentityReviewDialog, WarehouseManagerPicker, SalesCarrierPicker, SystemRecordPicker, SalesOrderAttachmentPreviewDialog, OrderEditImpactDialog, CrmOpportunityDetailDialog: () => import('@/components/crm/CrmOpportunityDetailDialog.vue') },
   data: () => ({
     selectedLine: null,
     salesUserPickerVisible: false,
@@ -784,6 +788,9 @@ export default {
     impactSubmitError: '',
     impactPayload: null,
     editOrderMeta: null,
+    opportunityContextLoading: false,
+    opportunityContextError: '',
+    sourceOpportunity: {},
     impactPreview: {
       level: 'low',
       candidateVersion: 'V1',
@@ -823,6 +830,7 @@ export default {
       order_time: '',
       created_by: '',
       draft_token: `draft-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      opportunity_id: null,
       customer_name: '',
       customer_kind: 'individual',
       customer_phone: '',
@@ -902,6 +910,12 @@ export default {
     },
     savedPlatformPayment() {
       return Boolean(this.editOrderMeta?.funding_status?.platform_payment)
+    },
+    savedPlatformReceipt() {
+      return Boolean(this.editOrderMeta?.funding_status?.platform_payment_receipt)
+    },
+    platformPaymentChoiceChanged() {
+      return this.platformPaymentChecked !== this.savedPlatformPayment || (!this.platformPaymentChecked && this.savedPlatformReceipt)
     },
     standalonePlatformPayment() {
       return this.isConfirmedEdit || this.platformPaymentOnly
@@ -1051,6 +1065,7 @@ export default {
     else {
       this.form.funding_policy_id = this.defaultFundingPolicy ? this.defaultFundingPolicy.id : null
       await Promise.all([this.reserveSalesOrderNumber(), this.defaultSalesUser()])
+      await this.loadOpportunityContext()
     }
     if (!this.selectedLine) this.selectedLine = this.form.lines[0]
     if (!this.isEdit && this.form.lines[0]) this.expandedLineKeys = [this.form.lines[0].line_uuid]
@@ -1088,6 +1103,7 @@ export default {
           this.selectedLine = this.form.lines[0]
           this.expandedLineKeys = this.form.lines[0] ? [this.form.lines[0].line_uuid] : []
           await Promise.all([this.reserveSalesOrderNumber(), this.defaultSalesUser()])
+          await this.loadOpportunityContext()
         }
       }
     },
@@ -1097,9 +1113,48 @@ export default {
   },
   methods: {
     legacyMediaUrl,
+    async loadOpportunityContext() {
+      const id = this.pageRoute.query.opportunity_id
+      this.opportunityContextError = ''
+      this.sourceOpportunity = {}
+      if (this.isEdit || !id) { this.opportunityContextLoading = false; return }
+      const form = this.form
+      this.opportunityContextLoading = true
+      try {
+        const { data } = await getCrmOpportunityOrderContext(id)
+        if (this._isDestroyed || this.isEdit || this.form !== form || String(this.pageRoute.query.opportunity_id) !== String(id)) return
+        const context = data.data || data
+        this.applyCustomer({ ...context.customer, contact_name: context.contact_name, contact_phone: context.contact_phone })
+        this.form.opportunity_id = context.opportunity_id
+        this.sourceOpportunity = context.opportunity || {}
+        this.form.customer_contact_id = context.customer_contact_id || null
+        this.form.currency = context.currency || 'CNY'
+        this.form.order_source = 'crm_clue'
+        if (['domestic','foreign'].includes(context.trade_type)) this.form.trade_type = context.trade_type
+      } catch (error) {
+        if (this.form === form && !this.isEdit && String(this.pageRoute.query.opportunity_id) === String(id)) {
+          this.opportunityContextError = crmError(error,'商机来源加载失败，请重新从商机新建订单')
+          this.$message.error(this.opportunityContextError)
+        }
+      } finally { if (this.form === form && String(this.pageRoute.query.opportunity_id) === String(id)) this.opportunityContextLoading = false }
+    },
+    openCustomerPicker() {
+      if (this.form.opportunity_id) return this.$message.warning('关联商机的订单须保留原客户')
+      this.$refs.customerPicker.open()
+    },
+    async loadOpportunitySource() {
+      const form = this.form
+      this.sourceOpportunity = {}
+      if (!form.opportunity_id || (this.$can && !this.$can('crm.opportunity.view'))) return
+      try {
+        const { data } = await getCrmOpportunity(form.opportunity_id)
+        if (!this._isDestroyed && this.form === form) this.sourceOpportunity = data.data || data
+      } catch (error) { /* 商机超出查看范围时仅保留订单已有的关联编号。 */ }
+    },
     async reserveSalesOrderNumber() {
       try {
-        this.numberReservation = await reserveForCreatePage('sales_order', '/sales/orders/create')
+        const opportunityId = this.pageRoute.query.opportunity_id
+        this.numberReservation = await reserveForCreatePage('sales_order', '/sales/orders/create', opportunityId ? `/sales/orders/create?opportunity_id=${opportunityId}` : '/sales/orders/create')
         this.form.sales_order_no = this.numberReservation.document_no
         this.form.reservation_token = this.numberReservation.reservation_token
         this.form.creation_session_id = this.numberReservation.creation_session_id
@@ -1125,6 +1180,7 @@ export default {
         created_by: '',
         draft_token: `draft-${Date.now()}-${Math.random().toString(16).slice(2)}`,
         customer_id: null,
+        opportunity_id: null,
         customer_contact_id: null,
         customer_address_id: null,
         customer_name: '',
@@ -1195,6 +1251,7 @@ export default {
       this.form = {
         ...withoutInternalFreight(this.form),
         ...formData,
+        opportunity_id: data.opportunity_id || (data.crm_opportunity_order && data.crm_opportunity_order.opportunity_id) || null,
         origin_order_no: salesOrderOriginalNo(data),
         trade_type: data.trade_type || 'domestic',
         platform: data.platform ? String(data.platform) : '',
@@ -1239,6 +1296,7 @@ export default {
       this.selectedSalesUser = salesUser ? { id: salesUser.user_id, nickname: salesUser.display_name, department_names: salesUser.department_name } : (data.sales_user_legacy_id ? { id: Number(data.sales_user_legacy_id), nickname: `账号 ${data.sales_user_legacy_id}` } : null)
       this.selectedCarrier = this.form.carrier_id ? { carrier_option_id: Number(this.form.carrier_id), name: data.default_carrier_name_snapshot || (data.shipping_snapshot || {}).default_carrier_name || (data.shipping_snapshot || {}).carrier_name || '' } : null
       this.selectedLine = this.form.lines[0] || null
+      this.loadOpportunitySource()
       return true
       } catch (error) {
         if (!this.isPageRouteActive) return false
@@ -1310,6 +1368,7 @@ export default {
       })
     },
     applyCustomer(row) {
+      if (this.form.opportunity_id && Number(row.id) !== Number(this.form.customer_id)) return this.$message.warning('关联商机的订单须保留原客户')
       const contact = (row.contacts || []).find(item => item.is_default) || (row.contacts || [])[0] || null
       const address = (row.addresses || []).find(item => item.is_default) || (row.addresses || [])[0] || null
       this.form.customer_id = row.id
@@ -1942,7 +2001,7 @@ export default {
       } finally { this.impactSubmitting = false }
     },
     async savePlatformPayment() {
-      if (!this.standalonePlatformPayment || !this.canCheckPlatformPayment || this.platformPaymentSaving || this.platformPaymentChecked === this.savedPlatformPayment) return
+      if (!this.standalonePlatformPayment || !this.canCheckPlatformPayment || this.platformPaymentSaving || !this.platformPaymentChoiceChanged) return
       const order = this.editOrderMeta
       const confirmed = this.platformPaymentChecked
       this.platformPaymentSaving = true
@@ -1974,6 +2033,8 @@ export default {
       return true
     },
     async save(andConfirm) {
+      if (this.opportunityContextLoading) return this.$message.warning('商机来源正在加载')
+      if (this.opportunityContextError) return this.$message.error(this.opportunityContextError)
       if (!this.canEditOrder || this.impactRechecking || this.impactSubmitting || this.platformPaymentSaving) return
       if (!this.form.customer_id) return this.$message.error('请通过客户选择框选择客户')
       if (!this.form.sales_user_legacy_id) return this.$message.error('请选择销售人员')
@@ -2787,6 +2848,13 @@ export default {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+.source-opportunity-link {
+  white-space: normal;
+  text-align: left;
+  word-break: break-word;
+  line-height: 1.5;
+  padding: 3px 0;
 }
 .platform-amount {
   color: #008b4b;

@@ -31,8 +31,11 @@ class RbacBootstrapService
             'master.sku_item_relation.view', 'finance.receipt.view', 'approval.todo', 'approval.task.view', 'approval.task.decide', 'approval.processed',
         ],
         'sales_user' => [
+            'crm.workbench.view', 'crm.dashboard.view',
             'crm.lead.view', 'crm.lead.create', 'crm.lead.edit', 'crm.lead.accept', 'crm.lead.return', 'crm.lead.claim',
             'crm.lead.follow', 'crm.lead.confirm', 'crm.lead.invalidate', 'crm.lead.pool', 'crm.followup.edit',
+            'crm.opportunity.view', 'crm.opportunity.create', 'crm.opportunity.edit', 'crm.opportunity.stage',
+            'crm.opportunity.lose', 'crm.opportunity.follow', 'crm.opportunity.file', 'crm.opportunity.order',
             'sales.customer.view', 'sales.customer.create', 'sales.customer.edit', 'sales_order.view', 'sales_order.amount.view', 'sales_order.invoice_request',
             'sales_order.create', 'sales_order.edit_draft', 'sales_order.delete_draft', 'sales_order.submit_confirmation', 'sales_order.production_confirm',
             'sales_order.inventory_lock', 'sales_order.change', 'sales_order.change.submit', 'sales_order.upload_attachment',
@@ -119,6 +122,7 @@ class RbacBootstrapService
      */
     private const NEW_PERMISSION_DEFAULTS = [
         'production.material_return.request' => ['production_manager', 'production_operator'],
+        'production.drawing_stats' => ['production_manager'],
         'production.material_return.approve' => ['warehouse_manager'],
         'inventory.material_return' => ['warehouse_manager'],
         'purchase.production_shortage' => ['production_manager'],
@@ -136,6 +140,10 @@ class RbacBootstrapService
         'sales.customer.collaborate' => ['sales_user', 'sales_manager'],
         'sales.customer.verify' => ['sales_manager', 'department_principal'],
         // 功能权限不代替分配授权；部门、渠道、可分配人员及领取资格仍由 CRM 授权服务校验。
+        'crm.workbench' => ['sales_user', 'sales_manager', 'department_principal'],
+        'crm.workbench.view' => ['sales_user', 'sales_manager', 'department_principal'],
+        'crm.dashboard' => ['sales_user', 'sales_manager', 'department_principal'],
+        'crm.dashboard.view' => ['sales_user', 'sales_manager', 'department_principal'],
         'crm.lead' => ['sales_user', 'sales_manager', 'department_principal'],
         'crm.lead.view' => ['sales_user', 'sales_manager', 'department_principal'],
         'crm.lead.create' => ['sales_user', 'sales_manager', 'department_principal'],
@@ -155,6 +163,15 @@ class RbacBootstrapService
         'crm.team.view' => ['sales_manager', 'department_principal'],
         'crm.team.capability' => ['sales_manager', 'department_principal'],
         'crm.team.grant' => ['sales_manager', 'department_principal'],
+        'crm.opportunity' => ['sales_user', 'sales_manager', 'department_principal'],
+        'crm.opportunity.view' => ['sales_user', 'sales_manager', 'department_principal'],
+        'crm.opportunity.create' => ['sales_user', 'sales_manager', 'department_principal'],
+        'crm.opportunity.edit' => ['sales_user', 'sales_manager', 'department_principal'],
+        'crm.opportunity.stage' => ['sales_user', 'sales_manager', 'department_principal'],
+        'crm.opportunity.lose' => ['sales_user', 'sales_manager', 'department_principal'],
+        'crm.opportunity.follow' => ['sales_user', 'sales_manager', 'department_principal'],
+        'crm.opportunity.file' => ['sales_user', 'sales_manager', 'department_principal'],
+        'crm.opportunity.order' => ['sales_user', 'sales_manager', 'department_principal'],
     ];
 
     /** 新权限还要授给已有某个权限的角色（如自建的采购员角色有“新增需求”就能看生产缺料并转采购）。 */
@@ -277,6 +294,7 @@ class RbacBootstrapService
             ['production.work_order', '工单管理', 'menu', 'production', '/production/work-orders', 'WorkOrderList', 'el-icon-s-order', 802],
             ['production.board', '生产作业看板', 'menu', 'production', '/production/board', 'ProductionBoard', 'el-icon-data-board', 802],
             ['production.tech', '定制工艺管理', 'menu', 'production', '/production/tech', 'ProductionTechList', 'el-icon-edit-outline', 802],
+            ['production.drawing_stats', '图纸统计', 'menu', 'production', '/production/drawing-statistics', 'TechnicalDrawingStatistics', 'el-icon-data-analysis', 802],
             ['production.serial', '序列号查询', 'menu', 'production', '/production/serials', 'ProductionSerialTrace', 'el-icon-search', 802],
             ['production.performance_stats', '提成与工时统计', 'menu', 'production', '/production/performance/orders', 'ProductionPerformanceStats', 'el-icon-money', 802],
             ['production.base', '生产基础', 'menu', 'production', null, null, 'el-icon-setting', 803],
@@ -456,15 +474,20 @@ class RbacBootstrapService
             ['bom.expand.export', '导出BOM展开表', 'button', 'bom.expand', null, null, 'el-icon-mouse', 2],
 
             // 5. 销售管理 二级菜单
+            ['crm.workbench', '销售工作台', 'menu', 'sales', '/sales/workbench', 'CrmWorkbench', 'el-icon-s-home', 499],
+            ['crm.dashboard', '经营看板', 'menu', 'sales', '/sales/crm-dashboard', 'CrmDashboard', 'el-icon-data-analysis', 506],
             ['crm.lead', '线索中心', 'menu', 'sales', '/sales/leads', 'CrmLeadList', 'el-icon-connection', 500],
             ['sales.customer', '客户管理', 'menu', 'sales', '/sales/customers', 'SalesCustomerList', 'el-icon-user', 501],
             ['crm.team', '团队管理', 'menu', 'sales', '/sales/crm-team', 'CrmTeam', 'el-icon-s-custom', 505],
+            ['crm.opportunity', '商机中心', 'menu', 'sales', '/sales/opportunities', 'CrmOpportunityList', 'el-icon-trophy', 504],
             ['sales.order', '销售订单', 'menu', 'sales', '/sales/orders', 'SalesOrderList', 'el-icon-s-order', 502],
             ['sales.shipment', '销售发货单', 'menu', 'sales', '/sales/shipments', 'SalesShipmentBoard', 'el-icon-truck', 503],
             ['sales.return', '销售退货', 'menu', 'sales', '/sales/returns', 'ReturnList', 'el-icon-refresh-left', 503],
             ['sales.aftersales', '售后单', 'menu', 'sales', '/sales/aftersales', 'AftersalesList', 'el-icon-service', 504],
 
             // 销售管理 按钮
+            ['crm.workbench.view', '查看销售工作台', 'button', 'crm.workbench', null, null, 'el-icon-view', 1],
+            ['crm.dashboard.view', '查看经营看板', 'button', 'crm.dashboard', null, null, 'el-icon-view', 1],
             ['sales.customer.view', '查看客户', 'button', 'sales.customer', null, null, 'el-icon-mouse', 1],
             ['sales.customer.create', '新增客户', 'button', 'sales.customer', null, null, 'el-icon-mouse', 2],
             ['sales.customer.edit', '编辑客户', 'button', 'sales.customer', null, null, 'el-icon-mouse', 3],
@@ -492,6 +515,14 @@ class RbacBootstrapService
             ['crm.team.view', '查看销售团队', 'button', 'crm.team', null, null, 'el-icon-view', 1],
             ['crm.team.capability', '维护销售能力', 'button', 'crm.team', null, null, 'el-icon-collection-tag', 2],
             ['crm.team.grant', '维护CRM分配授权', 'button', 'crm.team', null, null, 'el-icon-key', 3],
+            ['crm.opportunity.view', '查看商机', 'button', 'crm.opportunity', null, null, 'el-icon-view', 1],
+            ['crm.opportunity.create', '新增及转入商机', 'button', 'crm.opportunity', null, null, 'el-icon-plus', 2],
+            ['crm.opportunity.edit', '编辑商机', 'button', 'crm.opportunity', null, null, 'el-icon-edit', 3],
+            ['crm.opportunity.stage', '推进及退回阶段', 'button', 'crm.opportunity', null, null, 'el-icon-sort', 4],
+            ['crm.opportunity.lose', '登记丢单', 'button', 'crm.opportunity', null, null, 'el-icon-remove-outline', 5],
+            ['crm.opportunity.follow', '记录商机跟进', 'button', 'crm.opportunity', null, null, 'el-icon-chat-line-round', 6],
+            ['crm.opportunity.file', '维护方案与报价版本', 'button', 'crm.opportunity', null, null, 'el-icon-document', 7],
+            ['crm.opportunity.order', '从商机创建订单', 'button', 'crm.opportunity', null, null, 'el-icon-s-order', 8],
 
             ['production.work_order.view', '查看工单', 'button', 'production.work_order', null, null, 'el-icon-mouse', 1],
             ['production.work_order.create', '创建工单', 'button', 'production.work_order', null, null, 'el-icon-mouse', 2],
@@ -858,7 +889,7 @@ class RbacBootstrapService
             'production.operation.view', 'production.operation.create', 'production.operation.edit', 'production.operation.toggle', 'production.operation.delete',
             'production.routing.view', 'production.routing.create', 'production.routing.edit', 'production.routing.activate', 'production.routing.default', 'production.routing.delete',
             'production.board', 'production.tech', 'production.task.execute', 'production.task.assign', 'production.scrap.approve',
-            'production.receipt.execute', 'production.tech.manage', 'production.material_return.request',
+            'production.receipt.execute', 'production.tech.manage', 'production.drawing_stats', 'production.material_return.request',
             'purchase.production_shortage', 'purchase.production_shortage.convert',
         ];
         // 指定/调整部件编号前期只授系统管理员，放开时再授给车间角色。

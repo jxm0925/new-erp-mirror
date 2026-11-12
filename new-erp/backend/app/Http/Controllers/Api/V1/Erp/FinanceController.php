@@ -392,7 +392,9 @@ class FinanceController extends Controller
 
     public function cashDocuments(Request $request, string $direction)
     {
-        $this->authorizePermission($request, 'finance.view');
+        $user = app(AuthContextService::class)->currentUser($request);
+        abort_unless($user, 401, '未登录或登录已过期。');
+        app(\App\Services\Erp\FinanceCashDocumentReadAccessService::class)->assertView($user);
         abort_unless(in_array($direction, FinanceConstants::directions(), true), 404);
         $data = $request->validate(['allocation_status' => 'nullable|in:pending,settled']);
         $query = FinanceCashDocument::query()->with('account')->where('direction', $direction)->latest('business_date')->latest('id');
@@ -416,7 +418,9 @@ class FinanceController extends Controller
 
     public function showCashDocument(Request $request, int $id)
     {
-        $this->authorizePermission($request, 'finance.view');
+        $user = app(AuthContextService::class)->currentUser($request);
+        abort_unless($user, 401, '未登录或登录已过期。');
+        app(\App\Services\Erp\FinanceCashDocumentReadAccessService::class)->assertView($user);
         return response()->json(['data' => $this->cashPayload(FinanceCashDocument::with(['account', 'allocations', 'attachments', 'logs'])->findOrFail($id))]);
     }
 

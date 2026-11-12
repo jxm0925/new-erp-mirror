@@ -844,8 +844,9 @@
                       :href="g.url"
                       target="_blank"
                       rel="noopener"
+                      @click="openDrawing($event,g)"
                     >
-                      <i class="el-icon-document" /> {{ g.drawing_name }} V{{ g.version_no }}
+                      <i class="el-icon-document" /> {{ g.technical_drawing ? g.technical_drawing.drawing_no + ' · ' : '' }}{{ g.drawing_name }} V{{ g.technical_drawing ? g.technical_drawing.version_no : g.version_no }}
                     </a>
                   </template>
                   <span v-else class="text-muted">未上传技术图纸</span>
@@ -859,6 +860,8 @@
               </div>
             </div>
           </section>
+
+          <section v-if="wo.technical_drawings && wo.technical_drawings.length" class="detail-card"><technical-drawing-source-panel :source="{type:'work_order',id:wo.id,version:wo.business_version}" :source-label="'工单 · ' + wo.work_order_no" /></section>
 
           <!-- 卡片 7：材料成本归集与定额 -->
           <section class="detail-card">
@@ -1095,6 +1098,7 @@
       :operation-name="returnDialog.opName"
       @done="load"
     />
+    <technical-drawing-file-dialog ref="drawingFile" />
   </div>
 </template>
 
@@ -1107,6 +1111,8 @@ import SystemRecordPicker from '@/components/system/SystemRecordPicker.vue'
 import MaterialReturnDialog from './MaterialReturnDialog.vue'
 import ShortagePurchaseDialog from '../purchase/ShortagePurchaseDialog.vue'
 import unitOptionsMixin from './unit-options-mixin'
+import TechnicalDrawingSourcePanel from '@/components/technical-drawings/TechnicalDrawingSourcePanel.vue'
+import TechnicalDrawingFileDialog from '@/components/technical-drawings/TechnicalDrawingFileDialog.vue'
 
 const STEPS = [
   { value: 'planned', label: '计划制令' },
@@ -1118,7 +1124,7 @@ const STEPS = [
 
 export default {
   name: 'WorkOrderDetail',
-  components: { CancellationDispositions, SystemRecordPicker, WorkOrderCuttingPanel, MaterialReturnDialog, ShortagePurchaseDialog },
+  components: { CancellationDispositions, SystemRecordPicker, WorkOrderCuttingPanel, MaterialReturnDialog, ShortagePurchaseDialog, TechnicalDrawingSourcePanel, TechnicalDrawingFileDialog },
   mixins: [unitOptionsMixin],
   data: () => ({
     loading: false,
@@ -1254,6 +1260,7 @@ export default {
     this.load()
   },
   methods: {
+    openDrawing(event, drawing) { if (drawing.technical_drawing) { event.preventDefault(); this.$refs.drawingFile.open(drawing) } },
     qty,
     money,
     shortDate,

@@ -112,7 +112,7 @@ final class TechService
         $routingBlock = $wo->block_reason && str_contains($wo->block_reason, '路线');
         return [
             'work_order' => [
-                'id' => $wo->id, 'work_order_no' => $wo->work_order_no, 'status' => $wo->status, 'status_label' => WorkOrderQueryService::STATUS_LABELS[$wo->status] ?? $wo->status,
+                'id' => $wo->id, 'work_order_no' => $wo->work_order_no, 'business_version' => $wo->business_version, 'status' => $wo->status, 'status_label' => WorkOrderQueryService::STATUS_LABELS[$wo->status] ?? $wo->status,
                 'item_name' => $wo->item_name, 'item_code' => $wo->item_code, 'product_name' => $wo->product_name ?: $wo->item_name, 'sku_code' => $wo->sku_code, 'sku_name' => $wo->sku_name,
                 'planned_qty' => (float) $wo->planned_qty, 'unit_name' => $wo->unit_name, 'required_date' => $wo->required_date?->toDateString(), 'is_urgent' => (bool) $wo->is_urgent, 'priority' => (int) ($wo->priority ?: 3), 'priority_label' => \App\Services\Erp\SalesOrderPriorityService::label((int) ($wo->priority ?: 3)),
                 'customer_name' => $wo->customer_name, 'sales_order_id' => $wo->sales_order_id, 'sales_order_no' => $wo->sales_order_no, 'sales_order_line_no' => $wo->sales_order_line_no,
@@ -311,6 +311,7 @@ final class TechService
                 $old = MfgDrawing::query()->where('work_order_id', $wo->id)->where('status', 'active')->lockForUpdate()->find($replaceId);
                 if (! $old) $this->fail('drawing_invalid', '要替换的图纸不存在或已被替换。');
                 $old->update(['status' => 'replaced']);
+                app(\App\Services\Erp\TechnicalDrawingSourceService::class)->deactivateFile('work_order', $wo->id, $old->id);
             }
             $name = trim((string) $drawingName) ?: ($old?->drawing_name ?: pathinfo($file['original_name'], PATHINFO_FILENAME));
             $drawing = MfgDrawing::create($file + [
@@ -338,6 +339,7 @@ final class TechService
             if ($released && MfgDrawing::query()->where('work_order_id', $wo->id)->where('status', 'active')->count() <= 1)
                 $this->fail('last_drawing', '已下发车间，至少要留一张图纸；要换图请用“替换”。');
             $drawing->update(['status' => 'deleted']);
+            app(\App\Services\Erp\TechnicalDrawingSourceService::class)->deactivateFile('work_order', $wo->id, $drawing->id);
             if ($released) $tech->update(['drawings_updated_at' => now()]);
             $this->workOrders->log($wo, 'tech_drawing', null, null, "删除图纸 {$drawing->drawing_name} V{$drawing->version_no}", $actor);
         }, 5);
@@ -464,6 +466,7 @@ final class TechService
     private function drawingRow(MfgDrawing $d): array
     {
         return ['id' => $d->id, 'drawing_name' => $d->drawing_name, 'version_no' => $d->version_no, 'original_name' => $d->original_name, 'url' => $d->url,
+            'technical_drawing' => app(\App\Services\Erp\TechnicalDrawingSourceService::class)->forFile('work_order', $d->id),
             'mime_type' => $d->mime_type, 'file_size' => $d->file_size, 'status' => $d->status, 'replaced_drawing_id' => $d->replaced_drawing_id,
             'uploaded_by' => $d->uploaded_by, 'uploaded_at' => $d->uploaded_at?->toDateTimeString()];
     }

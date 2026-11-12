@@ -42,13 +42,16 @@ export default {
   name: 'SalesOrderAttachmentPreviewDialog',
   props: {
     visible: { type: Boolean, default: false },
-    file: { type: Object, default: null }
+    file: { type: Object, default: null },
+    previewRequest: { type: Function, default: previewSalesOrderAttachment },
+    downloadRequest: { type: Function, default: downloadSalesOrderAttachment }
   },
   data: () => ({
     loading: false,
     downloading: false,
     objectUrl: '',
-    error: ''
+    error: '',
+    requestSequence: 0
   }),
   computed: {
     mimeType() {
@@ -78,6 +81,8 @@ export default {
   methods: {
     async loadPreview() {
       this.releaseUrl()
+      const sequence = this.requestSequence
+      const file = this.file
       this.error = ''
       if (!this.file || !this.file.attachment_id || this.file.can_preview !== true) {
         this.error = '附件暂时无法预览，请下载后查看。'
@@ -85,43 +90,50 @@ export default {
       }
       this.loading = true
       try {
-        const { data } = await previewSalesOrderAttachment(this.file.attachment_id)
+        const { data } = await this.previewRequest(file.attachment_id)
+        if (sequence !== this.requestSequence || !this.visible || this.file !== file) return
         this.objectUrl = URL.createObjectURL(new Blob([data], { type: this.mimeType || 'application/octet-stream' }))
       } catch (error) {
-        this.error = '附件暂时无法预览，请重新加载或下载后查看。'
+        if (sequence === this.requestSequence) this.error = '附件暂时无法预览，请重新加载或下载后查看。'
       } finally {
-        this.loading = false
+        if (sequence === this.requestSequence) this.loading = false
       }
     },
     async download() {
       if (!this.canDownload) return
       this.downloading = true
+      const file = this.file
+      const sequence = this.requestSequence
       try {
-        const { data } = await downloadSalesOrderAttachment(this.file.attachment_id)
+        const { data } = await this.downloadRequest(file.attachment_id)
+        if (sequence !== this.requestSequence || this.file !== file || !this.visible) return
         const url = URL.createObjectURL(new Blob([data], { type: this.mimeType || 'application/octet-stream' }))
         const link = document.createElement('a')
         link.href = url
-        link.download = this.file.file_name || this.file.original_name || '附件'
+        link.download = file.file_name || file.original_name || '附件'
         link.style.display = 'none'
         document.body.appendChild(link)
         link.click()
         link.remove()
         window.setTimeout(() => URL.revokeObjectURL(url), 30000)
       } catch (error) {
-        this.$message.error('附件下载失败，请稍后重试')
+        if (sequence === this.requestSequence) this.$message.error('附件下载失败，请稍后重试')
       } finally {
-        this.downloading = false
+        if (sequence === this.requestSequence) this.downloading = false
       }
     },
     close() {
+      this.releaseUrl()
       this.$emit('update:visible', false)
       this.$emit('close')
     },
     releaseUrl() {
+      this.requestSequence += 1
       if (this.objectUrl) URL.revokeObjectURL(this.objectUrl)
       this.objectUrl = ''
       this.error = ''
       this.loading = false
+      this.downloading = false
     }
   }
 }

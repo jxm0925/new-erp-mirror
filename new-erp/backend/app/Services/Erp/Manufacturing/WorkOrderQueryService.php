@@ -139,6 +139,7 @@ final class WorkOrderQueryService
         ])->values()->all();
         $row['operations'] = $this->operationProgress($wo, $row['operations']);
         $row['tech'] = $this->techSummary($wo);
+        $row['technical_drawings'] = app(\App\Services\Erp\TechnicalDrawingSourceService::class)->forSource('work_order', $wo->id);
         // 订单信息（销售员、客户、电话、地址、各种备注），取订单现在的内容，销售改过的标出来
         $row['order_info'] = app(OrderBrief::class)->forWorkOrder($wo);
         $row['workshop_reference'] = app(WorkshopReferenceService::class)->forWorkOrder($wo);
@@ -251,6 +252,7 @@ final class WorkOrderQueryService
         return ['status' => $tech->status, 'status_label' => TechService::STATUS_LABELS[$tech->status] ?? $tech->status, 'tech_owner_name' => $tech->tech_owner_name,
             'released_at' => $tech->released_at?->toDateTimeString(), 'drawings_updated_at' => $tech->drawings_updated_at?->toDateTimeString(),
             'drawings' => $drawings->map(fn ($d) => ['id' => $d->id, 'drawing_name' => $d->drawing_name, 'version_no' => $d->version_no, 'url' => $d->url,
+                'original_name' => $d->original_name, 'technical_drawing' => app(\App\Services\Erp\TechnicalDrawingSourceService::class)->forFile('work_order', $d->id),
                 'mime_type' => $d->mime_type, 'uploaded_by' => $d->uploaded_by, 'uploaded_at' => $d->uploaded_at?->toDateTimeString()])->values()->all()];
     }
 

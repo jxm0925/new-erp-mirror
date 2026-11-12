@@ -33,7 +33,8 @@ class WorkshopReferenceService
             $this->note($result, '技术说明', $tech?->remark, $source);
             foreach (MfgDrawing::query()->where('work_order_id', $current->id)->where('status', 'active')->orderBy('id')->get() as $drawing) {
                 $this->file($result, ['id' => 'drawing-'.$drawing->id, 'name' => $drawing->drawing_name ?: $drawing->original_name,
-                    'url' => $this->publicUrl($drawing->url, $drawing->storage_path), 'mime_type' => $drawing->mime_type,
+                    'original_name' => $drawing->original_name,
+                    'url' => $this->publicUrl($drawing->url, $drawing->storage_disk === 'public' ? $drawing->storage_path : null), 'mime_type' => $drawing->mime_type,
                     'version' => $drawing->version_no, 'updated_at' => $drawing->uploaded_at?->toDateTimeString(),
                     'source' => $source.' · 技术图纸']);
             }

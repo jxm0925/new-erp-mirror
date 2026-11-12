@@ -70,14 +70,16 @@
             </div>
             <div class="drawing-grid">
               <div v-for="g in d.drawings" :key="g.id" class="drawing-card">
-                <a class="drawing-thumb" :href="g.url" target="_blank" rel="noopener">
-                  <img v-if="isImage(g)" :src="g.url" :alt="g.drawing_name">
-                  <span v-else class="file-icon-box"><i class="el-icon-document" /> {{ g.original_name || g.drawing_name }}</span>
+                <a class="drawing-thumb" :href="g.url" target="_blank" rel="noopener" @click="openDrawing($event,g)">
+                  <technical-drawing-thumbnail :drawing="g" />
                 </a>
                 <div class="drawing-info">
                   <div class="drawing-name" :title="g.drawing_name"><b>{{ g.drawing_name }}</b> <span class="ver-badge">V{{ g.version_no }}</span></div>
                   <div class="drawing-meta">{{ g.uploaded_by || '-' }} · {{ (g.uploaded_at || '').slice(5, 10) }}<span v-if="g.replaced_drawing_id"> · 更新自 V{{ g.version_no - 1 }}</span></div>
+                  <div v-if="g.technical_drawing" class="drawing-identification">{{ g.technical_drawing.drawing_no }} · V{{ g.technical_drawing.version_no }} · {{ g.technical_drawing.designer_name }}</div>
                   <div v-if="canUpload" class="drawing-ops">
+                    <el-button v-if="!g.technical_drawing" type="text" size="mini" @click="registerDrawing(g)">登记技术图纸</el-button>
+                    <el-button v-else type="text" size="mini" @click="$refs.drawingDetail.open(g.technical_drawing.drawing_id)">图纸详情</el-button>
                     <span class="theme-link" @click="pickFile(g)"><i class="el-icon-refresh" /> 更新版本</span>
                     <span class="danger-link" @click="removeDrawing(g)"><i class="el-icon-delete" /> 删除</span>
                   </div>
@@ -98,12 +100,14 @@
               </span>
               <div v-if="showHistory" class="history-list">
                 <div v-for="g in d.drawing_history" :key="g.id" class="history-item">
-                  <a :href="g.url" target="_blank" rel="noopener" class="theme-link"><i class="el-icon-document" /> {{ g.drawing_name }} V{{ g.version_no }}</a>
+                  <a :href="g.url" target="_blank" rel="noopener" class="theme-link" @click="openDrawing($event,g)"><i class="el-icon-document" /> {{ g.drawing_name }} V{{ g.version_no }}</a>
                   <span class="text-muted">· {{ g.uploaded_by }} {{ (g.uploaded_at || '').slice(5, 16) }}</span>
                 </div>
               </div>
             </div>
           </div>
+
+          <div class="content-card"><technical-drawing-source-panel :source="{type:'work_order',id:wo.id,version:wo.business_version}" :source-label="'工单 · ' + wo.work_order_no" :editable="canUpload" @changed="load" /></div>
 
           <!-- 卡片 3：定制 BOM 清单 -->
           <div class="content-card">
@@ -411,11 +415,17 @@
         <el-button size="small" type="success" class="btn-theme-create" :loading="saving" @click="saveBom(true)">保存并确认BOM</el-button>
       </span>
     </el-dialog>
+    <technical-drawing-register-dialog ref="drawingRegister" @saved="load" /><technical-drawing-detail-dialog ref="drawingDetail" @changed="load" /><technical-drawing-file-dialog ref="drawingFile" />
   </div>
 </template>
 
 <script>
 import unitOptionsMixin from './unit-options-mixin'
+import TechnicalDrawingSourcePanel from '@/components/technical-drawings/TechnicalDrawingSourcePanel.vue'
+import TechnicalDrawingRegisterDialog from '@/components/technical-drawings/TechnicalDrawingRegisterDialog.vue'
+import TechnicalDrawingDetailDialog from '@/components/technical-drawings/TechnicalDrawingDetailDialog.vue'
+import TechnicalDrawingFileDialog from '@/components/technical-drawings/TechnicalDrawingFileDialog.vue'
+import TechnicalDrawingThumbnail from '@/components/technical-drawings/TechnicalDrawingThumbnail.vue'
 import { getProductionTech, saveProductionTechBom, uploadProductionDrawing, deleteProductionDrawing, releaseProductionTech, searchProductionOptions } from '../../../api/erp/production'
 import { qty, shortDate, bomLabel, errorText, isCancel } from './mfg-helpers'
 
@@ -424,6 +434,7 @@ let uid = 0
 
 export default {
   name: 'ProductionTechDetail',
+  components: { TechnicalDrawingSourcePanel, TechnicalDrawingRegisterDialog, TechnicalDrawingDetailDialog, TechnicalDrawingFileDialog, TechnicalDrawingThumbnail },
   mixins: [unitOptionsMixin],
   data: () => ({
     CHANGE,
@@ -471,6 +482,8 @@ export default {
     qty,
     shortDate,
     bomLabel,
+    openDrawing(event, drawing) { if (drawing.technical_drawing) { event.preventDefault(); this.$refs.drawingFile.open(drawing) } },
+    registerDrawing(drawing) { this.$refs.drawingRegister.open({ source: {type:'work_order',id:this.wo.id,file_id:drawing.id,version:this.wo.business_version}, sourceLabel:'工单 · ' + this.wo.work_order_no, fileName:drawing.original_name || drawing.drawing_name }) },
     async load() {
       this.loading = true
       try {
@@ -608,7 +621,6 @@ export default {
         this.saving = false
       }
     },
-    isImage(g) { return /^image\//.test(g.mime_type || '') },
     pickFile(target) {
       this.replaceTarget = target
       this.$refs.file.value = ''

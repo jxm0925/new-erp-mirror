@@ -12,6 +12,7 @@ use App\Models\Erp\{
     Unit
 };
 use App\Exceptions\Erp\WorkOrderDomainException;
+use App\Services\Erp\Crm\CrmOpportunityOrderService;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -39,7 +40,7 @@ class SalesOrderFulfillmentApplicationService
                 return $current->fresh(['lines', 'fulfillments']);
             }
             if ($current->order_status === 'draft') {
-                $this->confirmOrder($orderId, $operatorName);
+                $this->confirmOrder($orderId, $operatorName, $operator);
             } elseif ($current->order_status !== 'confirmed') {
                 throw ValidationException::withMessages(['order_status' => '当前销售订单状态不能执行正式确认。']);
             }
@@ -66,9 +67,9 @@ class SalesOrderFulfillmentApplicationService
         }, 5);
     }
 
-    public function confirmOrder(int $orderId, string $operatorName): SalesOrder
+    public function confirmOrder(int $orderId, string $operatorName, ?object $actor = null): SalesOrder
     {
-        return DB::transaction(function () use ($orderId, $operatorName) {
+        return DB::transaction(function () use ($orderId, $operatorName, $actor) {
             $order = SalesOrder::with(['lines.sku.salesUnit.standardUnit', 'lines.item.unit.standardUnit'])
                 ->lockForUpdate()->findOrFail($orderId);
             $order->assertCurrentBusiness();
@@ -79,6 +80,7 @@ class SalesOrderFulfillmentApplicationService
                 throw ValidationException::withMessages(['lines' => '销售订单至少需要一行明细。']);
             }
             SalesOrderFulfillmentPolicy::assertConfirmationRequirements($order);
+            app(CrmOpportunityOrderService::class)->beforeConfirm($order);
 
             // Drafts may remain open while finance masters change. Formal
             // confirmation revalidates and freezes the selected records while
@@ -134,6 +136,7 @@ class SalesOrderFulfillmentApplicationService
                 'confirmed_at' => now(),
                 'confirmed_by' => $operatorName,
             ]);
+            app(CrmOpportunityOrderService::class)->recordEffective($order, $actor);
             $this->log($order, 'confirm', 'draft', 'confirmed', '销售订单已确认并锁定单位换算信息；尚未生成库存备货或生产需求。', $operatorName);
             return $order->fresh(['lines.product', 'lines.sku', 'lines.item']);
         });

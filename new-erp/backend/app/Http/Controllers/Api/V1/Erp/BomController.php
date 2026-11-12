@@ -302,6 +302,7 @@ class BomController extends Controller
                 $this->standards()->copy($source, $copy);
                 $this->positionPerformance()->copy($source, $copy, $uidMap);
             }
+            app(\App\Services\Erp\TechnicalDrawingSourceService::class)->copyBom($source, $copy, $uidMap, $operator);
             $unboundNote = $unbound ? '；物料 '.implode('、', array_unique($unbound)).' 原指定的用料工序不在当前适用路线中，已改按路线规则，请确认' : '';
             $this->log($copy, 'copy_version', ($crossItem ? "由 {$source->bom_no} 复制到物料 {$targetItem->item_code}" : "由 {$source->bom_no} 复制为新版本").$unboundNote, (int) $operator->legacy_id);
             return response()->json(['message' => ($crossItem ? '已复制到所选物料，生成草稿' : '已复制为新版本草稿').$unboundNote, 'data' => $this->withStandards($request, $copy->fresh(self::RELATIONS)), 'unbound_component_names' => array_values(array_unique($unbound))], 201);
@@ -566,6 +567,7 @@ class BomController extends Controller
         $bom->setAttribute('operation_standards', $this->standards()->describe($bom, $this->canPerformance($request, 'view')));
         $bom->setAttribute('performance_permissions', ['view' => $this->canPerformance($request, 'view'), 'edit' => $this->canPerformance($request, 'edit')]);
         $bom->setAttribute('position_performance', $this->positionPerformance()->tree($bom, $this->canPerformance($request, 'view')));
+        $bom->setAttribute('technical_drawings', app(\App\Services\Erp\TechnicalDrawingSourceService::class)->forSource('bom', $bom->id));
         return $bom;
     }
 
@@ -661,6 +663,7 @@ class BomController extends Controller
             ]);
             if ($operationId) BomItemOperation::create(['bom_item_id' => $created->id, 'operation_id' => $operationId]);
         }
+        app(\App\Services\Erp\TechnicalDrawingSourceService::class)->retainBomPositions($bom, array_keys($usedUids));
     }
 
     private function assertProductionTarget(array $payload): void

@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1\Erp;
 
 use App\Http\Controllers\Controller;
 use App\Models\Erp\CrmCustomerIdentity;
+use App\Models\Erp\CrmOpportunity;
 use App\Models\Erp\SalesCustomer;
 use App\Services\Erp\AuthContextService;
 use App\Services\Erp\Crm\CrmCustomerAccessService;
@@ -11,6 +12,7 @@ use App\Services\Erp\Crm\CrmCustomerApplicationService;
 use App\Services\Erp\Crm\CrmCustomerCollaborationService;
 use App\Services\Erp\Crm\CrmCustomerDedupeService;
 use App\Services\Erp\Crm\CrmPlatformIdentityService;
+use App\Services\Erp\Crm\CrmOpportunityApplicationService;
 use App\Services\Erp\Crm\CrmSalesStaffService;
 use App\Services\Erp\TradePlatformApplicationService;
 use Illuminate\Http\Request;
@@ -55,8 +57,19 @@ final class CrmCustomerController extends Controller
 
     public function collaborators(Request $request, int $id)
     {
-        [, $customer] = $this->visible($request, $id);
-        return response()->json(['data' => $customer->collaborators()->orderByRaw("status = 'active' DESC")->orderByDesc('id')->limit(100)->get()]);
+        [$user, $customer] = $this->visible($request, $id);
+        $rows = $customer->collaborators()->orderByRaw("status = 'active' DESC")->orderByDesc('id')->limit(100)->get();
+        $names = collect();
+        if ($this->access->can($user, 'crm.opportunity.view')) {
+            $ids = $rows->flatMap(fn ($row) => $row->scope['opportunity_ids'] ?? [])->unique()->all();
+            $query = CrmOpportunity::query()->where('customer_id', $id)->whereIn('id', $ids);
+            app(CrmOpportunityApplicationService::class)->applyVisible($query, $user);
+            $names = $query->pluck('name', 'id');
+        }
+        return response()->json(['data' => $rows->map(function ($row) use ($names) {
+            $row->setAttribute('opportunity_names', $names->only($row->scope['opportunity_ids'] ?? [])->values()->all());
+            return $row;
+        })]);
     }
 
     public function addCollaborator(Request $request, int $id, CrmCustomerCollaborationService $service)
@@ -65,7 +78,7 @@ final class CrmCustomerController extends Controller
         $data = $request->validate([
             'user_legacy_id' => 'required|integer|min:1',
             'scope' => 'nullable|array', 'scope.order_amount' => 'nullable|boolean', 'scope.finance' => 'nullable|boolean',
-            'scope.opportunity_ids' => 'nullable|array', 'scope.opportunity_ids.*' => 'integer|min:1',
+            'scope.opportunity_ids' => 'nullable|array|max:100', 'scope.opportunity_ids.*' => 'required|integer|min:1|distinct',
             'actions' => 'nullable|array', 'actions.follow' => 'nullable|boolean', 'actions.edit_master' => 'nullable|boolean',
             'effective_from' => 'required|date', 'effective_to' => 'nullable|date|after_or_equal:effective_from',
             'reason' => 'required|string|max:500',

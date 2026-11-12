@@ -3,6 +3,7 @@
 namespace App\Services\Erp\Crm;
 
 use App\Models\Erp\CrmAssignGrant;
+use App\Models\Erp\CrmOpportunity;
 use App\Models\Erp\CrmStaffProfile;
 use App\Services\Erp\AuthContextService;
 use Illuminate\Database\Query\Builder;
@@ -60,7 +61,7 @@ final class CrmTeamApplicationService
             if ($filters['accepting']) $query->where(fn ($q) => $q->whereNull('p.accepting')->orWhere('p.accepting', true));
             else $query->where('p.accepting', false);
         }
-        return $this->staffPage($query, $filters);
+        return $this->staffPage($query, $filters, $actor);
     }
 
     public function showStaff(object $actor, int $userId): array
@@ -69,7 +70,7 @@ final class CrmTeamApplicationService
         $row = $this->staffQuery(['ids' => [$userId]])->whereIn('bs.department_legacy_id', $this->access->managedDepartments($actor))
             ->first(['u.legacy_id as id', 'u.nickname', 'u.username', 'u.status as account_status', 'bs.department_legacy_id', 'd.name as department_name']);
         abort_unless($row, 404, '该销售不在可管理的团队范围内。');
-        return $this->presentStaff($row);
+        return $this->presentStaff($row, $actor);
     }
 
     /** 线索分配候选在查询阶段过滤授权，分页总数与可选人员保持一致。 */
@@ -83,7 +84,7 @@ final class CrmTeamApplicationService
             $grant = $this->access->activeGrant($actor);
             if ($grant?->assignee_mode === 'specified') $query->whereIn('u.legacy_id', $grant->assignee_ids);
         }
-        return $this->staffPage($query, $filters);
+        return $this->staffPage($query, $filters, $actor);
     }
 
     public function users(object $actor, array $filters)
@@ -217,24 +218,30 @@ final class CrmTeamApplicationService
             ->where(fn ($q) => $q->whereNull('bs.effective_to')->orWhere('bs.effective_to', '>=', today()->toDateString()));
     }
 
-    private function staffPage(Builder $query, array $filters)
+    private function staffPage(Builder $query, array $filters, object $actor)
     {
         return $query->orderBy('u.legacy_id')->paginate($this->perPage($filters), ['u.legacy_id as id', 'u.nickname', 'u.username', 'u.status as account_status',
             'u.deleted_at as account_deleted_at', 'bs.status as staff_status', 'bs.department_legacy_id', 'bs.effective_from', 'bs.effective_to', 'd.name as department_name',
             'p.region', 'p.tags', 'p.tag_source', 'p.confirmed_by_legacy_id', 'p.confirmed_by_name', 'p.confirmed_at', 'p.accepting', 'p.remark', 'p.version'])
-            ->through(fn ($row) => $this->presentStaff($row));
+            ->through(fn ($row) => $this->presentStaff($row, $actor));
     }
 
-    private function presentStaff(object $row): array
+    private function presentStaff(object $row, object $actor): array
     {
         $profile = CrmStaffProfile::query()->where('user_legacy_id', $row->id)->first();
         $pending = Schema::hasTable('erp_crm_leads') ? DB::table('erp_crm_leads')->where('pending_user_legacy_id', $row->id)->where('status', 'pending_acceptance')->count() : 0;
+        $openOpportunities = null;
+        if ($this->access->hasPermission($actor, 'crm.opportunity.view')) {
+            $query = CrmOpportunity::query()->where('owner_legacy_id', $row->id)->where('status', 'open');
+            app(CrmOpportunityApplicationService::class)->applyVisible($query, $actor);
+            $openOpportunities = $query->count();
+        }
         return ['id' => (int) $row->id, 'name' => $row->nickname ?: $row->username, 'department_legacy_id' => (int) $row->department_legacy_id,
             'department_name' => $row->department_name, 'account_status' => $row->account_status, 'is_effective' => $this->access->activeSales((int) $row->id),
             'region' => $profile?->region ?: implode('、', $profile?->tags['regions'] ?? []), 'joined_at' => null, 'tags' => $profile?->tags ?? [], 'tag_source' => $profile?->tag_source,
             'confirmed_by_legacy_id' => $profile?->confirmed_by_legacy_id, 'confirmed_by_name' => $profile?->confirmed_by_name,
             'confirmed_at' => $profile?->confirmed_at?->toDateTimeString(), 'accepting' => $profile?->accepting ?? true,
-            'remark' => $profile?->remark, 'version' => $profile?->version ?? 0, 'open_opportunities' => null, 'pending_leads' => $pending];
+            'remark' => $profile?->remark, 'version' => $profile?->version ?? 0, 'open_opportunities' => $openOpportunities, 'pending_leads' => $pending];
     }
 
     private function presentGrant(CrmAssignGrant $grant, object $actor): array
