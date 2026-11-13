@@ -16,7 +16,7 @@ use Illuminate\Support\Facades\DB;
 /** 看板只读取真实阶段和计划事实；工作台的本人待办及正式办理入口保持独立。 */
 final class CrmDashboardPipelineService
 {
-    public const FUNNEL = ['recorded' => '线索录入', 'confirmed' => '基础确认',
+    public const FUNNEL = ['recorded' => '线索录入', 'confirmed' => '有效线索',
         'requirement' => '客户需求确认', 'solution' => '客户方案生成', 'product' => '产品方案确认',
         'price' => '订单价格确认', 'contract' => '订单合同确认', 'won' => '成交'];
     private const KINDS = ['pipeline_stage', 'pipeline_stalled', 'pipeline_overdue_followup', 'pipeline_overdue_close',
@@ -177,7 +177,7 @@ final class CrmDashboardPipelineService
         return ['can' => $can, 'cohort_from' => $filters['cohort_from'] ?? $filters['date_from'] ?? null,
             'cohort_to' => $filters['cohort_to'] ?? $filters['date_to'] ?? null, 'observed_on' => $this->observedOn($filters)->toDateString(),
             'cohort_count' => $row ? (int) $row->cohort_count : null, 'stages' => $this->funnelStages($row),
-            'evidence' => '录入、基础确认、商机创建、实际阶段日志及首次成交；缺少完整历史的未到达项保留未知'];
+            'evidence' => '录入、有效线索、商机创建、实际阶段日志及首次成交；缺少完整历史的未到达项保留未知'];
     }
 
     private function funnelStages(?object $row): array

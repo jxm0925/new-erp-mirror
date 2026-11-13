@@ -11,8 +11,8 @@
         <el-tab-pane label="共享范围" name="share" />
       </el-tabs>
       <div class="view-name-row">
-        <label>视图名称<el-input v-model.trim="draft.name" size="small" maxlength="80" placeholder="请输入视图名称" /></label>
-        <label class="view-scope-label">保存范围<el-select v-model="shareKey" size="small" :disabled="saving"><el-option label="仅自己" value="personal" /><el-option v-for="scope in (metadata.share_scopes || []).filter(item => item.scope !== 'personal')" :key="scope.scope + ':' + scope.id" :value="scope.scope + ':' + scope.id" :label="scope.label || scope.name" /></el-select></label>
+        <div class="view-field-item">视图名称<el-input v-model.trim="draft.name" size="small" maxlength="80" placeholder="请输入视图名称" /></div>
+        <div class="view-field-item view-scope-label">保存范围<el-select v-model="shareKey" size="small" :disabled="saving"><el-option label="仅自己" value="personal" /><el-option v-for="scope in (metadata.share_scopes || []).filter(item => item.scope !== 'personal')" :key="scope.scope + ':' + scope.id" :value="scope.scope + ':' + scope.id" :label="scope.label || scope.name" /></el-select></div>
         <el-button size="small" @click="openPicker">选择已有视图</el-button>
       </div>
       <div v-if="tab === 'columns'" class="view-column-grid">
@@ -33,9 +33,9 @@
       <section v-else-if="tab === 'filters'" class="view-settings-section">
         <div class="view-section-head"><b>当前筛选快照</b><el-button size="mini" @click="captureFilters">使用当前列表筛选</el-button></div>
         <div class="view-filter-values"><el-tag v-for="(value,key) in activeFilters" :key="key" type="info" closable @close="$delete(draft.configuration.filters,key)">{{ filterLabel(key) }}：{{ filterValue(key,value) }}</el-tag><span v-if="!Object.keys(activeFilters).length" class="view-muted">无额外筛选</span></div>
-        <div class="view-sort-row"><label>排序字段<el-select v-model="draft.configuration.sort.field" clearable size="small" placeholder="默认排序"><el-option v-for="field in metadata.sort_fields || []" :key="field.key" :value="field.key" :label="field.label" /></el-select></label><label>排序方向<el-select v-model="draft.configuration.sort.direction" size="small"><el-option label="升序" value="asc" /><el-option label="降序" value="desc" /></el-select></label></div>
+        <div class="view-sort-row"><div class="view-field-item">排序字段<el-select v-model="draft.configuration.sort.field" clearable size="small" placeholder="默认排序"><el-option v-for="field in metadata.sort_fields || []" :key="field.key" :value="field.key" :label="field.label" /></el-select></div><div class="view-field-item">排序方向<el-select v-model="draft.configuration.sort.direction" size="small"><el-option label="升序" value="asc" /><el-option label="降序" value="desc" /></el-select></div></div>
       </section>
-      <section v-else-if="tab === 'group'" class="view-settings-section"><label>分组字段<el-select v-model="draft.configuration.group_by" clearable size="small" placeholder="不分组"><el-option v-for="field in metadata.group_fields || []" :key="field.key" :label="field.label" :value="field.key" /></el-select></label></section>
+      <section v-else-if="tab === 'group'" class="view-settings-section"><div class="view-field-item">分组字段<el-select v-model="draft.configuration.group_by" clearable size="small" placeholder="不分组"><el-option v-for="field in metadata.group_fields || []" :key="field.key" :label="field.label" :value="field.key" /></el-select></div></section>
       <section v-else class="view-settings-section"><p>{{ shareKey === 'personal' ? '仅自己可使用此视图。' : '共享成员使用此配置时，仍按本人权限读取业务数据。' }}</p><p v-if="privateFilters.length" class="view-private-filters">共享视图不能保存：{{ privateFilters.map(filterLabel).join('、') }}。<el-button type="text" @click="removePrivateFilters">移除这些条件</el-button></p><p v-if="active && !active.can_edit">保存时将创建自己的视图，原共享视图保留。</p></section>
       <p v-if="resource === 'customers'" class="view-footnote"><i class="el-icon-info" /> 一个客户可有多条线索和商机，关联记录只在展开行显示。隐藏字段不删除资料，共享视图按查看人权限取数。</p>
       <span slot="footer" class="view-footer"><el-button size="small" :disabled="saving" @click="restoreDefault">恢复默认</el-button><el-button v-if="active && active.can_edit" size="small" :loading="saving" @click="save(true)">另存视图</el-button><el-button size="small" :disabled="saving" @click="close()">取消</el-button><el-button size="small" type="success" :loading="saving" @click="save(false)">保存视图</el-button></span>
@@ -295,7 +295,7 @@ export default {
   gap: 12px;
   margin: 0 0 14px;
 }
-.view-name-row label {
+.view-name-row .view-field-item {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -404,7 +404,7 @@ export default {
   padding: 20px 4px;
   box-sizing: border-box;
 }
-.view-settings-section label {
+.view-settings-section .view-field-item {
   display: inline-flex;
   align-items: center;
   gap: 10px;

@@ -11,7 +11,7 @@
         </h1>
       </div>
       <div class="head-actions">
-        <el-button size="small" @click="$router.back()">返回</el-button>
+        <el-button size="small" @click="returnToList">{{ embeddedCaseId ? '关闭' : '返回' }}</el-button>
         <el-button size="small" @click="goOrder">原订单</el-button>
         <el-button v-if="row.status === 'pending' && $can('aftersales.handle')" size="small" type="success" @click="accept">受理</el-button>
         <el-button v-if="canAct" size="small" type="success" plain icon="el-icon-plus" @click="actionDialog = true">添加处理</el-button>
@@ -71,7 +71,7 @@
               <el-table-column label="类型" width="140"><template>销售退货单（{{ a.action_type === 'exchange' ? '换货' : '退货退款' }}）</template></el-table-column>
               <el-table-column label="内容" min-width="180"><template>{{ a.action_type === 'exchange' ? '退回旧件' : '退货退款' }}{{ a.planned_disposition ? ` · 计划处置：${dispositionLabel(a.planned_disposition)}` : '' }}</template></el-table-column>
               <el-table-column label="状态" width="130"><template slot-scope="{ row: r }"><el-tag size="mini" :type="returnTag(r.return_status)">{{ returnLabel(r.return_status) }}</el-tag></template></el-table-column>
-              <el-table-column label="操作" width="90"><template slot-scope="{ row: r }"><el-button type="text" size="mini" @click="$router.push(`/sales/returns/${r.id}/detail`)">查看</el-button></template></el-table-column>
+              <el-table-column label="操作" width="90"><template slot-scope="{ row: r }"><el-button type="text" size="mini" @click="openRelatedRoute(`/sales/returns/${r.id}/detail`)">查看</el-button></template></el-table-column>
             </el-table>
             <el-table v-for="r in (a.reships || [])" :key="`rs-${r.id}`" :data="[r]" border size="mini" class="ret-table">
               <el-table-column prop="reship_no" label="单据" width="160"><template slot-scope="{ row: s }"><span class="mono">{{ s.reship_no }}</span></template></el-table-column>
@@ -293,6 +293,7 @@ const ISSUE_TYPES = { quality: '质量故障', transport_damage: '运输破损',
 
 export default {
   name: 'AftersalesDetail',
+  props: { embeddedCaseId: { type: [Number, String], default: null } },
   components: { AftersalesCaseForm, AftersalesAttachmentMedia, PagedRecordSelect },
   data() {
     return {
@@ -326,7 +327,7 @@ export default {
   },
   created() {
     this.load()
-    const action = this.$route.query.action
+    const action = !this.embeddedCaseId && this.$route.query.action
     if (action) {
       this.$router.replace({ query: {} })
       this.$nextTick(() => { this.actionForm.action_type = action; this.actionDialog = true })
@@ -338,9 +339,12 @@ export default {
     }
   },
   methods: {
+    returnToList() { if (this.embeddedCaseId) this.$emit('close'); else this.$router.back() },
+    openRelatedRoute(location) { if (this.embeddedCaseId) window.open(this.$router.resolve(location).href, '_blank', 'noopener'); else this.$router.push(location) },
     async load() {
+      if (this._isDestroyed) return
       this.loading = true
-      try { const { data } = await getAftersalesCase(this.$route.params.id); this.row = data.data || {} }
+      try { const { data } = await getAftersalesCase(this.embeddedCaseId || this.$route.params.id); if (!this._isDestroyed) this.row = data.data || {} }
       finally { this.loading = false }
     },
     buildActionItems() {
@@ -501,7 +505,7 @@ export default {
       if (errors) return Object.values(errors).flat()
       return [e.response?.data?.message || '操作失败']
     },
-    goOrder() { if (this.row.sales_order_id) this.$router.push(`/sales/orders/${this.row.sales_order_id}/detail`) },
+    goOrder() { if (!this.row.sales_order_id) return; if (this.embeddedCaseId) this.$emit('open-order', this.row.sales_order_id); else this.$router.push(`/sales/orders/${this.row.sales_order_id}/detail`) },
     fmt: v => v ? erpDateTime(v) : '—',
     fmtShort: v => v ? String(v).slice(5, 16) : '',
     fmtAmt: v => v == null ? '—' : (+v).toLocaleString('zh-CN', { minimumFractionDigits: 2 }),

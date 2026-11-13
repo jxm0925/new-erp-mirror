@@ -4,7 +4,7 @@
       <div class="detail-head-main">
         <b>线索详情 · {{ lead.customer_name || '加载中' }}</b>
         <el-tag v-if="lead.status_label" size="mini" :type="statusType">{{ lead.status_label }}</el-tag>
-        <span v-if="lead.confirmed_at" class="head-pill is-green"><i class="el-icon-check" /> 基础已确认</span>
+        <span v-if="lead.confirmed_at" class="head-pill is-green"><i class="el-icon-check" /> 有效线索</span>
         <span v-if="lead.customer_kind" class="head-pill">{{ lead.customer_kind === 'enterprise' ? '企业客户' : '个人客户' }}</span>
         <span v-if="lead.lead_no" class="head-no">
           {{ lead.lead_no }}
@@ -301,7 +301,7 @@
       <el-button v-if="allowed.accept" size="small" type="success" icon="el-icon-check" @click="act('accept')">接收线索</el-button>
       <el-button v-if="allowed.claim" size="small" type="success" icon="el-icon-thumb" @click="act('claim')">领取线索</el-button>
       <el-button v-if="allowed.follow" size="small" type="success" icon="el-icon-chat-line-round" @click="editFollowup()">记录跟进</el-button>
-      <el-button v-if="allowed.confirm" size="small" icon="el-icon-circle-check" @click="act('confirm')">基础线索确认</el-button>
+      <el-button v-if="allowed.confirm" size="small" icon="el-icon-circle-check" @click="act('confirm')">有效线索</el-button>
       <el-button v-if="allowed.convert" size="small" type="success" icon="el-icon-aim" @click="$refs.opportunityForm.open({lead})">转为商机</el-button>
       <el-button v-if="lead.opportunity_id" size="small" icon="el-icon-connection" @click="$refs.opportunityDetail.open(lead.opportunity_id)">查看商机</el-button>
       <el-dropdown v-if="allowed.transfer || allowed.recycle || allowed.pool || allowed.invalidate" @command="act">

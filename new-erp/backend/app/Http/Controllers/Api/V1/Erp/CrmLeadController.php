@@ -65,6 +65,7 @@ final class CrmLeadController extends Controller
             'keyword' => 'nullable|string|max:160', 'tab' => 'nullable|in:all,mine,collaborating,pending_assignment,pending_acceptance,pending_review,public_pool,draft',
             'status' => ['nullable', Rule::in(array_keys(CrmLeadApplicationService::STATUSES))],
             'source_channel' => 'nullable|string|max:120', 'department_legacy_id' => 'nullable|integer|min:1', 'customer_id' => 'nullable|integer|min:1',
+            'exclude_id' => 'nullable|integer|min:1',
             'recycle_reason' => 'nullable|string|max:500',
             'base_confirmed' => 'nullable|boolean', 'unconverted' => 'nullable|boolean', 'convertible' => 'nullable|boolean',
             'customer_pool' => ['nullable', Rule::in(CrmLeadApplicationService::POOLS)], 'entry_method' => 'nullable|in:self,operations',
@@ -73,6 +74,7 @@ final class CrmLeadController extends Controller
         ] + CrmListViewQueryService::rules('leads'));
         $query = CrmLead::query()->with(['customer', 'attachments']);
         $this->leads->applyVisible($query, $actor);
+        if (!empty($data['exclude_id'])) $query->where('id', '!=', $data['exclude_id']);
         if (!empty($data['base_confirmed'])) $query->whereNotNull('confirmed_at');
         if (!empty($data['unconverted'])) $query->whereNotExists(fn ($o) => $o->from('erp_crm_opportunities')->whereColumn('source_lead_id', 'erp_crm_leads.id'));
         if (!empty($data['convertible'])) app(\App\Services\Erp\Crm\CrmOpportunityApplicationService::class)->applyConvertible($query, $actor);
@@ -220,6 +222,7 @@ final class CrmLeadController extends Controller
             'platform_legacy_id' => 'nullable|integer|min:1', 'platform_buyer_id' => 'nullable|string|max:160',
             'next_contact_at' => 'nullable|date', 'next_plan' => 'nullable|string|max:5000',
             'duplicate_confirmed' => 'nullable|boolean', 'duplicate_reason' => 'nullable|string|max:500', 'review_note' => 'nullable|string|max:500',
+            'new_demand_confirmed' => 'nullable|boolean',
             'attachment_ids' => 'nullable|array|max:30', 'attachment_ids.*' => 'required|integer|min:1|distinct'];
         foreach (['customer_tags', 'custom_tags', 'business_lines'] as $field) { $rules[$field] = 'nullable|array|max:30'; $rules[$field.'.*'] = 'required|string|max:80|distinct'; }
         return $request->validate($rules);

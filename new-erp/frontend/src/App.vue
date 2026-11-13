@@ -150,7 +150,7 @@
         </nav>
 
         <section class="erp-content-container">
-          <router-view v-if="isRouterAlive" :key="$route.path === '/finance/payables' ? $route.path : $route.fullPath" />
+          <router-view v-if="isRouterAlive" :key="['/finance/payables', '/sales/leads'].includes($route.path) ? $route.path : $route.fullPath" />
         </section>
       </main>
     </template>

@@ -508,7 +508,7 @@ class RbacBootstrapService
             ['crm.lead.recycle', '回收到公海', 'button', 'crm.lead', null, null, 'el-icon-refresh-left', 8],
             ['crm.lead.claim', '领取公海线索', 'button', 'crm.lead', null, null, 'el-icon-download', 9],
             ['crm.lead.follow', '记录跟进', 'button', 'crm.lead', null, null, 'el-icon-chat-line-round', 10],
-            ['crm.lead.confirm', '确认基础线索', 'button', 'crm.lead', null, null, 'el-icon-check', 11],
+            ['crm.lead.confirm', '有效线索', 'button', 'crm.lead', null, null, 'el-icon-check', 11],
             ['crm.lead.invalidate', '标记无效线索', 'button', 'crm.lead', null, null, 'el-icon-remove-outline', 12],
             ['crm.lead.pool', '调整客户池', 'button', 'crm.lead', null, null, 'el-icon-collection-tag', 13],
             ['crm.followup.edit', '修改跟进记录', 'button', 'crm.lead', null, null, 'el-icon-edit-outline', 15],

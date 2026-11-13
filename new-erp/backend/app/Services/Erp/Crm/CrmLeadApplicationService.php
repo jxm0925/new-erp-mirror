@@ -301,7 +301,7 @@ final class CrmLeadApplicationService
             }
             $lead->version++;
             $lead->save();
-            $labels = ['assign' => '分配线索', 'transfer' => '转交线索，待新负责人接收', 'accept' => '接收线索', 'return' => '退回待分配', 'recycle' => '人工回收到公海', 'claim' => '领取公海线索', 'pool' => '人工调整客户池', 'invalidate' => '标记线索无效', 'confirm' => '完成基础线索确认'];
+            $labels = ['assign' => '分配线索', 'transfer' => '转交线索，待新负责人接收', 'accept' => '接收线索', 'return' => '退回待分配', 'recycle' => '人工回收到公海', 'claim' => '领取公海线索', 'pool' => '人工调整客户池', 'invalidate' => '标记线索无效', 'confirm' => '确认为有效线索'];
             $this->log($lead, $action, $labels[$action], $before, $this->snapshot($lead), trim($reason.' '.($data['note'] ?? '')) ?: null, $actor);
             if ($lead->customer_id) app(CrmFollowupApplicationService::class)->refreshContactFacts($lead->customer_id, $lead->id, false);
             return $lead->fresh();
@@ -392,6 +392,17 @@ final class CrmLeadApplicationService
             if (!$reviewed) abort_unless($this->customers->relation($customer, $actor) !== null, 403, '该客户不在可见范围，请先申请核实或协作。');
             abort_if(in_array($customer->status, ['disabled', 'blacklisted'], true), 422, '该客户已停用或列入黑名单。');
             if ($online) $this->identities->assertCustomer($customer->id, $lead->platform_legacy_id, $lead->platform_buyer_id, true);
+            // 在客户锁内复核，避免选择客户后新出现的线索被直接重复录入；只提示本人有权查看的记录。
+            if (!$reviewed && empty($data['new_demand_confirmed']) && $this->customers->can($actor, 'crm.lead.view')) {
+                $existing = CrmLead::query()->where('customer_id', $customer->id)->where('id', '!=', $lead->id ?? 0);
+                $this->applyVisible($existing, $actor);
+                if ($existing->exists()) {
+                    throw new HttpResponseException(response()->json([
+                        'message' => '该客户已有线索，请选择继续跟进或新增需求。',
+                        'requires_lead_choice' => true, 'customer_id' => (int) $customer->id,
+                    ], 409));
+                }
+            }
         } else {
             $contact = ['contact_name' => $lead->contact_name ?: $lead->customer_name, 'mobile' => $lead->mobile, 'phone' => $lead->contact_value2,
                 'wechat' => $lead->wechat, 'email' => $lead->email, 'position' => $lead->contact_role, 'is_default' => true, 'status' => 'enabled'];

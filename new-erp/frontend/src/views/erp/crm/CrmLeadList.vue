@@ -43,40 +43,6 @@
       </div>
     </section>
 
-    <div class="tabs-bar">
-      <el-tabs v-model="query.tab" class="lead-tabs" @tab-click="handleTabClick">
-        <el-tab-pane v-for="tab in visibleTabs" :key="tab.value" :name="tab.value">
-          <span slot="label" class="tab-label-wrap">
-            <span>{{ tab.label }}</span>
-            <span
-              v-if="counts[tab.value] !== undefined"
-              class="tab-badge"
-              :class="{
-                'is-active': query.tab === tab.value,
-                'is-alert': ['pending_acceptance', 'pending_assignment', 'pending_review'].includes(tab.value) && counts[tab.value] > 0
-              }"
-            >{{ counts[tab.value] }}</span>
-          </span>
-        </el-tab-pane>
-      </el-tabs>
-
-      <div v-if="query.tab === 'mine'" class="due-quick-group">
-        <span class="due-label">跟进排期：</span>
-        <el-button
-          v-for="item in dueOptions"
-          :key="item.value || 'all'"
-          size="mini"
-          :type="query.due === item.value ? 'success' : ''"
-          :plain="query.due !== item.value"
-          class="due-pill"
-          @click="selectDue(item.value)"
-        >
-          <i v-if="item.icon" :class="item.icon" />
-          {{ item.label }}
-        </el-button>
-      </div>
-    </div>
-
     <div v-if="query.tab === 'public_pool'" class="context-banner" :class="abilities.claim ? 'is-green' : 'is-slate'">
       <i :class="abilities.claim ? 'el-icon-circle-check' : 'el-icon-info'" />
       <span>{{ abilities.claim ? '当前公海展示你 CRM 授权范围内的可跟进线索，领取后即转入“我负责的”由你跟进。' : '你当前没有公海领取权限，仅可查看授权范围内公海线索；如需跟进请联系有分配权限的人员分配。' }}</span>
@@ -103,49 +69,49 @@
         @keyup.enter.native="search"
         @clear="search"
       />
-      <label v-if="query.tab !== 'public_pool' && (metadata.departments || []).length > 1">
+      <div v-if="query.tab !== 'public_pool' && (metadata.departments || []).length > 1" class="filter-item">
         <span>部门</span>
         <el-select popper-class="crm-select-popper" v-model="query.department_legacy_id" size="small" filterable clearable placeholder="全部授权部门" @change="search">
           <el-option v-for="item in metadata.departments || []" :key="item.id" :value="item.id" :label="item.name" />
         </el-select>
-      </label>
-      <label>
+      </div>
+      <div class="filter-item">
         <span>来源渠道</span>
         <el-select popper-class="crm-select-popper" v-model="query.source_channel" size="small" filterable clearable placeholder="全部渠道" @change="search">
           <el-option v-for="item in metadata.source_channels || []" :key="item" :value="item" :label="item" />
         </el-select>
-      </label>
-      <label v-if="query.tab !== 'public_pool'">
+      </div>
+      <div v-if="query.tab !== 'public_pool'" class="filter-item">
         <span>录入方式</span>
         <el-select popper-class="crm-select-popper" v-model="query.entry_method" size="small" clearable placeholder="全部方式" @change="search">
           <el-option v-for="(label, value) in metadata.entry_methods || { self: '销售自录', operations: '运营代录' }" :key="value" :value="value" :label="label" />
         </el-select>
-      </label>
-      <label v-if="showStatusFilter">
+      </div>
+      <div v-if="showStatusFilter" class="filter-item">
         <span>线索状态</span>
         <el-select popper-class="crm-select-popper" v-model="query.status" size="small" clearable placeholder="全部状态" @change="search">
           <el-option v-for="(label, value) in metadata.statuses || {}" :key="value" :value="value" :label="label" />
         </el-select>
-      </label>
-      <label v-if="showPoolFilter">
+      </div>
+      <div v-if="showPoolFilter" class="filter-item">
         <span>客户池</span>
         <el-select popper-class="crm-select-popper" v-model="query.customer_pool" size="small" filterable clearable placeholder="全部客户池" @change="search">
           <el-option v-for="item in metadata.customer_pools || []" :key="item" :value="item" :label="item" />
         </el-select>
-      </label>
-      <label>
+      </div>
+      <div class="filter-item">
         <span>客户标签</span>
         <el-select popper-class="crm-select-popper" v-model="query.customer_tag" size="small" filterable clearable placeholder="全部标签" @change="search">
           <el-option v-for="item in metadata.customer_tags || []" :key="item" :value="item" :label="item" />
         </el-select>
-      </label>
-      <label>
+      </div>
+      <div class="filter-item">
         <span>我的标签</span>
         <el-select popper-class="crm-select-popper" v-model="query.custom_tag" size="small" filterable clearable placeholder="全部标签" @change="search">
           <el-option v-for="item in metadata.custom_tags || []" :key="item" :value="item" :label="item" />
         </el-select>
-      </label>
-      <label v-if="query.tab === 'public_pool'">
+      </div>
+      <div v-if="query.tab === 'public_pool'" class="filter-item">
         <span>回收原因</span>
         <el-select
           popper-class="crm-select-popper"
@@ -160,7 +126,22 @@
         >
           <el-option v-for="item in recycleReasonOptions" :key="item" :value="item" :label="item" />
         </el-select>
-      </label>
+      </div>
+      <div v-if="query.tab === 'mine'" class="due-quick-group">
+        <span class="due-label">跟进排期：</span>
+        <el-button
+          v-for="item in dueOptions"
+          :key="item.value || 'all'"
+          size="mini"
+          :type="query.due === item.value ? 'success' : ''"
+          :plain="query.due !== item.value"
+          class="due-pill"
+          @click="selectDue(item.value)"
+        >
+          <i v-if="item.icon" :class="item.icon" />
+          {{ item.label }}
+        </el-button>
+      </div>
       <div class="filter-btns">
         <el-button size="small" type="success" icon="el-icon-search" @click="search">查询</el-button>
         <el-button size="small" icon="el-icon-refresh" @click="reset">重置</el-button>
@@ -281,8 +262,8 @@
               <el-tag v-if="hasField('status')" size="mini" :type="statusType(row.status)" class="status-tag">
                 {{ row.status_label || (metadata.statuses || {})[row.status] || row.status }}
               </el-tag>
-              <span v-if="hasField('status') && row.confirmed_at" class="confirmed-pill" title="已完成基础线索确认">
-                <i class="el-icon-check" /> 已确认
+              <span v-if="hasField('status') && row.confirmed_at" class="confirmed-pill" title="已确认为有效线索">
+                <i class="el-icon-check" /> 有效线索
               </span>
             </div>
             <div v-if="hasField('customer_pool') && row.customer_pool" class="cell-sub-line">
@@ -317,7 +298,7 @@
           </template>
         </el-table-column>
 
-        <el-table-column v-if="column.key === 'owner' && query.tab === 'public_pool' && hasField('department_name')" :key="column.key" prop="department_name" label="所属部门" min-width="105" />
+        <el-table-column v-if="column.key === 'owner' && query.tab === 'public_pool' && hasField('department_name')" :key="column.key + '_pool'" prop="department_name" label="所属部门" min-width="105" />
         <el-table-column v-if="column.key === 'recycle' && query.tab === 'public_pool'" :key="column.key" label="回收时间 / 原因" min-width="175">
           <template slot-scope="{row}">
             <div class="cell-primary-line">
@@ -449,7 +430,7 @@ const ACTION_META = [
   { key: 'claim', label: '领取', icon: 'el-icon-thumb', cls: '' },
   { key: 'review', label: '核实', icon: 'el-icon-coordinate', cls: 'crm-warn-link' },
   { key: 'edit', label: '编辑', icon: 'el-icon-edit', cls: '' },
-  { key: 'confirm', label: '基础确认', icon: 'el-icon-circle-check', cls: '' },
+  { key: 'confirm', label: '有效线索', icon: 'el-icon-circle-check', cls: '' },
   { key: 'pool', label: '客户池', icon: 'el-icon-collection-tag', cls: '' },
   { key: 'transfer', label: '转交', icon: 'el-icon-sort', cls: '' },
   { key: 'return', label: '退回', icon: 'el-icon-refresh-left', cls: 'crm-danger-link' },
@@ -478,7 +459,7 @@ export default {
     total: 0,
     counts: {},
     query: blankQuery(),
-    loading: false,
+    loading: true,
     sequence: 0,
     error: '',
     metadataReady: false,
@@ -492,7 +473,7 @@ export default {
   }),
   computed: {
     viewColumns() { return orderedColumnGroups(this.viewConfiguration.columns,this.columnGroups) },
-    viewTableKey() { return this.viewConfiguration.columns.join(',') + ':' + this.viewConfiguration.group_by },
+    viewTableKey() { return this.viewConfiguration.columns.join(',') + ':' + this.viewConfiguration.group_by + ':' + (this.query.tab === 'public_pool' ? 'pool' : 'std') },
     groupTitle() { const field = ((this.$refs.views && this.$refs.views.metadata.group_fields) || []).find(field => field.key === this.viewConfiguration.group_by); return field ? field.label : '分组' },
     viewFilterOptions() { return { tab: Object.fromEntries(this.visibleTabs.map(item => [item.value,item.label])), status: this.metadata.statuses || {}, department_legacy_id: Object.fromEntries((this.metadata.departments || []).map(item => [item.id,item.name])), entry_method: this.metadata.entry_methods || {}, due: Object.fromEntries(this.dueOptions.map(item => [item.value,item.label])) } },
     currentUser() { return this.metadata.current_user || {} },
@@ -559,16 +540,20 @@ export default {
     }
   },
   async created() {
+    this.readRouteQuery(true)
     try {
-      const { data } = await getCrmLeadMetadata()
+      await this.$nextTick()
+      const [{ data }, configuration] = await Promise.all([
+        getCrmLeadMetadata(),
+        this.$refs.views ? this.$refs.views.initialize() : Promise.resolve(null)
+      ])
       this.metadata = data.data || data
       this.metadataReady = true
-      await this.$nextTick()
-      const configuration = await this.$refs.views.initialize()
       if (configuration) this.applyView(configuration, false)
       this.readRouteQuery(true)
       await this.load()
     } catch (error) {
+      this.loading = false
       this.error = crmError(error, '线索中心加载失败')
     }
   },
@@ -809,7 +794,7 @@ export default {
 
 .lead-kpi-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(115px, 1fr));
   gap: 10px;
   min-width: 0;
 }
@@ -879,58 +864,12 @@ export default {
   text-overflow: ellipsis;
 }
 
-.tabs-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  flex-wrap: wrap;
-  background: #ffffff;
-  padding: 0 16px;
-  border: 1px solid #e2e8f0;
-  border-radius: 8px;
-}
-.lead-tabs {
-  flex: 1;
-  min-width: 0;
-}
-.lead-tabs :deep(.el-tabs__nav-wrap::after) {
-  display: none;
-}
-.tab-label-wrap {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-.tab-badge {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 20px;
-  height: 18px;
-  padding: 0 6px;
-  border-radius: 999px;
-  background: #f1f5f9;
-  color: #64748b;
-  font-size: 11px;
-  font-weight: 600;
-  line-height: 1;
-}
-.tab-badge.is-active {
-  background: #dcfce7;
-  color: #00763f;
-}
-.tab-badge.is-alert {
-  background: #fef3c7;
-  color: #b45309;
-}
-
 .due-quick-group {
   display: flex;
   align-items: center;
   gap: 6px;
   flex-wrap: wrap;
-  padding: 6px 0;
+  padding: 0;
 }
 .due-label {
   font-size: 12px;

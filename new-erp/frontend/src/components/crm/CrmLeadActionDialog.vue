@@ -128,7 +128,7 @@ const labels = {
   recycle: '回收',
   claim: '领取',
   pool: '调整客户池',
-  confirm: '确认基础线索',
+  confirm: '有效线索',
   invalidate: '标记无效'
 }
 

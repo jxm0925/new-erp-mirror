@@ -141,7 +141,7 @@ final class CrmOpportunityApplicationService
                         $converted = CrmOpportunity::query()->where('source_lead_id', $lead->id)->first();
                         if ($converted) return $this->visible((int) $converted->id, $actor);
                         $this->leads->version($lead, ['version' => $data['source_lead_version'] ?? 0]);
-                        abort_unless($this->canConvert($lead, $actor), 403, '线索须已接收并完成基础确认，且由负责人或其管理人员转商机。');
+                        abort_unless($this->canConvert($lead, $actor), 403, '线索须已接收并确认为有效线索，且由负责人或其管理人员转商机。');
                         abort_unless((int) $lead->customer_id === (int) $data['customer_id'], 422, '来源线索不属于当前客户。');
                     }
                 }

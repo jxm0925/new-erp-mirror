@@ -56,7 +56,8 @@
 .crm-filters > .el-input {
   width: 220px;
 }
-.crm-filters label {
+.crm-filters label,
+.crm-filters .filter-item {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -338,10 +339,10 @@ button.crm-opportunity-stage {
   .crm-dialog .el-dialog__body {
     padding: 14px;
   }
-  .crm-filters > .el-input, .crm-filters label, .crm-filters .el-select {
+  .crm-filters > .el-input, .crm-filters label, .crm-filters .filter-item, .crm-filters .el-select {
     width: 100%;
   }
-  .crm-filters label .el-select {
+  .crm-filters label .el-select, .crm-filters .filter-item .el-select {
     flex: 1;
     min-width: 0;
   }

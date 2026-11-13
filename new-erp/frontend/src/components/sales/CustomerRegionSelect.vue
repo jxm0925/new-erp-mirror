@@ -1,8 +1,9 @@
 <template>
   <div>
-    <el-row :gutter="12">
-      <el-col v-for="(label, level) in labels" :key="level" :xs="12" :sm="6">
+    <div class="region-select-grid" :class="{ 'is-two-col': Number(columns) === 2 }">
+      <div v-for="(label, level) in labels" :key="level" class="region-select-cell">
         <el-select
+          popper-class="crm-select-popper"
           :value="selected[level] || null"
           :placeholder="label"
           :aria-label="label"
@@ -15,8 +16,8 @@
         >
           <el-option v-for="region in options[level]" :key="region.id" :value="Number(region.id)" :label="region.name" />
         </el-select>
-      </el-col>
-    </el-row>
+      </div>
+    </div>
     <div v-if="!value && legacyLabel" class="legacy-region">{{ legacyLabel }}</div>
     <el-button v-if="failed" type="text" size="small" @click="initialize(value)">地区加载失败，点击重试</el-button>
   </div>
@@ -30,7 +31,8 @@ export default {
   props: {
     value: { type: [Number, String], default: null },
     legacyLabel: { type: String, default: '' },
-    disabled: { type: Boolean, default: false }
+    disabled: { type: Boolean, default: false },
+    columns: { type: [Number, String], default: 4 }
   },
   data: () => ({
     labels: ['国家/地区', '省/州', '城市', '区/县'],
@@ -94,8 +96,24 @@ export default {
 </script>
 
 <style scoped>
+.region-select-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+.region-select-grid.is-two-col {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.region-select-cell {
+  min-width: 0;
+}
 .el-select {
   width: 100%;
+}
+@media (max-width: 767px) {
+  .region-select-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 .legacy-region {
   color: #64748b;

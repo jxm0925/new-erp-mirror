@@ -24,13 +24,13 @@ Progress design: 用户确认的订单产品树、单台整链路与工单聚合
         </div>
       </div>
       <div class="header-actions">
-        <el-button size="small" icon="el-icon-back" @click="$router.push('/sales/orders')">返回列表</el-button>
-        <el-button v-if="!order.is_legacy_history && $can('sales_order.shipment.view')" size="small" icon="el-icon-truck" @click="$router.push({ path: '/sales/shipments', query: { sales_order_id: order.id } })">发货单</el-button>
+        <el-button size="small" icon="el-icon-back" @click="returnToList">{{ embeddedOrderId ? '关闭' : '返回列表' }}</el-button>
+        <el-button v-if="!order.is_legacy_history && $can('sales_order.shipment.view')" size="small" icon="el-icon-truck" @click="openRelatedRoute({ path: '/sales/shipments', query: { sales_order_id: order.id } })">发货单</el-button>
         <el-button v-if="canCreateAftersales" size="small" type="success" plain icon="el-icon-service" @click="$refs.caseForm.open()">售后</el-button>
-        <el-button v-if="!order.is_legacy_history && order.allowed_actions && order.allowed_actions.edit" size="small" icon="el-icon-edit" @click="$router.push(`/sales/orders/${order.id}/edit`)">修改订单</el-button>
+        <el-button v-if="!order.is_legacy_history && order.allowed_actions && order.allowed_actions.edit" size="small" icon="el-icon-edit" @click="openRelatedRoute(`/sales/orders/${order.id}/edit`)">修改订单</el-button>
         <el-button v-if="!order.is_legacy_history && order.allowed_actions && order.allowed_actions.lock_inventory" size="small" type="success" plain icon="el-icon-lock" @click="openInventoryLock">锁库存</el-button>
         <el-button v-if="!order.is_legacy_history && order.allowed_actions && order.allowed_actions.submit_confirmation" size="small" type="success" icon="el-icon-check" @click="doConfirm">确认订单</el-button>
-        <el-button v-if="!order.is_legacy_history && order.allowed_actions && order.allowed_actions.production_confirmation" size="small" type="success" icon="el-icon-s-operation" @click="$router.push(`/sales/orders/${order.id}/production-confirmation`)">生产确认</el-button>
+        <el-button v-if="!order.is_legacy_history && order.allowed_actions && order.allowed_actions.production_confirmation" size="small" type="success" icon="el-icon-s-operation" @click="openRelatedRoute(`/sales/orders/${order.id}/production-confirmation`)">生产确认</el-button>
         <el-button v-if="canRequestInvoice" size="small" :type="hasStageAction ? '' : 'success'" icon="el-icon-tickets" @click="openInvoiceRequest">申请开票</el-button>
         <el-dropdown v-if="moreActions.length" trigger="click" @command="runMoreAction">
           <el-button size="small" :loading="shortClose.loading || cancelling">更多<i class="el-icon-arrow-down el-icon--right" /></el-button>
@@ -123,7 +123,7 @@ Progress design: 用户确认的订单产品树、单台整链路与工单聚合
 
     <!-- 状态与预警提示 -->
     <el-alert v-if="!order.is_legacy_history && order.order_status === 'confirmed' && order.change_eligibility && !order.change_eligibility.allowed" class="change-block-alert" type="warning" :closable="false" show-icon :title="`当前订单不能原地变更：${order.change_eligibility.reason}`" />
-    <el-alert v-if="!order.is_legacy_history && $route.query.changed" class="change-success-alert" type="success" :closable="false" show-icon title="订单已变更，请重新安排备货或进行订单生产确认。" />
+    <el-alert v-if="!order.is_legacy_history && pageRoute.query.changed" class="change-success-alert" type="success" :closable="false" show-icon title="订单已变更，请重新安排备货或进行订单生产确认。" />
     <el-alert v-if="!order.is_legacy_history && order.pending_change_candidate" class="change-success-alert" type="warning" :closable="false" show-icon :title="`存在待审核 Candidate V${order.pending_change_candidate.candidate_version}：正式订单、库存预留以及生产和交付安排尚未变化。`" />
 
     <!-- 核心业务指标看板 (KPI Strip) -->
@@ -229,7 +229,7 @@ Progress design: 用户确认的订单产品树、单台整链路与工单聚合
             <span class="kv-label">平台付款确认</span>
             <span class="kv-value">
               <el-tag size="mini" :type="platformPayment ? 'success' : 'info'">{{ platformPayment ? '已确认平台付款' : '未确认平台付款' }}</el-tag>
-              <el-button v-if="!order.is_legacy_history && order.allowed_actions && order.allowed_actions.platform_payment_confirm" type="text" size="mini" @click="$router.push({ path: `/sales/orders/${order.id}/edit`, query: { platform_payment: '1' } })">前往核对</el-button>
+              <el-button v-if="!order.is_legacy_history && order.allowed_actions && order.allowed_actions.platform_payment_confirm" type="text" size="mini" @click="openRelatedRoute({ path: `/sales/orders/${order.id}/edit`, query: { platform_payment: '1' } })">前往核对</el-button>
             </span>
             <small v-if="platformPayment" class="text-muted">{{ platformPayment.confirmed_by }} · {{ date(platformPayment.confirmed_at) }}</small>
           </div>
@@ -276,7 +276,7 @@ Progress design: 用户确认的订单产品树、单台整链路与工单聚合
       </section>
 
       <!-- 客户与收货物流 -->
-      <section class="detail-card">
+      <section ref="deliverySection" class="detail-card">
         <div class="card-head">
           <div class="card-title"><i class="el-icon-truck" /> 客户与收货物流</div>
         </div>
@@ -349,7 +349,7 @@ Progress design: 用户确认的订单产品树、单台整链路与工单聚合
         <div class="dispatch-records">
           <div class="dispatch-records-head">
             <b>发货记录</b>
-            <el-button v-if="!order.is_legacy_history && $can('sales_order.shipment.view') && dispatchRecords.length" type="text" size="mini" @click="$router.push({ path: '/sales/shipments', query: { sales_order_id: order.id } })">查看发货单</el-button>
+            <el-button v-if="!order.is_legacy_history && $can('sales_order.shipment.view') && dispatchRecords.length" type="text" size="mini" @click="openRelatedRoute({ path: '/sales/shipments', query: { sales_order_id: order.id } })">查看发货单</el-button>
           </div>
           <template v-if="order.is_legacy_history">
             <el-table v-if="order.legacy_shipping" :data="[order.legacy_shipping]" size="mini" border>
@@ -625,7 +625,7 @@ Progress design: 用户确认的订单产品树、单台整链路与工单聚合
       <div class="approval-current">
         <span>当前等待：</span>
         <b>{{ orderApprovalCurrent }}</b>
-        <el-button type="text" size="mini" @click="$router.push(`/approvals/tasks/${order.approval_task.id}`)">
+        <el-button type="text" size="mini" @click="openRelatedRoute(`/approvals/tasks/${order.approval_task.id}`)">
           进入审核中心 <i class="el-icon-right" />
         </el-button>
       </div>
@@ -638,7 +638,7 @@ Progress design: 用户确认的订单产品树、单台整链路与工单聚合
           <order-progress v-if="!order.is_legacy_history && activeTab === 'production' && order.id" ref="orderProgress" :order-id="order.id" @show-work-orders="loadWorkOrders(loadSequence)">
             <template slot="work-orders">
             <el-table v-loading="workOrderLoading" :data="workOrders" size="small" border empty-text="这张订单没有生产工单（全部用库存、外购或服务）">
-              <el-table-column v-if="$can('production.work_order.view')" label="工单号" min-width="150"><template slot-scope="{ row }"><el-button type="text" class="font-mono" :disabled="!$can('production.work_order.view')" @click="$router.push(`/production/work-orders/${row.id}`)">{{ row.work_order_no }}</el-button></template></el-table-column>
+              <el-table-column v-if="$can('production.work_order.view')" label="工单号" min-width="150"><template slot-scope="{ row }"><el-button type="text" class="font-mono" :disabled="!$can('production.work_order.view')" @click="openRelatedRoute(`/production/work-orders/${row.id}`)">{{ row.work_order_no }}</el-button></template></el-table-column>
               <el-table-column label="行号" width="56" align="center"><template slot-scope="{ row }">{{ row.sales_order_line_no || '-' }}</template></el-table-column>
               <el-table-column label="产品" min-width="160"><template slot-scope="{ row }">{{ row.product_name || row.item_name }} × {{ Number(row.planned_qty) }} {{ row.unit_name || '' }}</template></el-table-column>
               <el-table-column label="状态" width="90"><template slot-scope="{ row }"><el-tag size="mini" :type="row.status === 'cancelled' ? 'info' : (row.status === 'paused' ? 'warning' : 'success')">{{ row.status_label }}</el-tag></template></el-table-column>
@@ -679,7 +679,7 @@ Progress design: 用户确认的订单产品树、单台整链路与工单聚合
                 <el-table-column label="状态" width="86"><template slot-scope="{ row }"><el-tag size="mini" :type="asStatusTag(row.status)">{{ asStatusLabel(row.status) }}</el-tag></template></el-table-column>
                 <el-table-column prop="owner_name" label="负责人" width="80" />
                 <el-table-column label="创建时间" width="140"><template slot-scope="{ row }">{{ date(row.created_at) }}</template></el-table-column>
-                <el-table-column label="操作" width="70"><template slot-scope="{ row }"><el-button type="text" size="mini" @click="$router.push(`/sales/aftersales/${row.id}/detail`)">查看</el-button></template></el-table-column>
+                <el-table-column label="操作" width="70"><template slot-scope="{ row }"><el-button type="text" size="mini" @click="viewAftersales(row.id)">查看</el-button></template></el-table-column>
               </el-table>
 
               <div class="section-title-row" style="margin:18px 0 8px"><div><h4>可售后商品</h4><p>只列已发货的数量；已在进行中售后里的设备会标出来。</p></div></div>
@@ -846,7 +846,6 @@ Progress design: 用户确认的订单产品树、单台整链路与工单聚合
 
 <script>
 import { erpDateTime } from '../../../utils/dateTime'
-import cachedPageRoute from '@/utils/cachedPageRoute'
 import { confirmSalesOrder, formalConfirmSalesOrder, previewShortCloseSalesOrder, shortCloseSalesOrder, deleteSalesOrderAttachment, deleteSalesOrderDraft, downloadSalesOrderAttachment, getSalesOrder, listSalesOrderChanges, lockSalesOrderInventory, adjustSalesOrderPriority } from '@/api/erp/sales'
 import SalesOrderCancellationDialog from '@/components/sales/SalesOrderCancellationDialog.vue'
 import CancellationDispositions from '@/components/production/CancellationDispositions.vue'
@@ -864,9 +863,10 @@ import { statusTag, statusText, shipmentStatusText, orderStatusText, orderStatus
 import { listSalesOrderWorkOrders } from '@/api/erp/production'
 
 export default {
-  mixins: [cachedPageRoute],
+  props: { embeddedOrderId: { type: [Number, String], default: null }, initialTab: { type: String, default: '' } },
   components: { SalesOrderCancellationDialog, CancellationDispositions, SalesOrderChangeLabor, SalesOrderAttachmentPreviewDialog, SalesOrderFinancePanel, SalesOrderInvoicePanel, OrderProgress, LegacyOrderHistory, AftersalesCaseForm },
-  data: () => ({
+  data() { return {
+    pageRoute: this.embeddedOrderId ? { ...this.$route, params: { id: this.embeddedOrderId }, query: { tab: this.initialTab } } : this.$route,
     cancelDialogVisible: false,
     invoicePendingCount: 0,
     invoiceRequestCount: 0,
@@ -898,9 +898,11 @@ export default {
     inventoryLockStorageKey: '',
     aftersales: { rows: [], loading: false, loaded: false },
     eligible: { rows: [], loading: false },
-    loadSequence: 0
-  }),
+    loadSequence: 0,
+    initialSectionOpened: false
+  } },
   computed: {
+    isPageRouteActive() { return !!this.embeddedOrderId || this.$route.path === this.pageRoute.path },
     canViewInvoice() { return !this.order.is_legacy_history && this.$can('sales_order.view') },
     hasShippedQty() { return (this.order.lines || []).some(line => Number(line.shipped_qty || 0) > 0) },
     canCreateAftersales() { return !this.order.is_legacy_history && this.$can('aftersales.create') && this.hasShippedQty && this.order.order_status !== 'cancelled' },
@@ -1032,11 +1034,19 @@ export default {
     await this.load()
   },
   activated() { if (this.order.id) this.load() },
+  beforeDestroy() { this.loadSequence += 1; this.inventoryLockSequence += 1 },
   watch: {
+    $route(route) { if (!this.embeddedOrderId && route.path === this.pageRoute.path) this.pageRoute = route },
     'pageRoute.params.id'(next, previous) { if (next !== previous) this.load() },
     activeTab(tab) { if (tab === 'aftersales') this.loadAftersalesTab() }
   },
   methods: {
+    returnToList() { if (this.embeddedOrderId) this.$emit('close'); else this.$router.push('/sales/orders') },
+    openRelatedRoute(location) {
+      if (this.embeddedOrderId) window.open(this.$router.resolve(location).href, '_blank', 'noopener')
+      else this.$router.push(location)
+    },
+    viewAftersales(id) { if (this.embeddedOrderId) this.$emit('open-aftersales', id); else this.$router.push('/sales/aftersales/' + id + '/detail') },
     async loadAftersalesTab() {
       if (!this.order.id || !this.$can('aftersales.view')) return
       this.aftersales.loading = true
@@ -1137,6 +1147,7 @@ export default {
       return original
     },
     async load() {
+      if (this._isDestroyed) return
       const sequence = ++this.loadSequence
       const id = this.pageRoute.params.id
       const { data } = await getSalesOrder(id)
@@ -1155,12 +1166,16 @@ export default {
       this.inventoryLockStorageKey = `erp_pending_sales_inventory_lock_${actor}_${id}`
       try { this.inventoryLockPending = JSON.parse(localStorage.getItem(this.inventoryLockStorageKey) || 'null') } catch (_) { this.inventoryLockPending = null }
       await this.loadChanges(1)
-      if (this.$route.query.tab === 'production' && (!data.is_legacy_history || this.$can('production.work_order.view'))) {
+      if (this.embeddedOrderId && !this.initialSectionOpened && this.initialTab === 'delivery') {
+        this.initialSectionOpened = true
+        this.activeTab = 'info'
+        this.$nextTick(() => { if (this.$refs.deliverySection) this.$refs.deliverySection.scrollIntoView({ block: 'start' }) })
+      } else if (this.pageRoute.query.tab === 'production' && (!data.is_legacy_history || this.$can('production.work_order.view'))) {
         this.activeTab = 'production'
-      } else if (this.$route.query.tab === 'logs') {
+      } else if (this.pageRoute.query.tab === 'logs') {
         this.activeTab = 'logs'
         this.scrollToLogs()
-      } else if (this.$route.query.tab === 'changes') {
+      } else if (this.pageRoute.query.tab === 'changes') {
         this.activeTab = 'changes'
         this.scrollToChanges()
       }
@@ -1204,7 +1219,7 @@ export default {
       } catch (error) {
         return
       }
-      this.$router.push({
+      this.openRelatedRoute({
         path: `/sales/orders/${this.order.id}/edit`,
         query: blocked && blocked.field ? { focus: blocked.field } : {}
       })
@@ -1339,7 +1354,7 @@ export default {
       await this.$confirm('删除后草稿及其订单行将不能恢复，附件绑定会保留审计记录。确认删除？', '删除销售订单草稿', { type: 'warning' })
       await deleteSalesOrderDraft(this.order.id)
       this.$message.success('销售订单草稿已删除')
-      this.$router.push('/sales/orders')
+      this.returnToList()
     },
     async loadChanges(page = this.changes.page) {
       if (!this.order.id) return

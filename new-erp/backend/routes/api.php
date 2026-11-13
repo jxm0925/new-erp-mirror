@@ -407,6 +407,9 @@ Route::prefix('v1/erp/crm')->group(function () {
     Route::get('dashboard/followups', [\App\Http\Controllers\Api\V1\Erp\CrmDashboardController::class, 'followups']);
     Route::get('workbench', [\App\Http\Controllers\Api\V1\Erp\CrmWorkbenchController::class, 'index']);
     Route::get('workbench/tasks', [\App\Http\Controllers\Api\V1\Erp\CrmWorkbenchController::class, 'tasks']);
+    Route::get('workbench/priorities', [\App\Http\Controllers\Api\V1\Erp\CrmWorkbenchController::class, 'priorities']);
+    Route::get('workbench/results', [\App\Http\Controllers\Api\V1\Erp\CrmWorkbenchController::class, 'results']);
+    Route::get('workbench/business', [\App\Http\Controllers\Api\V1\Erp\CrmWorkbenchController::class, 'business']);
     Route::get('order-amounts/people', [\App\Http\Controllers\Api\V1\Erp\CrmOrderAmountController::class, 'people']);
     Route::get('order-amounts', [\App\Http\Controllers\Api\V1\Erp\CrmOrderAmountController::class, 'index']);
     Route::get('opportunities/metadata', [\App\Http\Controllers\Api\V1\Erp\CrmOpportunityController::class, 'metadata']);
