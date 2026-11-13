@@ -2,6 +2,7 @@
 
 namespace App\Services\Erp;
 
+use App\Models\Erp\SalesOrder;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Query\Builder as QueryBuilder;
 use Illuminate\Support\Facades\DB;
@@ -57,7 +58,7 @@ final class SalesOrderVisibilityService
         });
     }
 
-    public function normalizeShareUsers(mixed $users): ?string
+    public function normalizeShareUsers(mixed $users, int $salesUserId, int $actorId, ?SalesOrder $order = null): ?string
     {
         if ($users !== null && !is_array($users) && !is_string($users)) {
             throw ValidationException::withMessages(['share_user' => '请通过员工选择框选择共享人员。']);
@@ -66,6 +67,16 @@ final class SalesOrderVisibilityService
         $users = array_values(array_filter($users, fn ($id) => $id !== null && $id !== ''));
         Validator::make(['share_user' => $users], ['share_user' => 'array|max:1000', 'share_user.*' => 'required|integer|min:1'])->validate();
         $ids = array_values(array_unique(array_map('intval', $users)));
+        // 未改动的历史共享保留；换销售产生的新重复身份仍须主动移除。
+        $existing = $order?->is_share ? array_map('intval', explode(',', (string) $order->share_user)) : [];
+        $added = array_diff($ids, $existing);
+        if ($actorId > 0 && in_array($actorId, $added, true)) {
+            throw ValidationException::withMessages(['share_user' => '共享人员不能选择自己，请移除后重新保存。']);
+        }
+        if (in_array($salesUserId, $ids, true)
+            && ((int) $order?->sales_user_legacy_id !== $salesUserId || in_array($salesUserId, $added, true))) {
+            throw ValidationException::withMessages(['share_user' => '订单销售人员无需共享权限，请从共享人员中移除。']);
+        }
         $active = DB::table('erp_legacy_admin_users')->whereIn('legacy_id', $ids)->whereNull('deleted_at')
             ->whereIn(DB::raw('LOWER(TRIM(status))'), ['normal', 'active']);
         $staff = app(BusinessStaffService::class);

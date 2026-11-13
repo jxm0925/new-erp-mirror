@@ -266,7 +266,7 @@
       <el-form label-width="96px" size="small" class="dialog-form">
         <el-form-item label="客户"><el-input :value="customer && customer.customer_name" disabled /></el-form-item>
         <el-form-item label="协作人员" required>
-          <paged-record-select v-if="collab.visible" :key="'collab-person-' + openSession" v-model="collab.user" :request="requestSalesStaff" :columns="staffColumns" :label="staffLabel" title="选择协作人员" placeholder="搜索在职销售" />
+          <paged-record-select v-if="collab.visible" :key="'collab-person-' + openSession" v-model="collab.user" :request="requestSalesStaff" :params="{collaboration_customer_id:customerId}" :columns="staffColumns" :label="staffLabel" title="选择协作人员" placeholder="搜索在职销售" />
         </el-form-item>
         <el-form-item label="协作范围">
           <el-checkbox :value="true" disabled>客户基础信息</el-checkbox>

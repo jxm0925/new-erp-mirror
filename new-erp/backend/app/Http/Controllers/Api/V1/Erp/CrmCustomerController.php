@@ -150,9 +150,16 @@ final class CrmCustomerController extends Controller
 
     public function staffOptions(Request $request, CrmSalesStaffService $staff)
     {
-        $this->user($request, 'sales.customer');
-        $data = $request->validate(['keyword' => 'nullable|string|max:80', 'per_page' => 'nullable|integer|min:1|max:50', 'ids' => 'nullable|array|max:50', 'ids.*' => 'integer']);
-        return response()->json($staff->options(trim((string) ($data['keyword'] ?? '')), (int) ($data['per_page'] ?? 10), $data['ids'] ?? null));
+        $user = $this->user($request, 'sales.customer');
+        $data = $request->validate(['keyword' => 'nullable|string|max:80', 'per_page' => 'nullable|integer|min:1|max:50', 'ids' => 'nullable|array|max:50', 'ids.*' => 'integer',
+            'collaboration_customer_id' => 'nullable|integer|min:1']);
+        $excludeIds = [];
+        if (!empty($data['collaboration_customer_id'])) {
+            $customer = SalesCustomer::query()->findOrFail((int) $data['collaboration_customer_id']);
+            $this->access->assert($customer, $user, 'collaborate', '无权为该客户添加协作。');
+            $excludeIds = [(int) $user->legacy_id, (int) $customer->owner_legacy_id];
+        }
+        return response()->json($staff->options(trim((string) ($data['keyword'] ?? '')), (int) ($data['per_page'] ?? 10), $data['ids'] ?? null, $excludeIds));
     }
 
     private function visible(Request $request, int $id): array

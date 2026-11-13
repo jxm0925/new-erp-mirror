@@ -30,13 +30,14 @@ final class CrmSalesStaffService
     }
 
     /** 有效销售员候选，供转交、协作选择；服务端分页。 */
-    public function options(string $keyword, int $perPage, ?array $onlyIds = null)
+    public function options(string $keyword, int $perPage, ?array $onlyIds = null, array $excludeIds = [])
     {
         $users = DB::table('erp_legacy_admin_users as u')->whereNull('u.deleted_at')
             ->whereIn(DB::raw('LOWER(TRIM(u.status))'), ['normal', 'active']);
         $this->staff->ensureBackfilled();
         $this->staff->applyActive($users, 'sales', 'u.legacy_id');
         if ($onlyIds !== null) $users->whereIn('u.legacy_id', $onlyIds ?: [0]);
+        if ($excludeIds) $users->whereNotIn('u.legacy_id', $excludeIds);
         if ($keyword !== '') $users->where(fn ($q) => $q->where('u.nickname', 'like', "%{$keyword}%")->orWhere('u.username', 'like', "%{$keyword}%"));
         $page = $users->orderBy('u.legacy_id')->paginate($perPage, ['u.legacy_id as id', 'u.nickname', 'u.username']);
         $page->through(function ($row) {

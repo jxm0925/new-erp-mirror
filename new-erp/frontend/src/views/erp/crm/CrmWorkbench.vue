@@ -285,7 +285,8 @@
               </div>
             </div>
             <div v-if="!priorities.loading && !priorities.rows.length" class="side-empty">
-              {{ priorities.error || '当前分类暂无重点推进商机' }}
+              <i class="el-icon-aim" />
+              <span>{{ priorities.error || '当前分类暂无重点推进商机' }}</span>
             </div>
           </div>
 
@@ -390,7 +391,8 @@
             </template>
 
             <div v-if="!business.loading && !business.rows.length" class="side-empty">
-              {{ business.error || '当前分类暂无待处理订单或售后单' }}
+              <i class="el-icon-document" />
+              <span>{{ business.error || '当前分类暂无待处理订单或售后单' }}</span>
             </div>
           </div>
 
@@ -513,7 +515,7 @@ const QUEUE_META = [
   { key: 'today', label: '今日联系', icon: 'el-icon-phone-outline', desc: '今日计划跟进事项', tone: 'is-green', valCls: '' },
   { key: 'overdue', label: '逾期跟进', icon: 'el-icon-warning-outline', desc: '超计划时间未跟进', tone: 'is-red', valCls: 'is-danger' },
   { key: 'pending_receive', label: '待接收', icon: 'el-icon-bell', desc: '分配给我待确认接收', tone: 'is-amber', valCls: 'is-warn' },
-  { key: 'pending_confirm', label: '待确认有效', icon: 'el-icon-circle-check', desc: '活跃线索待基础确认', tone: 'is-amber', valCls: '' },
+  { key: 'pending_confirm', label: '待确认有效', icon: 'el-icon-circle-check', desc: '待确认为有效线索', tone: 'is-amber', valCls: '' },
   { key: 'pending_assign', label: '待分配', icon: 'el-icon-s-promotion', desc: '授权范围内待指派销售', tone: 'is-amber', valCls: '' },
   { key: 'pending_verify', label: '待核实', icon: 'el-icon-coordinate', desc: '身份冲突待核实归属', tone: 'is-red', valCls: 'is-danger' }
 ]
@@ -527,7 +529,7 @@ const PRIORITY_TABS = [
 const ACTION_LABELS = {
   followup: '跟进',
   receive: '接收',
-  confirm: '基础确认',
+  confirm: '有效线索',
   assign: '分配',
   verify: '核实'
 }
@@ -1131,27 +1133,38 @@ export default {
   display: grid;
   grid-template-columns: minmax(0, 1.48fr) minmax(0, 1fr);
   gap: 12px;
-  align-items: start;
+  align-items: stretch;
 }
 .workbench-side-stack {
   display: flex;
   flex-direction: column;
   gap: 12px;
   min-width: 0;
+  height: 100%;
+}
+.workbench-side-stack > .panel-card {
+  flex: 1 1 0;
+  min-height: 252px;
 }
 
 .panel-card {
   display: flex;
   flex-direction: column;
 }
+.tasks-panel {
+  height: 100%;
+  min-height: 516px;
+}
 .panel-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  padding: 12px 16px;
+  min-height: 52px;
+  padding: 10px 16px;
   border-bottom: 1px solid #eef2f7;
   flex-wrap: wrap;
+  box-sizing: border-box;
 }
 .panel-head .crm-section-title {
   margin: 0;
@@ -1213,6 +1226,30 @@ export default {
   background: #bbf7d0;
 }
 
+.workbench-table {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+}
+.workbench-table ::v-deep .el-table__header-wrapper {
+  flex: 0 0 auto;
+}
+.workbench-table ::v-deep .el-table__body-wrapper {
+  flex: 1 1 auto;
+  min-height: 378px;
+}
+.workbench-table ::v-deep .el-table__empty-block {
+  width: 100% !important;
+  min-height: 378px;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.workbench-table ::v-deep .el-table__empty-text {
+  width: auto;
+  line-height: normal;
+}
 .workbench-table ::v-deep .workbench-overdue-row td.el-table__cell {
   background: #fef2f2;
 }
@@ -1350,7 +1387,10 @@ export default {
 
 .side-list {
   padding: 4px 16px;
-  min-height: 120px;
+  flex: 1 1 auto;
+  min-height: 150px;
+  display: flex;
+  flex-direction: column;
 }
 .side-list-item {
   display: flex;
@@ -1428,17 +1468,30 @@ export default {
   border-color: #fecaca;
 }
 .side-empty {
-  padding: 28px 0;
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 24px 12px;
   text-align: center;
   font-size: 12px;
-  color: #94a3b8;
+  color: #64748b;
+}
+.side-empty i {
+  font-size: 26px;
+  color: #008b4b;
 }
 
 .table-footer,
 .side-footer {
+  margin-top: auto;
   justify-content: space-between;
+  min-height: 49px;
   border-top: 1px solid #eef2f7;
   padding: 10px 16px;
+  box-sizing: border-box;
 }
 
 .radar-card {
@@ -1501,6 +1554,20 @@ export default {
 @media (max-width: 1260px) {
   .workbench-main-grid {
     grid-template-columns: minmax(0, 1fr);
+    align-items: start;
+  }
+  .workbench-side-stack {
+    height: auto;
+  }
+  .tasks-panel,
+  .workbench-side-stack > .panel-card {
+    height: auto;
+    min-height: 0;
+    flex: none;
+  }
+  .workbench-table ::v-deep .el-table__body-wrapper,
+  .workbench-table ::v-deep .el-table__empty-block {
+    min-height: 180px;
   }
 }
 @media (max-width: 780px) {

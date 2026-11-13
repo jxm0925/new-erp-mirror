@@ -36,6 +36,9 @@ final class CrmCustomerCollaborationService
             if ($userId === (int) $customer->owner_legacy_id) {
                 throw ValidationException::withMessages(['user_legacy_id' => '该人员已是负责销售，无需添加协作。']);
             }
+            if ($userId === (int) $actor->legacy_id) {
+                throw ValidationException::withMessages(['user_legacy_id' => '不能将自己添加为协作人员。']);
+            }
             $scope = [
                 'basic' => true,
                 'opportunity_ids' => array_values(array_map('intval', (array) ($data['scope']['opportunity_ids'] ?? []))),

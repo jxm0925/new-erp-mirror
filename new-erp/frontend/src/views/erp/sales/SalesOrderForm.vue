@@ -1638,7 +1638,7 @@ export default {
     },
     async loadShareUsers(params) {
       const { category_id: departmentId, ...filters } = params
-      const response = await listUsers({ ...filters, scope: 'sales_share', department_id: departmentId || undefined, include_departments: this.shareDepartments.length ? undefined : 1 })
+      const response = await listUsers({ ...filters, scope: 'sales_share', sales_user_legacy_id: this.form.sales_user_legacy_id || undefined, department_id: departmentId || undefined, include_departments: this.shareDepartments.length ? undefined : 1 })
       if (response.data.departments) this.shareDepartments = response.data.departments
       return response
     },

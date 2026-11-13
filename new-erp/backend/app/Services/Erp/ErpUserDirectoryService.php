@@ -42,6 +42,9 @@ class ErpUserDirectoryService
             $staff->applyActive($query, 'sales');
             // 订单共享可跨销售人员，不沿用订单业务员指派的数据范围。
             if ($salesScope && $actor) app(SalesOrderVisibilityService::class)->applySalesUserScope($query, $actor);
+            if ($shareScope) $query->whereNotIn('legacy_id', array_filter([
+                (int) ($actor->legacy_id ?? $actor->id ?? 0), (int) ($filters['sales_user_legacy_id'] ?? 0),
+            ]));
         }
         if ($warehouseScope) {
             // 仓库负责人候选：业务员档案中有效的仓管员。

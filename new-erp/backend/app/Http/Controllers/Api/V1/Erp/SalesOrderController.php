@@ -201,7 +201,7 @@ class SalesOrderController extends Controller
             + $request->validate(['expected_version' => 'required|integer|min:1']);
         $this->assertTradePlatform($payload, $order, true);
         if (array_key_exists('agreed_deposit_amount', $request->all())) $payload['agreed_deposit_amount'] = $this->validatedAgreedDeposit($request);
-        return response()->json(['data' => $service->preview($order, $payload)]);
+        return response()->json(['data' => $service->preview($order, $payload, app(AuthContextService::class)->currentUser($request))]);
     }
 
     public function changeProductionUnits(Request $request, int $id, \App\Services\Erp\Manufacturing\OrderChangeUnitSelectionService $selections)
@@ -638,7 +638,7 @@ class SalesOrderController extends Controller
             unset($payload['lines']);
             unset($payload['draft_token'], $payload['deleted_line_ids']);
             unset($payload['opportunity_id']);
-            $payload = $this->normalizeOrderPayload($payload);
+            $payload = $this->normalizeOrderPayload($payload, $request);
             $payload['sales_order_no'] = $payload['sales_order_no'] ?? $this->nextNo('SO');
             $payload['order_status'] = 'draft';
             $payload['confirm_status'] = 'unconfirmed';
@@ -831,7 +831,7 @@ class SalesOrderController extends Controller
             $draftToken = $payload['draft_token'] ?? null;
             unset($payload['lines']);
             unset($payload['draft_token'], $payload['deleted_line_ids']);
-            $payload = $this->normalizeOrderPayload($payload);
+            $payload = $this->normalizeOrderPayload($payload, $request, $order);
             app(CrmOpportunityOrderService::class)->guardOrderUpdate($order, $payload);
             $payload = app(SalesCostVisibilityService::class)->preserveStoredCosts($payload, $order->attributesToArray());
             $order->update($payload);
@@ -1419,13 +1419,15 @@ class SalesOrderController extends Controller
         return app(SalesCostVisibilityService::class)->redact($validated);
     }
 
-    private function normalizeOrderPayload(array $payload): array
+    private function normalizeOrderPayload(array $payload, Request $request, ?SalesOrder $order = null): array
     {
         foreach (['is_urgent', 'is_customized', 'is_special_customized', 'is_delay', 'need_pump', 'is_share'] as $field) {
             $payload[$field] = (bool) ($payload[$field] ?? false);
         }
         $payload['share_user'] = $payload['is_share']
-            ? app(SalesOrderVisibilityService::class)->normalizeShareUsers($payload['share_user'] ?? null) : null;
+            ? app(SalesOrderVisibilityService::class)->normalizeShareUsers($payload['share_user'] ?? null,
+                (int) ($payload['sales_user_legacy_id'] ?? $order?->sales_user_legacy_id),
+                (int) app(AuthContextService::class)->currentUser($request)?->legacy_id, $order) : null;
         $payload['order_source'] = $payload['order_source'] ?? 'manual';
         $payload['currency'] = $payload['currency'] ?? 'CNY';
         $payload['freight_amount'] = $payload['freight_amount'] ?? 0;

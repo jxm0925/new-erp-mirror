@@ -44,6 +44,7 @@ class UserDirectoryController extends Controller
             'role_id' => $request->integer('role_id'),
             'data_scope' => $request->input('data_scope'),
             'keyword' => $request->input('keyword'),
+            'sales_user_legacy_id' => $request->integer('sales_user_legacy_id'),
             ...array_intersect_key($selected, ['ids' => true]),
             'page' => $request->input('page'),
             'per_page' => $request->input('per_page'),

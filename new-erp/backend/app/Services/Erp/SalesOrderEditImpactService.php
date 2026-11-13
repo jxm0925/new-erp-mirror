@@ -114,10 +114,10 @@ class SalesOrderEditImpactService
         private readonly InventoryReservationService $reservations,
     ) {}
 
-    public function preview(SalesOrder $order, array $payload): array
+    public function preview(SalesOrder $order, array $payload, ?object $actor = null): array
     {
         $this->assertChangeable($order);
-        return $this->analyse($order, $this->candidatePayload($payload, $order));
+        return $this->analyse($order, $this->candidatePayload($payload, $order, $actor));
     }
 
     public function updateApprovalFields(int $orderId, array $updates, string $operator, int $taskId): void
@@ -179,7 +179,7 @@ class SalesOrderEditImpactService
         return DB::transaction(function () use ($orderId, $payload, $operator, $actor) {
             $order = $this->lockedOrder($orderId);
             $this->assertChangeable($order);
-            $candidatePayload = $this->candidatePayload($payload, $order);
+            $candidatePayload = $this->candidatePayload($payload, $order, $actor);
             $impact = $this->analyse($order, $candidatePayload, true);
             if (!($impact['can_submit'] ?? true)) throw ValidationException::withMessages(['production_unit_selections' =>
                 implode('；', $impact['production_selection_errors'] ?? []) ?: '请先选择本次要调整的主机和半成品编号，再重新预览确认。']);
@@ -444,8 +444,13 @@ class SalesOrderEditImpactService
         if (array_key_exists('customer_id', $candidate['header'])) $this->assertCustomerChangeAllowed($order, $candidate['header']['customer_id']);
         $this->validateCustomerIdentity($order, $candidate['header'], true, $actor);
         $this->assertSpecialCustomRequirements($order, $candidate);
-        if (!empty($candidate['header']['is_share'])) {
-            $candidate['header']['share_user'] = app(SalesOrderVisibilityService::class)->normalizeShareUsers($candidate['header']['share_user'] ?? null);
+        if (($candidate['header']['is_share'] ?? $order->is_share)
+            && array_intersect(['is_share', 'share_user', 'sales_user_legacy_id'], array_keys($candidate['header']))) {
+            // 审核人仅负责生效；共享的发起人来自服务端保存的候选快照，旧候选不套用审核人身份。
+            $shareActorId = $candidateModel ? (int) ($candidate['share_actor_id'] ?? 0) : (int) ($actor->legacy_id ?? $actor->id ?? 0);
+            $candidate['header']['share_user'] = app(SalesOrderVisibilityService::class)->normalizeShareUsers(
+                $candidate['header']['share_user'] ?? $order->share_user,
+                (int) ($candidate['header']['sales_user_legacy_id'] ?? $order->sales_user_legacy_id), $shareActorId, $order);
         }
         $candidate['header'] = $this->preserveAgreedDeposit($candidate['header'], $order);
         unset($candidate['header']['agreed_deposit_amount']);
@@ -609,7 +614,7 @@ class SalesOrderEditImpactService
             && !in_array((int) ($diff['line_id'] ?? 0), $resetLineIds, true))->values()->all();
     }
 
-    private function candidatePayload(array $payload, SalesOrder $order): array
+    private function candidatePayload(array $payload, SalesOrder $order, ?object $actor = null): array
     {
         if (isset($payload['expected_version']) && (int) $payload['expected_version'] !== (int) $order->business_version) {
             throw ValidationException::withMessages(['expected_version' => '订单已被修改，请刷新后按最新内容重新编辑。']);
@@ -638,7 +643,8 @@ class SalesOrderEditImpactService
             throw ValidationException::withMessages(['deleted_line_ids' => '删除行与保留行冲突或不属于当前订单，请刷新后重新编辑。']);
         }
         $candidate = [
-            'header' => $this->preserveAgreedDeposit($this->normalizeHeader(Arr::only($payload, self::HEADER_FIELDS), $order), $order),
+            'header' => $this->preserveAgreedDeposit($this->normalizeHeader(Arr::only($payload, self::HEADER_FIELDS), $order, $actor), $order),
+            'share_actor_id' => (int) ($actor->legacy_id ?? $actor->id ?? 0),
             'lines' => $lines,
             'deleted_line_ids' => $deletedIds,
             'draft_token' => $payload['draft_token'] ?? null,
@@ -740,7 +746,7 @@ class SalesOrderEditImpactService
      * 把页面提交的表头整理成正式口径：快照只合并允许编辑的键，付款方式和付款条件由服务端重新冻结，
      * 客户快照按订单客户信息重建，避免旧页面带回的快照覆盖正式事实。
      */
-    private function normalizeHeader(array $header, SalesOrder $order): array
+    private function normalizeHeader(array $header, SalesOrder $order, ?object $actor = null): array
     {
         unset($header['customer_snapshot'], $header['pay_type'], $header['channel_type_snapshot']);
         $channelId = (int) ($header['sales_channel_id'] ?? $order->sales_channel_id);
@@ -769,7 +775,7 @@ class SalesOrderEditImpactService
                 throw ValidationException::withMessages(['customer_id' => '所选客户已停用或在黑名单，不能用于订单。']);
             }
             // 改单换客户与新建订单共用客户可见范围：其他部门负责的客户需先申请协作。
-            $actor = request() ? app(AuthContextService::class)->currentUser(request()) : null;
+            $actor ??= request() ? app(AuthContextService::class)->currentUser(request()) : null;
             if ($actor && app(\App\Services\Erp\Crm\CrmCustomerAccessService::class)->relation($customer, $actor) === null) {
                 throw ValidationException::withMessages(['customer_id' => '该客户由其他部门负责，不在你的可见范围内，请先申请协作。']);
             }
@@ -833,11 +839,12 @@ class SalesOrderEditImpactService
             }
         }
 
-        if (array_key_exists('is_share', $header) || array_key_exists('share_user', $header)) {
+        if (array_key_exists('is_share', $header) || array_key_exists('share_user', $header) || array_key_exists('sales_user_legacy_id', $header)) {
             $isShare = array_key_exists('is_share', $header) ? (bool) $header['is_share'] : (bool) $order->is_share;
             $header['is_share'] = $isShare;
             $header['share_user'] = $isShare
-                ? app(SalesOrderVisibilityService::class)->normalizeShareUsers($header['share_user'] ?? $order->share_user) : null;
+                ? app(SalesOrderVisibilityService::class)->normalizeShareUsers($header['share_user'] ?? $order->share_user,
+                    (int) ($header['sales_user_legacy_id'] ?? $order->sales_user_legacy_id), (int) ($actor->legacy_id ?? $actor->id ?? 0), $order) : null;
         }
 
         foreach (self::SNAPSHOT_EDIT_FIELDS as $snapshotField => $keys) {

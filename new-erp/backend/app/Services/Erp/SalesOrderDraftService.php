@@ -35,7 +35,7 @@ class SalesOrderDraftService
             $number = $reservationToken
                 ? $this->numbers->reservedNumber($reservationToken, 'sales_order', $header['created_by_legacy_id'] ?? null, $creationSessionId)
                 : $this->numbers->next('sales_order');
-            $header = $this->normalize($header);
+            $header = $this->normalize($header, null, $actor);
             $header['sales_order_no'] = $number;
             $header['order_status'] = 'draft';
             $header['confirm_status'] = 'unconfirmed';
@@ -83,7 +83,7 @@ class SalesOrderDraftService
             // accepted in the shared form payload, but are not sales-order columns
             // and must never be persisted while editing an existing draft.
             unset($header['reservation_token'], $header['creation_session_id'], $header['created_by_legacy_id'], $header['created_by']);
-            $header = $this->normalize($header, $order);
+            $header = $this->normalize($header, $order, $actor);
             app(CrmOpportunityOrderService::class)->guardOrderUpdate($order, $header);
             unset($header['sales_order_no']);
             // 草稿也可能已有预收核销，换客户同样要先由财务撤销核销。
@@ -292,7 +292,7 @@ class SalesOrderDraftService
         return [$payload, $lines, $deleted, $draftToken, $platformPaid];
     }
 
-    private function normalize(array $payload, ?SalesOrder $order = null): array
+    private function normalize(array $payload, ?SalesOrder $order = null, ?object $actor = null): array
     {
         $payload = app(SalesCostVisibilityService::class)->redact($payload);
         if (array_key_exists('order_flags', $payload)) {
@@ -306,7 +306,8 @@ class SalesOrderDraftService
             $payload[$field] = (bool) ($payload[$field] ?? false);
         }
         $payload['share_user'] = $payload['is_share']
-            ? app(SalesOrderVisibilityService::class)->normalizeShareUsers($payload['share_user'] ?? null) : null;
+            ? app(SalesOrderVisibilityService::class)->normalizeShareUsers($payload['share_user'] ?? null,
+                (int) ($payload['sales_user_legacy_id'] ?? $order?->sales_user_legacy_id), (int) ($actor->legacy_id ?? $actor->id ?? 0), $order) : null;
         $payload['order_source'] = $payload['order_source'] ?? 'manual';
         $payload['currency'] = $payload['currency'] ?? 'CNY';
         $payload['freight_amount'] = round((float) ($payload['freight_amount'] ?? 0), 2);
