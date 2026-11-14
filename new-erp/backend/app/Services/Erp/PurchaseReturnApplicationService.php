@@ -122,8 +122,7 @@ class PurchaseReturnApplicationService
                     'posted_base_qty' => 0,
                     'unit_cost_snapshot' => $this->baseUnitCost($source),
                     'original_inventory_transaction_id' => $this->originalInventoryTransactionId($source),
-                    ...$this->finance->proportionalFacts($source, (float) $row['requested_base_qty']),
-                    'inventory_cost_amount' => round((float) $row['requested_base_qty'] * $this->baseUnitCost($source), 4),
+                    ...$this->finance->dispositionFacts($source, (float) $row['requested_base_qty']),
                     'remark' => $row['remark'] ?? null,
                 ]);
                 foreach ($selectedSerials as $serial) {
@@ -215,7 +214,7 @@ class PurchaseReturnApplicationService
                 'approved_base_qty' => 0,
                 'posted_base_qty' => 0,
                 'unit_cost_snapshot' => $this->baseUnitCost($source),
-                ...$this->finance->proportionalFacts($source, $baseQuantity),
+                ...$this->finance->dispositionFacts($source, $baseQuantity),
                 'inventory_cost_amount' => 0,
                 'remark' => '未正式入库拒收，不产生采购入库或采购退货出库流水',
             ]);
@@ -299,8 +298,8 @@ class PurchaseReturnApplicationService
                 'posted_base_qty' => 0,
                 'unit_cost_snapshot' => $balance->average_unit_cost,
                 'original_inventory_transaction_id' => $this->originalInventoryTransactionId($source),
-                ...$this->finance->proportionalFacts($source, (float) $event->issue_qty),
-                'inventory_cost_amount' => round((float) $event->issue_qty * (float) $balance->average_unit_cost, 4),
+                ...$this->finance->dispositionFacts($source, (float) $event->issue_qty),
+                'inventory_cost_amount' => CuttingDecimal::share((string) $balance->inventory_value, (string) $balance->quantity_on_hand, (string) $event->issue_qty),
                 'remark' => '入库后质量问题退供应商，实物出库时冲减原批次库存',
             ]);
             if ($event->inventory_serial_id) {
@@ -885,7 +884,8 @@ class PurchaseReturnApplicationService
             ?: $source->original_qualified_base_qty
             ?: $source->actual_base_qty
             ?: $source->standard_base_qty);
-        $cost = (float) ($source->inventory_cost_amount ?: $source->amount_excl_tax ?: $source->receipt_cost);
+        $cost = (float) $source->final_stockable_base_qty > 0
+            ? (float) $source->inventory_cost_amount : (float) $source->effectiveAmount();
 
         return $baseQuantity > 0 ? round($cost / $baseQuantity, 8) : 0;
     }

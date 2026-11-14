@@ -33,9 +33,9 @@ class PurchaseWorkflowApplicationService
             abort_if($plan->items->contains(fn ($i) => (float) $i->remaining_qty > 0), 422, '采购计划存在未分配数量，不能提交审核');
             abort_if($plan->items->contains(fn ($i) => $i->splits->isEmpty()), 422, '采购计划必须完成供应商拆分');
             abort_if(
-                PurchasePlanSupplierSplit::where('plan_id', $id)->where('unit_price', '<=', 0)->exists(),
+                PurchasePlanSupplierSplit::where('plan_id', $id)->where('amount', '<=', 0)->exists(),
                 422,
-                '采购计划存在采购单价小于或等于 0 的供应商拆分，不能提交审核。供应商报价仅供参考，实际采购价必须由采购员确认。'
+                '采购计划存在未确认成交金额的供应商拆分，请补全成交金额后再提交审核。'
             );
             $conversionService = app(PurchasePlanningConversionService::class);
             foreach ($plan->items as $item) {
@@ -116,8 +116,8 @@ class PurchaseWorkflowApplicationService
             if ($order->items->isEmpty()) {
                 throw ValidationException::withMessages(['items' => '采购订单没有明细，不能提交。']);
             }
-            if ($order->items->contains(fn ($item) => (float) $item->unit_price <= 0)) {
-                throw ValidationException::withMessages(['items' => '采购订单存在未确认采购单价的明细，请补全单价后再提交。']);
+            if ($order->items->contains(fn ($item) => bccomp((string) $item->amount, '0', 4) <= 0)) {
+                throw ValidationException::withMessages(['items' => '采购订单存在未确认成交金额的明细，请补全成交金额后再提交。']);
             }
             // 交期跟踪：提交订单前必须有预计到货日期；订单头未填时取明细中最早的日期。
             if (!$order->expected_arrival_date) {
@@ -212,22 +212,11 @@ class PurchaseWorkflowApplicationService
             throw ValidationException::withMessages(['receipt_status' => '该订单已经发生到货，不能重复确认。']);
         }
 
-        foreach ($order->items as $line) {
-            $facts = $this->finance->amountFacts((float) $line->amount, (float) $line->tax_rate, (string) $order->tax_mode);
-            $line->update([
-                'currency_snapshot' => $order->currency ?: 'CNY',
-                'tax_mode_snapshot' => $order->tax_mode ?: 'tax_included',
-                ...$facts,
-                'contract_amount_snapshot' => $facts['amount_incl_tax'],
-                'commercial_snapshot_at' => now(),
-            ]);
-        }
+        $this->finance->refreshOrder($order, true);
 
         return $this->updateOrder($order, [
             'purchase_status' => 'processing',
             'audit_status' => 'approved',
-            'amount_excl_tax' => round((float) $order->items()->sum('amount_excl_tax'), 4),
-            'amount_incl_tax' => round((float) $order->items()->sum('amount_incl_tax') + (float) $order->freight_amount, 4),
             'finance_fact_status' => 'frozen',
         ], $action, $message, $operator);
     }

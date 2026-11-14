@@ -10,6 +10,7 @@ class PurchaseOrder extends PurchaseBaseModel
         'amount_excl_tax' => 'decimal:4',
         'amount_incl_tax' => 'decimal:4',
         'freight_amount' => 'decimal:4',
+        'discount_amount' => 'decimal:2',
         'other_purchase_cost_amount' => 'decimal:4',
         'payment_plan_version' => 'integer',
     ];

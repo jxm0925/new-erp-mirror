@@ -67,7 +67,7 @@ class PurchaseReceiptPostingEligibilityService
             $qualifiedTotal += $qualified;
             $code = $line->item?->item_code ?: '未知物料';
 
-            if ((float) $line->quality_hold_amount > 0.0001) {
+            if ($line->settlement_status === 'quality_hold') {
                 if (self::requiresQualityClosedBeforePosting($line->item)) {
                     $this->reason(
                         $reasons,

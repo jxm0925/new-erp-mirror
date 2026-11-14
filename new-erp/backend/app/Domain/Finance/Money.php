@@ -9,13 +9,13 @@ final class Money
     public const SCALE = 4;
     public const CALC_SCALE = 8;
 
-    public static function normalize(string|int $amount): string
+    public static function normalize(string|int $amount, int $scale = self::SCALE): string
     {
         $value = trim((string) $amount);
         if (!preg_match('/^-?\d+(?:\.\d+)?$/', $value)) {
             throw new InvalidArgumentException('Invalid decimal money value.');
         }
-        return self::round($value, self::SCALE);
+        return self::round($value, $scale);
     }
 
     public static function add(string|int $left, string|int $right): string

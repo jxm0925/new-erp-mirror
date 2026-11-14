@@ -439,6 +439,17 @@ class PurchaseController extends Controller
                 ]);
                 foreach ($preparedItems as $line) {
                     $conversion = $line['conversion_snapshot'];
+                    $commercial = app(\App\Services\Erp\PurchaseFinancialFactService::class)->commercialLine(
+                        (string) $conversion['purchase_qty'], (string) $conversion['amount'], (string) $conversion['purchase_unit_price'],
+                    );
+                    $conversion['amount'] = $commercial['amount'];
+                    $conversion['purchase_unit_price'] = $commercial['unit_price'];
+                    $conversion['base_unit_price'] = bcdiv($commercial['unit_price'], (string) $conversion['conversion_factor_snapshot'], 8);
+                    app(\App\Services\Erp\PurchaseFinancialFactService::class)->assertUnitPrice($conversion['base_unit_price']);
+                    $conversion['purchase_conversion_snapshot'] = array_replace($conversion['purchase_conversion_snapshot'], [
+                        'amount' => $commercial['amount'], 'purchase_unit_price' => $conversion['purchase_unit_price'],
+                        'base_unit_price' => $conversion['base_unit_price'],
+                    ]);
                     $orderItem = PurchaseOrderItem::create([
                         'order_id' => $order->id,
                         'plan_id' => $plan->id,
@@ -479,6 +490,7 @@ class PurchaseController extends Controller
                     ]);
                     PurchasePlanItem::whereKey($line['plan_item_id'])->increment('ordered_qty', $line['purchase_qty']);
                 }
+                app(\App\Services\Erp\PurchaseFinancialFactService::class)->refreshOrder($order);
                 $orders[] = $order->fresh(['items.item', 'supplier']);
                 $this->log('purchase_order', $order->id, 'create_from_plan', "由采购计划 {$plan->plan_no} 生成");
             }
@@ -537,6 +549,7 @@ class PurchaseController extends Controller
                 'settlement_method' => $payload['settlement_method'] ?? null,
                 'delivery_method' => $payload['delivery_method'] ?? null,
                 'freight_amount' => $payload['freight_amount'] ?? 0,
+                'discount_amount' => $payload['discount_amount'] ?? 0,
                 'purchase_status' => 'draft',
                 'audit_status' => 'pending',
                 'receipt_status' => 'not_received',
@@ -613,6 +626,7 @@ class PurchaseController extends Controller
                 'settlement_method' => $payload['settlement_method'] ?? null,
                 'delivery_method' => $payload['delivery_method'] ?? null,
                 'freight_amount' => $payload['freight_amount'] ?? 0,
+                'discount_amount' => $payload['discount_amount'] ?? 0,
                 'remark' => $payload['remark'] ?? null,
             ]);
             $retainedIds = array_filter(array_column($payload['items'], 'id'));
@@ -986,6 +1000,7 @@ class PurchaseController extends Controller
             'purchase_unit_id' => 'nullable|integer|exists:erp_units,id',
             'purchase_quantity' => 'nullable|numeric|gt:0',
             'purchase_unit_price' => 'nullable|numeric|min:0',
+            'amount' => 'nullable|numeric|min:0|max:9999999999.99|decimal:0,2',
             'document_type' => 'required|in:request,plan',
             'document_id' => 'nullable|integer', 'line_id' => 'nullable|integer',
             'split_id' => 'nullable|integer',
@@ -1041,6 +1056,7 @@ class PurchaseController extends Controller
             'items.*.splits.*.purchase_unit_price' => 'nullable|numeric|min:0',
             'items.*.splits.*.purchase_qty' => 'required_without:items.*.splits.*.purchase_quantity|numeric|min:0|decimal:0,4',
             'items.*.splits.*.unit_price' => 'nullable|numeric|min:0',
+            'items.*.splits.*.amount' => 'nullable|numeric|min:0|max:9999999999.99|decimal:0,2',
             'items.*.splits.*.tax_rate' => 'nullable|numeric|min:0|max:100',
             'items.*.splits.*.delivery_days' => 'nullable|integer|min:0|max:999',
             'items.*.splits.*.moq_qty' => 'nullable|numeric|min:0',
@@ -1074,6 +1090,7 @@ class PurchaseController extends Controller
             'settlement_method' => 'nullable|string|max:80',
             'delivery_method' => 'nullable|string|max:80',
             'freight_amount' => 'nullable|numeric|min:0',
+            'discount_amount' => 'nullable|numeric|min:0|max:9999999999.99|decimal:0,2',
             'remark' => 'nullable|string',
             'data_source' => ['nullable', Rule::in(self::DATA_SOURCES)],
             'items' => 'required|array|min:1',
@@ -1085,6 +1102,7 @@ class PurchaseController extends Controller
             'items.*.expected_conversion_factor' => 'nullable|numeric|gt:0',
             'items.*.order_qty' => 'required|numeric|min:0.0001|decimal:0,4',
             'items.*.unit_price' => 'nullable|numeric|min:0',
+            'items.*.amount' => 'nullable|numeric|min:0|max:9999999999.99|decimal:0,2',
             'items.*.tax_rate' => 'nullable|numeric|min:0|max:100',
             'items.*.expected_arrival_date' => 'nullable|date',
             'items.*.target_warehouse_id' => 'nullable|exists:erp_warehouses,id',
@@ -1118,6 +1136,7 @@ class PurchaseController extends Controller
             'items.*.warehouse_id' => 'nullable|exists:erp_warehouses,id',
             'items.*.location_id' => 'nullable|exists:erp_locations,id',
             'items.*.receipt_qty' => 'required|numeric|min:0.0001',
+            'items.*.receipt_cost' => 'nullable|numeric|min:0|max:9999999999.9999|decimal:0,4',
             'items.*.actual_base_qty' => 'nullable|numeric|min:0',
             'items.*.difference_reason' => 'nullable|string|max:255',
             'items.*.qualified_qty' => 'nullable|numeric|min:0',
@@ -1244,7 +1263,7 @@ class PurchaseController extends Controller
 
     private function saveOrderItems(PurchaseOrder $order, array $items, $priorItems = null): void
     {
-        $totalQty = 0; $totalAmount = 0; $taxAmount = 0;
+        $finance = app(\App\Services\Erp\PurchaseFinancialFactService::class);
         foreach ($items as $line) {
             $this->assertRecommendationOverride($line, (int) $order->supplier_id);
             $item = app(PurchaseManagementScopeService::class)->assertItemScope((int) $line['item_id'], $order->management_scope)->load('activeMaterialPolicy');
@@ -1252,12 +1271,13 @@ class PurchaseController extends Controller
             if (!empty($line['target_warehouse_id'])) app(\App\Services\Erp\WarehouseManagementScopeService::class)
                 ->assertWarehouseItem($item, (int) $line['target_warehouse_id'], 'target_warehouse_id', $order->management_scope);
             $qty = (float) $line['order_qty'];
-            $price = (float) ($line['unit_price'] ?? 0);
+            $commercial = $finance->commercialLine($line['order_qty'], $line['amount'] ?? null, $line['unit_price'] ?? '0');
+            $price = $commercial['unit_price'];
+            $line['unit_price'] = $price;
+            $line['amount'] = $commercial['amount'];
             $taxRate = (float) ($line['tax_rate'] ?? 0);
-            $amount = $qty * $price;
-            $finance = app(\App\Services\Erp\PurchaseFinancialFactService::class);
-            $amountFacts = $finance->amountFacts($amount, $taxRate, (string) $order->tax_mode);
             $conversion = app(\App\Services\Erp\PurchaseConversionApplicationService::class)->orderLineSnapshot($line, $priorItems?->get($line['id'] ?? 0));
+            $finance->assertUnitPrice($conversion['base_unit_price']);
             PurchaseOrderItem::updateOrCreate(['id' => $priorItems?->get($line['id'] ?? 0)?->id], [
                 'order_id' => $order->id,
                 'plan_id' => $order->plan_id,
@@ -1268,11 +1288,7 @@ class PurchaseController extends Controller
                 'unit_price' => $price,
                 ...$conversion,
                 'tax_rate' => $taxRate,
-                'amount' => $amount,
-                'currency_snapshot' => $order->currency ?: 'CNY',
-                'tax_mode_snapshot' => $order->tax_mode ?: 'tax_included',
-                ...$amountFacts,
-                'contract_amount_snapshot' => $amountFacts['amount_incl_tax'],
+                'amount' => $commercial['amount'],
                 'expected_arrival_date' => $line['expected_arrival_date'] ?? null,
                 'target_warehouse_id' => $line['target_warehouse_id'] ?? null,
                 'recommended_supplier_id_snapshot' => $line['recommended_supplier_id_snapshot'] ?? null,
@@ -1292,19 +1308,8 @@ class PurchaseController extends Controller
                     ? $priorItems->get($line['id'])->only(['material_policy_id_snapshot', 'material_policy_version_snapshot', 'material_policy_snapshot'])
                     : $this->materialPolicySnapshotForOrderLine($item, $line)),
             ]);
-            $totalQty += $qty;
-            $totalAmount += $amount;
-            $taxAmount += $amountFacts['tax_amount_snapshot'];
         }
-        $contractAmount = $totalAmount + ($order->tax_mode === 'tax_excluded' ? $taxAmount : 0) + (float) ($order->freight_amount ?? 0);
-        $order->update([
-            'total_qty' => $totalQty,
-            'total_amount' => $contractAmount,
-            'amount_excl_tax' => round((float) $order->items()->sum('amount_excl_tax'), 4),
-            'tax_amount' => round($taxAmount, 4),
-            'amount_incl_tax' => round((float) $order->items()->sum('amount_incl_tax') + (float) ($order->freight_amount ?? 0), 4),
-            'finance_fact_status' => 'pending',
-        ]);
+        $finance->refreshOrder($order);
     }
 
     private function persistReceipt(array $payload, ?PurchaseReceipt $receipt)
@@ -1313,7 +1318,10 @@ class PurchaseController extends Controller
         $scopes = app(PurchaseManagementScopeService::class);
         $priorLines = collect();
         if ($receipt) {
+            $lockedOrderId = $receipt->order_id;
+            if ($lockedOrderId) PurchaseOrder::query()->lockForUpdate()->findOrFail($lockedOrderId);
             $receipt = PurchaseReceipt::query()->lockForUpdate()->findOrFail($receipt->id);
+            abort_if((int) $receipt->order_id !== (int) $lockedOrderId, 422, '到货来源已变化，请刷新后重新保存');
             abort_if($receipt->confirm_status !== 'draft', 422, '只有草稿到货单可以编辑');
             $priorLines = $receipt->items()->lockForUpdate()->get()->keyBy('id');
             if (array_key_exists('management_scope', $payload)) {
@@ -1395,6 +1403,17 @@ class PurchaseController extends Controller
             $qty = (float) $line['receipt_qty'];
             // 修改到货单时未传单价：沿用原到货行单价，新行取采购单行单价，不能清零。
             $price = (float) ($line['unit_price'] ?? ($priorLine ? $priorLine->unit_price : ($orderItem && $receipt->settlement_mode !== 'replacement_no_charge' ? $orderItem->unit_price : 0)));
+            $finance = app(\App\Services\Erp\PurchaseFinancialFactService::class);
+            if ($orderItem && $receipt->settlement_mode !== 'replacement_no_charge') {
+                $amountFacts = $finance->orderReceiptFacts($receipt, $orderItem, $line['receipt_qty']);
+            } elseif ($receipt->settlement_mode === 'replacement_no_charge') {
+                $amountFacts = ['unit_price' => $priorLine->unit_price, 'receipt_cost' => $priorLine->receipt_cost,
+                    'amount_excl_tax' => $priorLine->receipt_cost, 'tax_amount_snapshot' => '0.0000', 'amount_incl_tax' => $priorLine->receipt_cost];
+            } else {
+                $commercial = $finance->commercialLine($line['receipt_qty'], $line['receipt_cost'] ?? null, $line['unit_price'] ?? $price);
+                $amountFacts = ['unit_price' => $commercial['unit_price'], 'receipt_cost' => $commercial['amount'],
+                    ...$finance->amountFacts($commercial['amount'], $line['tax_rate'] ?? 13, 'tax_included', 2)];
+            }
             $batchNo = $stockManaged ? trim((string) ($line['batch_no'] ?? '')) : null;
             if ($stockManaged && $batchNo === '') {
                 $batchNo = app(DocumentNumberService::class)->next('inventory_batch', 'BAT');
@@ -1414,10 +1433,10 @@ class PurchaseController extends Controller
                 'receipt_qty' => $qty,
                 'qualified_qty' => $line['qualified_qty'] ?? $qty,
                 'unqualified_qty' => $line['unqualified_qty'] ?? 0,
-                'unit_price' => $price,
+                'unit_price' => $amountFacts['unit_price'],
                 'tax_rate' => $orderItem && $receipt->settlement_mode !== 'replacement_no_charge'
                     ? $orderItem->tax_rate : ($line['tax_rate'] ?? 13),
-                'receipt_cost' => $qty * $price,
+                ...$amountFacts,
                 ...$conversion,
                 'batch_no' => $batchNo,
                 // 管材按根入库：这一行每根的实际长度（不填按物料标准长度），过账时记到材料批次上。
@@ -1624,7 +1643,7 @@ class PurchaseController extends Controller
     private function refreshReceiptTotal(int $receiptId): void
     {
         $totals = PurchaseReceiptItem::where('receipt_id', $receiptId)
-            ->selectRaw('COALESCE(SUM(receipt_qty),0) qty, COALESCE(SUM(qualified_qty),0) q, COALESCE(SUM(unqualified_qty),0) uq, COALESCE(SUM(receipt_cost),0) amount, COALESCE(SUM(receipt_cost * tax_rate / 100),0) tax_amount')->first();
+            ->selectRaw('COALESCE(SUM(receipt_qty),0) qty, COALESCE(SUM(qualified_qty),0) q, COALESCE(SUM(unqualified_qty),0) uq, COALESCE(SUM(COALESCE(amount_incl_tax, receipt_cost)),0) amount, COALESCE(SUM(tax_amount_snapshot),0) tax_amount')->first();
         PurchaseReceipt::whereKey($receiptId)->update([
             'total_receipt_qty' => $totals->qty,
             'total_qualified_qty' => $totals->q,

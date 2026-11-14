@@ -100,7 +100,7 @@ class FinanceInvoiceQueryService
                 ->on('draft_invoice_reservations.source_document_id', '=', 'settlement_source.id'))
             ->where('settlement_source.supplier_id', $supplierId)
             ->where('settlement_source.currency', 'CNY')
-            ->whereRaw('(settlement_source.eligible_amount - settlement_source.ap_offset_amount - COALESCE(official_invoice_matches.total, 0) - COALESCE(draft_invoice_reservations.total, 0)) > 0.0000')
+            ->whereRaw('ROUND(settlement_source.eligible_amount - settlement_source.ap_offset_amount - COALESCE(official_invoice_matches.total, 0) - COALESCE(draft_invoice_reservations.total, 0), 2) > 0')
             ->when($filters['settlement_source_no'] ?? null, fn (Builder $q, string $value) => $q->where('settlement_source.source_document_no', 'like', '%'.trim($value).'%'))
             ->when($filters['purchase_order_no'] ?? null, fn (Builder $q, string $value) => $q->where('settlement_source.purchase_order_no_snapshot', 'like', '%'.trim($value).'%'))
             ->when($filters['business_date_start'] ?? null, fn (Builder $q, string $value) => $q->whereDate('settlement_source.business_date', '>=', $value))
@@ -113,9 +113,9 @@ class FinanceInvoiceQueryService
                 $officialMatched = $officialInvoiceMatches[(int) $source->id] ?? '0.0000';
                 $reservedByDrafts = $draftReservations[(int) $source->id] ?? '0.0000';
                 $available = Money::maxZero(Money::sub(Money::sub($payable, $officialMatched), $reservedByDrafts));
-                $carry['payable_amount'] = Money::add($carry['payable_amount'], $payable);
-                $carry['invoiced_amount'] = Money::add($carry['invoiced_amount'], $officialMatched);
-                $carry['available_amount'] = Money::add($carry['available_amount'], $available);
+                $carry['payable_amount'] = Money::add($carry['payable_amount'], Money::normalize($payable, 2));
+                $carry['invoiced_amount'] = Money::add($carry['invoiced_amount'], Money::normalize($officialMatched, 2));
+                $carry['available_amount'] = Money::add($carry['available_amount'], Money::normalize($available, 2));
                 return $carry;
             }, ['payable_amount' => '0.0000', 'invoiced_amount' => '0.0000', 'available_amount' => '0.0000']);
         $page = $query->latest('business_date')->latest('id')->paginate($perPage);
@@ -135,11 +135,11 @@ class FinanceInvoiceQueryService
                     'purchase_order_no' => $source->purchase_order_no_snapshot,
                     'receipt_no' => $source->receipt?->receipt_no,
                     'business_date' => $source->business_date?->toDateString(),
-                    'current_payable_amount' => $payable,
-                    'invoiced_amount' => $officialMatched,
-                    'current_invoice_matched_amount' => $current,
-                    'available_amount' => $available,
-                    'reserved_by_draft_amount' => $reservedByDrafts,
+                    'current_payable_amount' => Money::normalize($payable, 2),
+                    'invoiced_amount' => Money::normalize($officialMatched, 2),
+                    'current_invoice_matched_amount' => Money::normalize($current, 2),
+                    'available_amount' => Money::normalize($available, 2),
+                    'reserved_by_draft_amount' => Money::normalize($reservedByDrafts, 2),
                 ];
             })->values(),
             'summary' => $summary,

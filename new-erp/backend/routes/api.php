@@ -251,6 +251,9 @@ Route::prefix('v1/erp/finance')->group(function () {
     Route::get('sources/resolve', [FinanceController::class, 'source']);
     Route::get('sources', [FinanceController::class, 'sources']);
     Route::get('payables', [FinanceController::class, 'payables']);
+    Route::post('payables/{id}/actual-amount/preview', [FinanceController::class, 'previewPurchaseActualAmount'])->whereNumber('id');
+    Route::post('payables/{id}/actual-amount', [FinanceController::class, 'confirmPurchaseActualAmount'])->whereNumber('id');
+    Route::get('payables/{id}/actual-amount/history', [FinanceController::class, 'purchaseActualAmountHistory'])->whereNumber('id');
     Route::get('supplier-ledgers', [FinanceController::class, 'supplierLedgers']);
     Route::get('invoice-requests', [\App\Http\Controllers\Api\V1\Erp\SalesInvoiceRequestController::class, 'index']);
     Route::post('invoice-requests/{id}/issue', [\App\Http\Controllers\Api\V1\Erp\SalesInvoiceRequestController::class, 'issue'])->whereNumber('id');

@@ -44,6 +44,7 @@ CREATE TABLE `erp_purchase_order_items` (
   `tax_mode_snapshot` varchar(30) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `receipt_cost` decimal(14,4) NOT NULL DEFAULT '0.0000',
   `amount` decimal(14,4) NOT NULL DEFAULT '0.0000',
+  `discount_allocated_amount` decimal(18,4) NOT NULL DEFAULT '0.0000',
   `amount_excl_tax` decimal(18,4) DEFAULT NULL,
   `tax_amount_snapshot` decimal(18,4) DEFAULT NULL,
   `amount_incl_tax` decimal(18,4) DEFAULT NULL,

@@ -194,7 +194,7 @@
                     <span class="supplier-name-bold">{{ split.supplier ? split.supplier.supplier_name : (split.supplier_id ? supplierName(split.supplier_id) : '-') }}</span>
                     <span class="split-amount-pill">
                       {{ number(split.purchase_conversion_snapshot?.purchase_qty ?? split.purchase_qty) }} {{ split.purchase_conversion_snapshot?.purchase_unit_name_snapshot || lineUnit(row) }} ·
-                      ¥{{ money(split.purchase_conversion_snapshot?.purchase_unit_price ?? split.unit_price) }}
+                      ¥{{ purchasePrice(split.purchase_conversion_snapshot?.purchase_unit_price ?? split.unit_price) }} · 成交 ¥{{ money(split.amount) }}
                     </span>
                     <el-tag v-if="split.order" size="mini" type="success">{{ split.order.purchase_order_no }}</el-tag>
                     <el-tag v-else size="mini" type="info">未生成订单</el-tag>
@@ -230,14 +230,16 @@
               </template>
             </el-table-column>
             <el-table-column v-if="mode==='orders'" label="采购单价" min-width="84" align="left" show-overflow-tooltip>
-              <template slot-scope="{row}">¥{{ money(row.purchase_unit_price || row.unit_price) }}/{{ row.purchase_unit_name_snapshot || lineUnit(row) }}</template>
+              <template slot-scope="{row}">¥{{ purchasePrice(row.purchase_unit_price ?? row.unit_price) }}/{{ row.purchase_unit_name_snapshot || lineUnit(row) }}</template>
             </el-table-column>
             <el-table-column v-if="mode==='orders'" label="税率" width="54" align="center">
               <template slot-scope="{row}">{{ number(row.tax_rate) }}%</template>
             </el-table-column>
-            <el-table-column v-if="mode==='orders'" label="行金额" min-width="76" align="left" show-overflow-tooltip>
+            <el-table-column v-if="mode==='orders'" :label="selected.tax_mode === 'tax_excluded' ? '成交总额（未税）' : '成交总额（含税）'" min-width="120" align="right">
               <template slot-scope="{row}"><strong class="highlight-qty">¥{{ money(row.amount) }}</strong></template>
             </el-table-column>
+            <el-table-column v-if="mode==='orders'" label="优惠分摊" min-width="90" align="right"><template slot-scope="{row}">¥{{ money(row.discount_allocated_amount) }}</template></el-table-column>
+            <el-table-column v-if="mode==='orders'" label="含税应付" min-width="100" align="right"><template slot-scope="{row}">¥{{ money(row.amount_incl_tax ?? row.amount) }}</template></el-table-column>
             <el-table-column v-if="mode==='orders'" label="已到 / 未到" min-width="74" align="center">
               <template slot-scope="{row}">{{ number(row.received_qty) }} / <span :class="{ 'red-money': Number(row.remaining_qty) > 0 }">{{ number(row.remaining_qty) }}</span></template>
             </el-table-column>
@@ -264,6 +266,8 @@
         <section v-if="mode==='orders'" class="dialog-section">
           <div class="section-title-bar"><span class="bar-accent"></span><h4>金额与财务结算</h4><el-button v-if="$can('purchase.order.view') || $can('finance.view')" type="text" icon="el-icon-date" @click="openPaymentPlan(selected)">付款安排</el-button></div>
           <div class="spec-grid">
+            <div class="spec-item"><span class="spec-label">{{ selected.tax_mode === 'tax_excluded' ? '成交总额（未税）' : '成交总额（含税）' }}</span><span class="spec-value">¥{{ money(orderLineAmount(selected)) }}</span></div>
+            <div class="spec-item"><span class="spec-label">整单优惠</span><span class="spec-value">¥{{ money(selected.discount_amount) }}</span></div>
             <div class="spec-item"><span class="spec-label">未税金额</span><span class="spec-value">¥{{ money(orderUntaxedAmount(selected)) }}</span></div>
             <div class="spec-item"><span class="spec-label">税额</span><span class="spec-value">¥{{ money(orderTaxAmount(selected)) }}</span></div>
             <div class="spec-item"><span class="spec-label">运费</span><span class="spec-value">¥{{ money(selected.freight_amount) }}</span></div>
@@ -1387,16 +1391,10 @@ export default {
     },
     supplierContact(supplier) { return supplier ? (supplier.contact_name || supplier.contact_person || supplier.contacts || '--') : '--' },
     supplierPhone(supplier) { return supplier ? (supplier.contact_phone || supplier.phone || supplier.mobile || '--') : '--' },
-    orderLineAmount(order) { return (order.items || []).reduce((sum, line) => sum + Number(line.purchase_qty || line.order_qty || 0) * Number(line.purchase_unit_price || line.unit_price || 0), 0) },
-    orderTaxAmount(order) {
-      return (order.items || []).reduce((sum, line) => {
-        const amount = Number(line.purchase_qty || line.order_qty || 0) * Number(line.purchase_unit_price || line.unit_price || 0)
-        const rate = Number(line.tax_rate || 0)
-        return sum + (order.tax_mode === 'tax_excluded' ? amount * rate / 100 : (rate ? amount * rate / (100 + rate) : 0))
-      }, 0)
-    },
-    orderUntaxedAmount(order) { const subtotal = this.orderLineAmount(order); return order.tax_mode === 'tax_excluded' ? subtotal : subtotal - this.orderTaxAmount(order) },
-    orderGrandTotal(order) { const subtotal = this.orderLineAmount(order); return subtotal + (order.tax_mode === 'tax_excluded' ? this.orderTaxAmount(order) : 0) + Number(order.freight_amount || 0) },
+    orderLineAmount(order) { return (order.items || []).reduce((sum, line) => sum + Number(line.amount ?? Number(line.purchase_qty || line.order_qty || 0) * Number(line.purchase_unit_price ?? line.unit_price ?? 0)), 0) },
+    orderTaxAmount(order) { return Number(order.tax_amount || 0) },
+    orderUntaxedAmount(order) { return Number(order.amount_excl_tax ?? this.orderGrandTotal(order) - this.orderTaxAmount(order)) },
+    orderGrandTotal(order) { return Number(order.amount_incl_tax ?? order.total_amount ?? 0) },
     timeText(value) { return value ? erpDateTime(value, 19) : '-' },
     goOrderDetail(order) { this.$router.push(`/purchase/orders/${order.id}/detail`) },
     goReceiptDetail(receipt) {
@@ -1405,6 +1403,7 @@ export default {
     },
     rowClass({ row }) { return row === this.selected ? 'current-purchase-row' : '' },
     money(v) { return Number(v || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) },
+    purchasePrice(value) { return Number(value || 0).toLocaleString('zh-CN', { maximumFractionDigits: 8 }) },
     number(v) { return Number(v || 0).toFixed(6).replace(/0+$/, '').replace(/\.$/, '') }
   }
 }

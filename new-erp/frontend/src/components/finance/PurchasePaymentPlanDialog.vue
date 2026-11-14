@@ -8,11 +8,13 @@
         <div class="plan-context"><strong>{{ plan.purchase_order_no }}</strong><span>{{ plan.supplier_name }}</span><span>{{ plan.currency }}</span></div>
         <div class="plan-summary">
           <span>合同总额<strong>{{ money(plan.contract_amount) }}</strong></span>
+          <span>实际金额修正<strong>{{ money(plan.actual_amount_adjustment) }}</strong></span>
+          <span>当前付款总额<strong>{{ money(plan.current_payment_amount) }}</strong></span>
           <span>已安排<strong>{{ money(plannedTotal) }}</strong></span>
           <span>未安排<strong>{{ money(unplannedAmount) }}</strong></span>
           <span>已付款<strong>{{ money(plan.paid_amount) }}</strong></span>
           <span>已退款<strong>{{ money(plan.refund_amount) }}</strong></span>
-          <span>合同待付<strong>{{ money(plan.contract_unpaid_amount) }}</strong></span>
+          <span>当前待付<strong>{{ money(plan.contract_unpaid_amount) }}</strong></span>
         </div>
         <p class="plan-note">付款安排用于约定付款条件。保存安排不会产生付款或应付；日期未知可留空。</p>
         <div class="plan-toolbar"><b>付款期次</b><el-button v-if="editable" size="small" type="success" icon="el-icon-plus" :disabled="saving" @click="addRow">添加期次</el-button></div>
@@ -53,8 +55,8 @@ export default {
     canStartPayment() { return purchaseOrderCanPay(this.plan) && this.$can('finance.payment.create') && this.$can('finance.view') },
     dirty() { return JSON.stringify(serializePaymentPlan(this.items)) !== this.baseline },
     plannedTotal() { return this.items.reduce((sum, row) => sum + (amountUnits(row.amount) || 0), 0) / 10000 },
-    unplannedAmount() { return ((amountUnits(this.plan?.contract_amount) || 0) - Math.round(this.plannedTotal * 10000)) / 10000 },
-    validationError() { return this.plan ? validatePaymentPlan(this.items, this.plan.contract_amount) : '' },
+    unplannedAmount() { return ((amountUnits(this.plan?.current_payment_amount) || 0) - Math.round(this.plannedTotal * 10000)) / 10000 },
+    validationError() { return this.plan ? validatePaymentPlan(this.items, this.plan.current_payment_amount) : '' },
   },
   watch: { contextKey: { immediate: true, handler() { this.reset(); if (this.visible && this.orderId) this.load() } } },
   beforeDestroy() { this.requestRevision += 1 },

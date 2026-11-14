@@ -167,14 +167,17 @@ class PurchaseSettlementSourceApplicationService
     private function activeInvoiceMatched(int $sourceId): string
     {
         if ($sourceId <= 0) return '0.0000';
-        return Money::normalize((string) FinanceInvoiceAllocation::query()
+        // Refresh may follow a lock wait; current invoice facts must not be replaced with an earlier RR snapshot.
+        return FinanceInvoiceAllocation::query()
+            ->join('erp_finance_invoices as source_invoice', 'source_invoice.id', '=', 'erp_finance_invoice_allocations.invoice_id')
             ->where('source_business_type', self::FINANCE_SOURCE_TYPE)
             ->where('source_document_id', $sourceId)
-            ->where('status', FinanceConstants::ALLOCATION_ACTIVE)
+            ->where('erp_finance_invoice_allocations.status', FinanceConstants::ALLOCATION_ACTIVE)
             // Editable draft matches are not received-invoice facts. Only a
             // confirmed invoice or a red-invoice fact changes official source coverage.
-            ->whereHas('invoice', fn ($query) => $query->whereIn('status', [FinanceConstants::STATUS_CONFIRMED, FinanceConstants::STATUS_RED]))
-            ->sum('allocated_amount'));
+            ->whereIn('source_invoice.status', [FinanceConstants::STATUS_CONFIRMED, FinanceConstants::STATUS_RED])
+            ->orderBy('erp_finance_invoice_allocations.id')->lockForUpdate()->get(['erp_finance_invoice_allocations.allocated_amount'])
+            ->reduce(fn (string $sum, $row): string => Money::add($sum, (string) $row->allocated_amount), '0.0000');
     }
 
     private function status(string $eligible, string $frozen, string $offset, string $allocated, string $unallocated): string

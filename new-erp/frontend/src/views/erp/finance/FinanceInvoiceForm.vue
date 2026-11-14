@@ -137,7 +137,7 @@
                       </el-select>
                     </td>
                     <td class="col-center">
-                      <el-input v-model.trim="row.amount_excl_tax" :disabled="!editable" size="small" placeholder="请输入未税金额" class="cell-input-excl" @input="syncTaxRow(row)" />
+                      <el-input v-model.trim="row.amount_excl_tax" :disabled="!editable" size="small" placeholder="请输入未税金额" class="cell-input-excl" @input="syncTaxRow(row)" @blur="normalizeTaxRow(row)" />
                     </td>
                     <td class="col-center">
                       <el-input :value="row.tax_amount" disabled size="small" placeholder="按税率自动计算" class="cell-input-tax" />
@@ -430,6 +430,7 @@
 <script>
 import { listEntity } from '../../../api/erp/master'
 import { reserveForCreatePage, clearCreatePageReservation } from '../../../utils/documentNumberReservation'
+import { roundInvoiceAmount, invoiceTaxAmount } from '../../../utils/financeInvoiceAmount'
 import {
   getFinanceInvoice,
   createFinanceInvoice,
@@ -506,7 +507,7 @@ export default {
     taxDetailValid() {
       const rows = this.taxRows || []
       if (!rows.length || rows.some(row => row.tax_rate === '' || row.amount_excl_tax === '' || row.tax_amount === '')) return false
-      const excl = rows.reduce((sum, row) => sum + Number(row.amount_excl_tax || 0), 0)
+      const excl = rows.reduce((sum, row) => sum + Number(roundInvoiceAmount(row.amount_excl_tax || 0)), 0)
       const tax = rows.reduce((sum, row) => sum + Number(row.tax_amount || 0), 0)
       return Math.abs(excl - Number(this.form.amount_excl_tax || 0)) < 0.0001 && Math.abs(tax - Number(this.form.tax_amount || 0)) < 0.0001
     }
@@ -527,6 +528,7 @@ export default {
           const r = await getFinanceInvoice(this.id)
           this.form = { ...empty(), ...r.data.data }
           this.taxRows = this.hydrateTaxRows(this.form.tax_detail)
+          if (this.editable) this.taxRows.forEach(row => this.normalizeTaxRow(row))
         } else {
           this.form = empty()
           this.taxRows = [{ tax_rate: '', amount_excl_tax: '', tax_amount: '' }]
@@ -556,7 +558,7 @@ export default {
       // recover a single derived line from their stored header amounts, then
       // require the user to verify it before saving.
       const rate = formExcl > 0 ? Number((formTax * 100 / formExcl).toFixed(4)) : 0
-      return [{ tax_rate: rate, amount_excl_tax: formExcl ? formExcl.toFixed(4) : '', tax_amount: formTax.toFixed(4) }]
+      return [{ tax_rate: rate, amount_excl_tax: formExcl ? roundInvoiceAmount(this.form.amount_excl_tax) : '', tax_amount: roundInvoiceAmount(this.form.tax_amount) }]
     },
     formatSize(bytes) {
       if (!bytes) return ''
@@ -568,17 +570,19 @@ export default {
       return (num / (1024 * 1024)).toFixed(2) + ' MB'
     },
     syncTaxRows() {
-      const excl = this.taxRows.reduce((s, x) => s + Number(x.amount_excl_tax || 0), 0)
-      const tax = this.taxRows.reduce((s, x) => s + Number(x.tax_amount || 0), 0)
-      this.form.amount_excl_tax = excl.toFixed(4)
-      this.form.tax_amount = tax.toFixed(4)
-      this.form.amount_incl_tax = (excl + tax).toFixed(4)
+      const excl = this.taxRows.reduce((s, x) => s + Math.round(Number(roundInvoiceAmount(x.amount_excl_tax || 0)) * 100), 0)
+      const tax = this.taxRows.reduce((s, x) => s + Math.round(Number(x.tax_amount || 0) * 100), 0)
+      this.form.amount_excl_tax = (excl / 100).toFixed(2)
+      this.form.tax_amount = (tax / 100).toFixed(2)
+      this.form.amount_incl_tax = ((excl + tax) / 100).toFixed(2)
     },
     syncTaxRow(row) {
-      const rate = Number(row.tax_rate || 0)
-      const excl = Number(row.amount_excl_tax || 0)
-      row.tax_amount = (excl * rate / 100).toFixed(4)
+      row.tax_amount = invoiceTaxAmount(row.amount_excl_tax || 0, row.tax_rate || 0)
       this.syncTaxRows()
+    },
+    normalizeTaxRow(row) {
+      if (row.amount_excl_tax !== '') row.amount_excl_tax = roundInvoiceAmount(row.amount_excl_tax)
+      this.syncTaxRow(row)
     },
     removeTaxRow(i) {
       if (this.taxRows.length === 1) return this.$message.warning('至少保留一条税率明细')
@@ -627,8 +631,8 @@ export default {
         currency: 'CNY',
         tax_detail: this.taxRows.map(x => ({
           tax_rate: Number(x.tax_rate || 0),
-          amount_excl_tax: Number(x.amount_excl_tax || 0),
-          tax_amount: Number(x.tax_amount || 0)
+          amount_excl_tax: roundInvoiceAmount(x.amount_excl_tax || 0),
+          tax_amount: roundInvoiceAmount(x.tax_amount || 0)
         }))
       }
     },

@@ -31,7 +31,7 @@ class PurchaseConversionApplicationService
                         'allow_actual_conversion_snapshot', 'base_unit_id', 'base_unit_name_snapshot']),
                     'purchase_qty' => $quantity, 'planned_base_qty' => round($quantity * $factor, 8),
                     'purchase_conversion_snapshot' => $existing->purchase_conversion_snapshot ? array_replace($existing->purchase_conversion_snapshot, [
-                        'purchase_unit_price' => $price, 'base_unit_price' => $this->conversions->calculateBaseUnitPrice($price, $factor), 'amount' => round($quantity * $price, 4),
+                        'purchase_unit_price' => $price, 'base_unit_price' => $this->conversions->calculateBaseUnitPrice($price, $factor), 'amount' => $line['amount'] ?? round($quantity * $price, 4),
                     ]) : null,
                     'purchase_unit_price' => $price, 'base_unit_price' => $this->conversions->calculateBaseUnitPrice($price, $factor),
                 ];

@@ -28,6 +28,7 @@ class PurchasePayableQueryService
         $query = $this->baseSourceQuery($filters)->with('supplier:id,supplier_code,supplier_name');
         $summary = $this->sourceSummary(clone $query);
         $page = $query->latest('business_date')->latest('id')->paginate($perPage);
+        $page->getCollection()->load('receiptItem.item');
 
         $sourceExtras = $this->sourceExtras($page->getCollection());
         $allocated = FinanceAllocation::query()->selectRaw('COALESCE(SUM(allocated_amount), 0)')
@@ -132,6 +133,15 @@ class PurchasePayableQueryService
             'supplier_code' => $source->supplier?->supplier_code,
             'supplier_name' => $source->supplier_name_snapshot,
             'source_document_no' => $source->source_document_no,
+            'source_type' => $source->source_type,
+            'source_document_type' => $source->source_document_type,
+            'receipt_item_id' => $source->source_line_id,
+            'item_code' => $source->receiptItem?->item?->item_code,
+            'item_name' => $source->receiptItem?->item?->item_name,
+            'spec_model' => $source->receiptItem?->spec_model ?: ($source->receiptItem?->item?->spec ?: $source->receiptItem?->item?->model),
+            'original_amount' => Money::normalize((string) ($source->receiptItem?->amount_incl_tax ?? $source->original_amount)),
+            'current_actual_amount' => $source->receiptItem?->effectiveAmount(),
+            'finance_actual_amount' => $source->receiptItem?->finance_actual_amount,
             'purchase_order_no' => $source->purchase_order_no_snapshot,
             'business_date' => $source->business_date?->toDateString(),
             'currency' => $source->currency,

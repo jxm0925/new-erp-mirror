@@ -138,6 +138,7 @@
               size="small"
               placeholder="输入匹配金额"
               @input="validateRow(row)"
+              @blur="normalizeMatch(row)"
             />
             <span v-else class="muted">0.00</span>
           </template>
@@ -207,6 +208,7 @@
 
 <script>
 import { getFinanceInvoice, listInvoiceMatchingSources, saveFinanceInvoiceMatches, confirmFinanceInvoice } from '../../../api/erp/finance'
+import { roundInvoiceAmount } from '../../../utils/financeInvoiceAmount'
 
 export default {
   name: 'FinanceInvoiceMatch',
@@ -252,7 +254,7 @@ export default {
       return this.matchableRows.length > 0 && this.matchableRows.every(row => Boolean(this.selected[row.id]))
     },
     selectedTotal() {
-      return Object.values(this.selected).reduce((sum, x) => sum + Number(x.allocated_amount || 0), 0)
+      return Object.values(this.selected).reduce((sum, x) => sum + Math.round(Number(roundInvoiceAmount(x.allocated_amount || 0)) * 100), 0) / 100
     },
     currentMatched() {
       return Number(this.invoice.matched_amount || 0)
@@ -280,6 +282,7 @@ export default {
         const r = await getFinanceInvoice(this.id)
         this.invoice = r.data.data || {}
         if (this.invoice.status !== 'draft') this.$message.warning('已确认发票不可调整匹配')
+        else this.validateCentDraft()
         await this.load()
       } catch (e) {
         this.$message.error(e.userMessage || '发票匹配加载失败')
@@ -295,6 +298,17 @@ export default {
         page: this.page,
         per_page: this.perPage
       }
+    },
+    validateCentDraft() {
+      if (['amount_excl_tax', 'tax_amount', 'amount_incl_tax'].some(key => Number(this.invoice[key] || 0) !== Number(roundInvoiceAmount(this.invoice[key] || 0)))) {
+        this.$message.warning('该草稿仍有分以下金额，请返回编辑页核对税率明细并保存草稿后重新匹配。')
+        return false
+      }
+      if ((this.invoice.allocations || []).some(row => row.status === 'active' && Number(row.allocated_amount) !== Number(roundInvoiceAmount(row.allocated_amount)))) {
+        this.$message.warning('该草稿含原四位小数的匹配记录，请到发票详情撤销这些匹配，再重新匹配。')
+        return false
+      }
+      return true
     },
     async load() {
       this.loading = true
@@ -323,7 +337,7 @@ export default {
         this.$set(this.selected, row.id, {
           source_business_type: 'purchase_settlement_source',
           source_document_id: row.id,
-          allocated_amount: String(row.available_amount || '')
+          allocated_amount: roundInvoiceAmount(row.available_amount || 0)
         })
       } else {
         this.$delete(this.selected, row.id)
@@ -345,17 +359,23 @@ export default {
         this.$message.warning(`本次匹配金额不能超过 ${this.money(row.available_amount)} CNY`)
       }
     },
+    normalizeMatch(row) {
+      const item = this.selected[row.id]
+      if (item && item.allocated_amount !== '') item.allocated_amount = roundInvoiceAmount(item.allocated_amount)
+      this.validateRow(row)
+    },
     money(v) {
       return Number(v || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
     },
     payload() {
-      return Object.values(this.selected).filter(x => Number(x.allocated_amount) > 0)
+      return Object.values(this.selected).map(x => ({ ...x, allocated_amount: roundInvoiceAmount(x.allocated_amount || 0) })).filter(x => Number(x.allocated_amount) > 0)
     },
     async saveMatches(showMessage = true) {
       if (this.invoice.status !== 'draft') {
         this.$message.error('仅草稿发票允许保存匹配')
         return false
       }
+      if (!this.validateCentDraft()) return false
       const items = this.payload()
       if (!items.length) {
         this.$message.error('请先勾选可匹配结算来源，并填写大于 0 的本次匹配金额；未匹配金额为只读结果。')
@@ -382,6 +402,7 @@ export default {
       }
     },
     async confirmMatches() {
+      if (!this.validateCentDraft()) return
       const persistedComplete = Math.abs(Number(this.invoice.amount_incl_tax || 0) - Number(this.invoice.matched_amount || 0)) < 0.0001 && Number(this.invoice.amount_incl_tax || 0) > 0
       if (!this.matchComplete && !persistedComplete) {
         return this.$message.error('请将发票未匹配金额完整匹配后再确认')

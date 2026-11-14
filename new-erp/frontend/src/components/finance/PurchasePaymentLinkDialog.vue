@@ -7,7 +7,7 @@
       <template v-if="doc">
         <div class="link-cash-context"><strong>{{ doc.document_no }}</strong><span>{{ doc.party_name_snapshot }}</span><span>{{ doc.direction === 'receipt' ? '退款收款' : '付款' }} {{ money(doc.amount) }} {{ doc.currency }}</span></div>
         <purchase-payment-links ref="links" v-model="rows" :supplier-id="Number(doc.party_id)" :currency="doc.currency" :amount="doc.amount" :direction="doc.direction" :readonly="!editable" :disabled="saving || loading || conflict" />
-        <el-form v-if="editable" label-position="top" class="link-reason-form"><el-form-item label="本次补充或调整原因（必填）"><el-input v-model.trim="reason" type="textarea" :rows="2" maxlength="1000" show-word-limit :disabled="saving" placeholder="说明关联调整原因；超合同付款也请在此说明" /></el-form-item></el-form>
+        <el-form v-if="editable" label-position="top" class="link-reason-form"><el-form-item label="本次补充或调整原因（必填）"><el-input v-model.trim="reason" type="textarea" :rows="2" maxlength="1000" show-word-limit :disabled="saving" placeholder="说明关联调整原因；超额付款也请在此说明" /></el-form-item></el-form>
         <p v-else-if="doc.purchase_order_allocation_reason" class="link-reason-text">关联说明：{{ doc.purchase_order_allocation_reason }}</p>
       </template>
     </div>

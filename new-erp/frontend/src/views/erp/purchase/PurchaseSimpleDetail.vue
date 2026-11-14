@@ -78,6 +78,14 @@
         <el-descriptions-item label="采购总数量">
           <strong class="highlight-green">{{ totalQuantitySummary }}</strong>
         </el-descriptions-item>
+        <template v-if="type==='orders'">
+          <el-descriptions-item :label="doc.tax_mode === 'tax_excluded' ? '成交总额（未税）' : '成交总额（含税）'">¥{{ money((doc.items || []).reduce((sum, line) => sum + Number(line.amount || 0), 0)) }}</el-descriptions-item>
+          <el-descriptions-item label="整单优惠">¥{{ money(doc.discount_amount) }}</el-descriptions-item>
+          <el-descriptions-item label="运费">¥{{ money(doc.freight_amount) }}</el-descriptions-item>
+          <el-descriptions-item label="未税金额">¥{{ money(doc.amount_excl_tax) }}</el-descriptions-item>
+          <el-descriptions-item label="税额">¥{{ money(doc.tax_amount) }}</el-descriptions-item>
+          <el-descriptions-item label="含税应付"><strong class="highlight-green">¥{{ money(doc.amount_incl_tax ?? doc.total_amount) }}</strong></el-descriptions-item>
+        </template>
         <el-descriptions-item label="备注说明" :span="2">
           <span class="text-muted">{{ doc.remark || '无备注' }}</span>
         </el-descriptions-item>
@@ -227,12 +235,14 @@
               <strong class="qty-num">{{ qty(row) }}</strong> {{ purchaseUnitName(row) }}
             </template>
           </el-table-column>
-          <el-table-column label="单价" width="95" align="left">
-            <template slot-scope="{row}">¥{{ Number(row.unit_price || 0).toFixed(2) }}</template>
+          <el-table-column :label="doc.tax_mode === 'tax_excluded' ? '采购单价（未税）' : '采购单价（含税）'" width="135" align="right">
+            <template slot-scope="{row}">¥{{ Number(row.purchase_unit_price ?? row.unit_price ?? 0).toLocaleString('zh-CN', { maximumFractionDigits: 8 }) }}</template>
           </el-table-column>
-          <el-table-column label="金额" width="105" align="left">
+          <el-table-column :label="doc.tax_mode === 'tax_excluded' ? '成交总额（未税）' : '成交总额（含税）'" width="135" align="right">
             <template slot-scope="{row}">¥{{ Number(row.amount || 0).toFixed(2) }}</template>
           </el-table-column>
+          <el-table-column label="优惠分摊" width="95" align="right"><template slot-scope="{row}">¥{{ money(row.discount_allocated_amount) }}</template></el-table-column>
+          <el-table-column label="含税应付" width="105" align="right"><template slot-scope="{row}">¥{{ money(row.amount_incl_tax ?? row.amount) }}</template></el-table-column>
           <el-table-column label="到货数量" width="85" align="left">
             <template slot-scope="{row}">{{ row.received_qty || 0 }}</template>
           </el-table-column>
@@ -383,6 +393,7 @@ export default {
   },
   beforeDestroy() { window.removeEventListener('resize', this.updateViewportWidth) },
   methods: {
+    money(value) { return Number(value || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) },
     updateViewportWidth() { this.viewportWidth = window.innerWidth },
     async loadDetail() {
       try {

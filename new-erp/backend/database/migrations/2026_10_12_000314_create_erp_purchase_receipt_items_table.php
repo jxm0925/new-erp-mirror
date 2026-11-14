@@ -62,6 +62,7 @@ CREATE TABLE `erp_purchase_receipt_items` (
   `amount_excl_tax` decimal(18,4) DEFAULT NULL,
   `tax_amount_snapshot` decimal(18,4) DEFAULT NULL,
   `amount_incl_tax` decimal(18,4) DEFAULT NULL,
+  `finance_actual_amount` decimal(18,4) DEFAULT NULL,
   `qualified_payable_amount` decimal(18,4) NOT NULL DEFAULT '0.0000',
   `settlement_amount` decimal(18,4) NOT NULL DEFAULT '0.0000',
   `quality_hold_amount` decimal(18,4) NOT NULL DEFAULT '0.0000',

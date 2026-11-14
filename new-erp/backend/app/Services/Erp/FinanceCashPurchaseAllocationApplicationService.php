@@ -11,6 +11,7 @@ use App\Models\Erp\FinanceCashPurchaseRevision;
 use App\Models\Erp\FinanceOperationLog;
 use App\Models\Erp\PurchaseOrder;
 use App\Models\Erp\PurchasePaymentPlanItem;
+use App\Models\Erp\PurchaseReceiptItem;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
@@ -159,6 +160,17 @@ class FinanceCashPurchaseAllocationApplicationService
         return Money::normalize((string) ($order->amount_incl_tax ?? $order->total_amount ?? '0'));
     }
 
+    public static function paymentAmount(PurchaseOrder $order): string
+    {
+        $query = PurchaseReceiptItem::query()->join('erp_purchase_receipts as actual_receipt', 'actual_receipt.id', '=', 'erp_purchase_receipt_items.receipt_id')
+            ->where('actual_receipt.order_id', $order->id)->where('actual_receipt.confirm_status', 'confirmed')
+            ->where('actual_receipt.settlement_mode', 'normal')->whereNotNull('erp_purchase_receipt_items.finance_actual_amount')
+            ->orderBy('erp_purchase_receipt_items.id');
+        if (DB::transactionLevel() > 0) $query->lockForUpdate();
+        return $query->get(['erp_purchase_receipt_items.amount_incl_tax', 'erp_purchase_receipt_items.finance_actual_amount'])
+            ->reduce(fn (string $sum, $line): string => Money::add($sum, Money::sub((string) $line->finance_actual_amount, (string) $line->amount_incl_tax)), self::contractAmount($order));
+    }
+
     private function validateRows(FinanceCashDocument $document, array $rows): array
     {
         if ($rows === []) return [];
@@ -204,8 +216,8 @@ class FinanceCashPurchaseAllocationApplicationService
         $orders = $this->lockOrders(array_keys($amounts))->keyBy('id');
         $balances = $this->balances->currentForOrders(array_keys($amounts), $document->id);
         foreach ($amounts as $orderId => $amount) {
-            if (Money::compare(Money::add($balances[$orderId]['net_paid_amount'], $amount), self::contractAmount($orders[$orderId])) > 0 && trim($reason) === '') {
-                throw ValidationException::withMessages(['purchase_order_allocation_reason' => '该笔付款将使采购订单净付款超过合同金额，请填写真实超付原因。']);
+            if (Money::compare(Money::add($balances[$orderId]['net_paid_amount'], $amount), self::paymentAmount($orders[$orderId])) > 0 && trim($reason) === '') {
+                throw ValidationException::withMessages(['purchase_order_allocation_reason' => '该笔付款将使采购订单净付款超过当前核定付款总额，请填写真实超付原因。']);
             }
         }
     }

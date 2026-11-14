@@ -42,6 +42,7 @@ CREATE TABLE `erp_purchase_orders` (
   `base_amount_incl_tax` decimal(18,4) NOT NULL DEFAULT '0.0000',
   `tax_amount` decimal(14,4) NOT NULL DEFAULT '0.0000',
   `freight_amount` decimal(14,4) NOT NULL DEFAULT '0.0000',
+  `discount_amount` decimal(18,4) NOT NULL DEFAULT '0.0000',
   `other_purchase_cost_amount` decimal(18,4) NOT NULL DEFAULT '0.0000',
   `finance_fact_status` varchar(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'pending',
   `remark` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci,

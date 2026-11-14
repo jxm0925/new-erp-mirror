@@ -10,7 +10,7 @@ export const paymentTriggers = [
 ]
 
 export const paymentTriggerLabel = value => paymentTriggers.find(item => item.value === value)?.label || value || '待定'
-export const paymentStatusLabel = value => ({ unpaid: '未付款', partial: '部分付款', paid: '已付清', overpaid: '超合同付款' })[value] || value || '—'
+export const paymentStatusLabel = value => ({ unpaid: '未付款', partial: '部分付款', paid: '已付清', overpaid: '超额付款' })[value] || value || '—'
 export const paymentStatusType = value => ({ unpaid: 'info', partial: 'warning', paid: 'success', overpaid: 'danger' })[value] || 'info'
 export const positivePaymentId = value => /^\d+$/.test(String(value || '')) && Number.isSafeInteger(Number(value)) && Number(value) > 0 ? Number(value) : null
 export const purchaseLinkKey = row => `${Number(row.purchase_order_id)}:${Number(row.payment_plan_id) || 0}`
@@ -40,7 +40,7 @@ export function serializePaymentPlan(items) {
   }))
 }
 
-export function validatePaymentPlan(items, contractAmount) {
+export function validatePaymentPlan(items, paymentAmount) {
   if (items.length > 100) return '每张采购订单最多安排 100 期付款'
   let total = 0
   for (const row of items) {
@@ -49,8 +49,8 @@ export function validatePaymentPlan(items, contractAmount) {
     if (amount === null || amount <= 0) return '每期安排金额必须大于 0，且最多 4 位小数'
     total += amount
   }
-  const contract = amountUnits(contractAmount)
-  return contract !== null && total > contract ? '付款安排合计不能超过合同总额' : ''
+  const payment = amountUnits(paymentAmount)
+  return payment !== null && total > payment ? '付款安排合计不能超过当前付款总额' : ''
 }
 
 export function serializePurchaseOrderAllocations(rows) {

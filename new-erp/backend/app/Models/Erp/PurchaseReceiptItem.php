@@ -36,6 +36,7 @@ class PurchaseReceiptItem extends PurchaseBaseModel
         'amount_excl_tax' => 'decimal:4',
         'tax_amount_snapshot' => 'decimal:4',
         'amount_incl_tax' => 'decimal:4',
+        'finance_actual_amount' => 'decimal:4',
         'qualified_payable_amount' => 'decimal:4',
         'quality_hold_amount' => 'decimal:4',
         'rejected_claim_amount' => 'decimal:4',
@@ -46,6 +47,11 @@ class PurchaseReceiptItem extends PurchaseBaseModel
         'facts_frozen_at' => 'datetime',
         'expected_arrival_date' => 'date:Y-m-d',
     ];
+    public function effectiveAmount(): string
+    {
+        return (string) ($this->finance_actual_amount ?? $this->amount_incl_tax ?? $this->receipt_cost ?? '0.0000');
+    }
+
     public function receipt() { return $this->belongsTo(PurchaseReceipt::class, 'receipt_id'); }
     public function orderItem() { return $this->belongsTo(PurchaseOrderItem::class, 'order_item_id'); }
     public function item() { return $this->belongsTo(Item::class); }

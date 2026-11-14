@@ -24,6 +24,7 @@ use App\Services\Erp\FinanceDraftDeletionApplicationService;
 use App\Services\Erp\FinanceBusinessSourceResolver;
 use App\Services\Erp\FinanceBusinessSourceQueryService;
 use App\Services\Erp\PurchasePayableQueryService;
+use App\Services\Erp\PurchaseActualAmountApplicationService;
 use App\Services\Erp\FinanceInvoiceQueryService;
 use App\Services\Erp\FinanceInvoiceApplicationService;
 use App\Services\Erp\FinanceCashDocumentApplicationService;
@@ -551,6 +552,26 @@ class FinanceController extends Controller
         return response()->json($service->payables($data, $this->perPage($request)));
     }
 
+    public function previewPurchaseActualAmount(Request $request, int $id, PurchaseActualAmountApplicationService $service)
+    {
+        $user = $this->authorizePermission($request, 'finance.payable.view');
+        return response()->json(['data' => $service->preview($id, $request->validate($service::rules()), $user)]);
+    }
+
+    public function confirmPurchaseActualAmount(Request $request, int $id, PurchaseActualAmountApplicationService $service)
+    {
+        $user = $this->authorizePermission($request, 'finance.payment.confirm');
+        return response()->json(['message' => '本行最终实际金额已确认，应付与库存成本已同步。',
+            'data' => $service->apply($id, $request->validate($service::rules(true)), $user)]);
+    }
+
+    public function purchaseActualAmountHistory(Request $request, int $id, PurchaseActualAmountApplicationService $service)
+    {
+        $user = $this->authorizePermission($request, 'finance.payable.view');
+        $data = $request->validate(['page' => 'nullable|integer|min:1', 'per_page' => 'nullable|integer|min:1|max:100']);
+        return response()->json($service->history($id, (int) ($data['per_page'] ?? 10), $user));
+    }
+
     public function supplierLedgers(Request $request, PurchasePayableQueryService $service)
     {
         $this->authorizePermission($request, 'finance.supplier-ledger.view');
@@ -647,8 +668,8 @@ class FinanceController extends Controller
             'amount_excl_tax' => ['required', 'regex:/^\d+(\.\d{1,4})?$/'],
             'tax_amount' => ['required', 'regex:/^\d+(\.\d{1,4})?$/'],
             'amount_incl_tax' => ['required', 'regex:/^\d+(\.\d{1,4})?$/'],
-            'tax_detail' => 'nullable|array|max:50', 'tax_detail.*.tax_rate' => 'nullable|numeric|min:0|max:100',
-            'tax_detail.*.amount_excl_tax' => 'nullable|numeric|min:0', 'tax_detail.*.tax_amount' => 'nullable|numeric|min:0',
+            'tax_detail' => 'nullable|array|max:50', 'tax_detail.*' => 'array', 'tax_detail.*.tax_rate' => 'nullable|numeric|min:0|max:100',
+            'tax_detail.*.amount_excl_tax' => ['nullable', 'regex:/^\d+(\.\d{1,4})?$/'], 'tax_detail.*.tax_amount' => ['nullable', 'regex:/^\d+(\.\d{1,4})?$/'],
             'remark' => 'nullable|string|max:200',
         ]);
         return response()->json(['data' => $service->createRedInvoice($id, $data, $user->legacy_id)], 201);
@@ -660,6 +681,8 @@ class FinanceController extends Controller
         $data = $request->validate([
             'reservation_token' => 'required|string|max:100', 'creation_session_id' => 'required|uuid', 'invoice_no' => 'nullable|string|max:120', 'invoice_code' => 'nullable|string|max:80', 'invoice_type' => 'required|string|max:40', 'red_date' => 'required|date', 'red_scope' => 'required|in:full,partial', 'red_reason' => 'required|string|max:255',
             'amount_excl_tax' => ['required', 'regex:/^\d+(\.\d{1,4})?$/'], 'tax_amount' => ['required', 'regex:/^\d+(\.\d{1,4})?$/'], 'amount_incl_tax' => ['required', 'regex:/^\d+(\.\d{1,4})?$/'], 'tax_detail' => 'nullable|array|max:50', 'remark' => 'nullable|string|max:200',
+            'tax_detail.*' => 'array', 'tax_detail.*.tax_rate' => 'nullable|numeric|min:0|max:100',
+            'tax_detail.*.amount_excl_tax' => ['nullable', 'regex:/^\d+(\.\d{1,4})?$/'], 'tax_detail.*.tax_amount' => ['nullable', 'regex:/^\d+(\.\d{1,4})?$/'],
         ]);
         return response()->json(['data' => $service->createRedInvoiceDraft($id, $data, $user->legacy_id)], 201);
     }

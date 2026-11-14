@@ -289,6 +289,8 @@
               </template>
             </el-table-column>
 
+            <el-table-column label="物料" min-width="200"><template slot-scope="{ row }"><div>{{ row.item_name || '—' }}</div><div class="text-muted">{{ row.item_code }} {{ row.spec_model }}</div></template></el-table-column>
+
             <money-column label="当前应付" prop="current_payable_amount" strong color-type="dark" />
             <money-column label="未付款" prop="unpaid_amount" strong color-type="danger" />
             <money-column label="已付款" prop="paid_amount" color-type="success" />
@@ -323,12 +325,13 @@
               </template>
             </el-table-column>
 
-            <el-table-column label="操作" width="230" fixed="right">
+            <el-table-column label="操作" width="360" fixed="right">
               <template slot-scope="{ row }">
                 <div class="row-actions">
                   <el-button type="text" size="small" icon="el-icon-view" class="action-btn theme-link" @click="openDetail(row)">查看明细</el-button>
                   <el-button v-if="canPay(row)" type="text" size="small" icon="el-icon-money" class="action-btn success-link" @click="pay(row)">付款</el-button>
                   <el-button v-if="canUsePrepayment(row)" type="text" size="small" icon="el-icon-bank-card" class="action-btn theme-link" @click="usePrepayment(row)">使用预付款</el-button>
+                  <el-button v-if="canViewActualAmount(row)" type="text" size="small" icon="el-icon-edit-outline" class="action-btn theme-link" @click="openActualAmount(row)">{{ $can('finance.payment.confirm') ? '修正实际金额' : '金额记录' }}</el-button>
                 </div>
               </template>
             </el-table-column>
@@ -444,6 +447,8 @@
               <span>应付结算与核销明细</span>
             </div>
             <div class="kv-grid">
+              <div class="kv-item"><span class="kv-label">原到货金额</span><span class="kv-val font-tabular">{{ money(detailRow.original_amount) }}</span></div>
+              <div class="kv-item"><span class="kv-label">当前实际金额</span><span class="kv-val font-tabular">{{ money(detailRow.current_actual_amount) }}</span></div>
               <div class="kv-item"><span class="kv-label">当前应付金额</span><span class="kv-val font-tabular font-bold">{{ money(detailRow.current_payable_amount) }}</span></div>
               <div class="kv-item"><span class="kv-label">已付款金额</span><span class="kv-val font-tabular text-success">{{ money(detailRow.paid_amount) }}</span></div>
               <div class="kv-item"><span class="kv-label">未付款金额</span><span class="kv-val font-tabular text-danger font-bold">{{ money(detailRow.unpaid_amount) }}</span></div>
@@ -471,6 +476,7 @@
 
       <div slot="footer" class="dialog-footer">
         <el-button size="small" @click="detailDialogVisible = false">关闭</el-button>
+        <el-button v-if="detailRow && canViewActualAmount(detailRow)" size="small" icon="el-icon-edit-outline" @click="openActualAmount(detailRow)">{{ $can('finance.payment.confirm') ? '修正实际金额' : '金额记录' }}</el-button>
         <el-button
           v-if="detailRow && canUsePrepayment(detailRow)"
           size="small"
@@ -491,6 +497,7 @@
         </el-button>
       </div>
     </el-dialog>
+    <purchase-actual-amount-dialog v-if="actualAmountSource" :visible.sync="actualAmountVisible" :source="actualAmountSource" @changed="actualAmountChanged" />
   </div>
 </template>
 
@@ -499,6 +506,7 @@ import PagedRecordSelect from '@/components/common/PagedRecordSelect.vue'
 import Vue from 'vue'
 import { listFinancePayables } from '../../../api/erp/finance'
 import FinanceSupplierLedgerList from './FinanceSupplierLedgerList.vue'
+import PurchaseActualAmountDialog from '@/components/finance/PurchaseActualAmountDialog.vue'
 
 const blankFilters = () => ({
   supplier_id: null,
@@ -515,7 +523,7 @@ Vue.component('money-column', {
 })
 
 export default {
-  components: { PagedRecordSelect, FinanceSupplierLedgerList },
+  components: { PagedRecordSelect, FinanceSupplierLedgerList, PurchaseActualAmountDialog },
   data: () => ({
     rows: [],
     suppliers: [],
@@ -531,6 +539,8 @@ export default {
     requestId: 0,
     detailDialogVisible: false,
     detailRow: null,
+    actualAmountVisible: false,
+    actualAmountSource: null,
   }),
   computed: {
     sourceFilterText() {
@@ -669,6 +679,25 @@ export default {
     },
     canPay(row) {
       return this.$can('finance.payment.create') && this.$can('finance.allocation.create') && this.$can('finance.view') && Number(row.unpaid_amount) > 0
+    },
+    canViewActualAmount(row) {
+      return this.canViewDocuments && Number(row.id) > 0 && Number(row.receipt_item_id) > 0
+        && row.source_type === 'purchase_receipt_qualified' && row.source_document_type === 'purchase_receipt'
+    },
+    openActualAmount(row) {
+      if (!this.canViewActualAmount(row)) return
+      this.detailDialogVisible = false
+      this.actualAmountSource = { ...row }
+      this.actualAmountVisible = true
+    },
+    async actualAmountChanged(result) {
+      if (this.detailRow && Number(this.detailRow.id) === Number(result.source_id)) {
+        this.detailRow = { ...this.detailRow, original_amount: result.original_amount, current_actual_amount: result.current_actual_amount,
+          finance_actual_amount: result.finance_actual_amount, current_payable_amount: result.current_payable_amount }
+      }
+      await this.load()
+      const current = this.rows.find(row => Number(row.id) === Number(result.source_id))
+      if (current && this.detailRow && Number(this.detailRow.id) === Number(current.id)) this.detailRow = { ...current }
     },
     canUsePrepayment(row) {
       return this.$can('finance.allocation.create') && this.$can('finance.view') && Number(row.unpaid_amount) > 0

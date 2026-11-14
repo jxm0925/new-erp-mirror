@@ -1,60 +1,85 @@
 <template>
   <section class="purchase-form-page">
-    <div class="page-head">
+    <header class="page-head">
       <div class="head-left">
         <el-button size="small" icon="el-icon-arrow-left" circle @click="$router.back()" />
         <div class="head-text">
           <div class="title-row">
             <h1>{{ title }}</h1>
+            <el-tag size="mini" :type="currentStatusTag" effect="light">{{ currentStatusLabel }}</el-tag>
             <el-tag size="mini" :type="form.management_scope === 'office' ? 'info' : 'success'">{{ scopeLabel(form.management_scope) }}</el-tag>
-            <el-tag size="mini" type="success">{{ type === 'request' ? '采购需求' : type === 'plan' ? '采购计划' : type === 'order' ? '采购订单' : '到货单' }}</el-tag>
+            <span class="doc-no-pill" :title="currentDocumentNo">{{ currentDocumentNo }}</span>
             <el-tag v-if="$route.params.id" size="mini" type="info">ID: {{ $route.params.id }}</el-tag>
           </div>
         </div>
       </div>
+
+      <div class="purchase-flow-steps" aria-label="采购业务流程">
+        <template v-for="(step, idx) in flowSteps">
+          <div
+            :key="step.key"
+            :class="['flow-step-item', { 'is-active': idx === activeFlowIndex, 'is-done': idx < activeFlowIndex }]"
+          >
+            <span class="flow-step-dot">
+              <i v-if="idx < activeFlowIndex" class="el-icon-check" />
+              <span v-else>{{ idx + 1 }}</span>
+            </span>
+            <span class="flow-step-label">{{ step.label }}</span>
+          </div>
+          <i v-if="idx < flowSteps.length - 1" :key="step.key + '-sep'" class="el-icon-arrow-right flow-step-arrow" />
+        </template>
+      </div>
+
       <div class="head-actions">
         <el-button size="small" @click="$router.back()">取消返回</el-button>
         <el-button size="small" :disabled="!!scopeIssue || scopeChanging || saving" @click="save(false)">保存草稿</el-button>
-        <el-button size="small" type="success" icon="el-icon-check" :disabled="!!scopeIssue || scopeChanging || saving" @click="save(true)">{{ type==='request' ? '确认需求' : type==='receipt' ? '保存' : type==='order' ? '提交订单' : '提交审核' }}</el-button>
+        <el-button size="small" type="success" icon="el-icon-check" :disabled="!!scopeIssue || scopeChanging || saving" @click="save(true)">{{ submitActionText }}</el-button>
       </div>
-    </div>
+    </header>
 
-    <el-alert v-if="scopeIssue" :title="scopeIssue" type="warning" :closable="false" show-icon />
+    <el-alert v-if="scopeIssue" :title="scopeIssue" type="warning" :closable="false" show-icon class="form-alert-banner" />
 
     <!-- 全局统一页面提示条 (对齐主数据中心规范) -->
     <div v-if="type==='request' && form.id && form.request_status!=='draft'" class="erp-page-tip">
       <i class="el-icon-info" />
       <span>此需求尚未转计划。保存修改后回到草稿，需要重新确认后才能转采购计划。</span>
     </div>
+    <div v-if="type==='order' && form.plan_id" class="erp-page-tip">
+      <i class="el-icon-info" />
+      <span>本采购订单由采购计划拆单生成：管理类型、供应商、物料及数量受计划约束已锁定，可调整交付口径、单价与整单优惠。</span>
+    </div>
     <div v-if="type==='receipt'" class="erp-page-tip">
       <i class="el-icon-info" />
-      <span>当前确认仅生成待过账库存记录，不直接更新正式库存余额。正式库存过账由库存模块完成。</span>
+      <span>当前确认仅生成待过账库存记录，不直接更新正式库存余额。正式库存过账由库存模块完成。<template v-if="form.order_id">关联采购订单的到货金额保存时按订单剩余成交金额分摊。</template></span>
     </div>
 
     <div :class="['form-layout', {'request-layout': ['request', 'plan'].includes(type)}]">
       <section class="form-card basic-info-card">
-        <div class="card-head-title">
-          <span class="bar-accent"></span>
-          <h3>基础信息</h3>
+        <div class="card-head-row">
+          <div class="card-head-title">
+            <span class="bar-accent"></span>
+            <h3>基础信息</h3>
+          </div>
+          <span class="card-head-hint">带 * 为必填项，系统单号在保存前自动预占</span>
         </div>
         <!-- 必填项带星号，离开字段即校验，不用等到保存才提示。 -->
-        <el-form ref="headerForm" :model="form" :rules="headerRules" label-width="96px" size="small">
-          <el-form-item label="管理类型" required>
-            <el-select :value="form.management_scope" :disabled="scopeLocked" placeholder="请选择管理类型" style="width:100%" @change="changeManagementScope">
-              <el-option v-for="scope in scopeOptions" :key="scope.value" :label="scope.label" :value="scope.value" />
-            </el-select>
-          </el-form-item>
+        <el-form ref="headerForm" :model="form" :rules="headerRules" label-position="top" size="small" class="compact-header-form">
           <div class="grid-4" v-if="type==='request'">
             <el-form-item label="需求单号">
               <el-input v-model="form.request_no" disabled class="erp-system-number" placeholder="系统预占生成">
                 <template slot="append">系统预占</template>
               </el-input>
             </el-form-item>
+            <el-form-item label="管理类型" required>
+              <el-select :value="form.management_scope" :disabled="scopeLocked" placeholder="请选择管理类型" @change="changeManagementScope">
+                <el-option v-for="scope in scopeOptions" :key="scope.value" :label="scope.label" :value="scope.value" />
+              </el-select>
+            </el-form-item>
             <el-form-item label="需求日期" required>
-              <el-date-picker v-model="form.request_date" value-format="yyyy-MM-dd" placeholder="选择需求日期" style="width: 100%" />
+              <el-date-picker v-model="form.request_date" value-format="yyyy-MM-dd" placeholder="选择需求日期" />
             </el-form-item>
             <el-form-item label="来源类型">
-              <el-select v-model="form.source_type" :disabled="Boolean(form.id)" placeholder="请选择来源类型" style="width: 100%" @change="changeRequestSource">
+              <el-select v-model="form.source_type" :disabled="Boolean(form.id)" placeholder="请选择来源类型" @change="changeRequestSource">
                 <el-option label="手工创建" value="manual" />
                 <el-option v-if="form.management_scope === 'factory'" label="生产需求" value="production" />
                 <el-option v-if="form.management_scope === 'factory'" label="销售订单" value="sales" />
@@ -62,18 +87,36 @@
                 <el-option v-if="form.source_type === 'inventory_alert'" label="库存预警" value="inventory_alert" />
               </el-select>
             </el-form-item>
-            <el-form-item label="单据状态">
-              <el-tag size="small" :type="form.request_status === 'confirmed' ? 'success' : 'info'">
-                {{ form.id ? ({ draft: '草稿', confirmed: '已确认', closed: '已关闭', cancelled: '已取消', partially_planned: '部分转计划', planned: '已转计划' }[form.request_status] || form.request_status) : '草稿' }}
-              </el-tag>
-            </el-form-item>
             <el-form-item :label="form.source_type === 'sales' ? '销售订单' : '来源单号'" prop="source_id" :required="form.source_type === 'sales' && !legacySalesSource">
               <paged-record-select v-if="form.source_type === 'sales'" v-model="form.source_id" :request="listPurchaseSalesCandidates" :columns="salesCandidateColumns" :label="salesCandidateLabel" title="选择销售订单" placeholder="选择销售订单" :disabled="saving" @select="selectSourceSalesOrder" />
               <paged-record-select v-else-if="form.source_type === 'production' && !form.id" v-model="form.source_id" :request="listPurchaseWorkOrderCandidates" :columns="workOrderCandidateColumns" :label="workOrderCandidateLabel" title="选择生产工单" placeholder="选择已有生产工单" @select="selectSourceWorkOrder" />
               <el-input v-else v-model="form.source_no" :disabled="form.source_type !== 'manual'" placeholder="选填，关联外部单号" />
             </el-form-item>
-            <el-form-item label="备注说明" class="remark-span-3">
-              <el-input v-model="form.remark" placeholder="选填，请输入需求补充说明或业务要求..." />
+            <el-form-item>
+              <template slot="label">
+                <span class="label-action-row">
+                  <span>默认目标仓库</span>
+                  <button v-if="defaultWarehouseId && form.items.length" type="button" class="field-sync-link" @click="syncDefaultWarehouseToLines">同步到明细</button>
+                </span>
+              </template>
+              <paged-record-select v-model="defaultWarehouseId" clearable placeholder="选填，用于新增行默认仓库" entity="warehouses" :params="{ management_scope: form.management_scope, statuses: ['enabled', 'active'] }" :selected-rows.sync="warehouses" title="选择默认目标仓库" @change="onHeaderDefaultWarehouseChange" />
+            </el-form-item>
+            <el-form-item>
+              <template slot="label">
+                <span class="label-action-row">
+                  <span>默认期望交期</span>
+                  <button v-if="defaultExpectedDate && form.items.length" type="button" class="field-sync-link" @click="syncDefaultDateToLines">同步到明细</button>
+                </span>
+              </template>
+              <el-date-picker v-model="defaultExpectedDate" value-format="yyyy-MM-dd" placeholder="选填，用于新增行默认交期" @change="onHeaderDefaultDateChange" />
+            </el-form-item>
+            <el-form-item label="单据状态">
+              <div class="readonly-status-box">
+                <el-tag size="small" :type="currentStatusTag" effect="light">{{ currentStatusLabel }}</el-tag>
+              </div>
+            </el-form-item>
+            <el-form-item label="备注说明" class="remark-span-4">
+              <el-input v-model="form.remark" placeholder="选填，请输入需求补充说明、技术规格要求或交期备注..." />
             </el-form-item>
           </div>
           <div class="grid-4" v-if="type==='plan'">
@@ -82,42 +125,83 @@
                 <template slot="append">系统预占</template>
               </el-input>
             </el-form-item>
+            <el-form-item label="管理类型" required>
+              <el-select :value="form.management_scope" :disabled="scopeLocked" placeholder="请选择管理类型" @change="changeManagementScope">
+                <el-option v-for="scope in scopeOptions" :key="scope.value" :label="scope.label" :value="scope.value" />
+              </el-select>
+            </el-form-item>
             <el-form-item label="计划日期" required>
-              <el-date-picker v-model="form.plan_date" value-format="yyyy-MM-dd" placeholder="选择计划日期" style="width: 100%" />
+              <el-date-picker v-model="form.plan_date" value-format="yyyy-MM-dd" placeholder="选择计划日期" />
             </el-form-item>
             <el-form-item label="需求来源">
               <el-input :value="planSourceText" disabled placeholder="手工创建" />
             </el-form-item>
-            <el-form-item label="单据状态">
-              <el-tag size="small" :type="planStatusTag">
-                {{ planStatusLabel }}
-              </el-tag>
+            <el-form-item>
+              <template slot="label">
+                <span class="label-action-row">
+                  <span>默认期望交期</span>
+                  <button v-if="defaultExpectedDate && form.items.length" type="button" class="field-sync-link" @click="syncDefaultDateToLines">同步到明细</button>
+                </span>
+              </template>
+              <el-date-picker v-model="defaultExpectedDate" value-format="yyyy-MM-dd" placeholder="选填，用于新增行默认交期" @change="onHeaderDefaultDateChange" />
             </el-form-item>
-            <el-form-item label="备注说明" class="remark-span-4">
-              <el-input v-model="form.remark" placeholder="选填，请输入计划补充说明或业务要求..." />
+            <el-form-item label="单据状态">
+              <div class="readonly-status-box">
+                <el-tag size="small" :type="planStatusTag" effect="light">{{ planStatusLabel }}</el-tag>
+              </div>
+            </el-form-item>
+            <el-form-item label="备注说明" class="remark-span-2">
+              <el-input v-model="form.remark" placeholder="选填，请输入计划补充说明、询价与拆单要求..." />
             </el-form-item>
           </div>
           <div class="grid-3" v-if="type==='order'">
             <el-form-item label="采购订单号"><el-input v-model="form.purchase_order_no" disabled class="erp-system-number" placeholder="系统预占生成"><template slot="append">系统预占</template></el-input></el-form-item>
+            <el-form-item label="管理类型" required>
+              <el-select :value="form.management_scope" :disabled="scopeLocked" placeholder="请选择管理类型" @change="changeManagementScope">
+                <el-option v-for="scope in scopeOptions" :key="scope.value" :label="scope.label" :value="scope.value" />
+              </el-select>
+            </el-form-item>
             <el-form-item label="供应商" prop="supplier_id"><paged-record-select v-model="form.supplier_id" :disabled="type==='order' && Boolean(form.plan_id)" placeholder="请选择供应商" style="width: 100%" entity="suppliers" :params="{ purchase_available: 1 }" :selected-rows.sync="suppliers" title="选择供应商" /></el-form-item>
             <el-form-item label="订单日期" prop="order_date"><el-date-picker v-model="form.order_date" value-format="yyyy-MM-dd" style="width: 100%" /></el-form-item>
-            <el-form-item label="预计到货" prop="expected_arrival_date"><el-date-picker v-model="form.expected_arrival_date" value-format="yyyy-MM-dd" placeholder="提交订单前必填" style="width: 100%" /></el-form-item>
-            <el-form-item label="币种"><el-input v-model="form.currency" /></el-form-item>
+            <el-form-item prop="expected_arrival_date">
+              <template slot="label">
+                <span class="label-action-row">
+                  <span>预计到货</span>
+                  <button v-if="form.expected_arrival_date && form.items.length" type="button" class="field-sync-link" @click="syncOrderArrivalDateToLines">同步到明细</button>
+                </span>
+              </template>
+              <el-date-picker v-model="form.expected_arrival_date" value-format="yyyy-MM-dd" placeholder="提交订单前必填" style="width: 100%" />
+            </el-form-item>
             <el-form-item label="税率口径"><el-select v-model="form.tax_mode" style="width: 100%"><el-option label="含税" value="tax_included" /><el-option label="未税" value="tax_excluded" /></el-select></el-form-item>
-            <el-form-item label="结算方式"><el-input v-model="form.settlement_method" /></el-form-item>
-            <el-form-item label="交付方式"><el-input v-model="form.delivery_method" /></el-form-item>
-            <el-form-item label="运费"><el-input-number v-model="form.freight_amount" :min="0" style="width: 100%" /></el-form-item>
+            <el-form-item label="币种"><el-input v-model="form.currency" placeholder="默认 CNY" /></el-form-item>
+            <el-form-item label="结算方式"><el-input v-model="form.settlement_method" placeholder="如：月结30天、货到付款" /></el-form-item>
+            <el-form-item label="交付方式"><el-input v-model="form.delivery_method" placeholder="如：送货上门、物流自提" /></el-form-item>
+            <el-form-item label="运费"><el-input-number v-model="form.freight_amount" :min="0" :precision="2" controls-position="right" style="width: 100%" /></el-form-item>
+            <el-form-item :label="form.tax_mode === 'tax_excluded' ? '整单优惠（未税）' : '整单优惠（含税）'"><el-input-number v-model="form.discount_amount" :min="0" :max="subtotalAmount" :precision="2" controls-position="right" style="width: 100%" /></el-form-item>
+            <el-form-item label="单据状态">
+              <div class="readonly-status-box">
+                <el-tag size="small" :type="currentStatusTag" effect="light">{{ currentStatusLabel }}</el-tag>
+              </div>
+            </el-form-item>
+            <el-form-item label="备注说明" class="remark-span-3">
+              <el-input v-model="form.remark" placeholder="选填，请输入合同条款、对账要求或物流备注..." />
+            </el-form-item>
           </div>
           <div class="grid-3" v-if="type==='receipt'">
             <el-form-item label="到货单号"><el-input v-model="form.receipt_no" disabled class="erp-system-number" placeholder="系统预占生成"><template slot="append">系统预占</template></el-input></el-form-item>
+            <el-form-item label="管理类型" required>
+              <el-select :value="form.management_scope" :disabled="scopeLocked" placeholder="请选择管理类型" @change="changeManagementScope">
+                <el-option v-for="scope in scopeOptions" :key="scope.value" :label="scope.label" :value="scope.value" />
+              </el-select>
+            </el-form-item>
             <el-form-item label="供应商" prop="supplier_id"><paged-record-select v-model="form.supplier_id" placeholder="请选择供应商" style="width: 100%" entity="suppliers" :params="{ purchase_available: 1 }" :selected-rows.sync="suppliers" title="选择供应商" /></el-form-item>
             <el-form-item label="到货日期" prop="receipt_date"><el-date-picker v-model="form.receipt_date" value-format="yyyy-MM-dd" style="width: 100%" /></el-form-item>
-            <el-form-item label="确认状态"><el-tag size="small" type="info">草稿</el-tag></el-form-item>
-            <el-form-item label="库存过账状态"><el-tag size="small" type="warning">待库存过账</el-tag></el-form-item>
+            <el-form-item label="确认状态"><div class="readonly-status-box"><el-tag size="small" type="info">草稿</el-tag></div></el-form-item>
+            <el-form-item label="库存过账状态"><div class="readonly-status-box"><el-tag size="small" type="warning">待库存过账</el-tag></div></el-form-item>
+            <el-form-item label="备注说明" class="remark-span-3">
+              <el-input v-model="form.remark" type="textarea" :rows="2" placeholder="请输入需求补充说明或业务要求..." />
+            </el-form-item>
           </div>
-          <el-form-item v-if="!['request', 'plan'].includes(type)" label="备注说明">
-            <el-input v-model="form.remark" type="textarea" :rows="2" placeholder="请输入需求补充说明或业务要求..." />
-          </el-form-item>
         </el-form>
       </section>
 
@@ -136,6 +220,30 @@
               <el-button v-if="form.items.length > 0" size="small" type="text" class="danger-link" @click="clearAllLines">清空明细</el-button>
             </div>
           </div>
+
+          <div class="batch-toolbar-strip">
+            <div class="batch-strip-left">
+              <span class="batch-check-indicator">
+                <i :class="selectedRequestRows.length ? 'el-icon-success text-green' : 'el-icon-info'" />
+                <template v-if="selectedRequestRows.length">已勾选 <strong>{{ selectedRequestRows.length }}</strong> 行</template>
+                <template v-else>勾选左侧复选框后可批量设置交期、仓库与优先级</template>
+              </span>
+            </div>
+            <div class="batch-strip-controls">
+              <el-button size="mini" plain icon="el-icon-date" :disabled="!selectedRequestRows.length" @click="batchSetDeliveryDate">批量设交期</el-button>
+              <paged-record-select :value="null" size="mini" :disabled="!selectedRequestRows.length" entity="warehouses" :params="{ management_scope: form.management_scope, statuses: ['enabled', 'active'] }" :selected-rows.sync="warehouses" title="批量设仓库" placeholder="批量设仓库" :clearable="false" style="width:148px" @change="batchSetWarehouse" />
+              <div class="batch-priority-group">
+                <el-select v-model="batchPriorityTemp" size="mini" :disabled="!selectedRequestRows.length" placeholder="优先级" style="width:88px">
+                  <el-option label="紧急" value="urgent" />
+                  <el-option label="高" value="high" />
+                  <el-option label="中" value="normal" />
+                  <el-option label="低" value="low" />
+                </el-select>
+                <el-button size="mini" plain :disabled="!selectedRequestRows.length" @click="batchSetPriority(batchPriorityTemp)">应用优先级</el-button>
+              </div>
+            </div>
+          </div>
+
           <el-table
             :data="form.items"
             size="small"
@@ -146,7 +254,7 @@
           >
             <el-table-column type="selection" width="48" align="center" />
             <el-table-column type="index" label="#" width="45" align="center" />
-            <el-table-column label="物料信息" min-width="220">
+            <el-table-column label="物料信息" min-width="225">
               <template slot-scope="{row}">
                 <div v-if="row.item_id" class="item-cell-box">
                   <div class="item-cell-info">
@@ -170,24 +278,24 @@
                 />
               </template>
             </el-table-column>
-            <el-table-column label="采购数量" width="125">
+            <el-table-column label="采购数量" width="128">
               <template slot-scope="{row}">
                 <el-input-number :key="`${row.item_id || 'empty'}:${row.purchase_unit_id || 'unit'}`" v-model="row.purchase_quantity" :min="purchaseStep(row)" :step="purchaseStep(row)" :disabled="!row.item_id" @change="refreshPlanning(row)" size="small" controls-position="right" style="width: 100%" />
               </template>
             </el-table-column>
-            <el-table-column label="采购单位" width="175">
+            <el-table-column label="采购单位" width="178">
               <template slot-scope="{row}">
                 <paged-record-select v-model="row.purchase_unit_id" size="small" placeholder="选择采购单位" :disabled="!row.item_id" style="width: 100%" @change="refreshPlanning(row)" :key="'purchase-unit-' + row.item_id" :params="{ item_id: row.item_id }" :request="params => purchaseConversions(row, params)" value-key="purchase_unit_id" :selected-rows.sync="row._conversionOptions" :local-rows="localConversionOptions(row)" :label="purchaseOptionLabel" :columns="[{ prop: 'purchase_unit.unit_name', label: '采购单位' }, { prop: 'factor', label: '换算比例' }, { prop: 'base_unit.unit_name', label: '基本单位' }]" title="选择采购单位" />
               </template>
             </el-table-column>
-            <el-table-column label="折合库存" width="125">
+            <el-table-column label="折合库存" width="136">
               <template slot-scope="{row}">
                 <div v-if="row.item_id" class="stock-conversion-cell">
                   <span v-if="row._planningPending" class="planning-calc-hint"><i class="el-icon-loading" /> 计算中</span>
                   <!-- 换算问题直接写在格内（含建议数量），不用再悬停查看。 -->
                   <span v-else-if="row._planningError" class="planning-error-inline"><i class="el-icon-warning-outline" /> {{ row._planningError }}</span>
-                  <div v-else class="stock-qty-display">
-                    <strong class="stock-num highlight-green">{{ plannedBaseQty(row) }}</strong>
+                  <div v-else class="stock-qty-badge">
+                    <strong class="stock-num">{{ plannedBaseQty(row) }}</strong>
                     <span class="stock-unit-label">{{ plannedBaseUnit(row) }}</span>
                     <el-tooltip
                       v-if="isConvertedUnit(row)"
@@ -211,14 +319,17 @@
                 <paged-record-select v-model="row.warehouse_id" clearable placeholder="请选择仓库" size="small" style="width: 100%" entity="warehouses" :params="{ management_scope: form.management_scope, statuses: ['enabled', 'active'] }" :selected-rows.sync="warehouses" title="选择仓库" />
               </template>
             </el-table-column>
-            <el-table-column label="优先级" width="105" align="center">
+            <el-table-column label="优先级" width="118" align="center">
               <template slot-scope="{row}">
-                <el-select v-model="row.priority" size="small" style="width: 100%">
-                  <el-option label="紧急" value="urgent" />
-                  <el-option label="高" value="high" />
-                  <el-option label="中" value="normal" />
-                  <el-option label="低" value="low" />
-                </el-select>
+                <div :class="['priority-select-wrap', 'priority-' + (row.priority || 'normal')]">
+                  <span class="priority-dot"></span>
+                  <el-select v-model="row.priority" size="small" style="width: 100%">
+                    <el-option label="紧急" value="urgent" />
+                    <el-option label="高" value="high" />
+                    <el-option label="中" value="normal" />
+                    <el-option label="低" value="low" />
+                  </el-select>
+                </div>
               </template>
             </el-table-column>
             <el-table-column label="备注" min-width="140">
@@ -226,21 +337,19 @@
                 <el-input v-model="row.remark" placeholder="选填行备注" size="small" />
               </template>
             </el-table-column>
-            <el-table-column label="操作" width="70" align="center">
+            <el-table-column label="操作" width="76" align="center">
               <template slot-scope="{$index}">
-                <el-button type="text" class="danger-link" icon="el-icon-delete" @click="form.items.splice($index,1)">删除</el-button>
+                <el-button type="text" class="danger-link" icon="el-icon-delete" @click="removeRequestLine($index)">删除</el-button>
               </template>
             </el-table-column>
           </el-table>
 
-          <!-- 需求表格底部统计与快捷栏 -->
+          <!-- 需求表格底部统计栏 -->
           <div class="table-summary-bar">
-            <div class="batch-quick-tools" v-if="selectedRequestRows.length">
-              <span class="selected-hint">已勾选 <strong>{{ selectedRequestRows.length }}</strong> 行：</span>
-              <el-button size="mini" plain icon="el-icon-date" @click="batchSetDeliveryDate">批量设交期</el-button>
-              <paged-record-select :value="null" entity="warehouses" :params="{ management_scope: form.management_scope, statuses: ['enabled', 'active'] }" :selected-rows.sync="warehouses" title="批量设仓库" placeholder="批量设仓库" :clearable="false" style="width:150px" @change="batchSetWarehouse" />
+            <div class="summary-left-tip">
+              <i class="el-icon-circle-check text-green" />
+              <span>已填有效物料行：<strong>{{ form.items.filter(i => i.item_id).length }}</strong> / {{ form.items.length }} 行</span>
             </div>
-            <div v-else></div>
             <div class="summary-metrics">
               <div class="metric-item">
                 <span class="metric-label">物料品种：</span>
@@ -264,13 +373,31 @@
               <span class="bar-accent"></span>
               <h3>计划物料明细及供应商拆分</h3>
               <el-tag size="mini" type="success">共 {{ form.items.length }} 行物料</el-tag>
+              <el-tag v-if="unallocatedSupplierItemsCount > 0" size="mini" type="warning" effect="plain">{{ unallocatedSupplierItemsCount }} 项未分配供应商</el-tag>
+              <el-tag v-else-if="form.items.some(i => i.item_id)" size="mini" type="success" effect="plain">供应商已全部分配</el-tag>
             </div>
             <div class="line-actions">
               <el-button size="small" type="success" icon="el-icon-plus" @click="openBatchItemPicker">选择物料 (多选)</el-button>
               <el-button size="small" icon="el-icon-circle-plus-outline" @click="addPlanItem">添加空白物料</el-button>
               <el-button size="small" type="danger" plain icon="el-icon-delete" :disabled="!selectedPlanRows.length" @click="removeSelectedPlanLines">批量删除</el-button>
-
               <el-button v-if="form.items.length > 0" size="small" type="text" class="danger-link" @click="clearAllPlanLines">清空明细</el-button>
+            </div>
+          </div>
+
+          <div class="batch-toolbar-strip">
+            <div class="batch-strip-left">
+              <span class="batch-check-indicator">
+                <i :class="selectedPlanRows.length ? 'el-icon-success text-green' : 'el-icon-info'" />
+                <template v-if="selectedPlanRows.length">已勾选 <strong>{{ selectedPlanRows.length }}</strong> 行</template>
+                <template v-else>勾选明细可批量设交期；点击右侧卡片可按供应商拆分数量与报价</template>
+              </span>
+            </div>
+            <div class="batch-strip-controls">
+              <el-button size="mini" plain icon="el-icon-date" :disabled="!selectedPlanRows.length" @click="batchSetPlanDeliveryDate">批量设交期</el-button>
+              <span class="plan-balance-pill" :class="planAllocationComplete ? 'is-complete' : 'is-pending'">
+                <i :class="planAllocationComplete ? 'el-icon-circle-check' : 'el-icon-warning-outline'" />
+                {{ planAllocationComplete ? `已全额配平 · 预计 ${expectedOrderCount} 张订单` : `尚有 ${unallocatedPlanItemsCount} 项待配平` }}
+              </span>
             </div>
           </div>
 
@@ -287,7 +414,7 @@
 
             <el-table-column type="selection" width="48" align="center" />
             <el-table-column type="index" label="#" width="45" align="center" />
-            <el-table-column label="物料信息" min-width="210">
+            <el-table-column label="物料信息" min-width="215">
               <template slot-scope="{row}">
                 <div v-if="row.item_id" class="item-cell-box">
                   <div class="item-cell-info">
@@ -311,37 +438,38 @@
                 />
               </template>
             </el-table-column>
-            <el-table-column label="计划采购量" width="125">
+            <el-table-column label="计划采购量" width="128">
               <template slot-scope="{row}">
                 <el-input-number :key="`${row.item_id || 'empty'}:${row.purchase_unit_id || 'unit'}`" v-model="row.purchase_quantity" :min="purchaseStep(row)" :step="purchaseStep(row)" :disabled="!row.item_id" size="small" controls-position="right" style="width: 100%" @change="refreshPlanning(row)" />
               </template>
             </el-table-column>
-            <el-table-column label="采购单位" width="175">
+            <el-table-column label="采购单位" width="178">
               <template slot-scope="{row}">
                 <paged-record-select v-model="row.purchase_unit_id" size="small" placeholder="选择采购单位" :disabled="!row.item_id" style="width: 100%" @change="changePlanUnit(row)" :key="'purchase-unit-' + row.item_id" :params="{ item_id: row.item_id }" :request="params => purchaseConversions(row, params)" value-key="purchase_unit_id" :selected-rows.sync="row._conversionOptions" :local-rows="localConversionOptions(row)" :label="purchaseOptionLabel" :columns="[{ prop: 'purchase_unit.unit_name', label: '采购单位' }, { prop: 'factor', label: '换算比例' }, { prop: 'base_unit.unit_name', label: '基本单位' }]" title="选择采购单位" />
               </template>
             </el-table-column>
-            <el-table-column label="折合库存" width="115">
+            <el-table-column label="折合库存" width="136">
               <template slot-scope="{row}">
                 <div v-if="row.item_id" class="stock-conversion-cell">
                   <span v-if="row._planningPending" class="planning-calc-hint"><i class="el-icon-loading" /> 计算中</span>
                   <span v-else-if="row._planningError" class="planning-error-inline"><i class="el-icon-warning-outline" /> {{ row._planningError }}</span>
-                  <template v-else>
-                    <span class="stock-qty-text">{{ plannedBaseQty(row) }} {{ plannedBaseUnit(row) }}</span>
+                  <div v-else class="stock-qty-badge">
+                    <strong class="stock-num">{{ plannedBaseQty(row) }}</strong>
+                    <span class="stock-unit-label">{{ plannedBaseUnit(row) }}</span>
                     <el-tooltip v-if="isConvertedUnit(row)" :content="conversionFormulaTip(row)" placement="top">
-                      <i class="el-icon-info unit-convert-icon" />
+                      <i class="el-icon-info stock-info-icon" />
                     </el-tooltip>
-                  </template>
+                  </div>
                 </div>
-                <span v-else class="text-muted">--</span>
+                <span v-else class="cell-empty-dash">-</span>
               </template>
             </el-table-column>
-            <el-table-column label="期望交期" width="135">
+            <el-table-column label="期望交期" width="142">
               <template slot-scope="{row}">
                 <el-date-picker v-model="row.expected_date" value-format="yyyy-MM-dd" placeholder="选择交期" size="small" style="width: 100%" />
               </template>
             </el-table-column>
-            <el-table-column label="供应商分配及报价" min-width="280">
+            <el-table-column label="供应商分配及报价" min-width="290">
               <template slot-scope="{row, $index}">
                 <div
                   v-if="hasAllocatedSupplier(row)"
@@ -379,7 +507,7 @@
                       <div class="split-qty-price-pill">
                         <span class="pill-qty">{{ split.purchase_quantity }} {{ planningUnitName(split) }}</span>
                         <span class="pill-dot">·</span>
-                        <span class="pill-price">¥{{ money(split.purchase_unit_price) }}</span>
+                        <span class="pill-price">¥{{ purchasePrice(split.purchase_unit_price) }} · 成交 ¥{{ money(splitAmount(split)) }}</span>
                       </div>
                     </div>
                   </div>
@@ -396,12 +524,12 @@
                 </div>
               </template>
             </el-table-column>
-            <el-table-column label="预计金额" width="115" align="right">
+            <el-table-column label="预计金额" width="118" align="right">
               <template slot-scope="{row}">
                 <strong class="text-money">¥{{ money(lineTotalAmount(row)) }}</strong>
               </template>
             </el-table-column>
-            <el-table-column label="操作" width="130" align="center">
+            <el-table-column label="操作" width="140" align="center">
               <template slot-scope="{row, $index}">
                 <el-button
                   type="text"
@@ -409,20 +537,31 @@
                   :icon="hasAllocatedSupplier(row) ? 'el-icon-setting' : 'el-icon-circle-plus-outline'"
                   @click.stop="openSupplierSplitDialog(row, $index)"
                 >
-                  {{ hasAllocatedSupplier(row) ? '分配供应商' : '分配供应商' }}
+                  {{ hasAllocatedSupplier(row) ? '调整供应商' : '分配供应商' }}
                 </el-button>
-                <el-button type="text" class="danger-link" icon="el-icon-delete" @click="form.items.splice($index, 1)">删除</el-button>
+                <el-button type="text" class="danger-link" icon="el-icon-delete" @click="removePlanItem($index)">删除</el-button>
               </template>
             </el-table-column>
           </el-table>
 
-          <!-- 计划表格底部统计与快捷栏 -->
+          <!-- 计划表格底部统计栏 -->
           <div class="table-summary-bar">
-            <div class="batch-quick-tools" v-if="selectedPlanRows.length">
-              <span class="selected-hint">已勾选 <strong>{{ selectedPlanRows.length }}</strong> 行：</span>
-              <el-button size="mini" plain icon="el-icon-date" @click="batchSetPlanDeliveryDate">批量设交期</el-button>
+            <div class="summary-left-tip">
+              <span class="metric-item">
+                <span class="metric-label">供应商分配：</span>
+                <strong class="metric-val" :class="unallocatedSupplierItemsCount === 0 ? 'text-success' : 'text-danger'">
+                  <i :class="unallocatedSupplierItemsCount === 0 ? 'el-icon-circle-check' : 'el-icon-warning'" />
+                  {{ unallocatedSupplierItemsCount === 0 ? `全部已分配 (${uniqueAllocatedSuppliersCount}家)` : `${unallocatedSupplierItemsCount} 项未分配供应商` }}
+                </strong>
+              </span>
+              <span class="metric-divider">|</span>
+              <span class="metric-item">
+                <span class="metric-label">采购量配平：</span>
+                <strong class="metric-val" :class="planAllocationComplete ? 'text-success' : 'text-warning'">
+                  {{ planAllocationComplete ? '全部已配平' : `${unallocatedPlanItemsCount} 项待配平` }}
+                </strong>
+              </span>
             </div>
-            <div v-else></div>
             <div class="summary-metrics">
               <div class="metric-item">
                 <span class="metric-label">物料品种：</span>
@@ -437,29 +576,34 @@
                 <strong class="metric-val base-stock-val">{{ baseQuantitySummary }}</strong>
               </div>
               <div class="metric-item">
+                <span class="metric-label">预计生成订单：</span>
+                <strong class="metric-val">{{ expectedOrderCount }} 张</strong>
+              </div>
+              <div class="metric-item">
                 <span class="metric-label">预计总金额：</span>
                 <strong class="metric-val highlight-green">¥{{ money(totalAmount) }}</strong>
-              </div>
-              <div class="metric-item">
-                <span class="metric-label">供应商分配：</span>
-                <strong class="metric-val" :class="unallocatedSupplierItemsCount === 0 ? 'text-success' : 'text-danger'">
-                  <i :class="unallocatedSupplierItemsCount === 0 ? 'el-icon-circle-check' : 'el-icon-warning'" />
-                  {{ unallocatedSupplierItemsCount === 0 ? `全部已分配 (${uniqueAllocatedSuppliersCount}家)` : `${unallocatedSupplierItemsCount} 项未分配供应商` }}
-                </strong>
-              </div>
-              <div class="metric-item">
-                <span class="metric-label">采购量配平：</span>
-                <strong class="metric-val" :class="planAllocationComplete ? 'text-success' : 'text-warning'">
-                  {{ planAllocationComplete ? '全部已配平' : `${unallocatedPlanItemsCount} 项待配平` }}
-                </strong>
               </div>
             </div>
           </div>
         </section>
 
-        <section v-if="['order', 'receipt'].includes(type)" class="form-card">
-          <div class="section-title"><div class="title-with-bar"><span class="bar-accent"></span><h3>{{ type==='order' ? '采购明细' : '到货明细' }}</h3></div><el-button type="text" icon="el-icon-plus" :disabled="type==='order' && Boolean(form.plan_id)" @click="addLine">添加明细</el-button></div>
-          <div v-if="type==='order'" class="recommend-card">
+        <section v-if="['order', 'receipt'].includes(type)" class="form-card items-card">
+          <div class="section-title">
+            <div class="title-with-bar">
+              <span class="bar-accent"></span>
+              <h3>{{ type==='order' ? '采购明细' : '到货明细' }}</h3>
+              <el-tag size="mini" type="success">共 {{ form.items.length }} 行物料</el-tag>
+            </div>
+            <div class="line-actions">
+              <template v-if="type==='order'">
+                <el-button size="small" type="success" icon="el-icon-plus" :disabled="Boolean(form.plan_id)" @click="openBatchItemPicker">选择物料 (多选)</el-button>
+                <el-button size="small" icon="el-icon-circle-plus-outline" :disabled="Boolean(form.plan_id)" @click="addLine">添加空白行</el-button>
+                <el-button size="small" plain type="success" icon="el-icon-magic-stick" @click="toggleOrderRecommendPanel">{{ showOrderRecommend ? '收起供应商推荐' : '展开供应商推荐' }}</el-button>
+              </template>
+              <el-button v-else size="small" type="success" icon="el-icon-plus" @click="addLine">添加明细</el-button>
+            </div>
+          </div>
+          <div v-if="type==='order' && showOrderRecommend" class="recommend-card">
             <div class="section-title">
               <div><h3>当前行供应商推荐</h3><span>点击采购明细行后查询；按统一权重综合价格、质量、交付、退货和合作表现</span></div>
               <el-button size="mini" :loading="recommendLoading" @click="loadRecommendations">刷新推荐</el-button>
@@ -473,23 +617,51 @@
               <el-table-column label="操作" width="76"><template slot-scope="{row}"><el-button type="text" size="mini" :disabled="!row.auto_selectable || Boolean(form.plan_id)" @click="chooseRecommendation(row)">选用</el-button></template></el-table-column>
             </el-table>
           </div>
-          <el-table class="purchase-lines-table" :data="form.items" size="mini" border highlight-current-row @row-click="selectLine">
-            <el-table-column label="物料" width="320"><template slot-scope="{row}"><el-input class="item-picker-input" :value="itemName(row.item_id)" readonly><el-button slot="append" icon="el-icon-search" :disabled="type==='order' && Boolean(form.plan_id)" @click.stop="openItemPicker(row)">选择</el-button></el-input></template></el-table-column>
-            <el-table-column :label="type==='order' ? '采购包装数量' : '到货采购数量'" width="126"><template slot-scope="{row}"><el-input v-model.number="row.qty" type="number" min="0.0001" :step="purchaseStep(row)" :disabled="type==='order' && Boolean(form.plan_id)" @input="syncReceiptActualQty(row)" /></template></el-table-column>
+          <el-table class="items-table purchase-lines-table" :data="form.items" size="small" border stripe highlight-current-row @row-click="selectLine">
+            <el-table-column type="index" label="#" width="45" align="center" />
+            <el-table-column label="物料信息" min-width="230">
+              <template slot-scope="{row}">
+                <div v-if="row.item_id" class="item-cell-box">
+                  <div class="item-cell-info">
+                    <span class="code-badge">{{ itemCode(row.item_id) }}</span>
+                    <strong class="item-name-bold" :title="itemNameOnly(row.item_id)">{{ itemNameOnly(row.item_id) }}</strong>
+                  </div>
+                  <el-button v-if="!(type==='order' && Boolean(form.plan_id))" type="text" size="mini" class="theme-link-btn" icon="el-icon-refresh" @click.stop="openItemPicker(row)">更换</el-button>
+                </div>
+                <div v-else class="empty-item-cell">
+                  <el-button size="mini" plain type="success" icon="el-icon-search" :disabled="type==='order' && Boolean(form.plan_id)" @click.stop="openItemPicker(row)">选择物料</el-button>
+                </div>
+              </template>
+            </el-table-column>
+            <el-table-column label="规格型号" min-width="135" show-overflow-tooltip>
+              <template slot-scope="{row}">
+                <span class="item-spec-sub">{{ row.spec_model || itemSpec(row.item_id) || '-' }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column :label="type==='order' ? '采购包装数量' : '到货采购数量'" width="128"><template slot-scope="{row}"><el-input v-model.number="row.qty" size="small" type="number" min="0.0001" :step="purchaseStep(row)" :disabled="type==='order' && Boolean(form.plan_id)" @input="handleOrderQuantityChange(row)" /></template></el-table-column>
             <el-table-column width="200">
               <template slot="header"><span>采购单位 <el-tooltip content="来自当前物料已生效的采购换算；库存基本单位按 1:1 补充" placement="top"><i class="el-icon-question unit-source-help" /></el-tooltip></span></template>
-              <template slot-scope="{row}"><paged-record-select v-if="type==='order'" v-model="row.purchase_unit_id" :disabled="Boolean(form.plan_id)" placeholder="请选择采购单位" no-data-text="当前物料未维护有效采购换算" @change="changePurchaseUnit(row)" :key="'purchase-unit-' + row.item_id" :params="{ item_id: row.item_id }" :request="params => purchaseConversions(row, params)" value-key="purchase_unit_id" :selected-rows.sync="row._conversionOptions" :local-rows="localConversionOptions(row)" :label="purchaseOptionLabel" :columns="[{ prop: 'purchase_unit.unit_name', label: '采购单位' }, { prop: 'factor', label: '换算比例' }, { prop: 'base_unit.unit_name', label: '基本单位' }]" title="选择采购单位" /><span v-else>{{ row.purchase_unit_name_snapshot || conversionUnitName(row) }}</span></template>
+              <template slot-scope="{row}"><paged-record-select v-if="type==='order'" v-model="row.purchase_unit_id" size="small" :disabled="Boolean(form.plan_id)" placeholder="请选择采购单位" no-data-text="当前物料未维护有效采购换算" @change="changePurchaseUnit(row)" :key="'purchase-unit-' + row.item_id" :params="{ item_id: row.item_id }" :request="params => purchaseConversions(row, params)" value-key="purchase_unit_id" :selected-rows.sync="row._conversionOptions" :local-rows="localConversionOptions(row)" :label="purchaseOptionLabel" :columns="[{ prop: 'purchase_unit.unit_name', label: '采购单位' }, { prop: 'factor', label: '换算比例' }, { prop: 'base_unit.unit_name', label: '基本单位' }]" title="选择采购单位" /><span v-else>{{ row.purchase_unit_name_snapshot || conversionUnitName(row) }}</span></template>
             </el-table-column>
-            <el-table-column label="换算因子" width="88" align="right"><template slot-scope="{row}">{{ conversionFactor(row) }}</template></el-table-column>
-            <el-table-column :label="type==='order' ? '计划基本数量' : '标准基本数量'" width="120" align="right"><template slot-scope="{row}">{{ standardBaseQty(row) }} {{ baseUnitName(row) }}</template></el-table-column>
-            <el-table-column v-if="type==='receipt'" label="实际基本数量" width="132"><template slot-scope="{row}"><el-input v-model.number="row.actual_base_qty" type="number" :disabled="!actualConversionAllowed(row)" min="0" step="0.000001" /></template></el-table-column>
+            <el-table-column label="换算因子" width="86" align="right"><template slot-scope="{row}">{{ conversionFactor(row) }}</template></el-table-column>
+            <el-table-column :label="type==='order' ? '计划基本数量' : '标准基本数量'" width="136">
+              <template slot-scope="{row}">
+                <div v-if="row.item_id" class="stock-qty-badge">
+                  <strong class="stock-num">{{ standardBaseQty(row) }}</strong>
+                  <span class="stock-unit-label">{{ baseUnitName(row) }}</span>
+                </div>
+                <span v-else class="cell-empty-dash">-</span>
+              </template>
+            </el-table-column>
+            <el-table-column v-if="type==='receipt'" label="实际基本数量" width="132"><template slot-scope="{row}"><el-input v-model.number="row.actual_base_qty" size="small" type="number" :disabled="!actualConversionAllowed(row)" min="0" step="0.000001" /></template></el-table-column>
             <el-table-column v-if="type==='receipt'" label="差异数量" width="110" align="right"><template slot-scope="{row}">{{ differenceQty(row) }} {{ baseUnitName(row) }}</template></el-table-column>
-            <el-table-column v-if="type==='receipt'" label="差异原因" min-width="150"><template slot-scope="{row}"><el-input v-model="row.difference_reason" :disabled="!hasDifference(row)" :placeholder="hasDifference(row) ? '必填' : '无差异'" /></template></el-table-column>
-            <el-table-column :label="type==='order' ? '包装单价' : '单价'" :width="type==='order' ? 146 : 132"><template slot-scope="{row}"><el-input-number class="line-number-input" v-model="row.unit_price" :min="0" controls-position="right" @change="$set(row, '_priceHint', '')" /><div v-if="row._priceHint" class="price-hint">{{ row._priceHint }}</div></template></el-table-column>
+            <el-table-column v-if="type==='receipt'" label="差异原因" min-width="150"><template slot-scope="{row}"><el-input v-model="row.difference_reason" size="small" :disabled="!hasDifference(row)" :placeholder="hasDifference(row) ? '必填' : '无差异'" /></template></el-table-column>
+            <el-table-column :label="type==='order' ? (form.tax_mode === 'tax_excluded' ? '包装单价（未税）' : '包装单价（含税）') : '单价'" :width="type==='order' ? 168 : 132"><template slot-scope="{row}"><el-input-number class="line-number-input" v-model="row.unit_price" size="small" :min="0" :precision="type==='order' || type==='receipt' ? 8 : undefined" :disabled="type==='receipt' && Boolean(row.order_item_id)" controls-position="right" @change="handleOrderPriceChange(row)" /><div v-if="row._priceHint" class="price-hint">{{ row._priceHint }}</div></template></el-table-column>
+            <el-table-column v-if="type==='order'" :label="form.tax_mode === 'tax_excluded' ? '成交总额（未税）' : '成交总额（含税）'" width="168"><template slot-scope="{row}"><el-input-number class="line-number-input" v-model="row.amount" size="small" :min="0" :precision="2" controls-position="right" @change="handleOrderAmountChange(row)" /></template></el-table-column>
             <el-table-column v-if="type==='order'" label="基本单位单价" width="120" align="right"><template slot-scope="{row}">{{ baseUnitPrice(row) }}</template></el-table-column>
-            <el-table-column v-if="type==='order'" label="税率（%）" width="136"><template slot-scope="{row}"><el-input-number class="line-number-input" v-model="row.tax_rate" :min="0" :max="100" controls-position="right" /></template></el-table-column>
-            <el-table-column v-if="type==='receipt'" label="合格/不合格" width="190"><template slot-scope="{row}"><el-input v-model.number="row.qualified_qty" type="number" min="0" step="0.0001" /><el-input v-model.number="row.unqualified_qty" type="number" min="0" step="0.0001" /></template></el-table-column>
-            <el-table-column v-if="type==='receipt'" label="批次号" width="150"><template slot-scope="{row}"><el-input v-model="row.batch_no" /></template></el-table-column>
+            <el-table-column v-if="type==='order'" label="税率（%）" width="126"><template slot-scope="{row}"><el-input-number class="line-number-input" v-model="row.tax_rate" size="small" :min="0" :max="100" controls-position="right" /></template></el-table-column>
+            <el-table-column v-if="type==='receipt'" label="合格/不合格" width="190"><template slot-scope="{row}"><el-input v-model.number="row.qualified_qty" size="small" type="number" min="0" step="0.0001" /><el-input v-model.number="row.unqualified_qty" size="small" type="number" min="0" step="0.0001" /></template></el-table-column>
+            <el-table-column v-if="type==='receipt'" label="批次号" width="150"><template slot-scope="{row}"><el-input v-model="row.batch_no" size="small" /></template></el-table-column>
             <el-table-column v-if="type==='receipt'" label="设备编号 / 序列号" min-width="330"><template slot-scope="{row}">
               <div v-if="isSerialManaged(row)" class="serial-entry">
                 <div class="serial-entry-tools"><span>{{ serialTrackingMode(row)==='required' ? '必须逐件编号' : '按需逐件编号' }}</span><el-button size="mini" type="success" plain @click.stop="generateLineSerials(row)">{{ serialGenerationButtonText(row) }}</el-button></div>
@@ -503,12 +675,48 @@
               </div>
               <span v-else>无需单件编号</span>
             </template></el-table-column>
-            <el-table-column v-if="type==='receipt'" label="目标仓库" width="150"><template slot-scope="{row}"><paged-record-select v-model="row.warehouse_id" clearable entity="warehouses" :params="{ management_scope: form.management_scope, statuses: ['enabled', 'active'] }" :selected-rows.sync="warehouses" title="选择仓库" /></template></el-table-column>
-            <el-table-column v-if="type==='receipt'" label="目标库位" width="150"><template slot-scope="{row}"><paged-record-select v-model="row.location_id" clearable :disabled="!row.warehouse_id" entity="locations" :params="{ management_scope: form.management_scope, warehouse_id: row.warehouse_id, statuses: ['enabled', 'active'] }" :selected-rows.sync="locations" title="选择库位" /></template></el-table-column>
-            <el-table-column label="预计到货" width="158"><template slot-scope="{row}"><el-date-picker v-model="row.expected_arrival_date" value-format="yyyy-MM-dd" /></template></el-table-column>
-            <el-table-column label="备注" width="147"><template slot-scope="{row}"><el-input v-model="row.remark" /></template></el-table-column>
-            <el-table-column label="操作" width="70"><template slot-scope="{$index}"><el-button type="text" class="danger-link" :disabled="type==='order' && Boolean(form.plan_id)" @click="form.items.splice($index,1)">删除</el-button></template></el-table-column>
+            <el-table-column v-if="type==='receipt'" label="目标仓库" width="150"><template slot-scope="{row}"><paged-record-select v-model="row.warehouse_id" size="small" clearable entity="warehouses" :params="{ management_scope: form.management_scope, statuses: ['enabled', 'active'] }" :selected-rows.sync="warehouses" title="选择仓库" /></template></el-table-column>
+            <el-table-column v-if="type==='receipt'" label="目标库位" width="150"><template slot-scope="{row}"><paged-record-select v-model="row.location_id" size="small" clearable :disabled="!row.warehouse_id" entity="locations" :params="{ management_scope: form.management_scope, warehouse_id: row.warehouse_id, statuses: ['enabled', 'active'] }" :selected-rows.sync="locations" title="选择库位" /></template></el-table-column>
+            <el-table-column label="预计到货" width="156"><template slot-scope="{row}"><el-date-picker v-model="row.expected_arrival_date" size="small" value-format="yyyy-MM-dd" placeholder="选择日期" /></template></el-table-column>
+            <el-table-column label="备注" width="147"><template slot-scope="{row}"><el-input v-model="row.remark" size="small" placeholder="选填备注" /></template></el-table-column>
+            <el-table-column label="操作" :width="type==='order' ? 116 : 76" align="center">
+              <template slot-scope="{$index}">
+                <el-button v-if="type==='order'" type="text" size="mini" class="theme-link-btn" :disabled="Boolean(form.plan_id)" @click.stop="duplicateOrderLine($index)">复制</el-button>
+                <el-button type="text" size="mini" class="danger-link" icon="el-icon-delete" :disabled="type==='order' && Boolean(form.plan_id)" @click.stop="type==='order' ? removeOrderLine($index) : form.items.splice($index,1)">删除</el-button>
+              </template>
+            </el-table-column>
           </el-table>
+
+          <div class="table-summary-bar">
+            <div class="summary-left-tip">
+              <i class="el-icon-circle-check text-green" />
+              <span>物料行数：<strong>{{ form.items.filter(i => i.item_id).length }}</strong> / {{ form.items.length }} 行</span>
+            </div>
+            <div class="summary-metrics">
+              <div class="metric-item">
+                <span class="metric-label">数量汇总：</span>
+                <strong class="metric-val highlight-green">{{ quantitySummary }}</strong>
+              </div>
+              <template v-if="type==='order'">
+                <div class="metric-item">
+                  <span class="metric-label">{{ form.tax_mode === 'tax_excluded' ? '成交总额（未税）：' : '成交总额（含税）：' }}</span>
+                  <strong class="metric-val">¥{{ money(subtotalAmount) }}</strong>
+                </div>
+                <div class="metric-item">
+                  <span class="metric-label">未税金额：</span>
+                  <strong class="metric-val">¥{{ money(untaxedAmount) }}</strong>
+                </div>
+                <div class="metric-item">
+                  <span class="metric-label">税额：</span>
+                  <strong class="metric-val">¥{{ money(taxAmount) }}</strong>
+                </div>
+                <div class="metric-item">
+                  <span class="metric-label">含税金额：</span>
+                  <strong class="metric-val highlight-green">¥{{ money(totalAmount) }}</strong>
+                </div>
+              </template>
+            </div>
+          </div>
         </section>
       </main>
 
@@ -521,6 +729,11 @@
           <dl class="stat-dl">
             <dt>物料行数</dt><dd>{{ form.items.length }} 行</dd>
             <dt>数量汇总</dt><dd class="green-text">{{ quantitySummary }}</dd>
+            <template v-if="type==='order'">
+              <dt>{{ form.tax_mode === 'tax_excluded' ? '成交总额（未税）' : '成交总额（含税）' }}</dt><dd>¥{{ money(subtotalAmount) }}</dd>
+              <dt>整单优惠</dt><dd>¥{{ money(form.discount_amount) }}</dd>
+              <dt>运费</dt><dd>¥{{ money(form.freight_amount) }}</dd>
+            </template>
             <template v-if="type!=='request'">
               <dt>未税金额</dt><dd>¥{{ money(untaxedAmount) }}</dd>
               <dt>税额</dt><dd>¥{{ money(taxAmount) }}</dd>
@@ -677,16 +890,16 @@
                 size="small"
                 controls-position="right"
                 style="width: 100%"
-                @change="refreshPlanning(activeSplitRow, scope.row)"
+                @change="handleDialogSplitQuantityChange(activeSplitRow, scope.row)"
               />
             </template>
           </el-table-column>
-          <el-table-column label="采购单价 (¥) *" width="125">
+          <el-table-column label="采购单价（含税）" width="162">
             <template slot-scope="scope">
               <el-input-number
                 v-model="scope.row.purchase_unit_price"
                 :min="0"
-                :precision="2"
+                :precision="8"
                 size="small"
                 controls-position="right"
                 style="width: 100%"
@@ -706,9 +919,9 @@
               />
             </template>
           </el-table-column>
-          <el-table-column label="预计金额" width="115" align="right">
+          <el-table-column label="成交总额（含税）" width="155" align="right">
             <template slot-scope="scope">
-              <strong class="text-money">¥{{ money(splitAmount(scope.row)) }}</strong>
+              <el-input-number v-model="scope.row.amount" :min="0" :precision="2" size="small" controls-position="right" style="width: 100%" @change="handleDialogSplitAmountChange(scope.row)" />
             </template>
           </el-table-column>
           <el-table-column label="期望交期" width="135">
@@ -762,9 +975,15 @@
     <purchase-item-picker ref="itemPicker" @select="applyPickedItem" @select-multiple="applyPickedMultipleItems" />
 
     <footer class="bottom-actions">
-      <el-button size="small" @click="$router.back()">取消返回</el-button>
-      <el-button size="small" :disabled="!!scopeIssue || scopeChanging || saving" @click="save(false)">保存草稿</el-button>
-      <el-button size="small" type="success" icon="el-icon-check" :disabled="!!scopeIssue || scopeChanging || saving" @click="save(true)">{{ type==='request' ? '确认需求' : type==='receipt' ? '保存' : type==='order' ? '提交订单' : '提交审核' }}</el-button>
+      <div class="bottom-actions-left">
+        <span class="doc-no-pill">{{ currentDocumentNo }}</span>
+        <span class="bottom-summary-meta">共 {{ form.items.length }} 行物料<template v-if="type==='order'"> · 含税总额 <strong class="green-text">¥{{ money(totalAmount) }}</strong></template><template v-else-if="type==='plan'"> · 预计金额 <strong class="green-text">¥{{ money(totalAmount) }}</strong></template></span>
+      </div>
+      <div class="bottom-actions-right">
+        <el-button size="small" @click="$router.back()">取消返回</el-button>
+        <el-button size="small" :disabled="!!scopeIssue || scopeChanging || saving" @click="save(false)">保存草稿</el-button>
+        <el-button size="small" type="success" icon="el-icon-check" :disabled="!!scopeIssue || scopeChanging || saving" @click="save(true)">{{ submitActionText }}</el-button>
+      </div>
     </footer>
   </section>
 </template>
@@ -775,6 +994,7 @@ import { erpDateTime } from '../../../utils/dateTime'
 import { listEntity, listItemPurchaseConversionOptions } from '@/api/erp/master'
 import { minimalValidPurchaseQuantity } from '@/utils/unitConversion'
 import { priceCheckText, priceWarnings } from '@/utils/purchasePriceCheck'
+import { roundInvoiceAmount } from '@/utils/financeInvoiceAmount'
 import { listPurchaseSalesCandidates, listPurchaseWorkOrderCandidates, checkPurchasePrices, listPriceHistories, previewPurchaseConversion, generateReceiptSerials, getPurchase, getSupplierRecommendations, savePurchaseRequest, savePurchasePlan, savePurchaseOrder, savePurchaseReceipt, submitRequest, submitPlan, submitOrder } from '@/api/erp/purchase'
 import { reserveForCreatePage, clearCreatePageReservation } from '@/utils/documentNumberReservation'
 import PurchaseItemPicker from '@/components/purchase/PurchaseItemPicker.vue'
@@ -793,13 +1013,61 @@ export default {
     salesCandidateColumns: [{ prop: 'sales_order_no', label: '销售订单' }, { prop: 'customer_name', label: '客户' }],
     workOrderCandidateColumns: [{ prop: 'work_order_no', label: '工单编号' }, { prop: 'item_name', label: '物料' }, { prop: 'product_name', label: '产品' }],
     selectedPlanRows: [],
-      supplierDialogVisible: false,
-      activeSplitRow: null,
-      activeSplitIndex: 0,
-      showRecommendInDialog: false,
-    isPlanAllExpanded: false
+    supplierDialogVisible: false,
+    activeSplitRow: null,
+    activeSplitIndex: 0,
+    showRecommendInDialog: false,
+    isPlanAllExpanded: false,
+    defaultWarehouseId: null,
+    defaultExpectedDate: '',
+    batchPriorityTemp: 'normal',
+    showOrderRecommend: true
   }),
   computed: {
+    flowSteps() {
+      return [
+        { key: 'request', label: '采购需求' },
+        { key: 'plan', label: '采购计划' },
+        { key: 'order', label: '采购订单' },
+        { key: 'receipt', label: '到货验收' }
+      ]
+    },
+    activeFlowIndex() {
+      return ['request', 'plan', 'order', 'receipt'].indexOf(this.type)
+    },
+    currentDocumentNo() {
+      if (this.type === 'request') return this.form.request_no || '系统预占生成'
+      if (this.type === 'plan') return this.form.plan_no || '系统预占生成'
+      if (this.type === 'order') return this.form.purchase_order_no || '系统预占生成'
+      return this.form.receipt_no || '系统预占生成'
+    },
+    currentStatusLabel() {
+      if (this.type === 'request') {
+        const map = { draft: '草稿', confirmed: '已确认', closed: '已关闭', cancelled: '已取消', partially_planned: '部分转计划', planned: '已转计划' }
+        return this.form.id ? (map[this.form.request_status] || this.form.request_status || '草稿') : '草稿'
+      }
+      if (this.type === 'plan') return this.planStatusLabel
+      if (this.type === 'order') {
+        const map = { draft: '草稿', submitted: '已提交', approved: '已审核', confirmed: '已确认', partially_received: '部分到货', received: '已到货', closed: '已关闭', cancelled: '已取消' }
+        return map[this.form.purchase_status] || this.form.purchase_status || '草稿'
+      }
+      return '草稿'
+    },
+    currentStatusTag() {
+      if (this.type === 'request') {
+        const status = this.form.request_status || 'draft'
+        return ['confirmed', 'partially_planned', 'planned'].includes(status) ? 'success' : status === 'cancelled' ? 'danger' : 'info'
+      }
+      if (this.type === 'plan') return this.planStatusTag
+      if (this.type === 'order') {
+        const status = this.form.purchase_status || 'draft'
+        return ['approved', 'confirmed', 'received'].includes(status) ? 'success' : status === 'cancelled' ? 'danger' : ['submitted', 'partially_received'].includes(status) ? 'warning' : 'info'
+      }
+      return 'info'
+    },
+    submitActionText() {
+      return this.type === 'request' ? '确认需求' : this.type === 'receipt' ? '保存' : this.type === 'order' ? '提交订单' : '提交审核'
+    },
     scopeOptions() { return purchaseScopes },
     legacySalesSource() { return Boolean(this.form.id && !this.form.source_id && (this.form.items || []).some(row => (row.sales_allocations || []).length)) },
     scopeIssue() { return purchaseScopeIssue(this.form, this.items) },
@@ -895,28 +1163,39 @@ export default {
     hasConversionDifference() {
       return this.quantitySummary !== this.baseQuantitySummary && this.baseQuantitySummary !== '0'
     },
+    subtotalAmount() {
+      const rows = this.type === 'plan' ? this.form.items.flatMap(line => line.splits || []) : this.form.items
+      return this.roundAmount(rows.reduce((sum, line) => sum + this.dealAmount(line, this.type === 'plan'), 0))
+    },
     untaxedAmount() {
+      if (this.type === 'receipt') return this.form.items.reduce((sum, line) => sum + this.receiptAmounts(line).excl, 0)
       return this.linesForAmount().reduce((sum, line) => {
-        const amount = Number(line.qty || 0) * Number(line.price || 0)
+        const amount = line.amount
         const rate = Number(line.tax || 0)
-        return sum + ((this.form.tax_mode || 'tax_included') === 'tax_included' && rate > 0 ? amount * 100 / (100 + rate) : amount)
-      }, 0)
+        const untaxed = (this.form.tax_mode || 'tax_included') === 'tax_included' && rate > 0 ? amount * 100 / (100 + rate) : amount
+        return sum + (this.type === 'receipt' ? untaxed : Number(roundInvoiceAmount(untaxed, 4)))
+      }, this.type === 'order' ? Number(this.form.freight_amount || 0) : 0)
     },
     taxAmount() {
+      if (this.type === 'receipt') return this.form.items.reduce((sum, line) => sum + this.receiptAmounts(line).tax, 0)
       return this.linesForAmount().reduce((sum, line) => {
-        const amount = Number(line.qty || 0) * Number(line.price || 0)
+        const amount = line.amount
         const rate = Number(line.tax || 0)
-        return sum + ((this.form.tax_mode || 'tax_included') === 'tax_included' && rate > 0
-          ? amount - amount * 100 / (100 + rate)
-          : amount * rate / 100)
+        if ((this.form.tax_mode || 'tax_included') === 'tax_included' && rate > 0) {
+          const untaxed = amount * 100 / (100 + rate)
+          return sum + (amount - (this.type === 'receipt' ? untaxed : Number(roundInvoiceAmount(untaxed, 4))))
+        }
+        const tax = amount * rate / 100
+        return sum + (this.type === 'receipt' ? tax : Number(roundInvoiceAmount(tax, 4)))
       }, 0)
     },
     totalAmount() {
+      if (this.type === 'receipt') return this.form.items.reduce((sum, line) => sum + this.receiptAmounts(line).incl, 0)
       // 计划生成的订单采用含税价；没有显式口径时，预览必须与生成结果一致。
       const lineAmount = (this.form.tax_mode || 'tax_included') === 'tax_included'
-        ? this.linesForAmount().reduce((sum, line) => sum + Number(line.qty || 0) * Number(line.price || 0), 0)
+        ? this.linesForAmount().reduce((sum, line) => sum + line.amount, 0) + Number(this.form.freight_amount || 0)
         : this.untaxedAmount + this.taxAmount
-      return lineAmount + Number(this.form.freight_amount || 0)
+      return lineAmount + (this.type !== 'order' && this.form.tax_mode === 'tax_excluded' ? Number(this.form.freight_amount || 0) : 0)
     },
     expectedOrderCount() { return new Set(this.form.items.flatMap(i => (i.splits || []).map(s => s.supplier_id).filter(Boolean))).size }
   },
@@ -982,6 +1261,9 @@ export default {
         this.activeSplitRow = null
         this.selectedPlanRows = []
         this.selectedRequestRows = []
+        this.defaultWarehouseId = null
+        this.defaultExpectedDate = ''
+        this.batchPriorityTemp = 'normal'
         this.recommendations = []
         this.recommendLoading = false
         this.$set(document, 'management_scope', scope)
@@ -1022,10 +1304,12 @@ export default {
     },
     async initializeSplit(line, split) {
       const snapshot = split.purchase_conversion_snapshot
-      this.$set(split, 'purchase_unit_id', snapshot?.purchase_unit_id || split.purchase_unit_id || line.purchase_unit_id)
+      this.$set(split, 'purchase_unit_id', split.purchase_unit_id || snapshot?.purchase_unit_id || line.purchase_unit_id)
       this.$set(split, '_conversionOptions', snapshot ? this.withSnapshotOption(line._conversionOptions || [], snapshot) : line._conversionOptions || [])
-      this.$set(split, 'purchase_quantity', snapshot ? Number(snapshot.purchase_qty) : split.purchase_quantity ?? 1)
-      this.$set(split, 'purchase_unit_price', snapshot ? Number(snapshot.purchase_unit_price) : split.purchase_unit_price ?? Number(split.unit_price || 0) * Number(line._planningPreview?.conversion_factor_snapshot || 1))
+      this.$set(split, 'purchase_quantity', split.purchase_quantity ?? Number(snapshot?.purchase_qty ?? 1))
+      this.$set(split, 'purchase_unit_price', split.purchase_unit_price ?? Number(snapshot?.purchase_unit_price ?? Number(split.unit_price || 0) * Number(line._planningPreview?.conversion_factor_snapshot || 1)))
+      this.$set(split, 'amount', Number(split.amount ?? snapshot?.amount ?? this.dealAmount(split, true)))
+      this.handleDialogSplitAmountChange(split)
       await this.refreshPlanning(line, split)
     },
     getLineConversionFactor(line, target = null) {
@@ -1067,7 +1351,7 @@ export default {
         this.$set(target._planningPreview, 'purchase_qty', quantity)
         if (split && split.purchase_unit_price != null) {
           this.$set(target._planningPreview, 'purchase_unit_price', Number(split.purchase_unit_price || 0))
-          this.$set(target._planningPreview, 'amount', Number((quantity * Number(split.purchase_unit_price || 0)).toFixed(4)))
+          this.$set(target._planningPreview, 'amount', this.splitAmount(split))
         }
       } else {
         this.$set(target, '_planningPreview', {
@@ -1090,6 +1374,7 @@ export default {
           purchase_unit_id: target.purchase_unit_id || line.purchase_unit_id,
           purchase_quantity: quantity, is_split: Boolean(split),
           purchase_unit_price: split ? Number(split.purchase_unit_price || 0) : 0,
+          amount: split ? this.splitAmount(split) : undefined,
           document_type: this.type, document_id: this.form.id || null,
           line_id: line.id || null, split_id: split?.id || null,
           request_item_id: line.request_item_id || null
@@ -1196,6 +1481,96 @@ export default {
         // cancel
       }
     },
+    batchSetPriority(priority) {
+      if (!this.selectedRequestRows.length) return this.$message.warning('请先勾选需要设置优先级的物料行')
+      const nextPriority = priority || this.batchPriorityTemp || 'normal'
+      this.selectedRequestRows.forEach(row => {
+        this.$set(row, 'priority', nextPriority)
+      })
+      const labelMap = { urgent: '紧急', high: '高', normal: '中', low: '低' }
+      this.$message.success(`已为 ${this.selectedRequestRows.length} 行设置优先级：${labelMap[nextPriority] || nextPriority}`)
+    },
+    onHeaderDefaultWarehouseChange(warehouseId) {
+      if (!warehouseId) return
+      let filled = 0
+      this.form.items.forEach(row => {
+        if (!row.warehouse_id) {
+          this.$set(row, 'warehouse_id', warehouseId)
+          filled++
+        }
+      })
+      if (filled > 0) this.$message.success(`已为 ${filled} 行空白仓库明细填入默认目标仓库`)
+    },
+    syncDefaultWarehouseToLines() {
+      if (!this.defaultWarehouseId) return this.$message.warning('请先在基础信息中选择默认目标仓库')
+      if (this.warehouses.some(r => Number(r.id) === Number(this.defaultWarehouseId)) && !this.scopedWarehouses.some(r => Number(r.id) === Number(this.defaultWarehouseId))) {
+        return this.$message.warning('默认仓库与当前单据管理类型不一致，请重新选择')
+      }
+      this.form.items.forEach(row => {
+        this.$set(row, 'warehouse_id', this.defaultWarehouseId)
+      })
+      this.$message.success(`已同步目标仓库到全部 ${this.form.items.length} 行明细`)
+    },
+    onHeaderDefaultDateChange(value) {
+      if (!value) return
+      let filled = 0
+      this.form.items.forEach(row => {
+        if (!row.expected_date) {
+          this.$set(row, 'expected_date', value)
+          filled++
+        }
+      })
+      if (filled > 0) this.$message.success(`已为 ${filled} 行空白交期明细填入默认期望交期：${value}`)
+    },
+    syncDefaultDateToLines() {
+      if (!this.defaultExpectedDate) return this.$message.warning('请先在基础信息中选择默认期望交期')
+      this.form.items.forEach(row => {
+        this.$set(row, 'expected_date', this.defaultExpectedDate)
+        if (this.type === 'plan') {
+          ;(row.splits || []).forEach(split => {
+            if (!split.expected_date) this.$set(split, 'expected_date', this.defaultExpectedDate)
+          })
+        }
+      })
+      this.$message.success(`已同步期望交期（${this.defaultExpectedDate}）到全部 ${this.form.items.length} 行明细`)
+    },
+    syncOrderArrivalDateToLines() {
+      if (!this.form.expected_arrival_date) return this.$message.warning('请先在基础信息中填写预计到货日期')
+      this.form.items.forEach(row => {
+        this.$set(row, 'expected_arrival_date', this.form.expected_arrival_date)
+      })
+      this.$message.success(`已同步预计到货日期（${this.form.expected_arrival_date}）到全部 ${this.form.items.length} 行明细`)
+    },
+    removeRequestLine(index) {
+      const target = this.form.items[index]
+      this.form.items.splice(index, 1)
+      if (target) this.selectedRequestRows = this.selectedRequestRows.filter(r => r !== target)
+      if (!this.form.items.length) this.addRequestLine()
+    },
+    duplicateOrderLine(index) {
+      if (this.type === 'order' && this.form.plan_id) return this.$message.warning('计划生成订单须保留计划明细')
+      const source = this.form.items[index]
+      if (!source) return
+      const copy = {
+        ...source,
+        _conversionOptions: [...(source._conversionOptions || [])]
+      }
+      ;['id', 'order_item_id', 'plan_item_id', 'plan_split_id', '_priceHint', 'recommended_supplier_id_snapshot', 'recommended_price_snapshot', 'recommendation_basis_snapshot', 'recommendation_time', 'supplier_override_reason', 'supplier_override_remark'].forEach(k => delete copy[k])
+      this.form.items.splice(index + 1, 0, copy)
+      this.activeIndex = index + 1
+    },
+    removeOrderLine(index) {
+      if (this.type === 'order' && this.form.plan_id) return this.$message.warning('计划生成订单须保留计划明细')
+      this.form.items.splice(index, 1)
+      if (!this.form.items.length) this.addLine()
+      if (this.activeIndex >= this.form.items.length) this.activeIndex = Math.max(0, this.form.items.length - 1)
+    },
+    toggleOrderRecommendPanel() {
+      this.showOrderRecommend = !this.showOrderRecommend
+      if (this.showOrderRecommend && !this.recommendations.length && this.activeLine && this.activeLine.item_id) {
+        this.loadRecommendations()
+      }
+    },
     async batchSetDeliveryDate() {
       if (!this.selectedRequestRows.length) return this.$message.warning('请先勾选需要设置交期的物料行')
       try {
@@ -1233,6 +1608,9 @@ export default {
       this.activeSplitRow = null
       this.selectedPlanRows = []
       this.selectedRequestRows = []
+      this.defaultWarehouseId = null
+      this.defaultExpectedDate = ''
+      this.batchPriorityTemp = 'normal'
       this.recommendationRevision++
       this.recommendLoading = false
       this.activeIndex = 0
@@ -1248,9 +1626,9 @@ export default {
     initBlank() {
       const today = new Date().toISOString().slice(0, 10)
       this.attachmentDraftToken = this.newDraftToken()
-      if (this.type === 'request') this.form = { management_scope: validPurchaseScope(this.$route.query?.management_scope) ? this.$route.query.management_scope : 'factory', request_no: '', request_date: today, source_type: 'manual', items: [{ item_id: null, spec_model: '', purchase_quantity: 1, expected_date: '', priority: 'normal' }] }
-      if (this.type === 'plan') this.form = { management_scope: validPurchaseScope(this.$route.query?.management_scope) ? this.$route.query.management_scope : 'factory', plan_no: '', plan_date: today, items: [{ _rowKey: Date.now(), item_id: null, spec_model: '', unit_id: null, purchase_quantity: 1, expected_date: '', splits: [] }] }
-      if (this.type === 'order') this.form = { management_scope: validPurchaseScope(this.$route.query?.management_scope) ? this.$route.query.management_scope : 'factory', purchase_order_no: '', supplier_id: null, order_date: today, currency: 'CNY', tax_mode: 'tax_included', freight_amount: 0, items: [{ item_id: null, qty: 1, unit_price: 0, tax_rate: 13, expected_arrival_date: '' }] }
+      if (this.type === 'request') this.form = { management_scope: validPurchaseScope(this.$route.query?.management_scope) ? this.$route.query.management_scope : 'factory', request_no: '', request_date: today, source_type: 'manual', items: [{ item_id: null, spec_model: '', purchase_quantity: 1, expected_date: this.defaultExpectedDate || '', warehouse_id: this.defaultWarehouseId || null, priority: 'normal' }] }
+      if (this.type === 'plan') this.form = { management_scope: validPurchaseScope(this.$route.query?.management_scope) ? this.$route.query.management_scope : 'factory', plan_no: '', plan_date: today, items: [{ _rowKey: Date.now(), item_id: null, spec_model: '', unit_id: null, purchase_quantity: 1, expected_date: this.defaultExpectedDate || '', splits: [] }] }
+      if (this.type === 'order') this.form = { management_scope: validPurchaseScope(this.$route.query?.management_scope) ? this.$route.query.management_scope : 'factory', purchase_order_no: '', supplier_id: null, order_date: today, expected_arrival_date: '', currency: 'CNY', tax_mode: 'tax_included', freight_amount: 0, discount_amount: 0, items: [{ item_id: null, spec_model: '', qty: 1, unit_price: 0, amount: 0, tax_rate: 13, expected_arrival_date: '' }] }
       if (this.type === 'receipt') this.form = { management_scope: validPurchaseScope(this.$route.query?.management_scope) ? this.$route.query.management_scope : 'factory', receipt_no: '', supplier_id: null, receipt_date: today, items: [{ item_id: null, qty: 1, qualified_qty: 1, unqualified_qty: 0, actual_base_qty: 0, unit_price: 0, batch_no: '', serial_text: '', serial_number_source: 'supplier', warehouse_id: null, location_id: null }] }
     },
     async reserveNumber() {
@@ -1285,8 +1663,12 @@ export default {
       ;(data.items || []).forEach(line => this.rememberItem(line.item))
       if (this.type === 'request') this.form = { ...data, items: (data.items || []).map(i => ({ ...i, spec_model: i.spec_model || i.item?.spec_model || i.item?.spec || i.item?.model || '', purchase_quantity: Number(i.purchase_conversion_snapshot?.purchase_qty ?? i.request_qty), purchase_unit_id: i.purchase_conversion_snapshot?.purchase_unit_id || i.unit_id })) }
       if (this.type === 'plan') this.form = { ...data, items: (data.items || []).map(i => ({ _rowKey: i.id || (Date.now() + Math.random()), ...i, spec_model: i.spec_model || i.item?.spec_model || i.item?.spec || i.item?.model || '', purchase_quantity: Number(i.purchase_conversion_snapshot?.purchase_qty ?? i.required_qty ?? i.plan_qty), purchase_unit_id: i.purchase_conversion_snapshot?.purchase_unit_id || i.unit_id, splits: (i.splits || []).map(s => ({ ...s, purchase_quantity: Number(s.purchase_conversion_snapshot?.purchase_qty ?? s.purchase_qty), purchase_unit_id: s.purchase_conversion_snapshot?.purchase_unit_id || i.unit_id, purchase_unit_price: Number(s.purchase_conversion_snapshot?.purchase_unit_price ?? s.unit_price), unit_price: Number(s.unit_price), tax_rate: Number(s.tax_rate) })) })) }
-      if (this.type === 'order') this.form = { ...data, items: (data.items || []).map(i => ({ ...i, qty: Number(i.purchase_qty || i.order_qty), unit_price: Number(i.purchase_unit_price || i.unit_price), tax_rate: Number(i.tax_rate), _conversionOptions: [] })) }
-      if (this.type === 'receipt') this.form = { ...data, items: (data.items || []).map(i => ({ ...i, qty: Number(i.receipt_qty), unit_price: Number(i.unit_price), qualified_qty: Number(i.qualified_qty), unqualified_qty: Number(i.unqualified_qty), actual_base_qty: i.actual_base_qty == null ? null : Number(i.actual_base_qty), _conversionOptions: [] })) }
+      if (this.type === 'order') this.form = { ...data, discount_amount: Number(data.discount_amount || 0), freight_amount: Number(data.freight_amount || 0), items: (data.items || []).map(i => ({ ...i, spec_model: i.spec_model || i.item?.spec_model || i.item?.spec || i.item?.model || '', qty: Number(i.purchase_qty || i.order_qty), unit_price: Number(i.purchase_unit_price ?? i.unit_price), amount: Number(i.amount ?? this.roundAmount(Number(i.purchase_qty || i.order_qty) * Number(i.purchase_unit_price ?? i.unit_price))), tax_rate: Number(i.tax_rate), _conversionOptions: [] })) }
+      if (this.type === 'receipt') this.form = { ...data, items: (data.items || []).map(i => {
+        const qty = Number(i.receipt_qty)
+        const price = qty > 0 && i.receipt_cost != null ? Number((Number(i.receipt_cost) / qty).toFixed(8)) : Number(i.unit_price)
+        return { ...i, qty, unit_price: price, _receiptSavedPrice: price, qualified_qty: Number(i.qualified_qty), unqualified_qty: Number(i.unqualified_qty), actual_base_qty: i.actual_base_qty == null ? null : Number(i.actual_base_qty), _conversionOptions: [] }
+      }) }
       await Promise.all(this.form.items.map(async line => {
         const snap = line.purchase_conversion_snapshot
         if (snap) this.$set(line, 'purchase_unit_id', snap.purchase_unit_id)
@@ -1295,16 +1677,23 @@ export default {
       }))
     },
     addPlanItem() {
-      const defaultDate = this.form.items[0]?.expected_date || ''
+      const defaultDate = this.defaultExpectedDate || this.form.items[0]?.expected_date || ''
       this.form.items.push({ _rowKey: Date.now() + Math.random(), item_id: null, spec_model: '', unit_id: null, purchase_quantity: 1, expected_date: defaultDate, splits: [] })
       this.activeIndex = this.form.items.length - 1
       this.recommendations = []
     },
     removePlanItem(index) {
+      const target = this.form.items[index]
       this.form.items.splice(index, 1)
+      if (target) this.selectedPlanRows = this.selectedPlanRows.filter(r => r !== target)
+      if (!this.form.items.length) this.addPlanItem()
       if (this.activeIndex >= this.form.items.length) this.activeIndex = Math.max(0, this.form.items.length - 1)
     },
-    addRequestLine() { this.form.items.push({ item_id: null, spec_model: '', purchase_quantity: 1, expected_date: '', priority: 'normal' }) },
+    addRequestLine() {
+      const defaultDate = this.defaultExpectedDate || this.form.items.find(r => r.expected_date)?.expected_date || ''
+      const defaultWarehouse = this.defaultWarehouseId || this.form.items.find(r => r.warehouse_id)?.warehouse_id || null
+      this.form.items.push({ item_id: null, spec_model: '', purchase_quantity: 1, expected_date: defaultDate, warehouse_id: defaultWarehouse, priority: 'normal' })
+    },
     remainingPurchaseQuantity(line) {
       const factor = Number(line._planningPreview?.conversion_factor_snapshot || 1)
       const step = this.purchaseStep(line)
@@ -1316,7 +1705,12 @@ export default {
       this.activeLine.splits.push(split)
       await this.initializeSplit(this.activeLine, split)
     },
-    addLine() { if (this.type === 'order' && this.form.plan_id) return this.$message.warning('计划生成订单须保留计划明细'); this.form.items.push({ item_id: null, qty: 1, unit_price: 0, tax_rate: 13, qualified_qty: 1, unqualified_qty: 0, actual_base_qty: 0, serial_text: '', serial_number_source: 'supplier', warehouse_id: null, location_id: null, purchase_unit_id: null, _conversionOptions: [] }); this.activeIndex = this.form.items.length - 1; this.recommendations = [] },
+    addLine() {
+      if (this.type === 'order' && this.form.plan_id) return this.$message.warning('计划生成订单须保留计划明细')
+      this.form.items.push({ item_id: null, spec_model: '', qty: 1, unit_price: 0, ...(this.type === 'order' ? { amount: 0 } : {}), tax_rate: 13, qualified_qty: 1, unqualified_qty: 0, actual_base_qty: 0, expected_arrival_date: this.type === 'order' ? (this.form.expected_arrival_date || '') : '', serial_text: '', serial_number_source: 'supplier', warehouse_id: null, location_id: null, purchase_unit_id: null, _conversionOptions: [] })
+      this.activeIndex = this.form.items.length - 1
+      this.recommendations = []
+    },
     openItemPicker(line) {
       if (!validPurchaseScope(this.form.management_scope)) return this.$message.warning('请先明确单据管理类型')
       if (purchaseSourceLocked(this.form)) return this.$message.warning('来源单据物料已锁定，请保留原来源明细')
@@ -1400,7 +1794,8 @@ export default {
       if (!history || Number(line.unit_price || 0) > 0) return
       const price = this.priceForUnit(history, line.purchase_unit_id, this.effectiveConversionFactor(line))
       if (!(price > 0)) return
-      this.$set(line, 'unit_price', Number(price.toFixed(4)))
+      this.$set(line, 'unit_price', Number(price.toFixed(8)))
+      this.handleOrderPriceChange(line)
       this.$set(line, '_priceHint', `已带出 ${String(history.effective_date || '').slice(0, 10)} 采购价`)
     },
     openBatchItemPicker() {
@@ -1422,20 +1817,44 @@ export default {
       const newItems = items.filter(item => !existingItemIds.has(Number(item.id)))
 
       if (!newItems.length) {
-        return this.$message.info('所选物料均已在需求明细中，未添加重复行')
+        return this.$message.info('所选物料均已在当前明细中，未添加重复行')
       }
 
-      const defaultDate = this.form.items[0]?.expected_date || ''
-      const defaultWarehouse = this.form.items[0]?.warehouse_id || null
-      let filledEmpty = false
+      const defaultDate = this.defaultExpectedDate || this.form.items.find(r => r.expected_date)?.expected_date || ''
+      const defaultWarehouse = this.defaultWarehouseId || this.form.items.find(r => r.warehouse_id)?.warehouse_id || null
+      const defaultOrderArrivalDate = this.form.expected_arrival_date || ''
+      const addedOrderLines = []
 
       newItems.forEach(item => {
         this.rememberItem(item)
         const emptyRow = this.form.items.find(row => !row.item_id)
-        if (emptyRow && !filledEmpty) {
+        if (emptyRow) {
           this.$set(emptyRow, 'item_id', item.id)
           this.$set(emptyRow, 'spec_model', item.spec_model || item.spec || item.model || '')
-          filledEmpty = true
+          if (this.type === 'order') {
+            if (!emptyRow.expected_arrival_date && defaultOrderArrivalDate) this.$set(emptyRow, 'expected_arrival_date', defaultOrderArrivalDate)
+            this.$set(emptyRow, 'purchase_unit_id', null)
+            this.$set(emptyRow, '_conversionOptions', [])
+            addedOrderLines.push(emptyRow)
+          } else {
+            this.$set(emptyRow, 'unit_id', item.unit_id || item.unit?.id || null)
+            if (!emptyRow.expected_date && defaultDate) this.$set(emptyRow, 'expected_date', defaultDate)
+            if (this.type === 'request' && !emptyRow.warehouse_id && defaultWarehouse) this.$set(emptyRow, 'warehouse_id', defaultWarehouse)
+          }
+        } else if (this.type === 'order') {
+          const newLine = {
+            item_id: item.id,
+            spec_model: item.spec_model || item.spec || item.model || '',
+            qty: 1,
+            unit_price: 0,
+            amount: 0,
+            tax_rate: 13,
+            expected_arrival_date: defaultOrderArrivalDate,
+            purchase_unit_id: null,
+            _conversionOptions: []
+          }
+          this.form.items.push(newLine)
+          addedOrderLines.push(newLine)
         } else {
           this.form.items.push(this.type === 'plan' ? {
             _rowKey: Date.now() + Math.random(),
@@ -1457,7 +1876,19 @@ export default {
         }
       })
 
-      await this.initializeMissingPlanningLines()
+      if (this.type === 'order') {
+        const documentRevision = this.documentRevision
+        await Promise.all(addedOrderLines.map(async line => {
+          try {
+            await this.loadLineConversions(line, true)
+            if (documentRevision !== this.documentRevision || !this.form.items.includes(line)) return
+            await this.fillReferencePrice(line)
+          } catch (e) { /* keep manual unit selectable */ }
+        }))
+        this.activeIndex = Math.max(0, this.form.items.length - 1)
+      } else {
+        await this.initializeMissingPlanningLines()
+      }
       this.$message.success(`已添加 ${newItems.length} 个新物料明细`)
     },
     rememberItem(item) {
@@ -1535,6 +1966,7 @@ export default {
       this.$set(line, 'base_unit_name_preview', baseUnit && (baseUnit.unit_name || baseUnit.symbol || baseUnit.unit_code))
       this.$set(line, 'allow_actual_conversion_preview', Boolean(c.allow_actual_conversion))
       this.$set(line, '_effectiveConversionFactor', nextFactor)
+      if (this.type === 'order' && preserveBaseQuantity && line.amount != null) this.handleOrderAmountChange(line)
       if (this.type === 'receipt' && (line.actual_base_qty == null || Number(line.actual_base_qty) === 0)) this.$set(line, 'actual_base_qty', this.standardBaseQtyNumber(line))
     },
     changePurchaseUnit(line) { this.applyConversion(line, true) },
@@ -1555,7 +1987,7 @@ export default {
     differenceQtyNumber(line) { return Number(line.actual_base_qty == null ? this.standardBaseQtyNumber(line) : line.actual_base_qty) - this.standardBaseQtyNumber(line) },
     differenceQty(line) { return this.differenceQtyNumber(line).toLocaleString('zh-CN', { maximumFractionDigits: 6 }) },
     hasDifference(line) { return Math.abs(this.differenceQtyNumber(line)) > 0.0000001 },
-    baseUnitPrice(line) { const factor = this.effectiveConversionFactor(line); return factor > 0 ? this.money(Number(line.unit_price || 0) / factor) : '-' },
+    baseUnitPrice(line) { const factor = this.effectiveConversionFactor(line); return factor > 0 ? Number((Number(line.unit_price || 0) / factor).toFixed(8)).toLocaleString('zh-CN', { maximumFractionDigits: 8 }) : '-' },
     selectLine(row) {
       const index = this.form.items.indexOf(row)
       if (index >= 0) this.activeIndex = index
@@ -1607,7 +2039,60 @@ export default {
       const canonical = unit && (unit.standard_unit || unit.standardUnit || unit)
       return canonical ? (canonical.unit_name || canonical.symbol || canonical.unit_code) : '-'
     },
-    linesForAmount() { return this.type === 'plan' ? this.form.items.flatMap(i => (i.splits || []).map(s => ({ qty: s.purchase_quantity, price: s.purchase_unit_price, tax: s.tax_rate }))) : this.form.items.map(i => ({ qty: i.qty, price: i.unit_price, tax: i.tax_rate || 0 })) },
+    purchasePrice(value) { return Number(value || 0).toLocaleString('zh-CN', { maximumFractionDigits: 8 }) },
+    roundAmount(value) { return Number(roundInvoiceAmount(value)) },
+    receiptAmounts(line) {
+      const qty = Number(line.qty || 0)
+      const samePrice = Number(line.unit_price) === line._receiptSavedPrice
+      if (samePrice && qty === Number(line.receipt_qty) && line.amount_incl_tax != null && line.amount_excl_tax != null && line.tax_amount_snapshot != null) {
+        return { amount: Number(line.receipt_cost), excl: Number(line.amount_excl_tax), tax: Number(line.tax_amount_snapshot), incl: Number(line.amount_incl_tax) }
+      }
+      const ratio = Number(line.receipt_qty) > 0 ? qty / Number(line.receipt_qty) : 0
+      const amount = this.roundAmount(samePrice && line.receipt_cost != null ? Number(line.receipt_cost) * ratio : qty * Number(line.unit_price || 0))
+      const taxMode = this.form.order?.tax_mode || this.form.tax_mode_snapshot || this.form.tax_mode || 'tax_included'
+      const freight = line.order_item_id ? this.roundAmount(Number(line.freight_allocated_amount || 0) * ratio) : 0
+      const rate = Number(line.tax_rate || 0)
+      const tax = line.order_item_id && line.tax_amount_snapshot != null ? this.roundAmount(Number(line.tax_amount_snapshot) * ratio)
+        : (taxMode === 'tax_excluded' ? this.roundAmount(amount * rate / 100) : this.roundAmount(amount - this.roundAmount(amount * 100 / (100 + rate))))
+      const incl = this.roundAmount(amount + freight + (taxMode === 'tax_excluded' ? tax : 0))
+      return { amount, excl: this.roundAmount(incl - tax), tax, incl }
+    },
+    dealAmount(line, split = false) {
+      if (this.type === 'receipt') return this.receiptAmounts(line).amount
+      const amount = Number((split ? line.purchase_quantity : line.qty) || 0) * Number((split ? line.purchase_unit_price : line.unit_price) || 0)
+      if (!['order', 'plan'].includes(this.type)) return amount
+      return line.amount == null || line.amount === '' ? this.roundAmount(amount) : Number(line.amount)
+    },
+    handleOrderPriceChange(line) {
+      this.$set(line, '_priceHint', '')
+      if (this.type === 'order') this.$set(line, 'amount', this.roundAmount(Number(line.qty || 0) * Number(line.unit_price || 0)))
+    },
+    handleOrderQuantityChange(line) {
+      this.syncReceiptActualQty(line)
+      this.handleOrderPriceChange(line)
+    },
+    handleOrderAmountChange(line) {
+      // 成交总额独立保存，反算单价的八位舍入不能再覆盖该金额。
+      this.$set(line, 'amount', this.roundAmount(line.amount))
+      if (Number(line.qty) > 0) this.$set(line, 'unit_price', Number((Number(line.amount) / Number(line.qty)).toFixed(8)))
+      this.$set(line, '_priceHint', '')
+    },
+    linesForAmount() {
+      const rows = this.type === 'plan' ? this.form.items.flatMap(line => line.splits || []) : this.form.items
+      const amounts = rows.map(line => this.dealAmount(line, this.type === 'plan'))
+      if (!['order', 'plan'].includes(this.type)) return rows.map((line, index) => ({ amount: amounts[index], tax: line.tax_rate || 0 }))
+      const weights = amounts.map(amount => BigInt(roundInvoiceAmount(amount).replace('.', '')))
+      let remainingWeight = weights.reduce((sum, weight) => sum + weight, 0n)
+      let remainingDiscount = this.type === 'order' ? BigInt(roundInvoiceAmount(Math.min(Number(this.form.discount_amount || 0), this.subtotalAmount)).replace('.', '')) : 0n
+      return rows.map((line, index) => {
+        const weight = weights[index]
+        // 与服务端一致按剩余金额分摊，最后一个非零金额行收尾。
+        const share = remainingWeight > 0n ? (remainingDiscount * weight + remainingWeight / 2n) / remainingWeight : 0n
+        remainingDiscount -= share
+        remainingWeight -= weight
+        return { amount: Number(weight - share) / 100, tax: line.tax_rate || 0 }
+      })
+    },
     async loadRecommendations() {
       const revision = ++this.recommendationRevision
       this.recommendations = []
@@ -1737,7 +2222,7 @@ export default {
       const factor = Number(split._planningPreview?.conversion_factor_snapshot || row._planningPreview?.conversion_factor_snapshot || 0)
       const price = this.priceForUnit(history, split.purchase_unit_id, factor)
       if (!(price > 0) || Number(split.purchase_unit_price || 0) > 0) return
-      this.$set(split, 'purchase_unit_price', Number(price.toFixed(4)))
+      this.$set(split, 'purchase_unit_price', Number(price.toFixed(8)))
       this.handleDialogSplitPriceChange(split)
       this.$message.info(`已带出 ${this.supplierName(split.supplier_id)} ${String(history.effective_date || '').slice(0, 10)} 的采购价 ¥${this.money(price)}，可修改`)
     },
@@ -1745,9 +2230,22 @@ export default {
       this.refreshPlanning(row, split)
     },
     handleDialogSplitPriceChange(split) {
+      this.$set(split, 'amount', this.roundAmount(Number(split.purchase_quantity || 0) * Number(split.purchase_unit_price || 0)))
       if (split && split._planningPreview) {
         this.$set(split._planningPreview, 'purchase_unit_price', Number(split.purchase_unit_price || 0))
         this.$set(split._planningPreview, 'amount', this.splitAmount(split))
+      }
+    },
+    handleDialogSplitQuantityChange(line, split) {
+      this.handleDialogSplitPriceChange(split)
+      this.refreshPlanning(line, split)
+    },
+    handleDialogSplitAmountChange(split) {
+      this.$set(split, 'amount', this.roundAmount(split.amount))
+      if (Number(split.purchase_quantity) > 0) this.$set(split, 'purchase_unit_price', Number((Number(split.amount) / Number(split.purchase_quantity)).toFixed(8)))
+      if (split._planningPreview) {
+        this.$set(split._planningPreview, 'purchase_unit_price', split.purchase_unit_price)
+        this.$set(split._planningPreview, 'amount', split.amount)
       }
     },
     hasAllocatedSupplier(row) {
@@ -1779,7 +2277,7 @@ export default {
         const donor = line.splits.filter(s => Number(s.purchase_unit_id) === Number(line.purchase_unit_id)).sort((a, b) => Number(b.purchase_quantity) - Number(a.purchase_quantity))[0]
         if (donor && Number(donor.purchase_quantity) > step) {
           donor.purchase_quantity = Number(donor.purchase_quantity) - step
-          this.refreshPlanning(line, donor)
+          this.handleDialogSplitQuantityChange(line, donor)
           this.$message.info('已从原供应商调出 ' + step + ' 给新供应商，请按实际分配调整数量')
         }
         quantity = step
@@ -1829,14 +2327,13 @@ export default {
       if (candidate.comparable_price != null) split.unit_price = candidate.comparable_price
       if (!existing) line.splits.push(split)
       this.$set(split, 'purchase_unit_price', candidate.comparable_price == null ? Number(split.purchase_unit_price || 0) : Number(candidate.comparable_price))
+      this.handleDialogSplitPriceChange(split)
       this.refreshPlanning(line, split)
       this.$refs.planTable?.toggleRowExpansion(line, true)
       this.$message.success(`已选用 ${candidate.supplier_name}，推荐依据和价格已留存快照`)
     },
     splitAmount(split) {
-      const qty = Number(split.purchase_quantity || split.purchase_qty || 0)
-      const price = Number(split.purchase_unit_price ?? split.unit_price ?? 0)
-      return Number((qty * price).toFixed(2))
+      return this.dealAmount(split, true)
     },
     lineTotalAmount(line) {
       return (line.splits || []).reduce((sum, s) => sum + this.splitAmount(s), 0)
@@ -1875,11 +2372,15 @@ export default {
         if (candidate.comparable_price != null) split.unit_price = candidate.comparable_price
         if (!existing) this.activeLine.splits.push(split)
         this.$set(split, 'purchase_unit_price', candidate.comparable_price == null ? Number(split.purchase_unit_price || 0) : Number(candidate.comparable_price))
+        this.handleDialogSplitPriceChange(split)
         this.initializeSplit(this.activeLine, split)
       } else if (this.type === 'order') {
         this.form.supplier_id = candidate.supplier_id
         Object.assign(this.activeLine, snapshot)
-        if (candidate.comparable_price != null) this.activeLine.unit_price = candidate.comparable_price
+        if (candidate.comparable_price != null) {
+          this.activeLine.unit_price = candidate.comparable_price
+          this.handleOrderPriceChange(this.activeLine)
+        }
       }
       this.$message.success(`已选用 ${candidate.supplier_name}，推荐依据和价格已留存快照`)
     },
@@ -1912,7 +2413,7 @@ export default {
       }) }
       else if (this.type === 'plan') payload = { ...this.form, items: this.form.items.map(i => ({ ...i, purchase_quantity: i.purchase_quantity, expected_conversion_fingerprint: i._planningPreview?.conversion_fingerprint, splits: (i.splits || []).map(split => ({ ...split, expected_conversion_fingerprint: split._planningPreview?.conversion_fingerprint })) })) }
       else if (this.type === 'order') payload = { ...this.form, items: this.form.items.map(i => ({ ...i, order_qty: i.qty, expected_conversion_factor: this.effectiveConversionFactor(i) })) }
-      else payload = { ...this.form, items: this.form.items.map(i => ({ ...i, receipt_qty: i.qty })) }
+      else payload = { ...this.form, items: this.form.items.map(i => ({ ...i, receipt_qty: i.qty, receipt_cost: this.receiptAmounts(i).amount })) }
       if (!this.$route.params.id && this.reservation) {
         payload.reservation_token = this.reservation.reservation_token
         payload.creation_session_id = this.reservation.creation_session_id
@@ -1927,6 +2428,7 @@ export default {
       if (this.scopeIssue) return this.$message.error(this.scopeIssue)
       if (this.form.items.some(line => line.warehouse_id && !this.scopedWarehouses.some(row => Number(row.id) === Number(line.warehouse_id)))) return this.$message.error('目标仓库与单据管理类型不一致或不可用，请重新选择')
       if (!this.form.items.length) return this.$message.error('请至少添加一行采购物料')
+      if (this.type === 'order' && Number(this.form.discount_amount || 0) > this.subtotalAmount) return this.$message.error('整单优惠不能超过成交总额')
       if (this.type === 'plan' && this.form.items.some(line => (line.splits || []).some(split => !split.supplier_id))) return this.$message.error('请为每条供应商分配选择供应商，或删除空白分配行')
       if (!['plan', 'request'].includes(this.type) && !this.form.supplier_id) { this.$refs.headerForm && this.$refs.headerForm.validateField('supplier_id'); return this.$message.error('供应商不能为空') }
       // 交期跟踪：提交订单前必须填写预计到货（订单头未填时，明细都填了也可以）。
@@ -2025,7 +2527,10 @@ export default {
   max-width: 100%;
   min-height: calc(100vh - 52px);
   background: #f8fafc;
-  padding: 16px 20px 80px;
+  padding: 16px 20px 0;
+  display: flex;
+  flex-direction: column;
+  overflow-x: clip;
   position: relative;
 }
 
@@ -2033,39 +2538,117 @@ export default {
   background: #fff;
   border: 1px solid #e2e8f0;
   border-radius: 8px;
-  padding: 16px 20px;
+  padding: 14px 20px;
   margin-bottom: 14px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.03);
   display: flex;
   justify-content: space-between;
   align-items: center;
   flex-wrap: wrap;
-  gap: 12px;
+  gap: 12px 16px;
 }
 
 .head-left {
   display: flex;
   align-items: center;
   gap: 12px;
+  min-width: 0;
 }
 
 .head-text {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  min-width: 0;
 }
 
 .title-row {
   display: flex;
   align-items: center;
-  gap: 10px;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .title-row h1 {
   margin: 0;
-  font-size: 20px;
+  font-size: 19px;
   font-weight: 700;
   color: #0f172a;
+}
+
+.doc-no-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 9px;
+  border-radius: 4px;
+  background: #f1f5f9;
+  border: 1px solid #e2e8f0;
+  color: #334155;
+  font-family: Consolas, Monaco, monospace;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.purchase-flow-steps {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border-radius: 8px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  flex-wrap: wrap;
+}
+
+.flow-step-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 12px;
+  color: #64748b;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.flow-step-dot {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: #e2e8f0;
+  color: #475569;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.flow-step-item.is-done {
+  color: #15803d;
+}
+
+.flow-step-item.is-done .flow-step-dot {
+  background: #dcfce7;
+  color: #008b4b;
+}
+
+.flow-step-item.is-active {
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  color: #008b4b;
+  font-weight: 600;
+}
+
+.flow-step-item.is-active .flow-step-dot {
+  background: #008b4b;
+  color: #ffffff;
+}
+
+.flow-step-arrow {
+  font-size: 11px;
+  color: #cbd5e1;
 }
 
 .subtitle {
@@ -2078,8 +2661,10 @@ export default {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
 }
 
+.form-alert-banner,
 .receipt-posting-tip {
   border-radius: 8px;
   margin-bottom: 14px;
@@ -2091,7 +2676,7 @@ export default {
   grid-template-areas: "basic summary" "detail detail";
   gap: 14px;
   align-items: stretch;
-  margin-bottom: 14px;
+  margin-bottom: 16px;
 }
 
 .form-layout.request-layout {
@@ -2123,10 +2708,28 @@ export default {
   border: 1px solid #e2e8f0;
   border-radius: 8px;
   padding: 16px 20px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.03);
   box-sizing: border-box;
   min-width: 0;
   margin-bottom: 14px;
+}
+
+.card-head-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.card-head-row .card-head-title {
+  margin-bottom: 0;
+}
+
+.card-head-hint {
+  font-size: 12px;
+  color: #94a3b8;
 }
 
 .card-head-title {
@@ -2141,6 +2744,7 @@ export default {
   height: 16px;
   background: #008b4b;
   border-radius: 2px;
+  flex-shrink: 0;
 }
 
 .card-head-title h3,
@@ -2151,10 +2755,79 @@ export default {
   color: #1e293b;
 }
 
+.compact-header-form ::v-deep .el-form-item {
+  margin-bottom: 4px;
+  min-width: 0;
+}
+
+.compact-header-form ::v-deep .el-form-item__label {
+  padding: 0 0 5px !important;
+  line-height: 1.3;
+  font-size: 12px;
+  font-weight: 500;
+  color: #475569;
+  width: 100%;
+}
+
+.compact-header-form ::v-deep .el-form-item__content {
+  line-height: 32px;
+  min-width: 0;
+}
+
+.compact-header-form ::v-deep .el-input-number {
+  width: 100%;
+}
+
+.compact-header-form ::v-deep .el-input-number .el-input__inner {
+  text-align: left;
+}
+
+.label-action-row {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: calc(100% - 10px);
+}
+
+.field-sync-link {
+  border: 0;
+  background: #f0fdf4;
+  color: #008b4b;
+  border: 1px solid #bbf7d0;
+  border-radius: 4px;
+  padding: 1px 7px;
+  font-size: 11px;
+  line-height: 1.5;
+  cursor: pointer;
+  font-weight: 500;
+  transition: all 0.15s ease;
+}
+
+.field-sync-link:hover {
+  background: #008b4b;
+  color: #fff;
+  border-color: #008b4b;
+}
+
+.readonly-status-box {
+  height: 32px;
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 4px;
+}
+
 .grid-4 {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 12px;
+  gap: 10px 14px;
+}
+
+.remark-span-2 {
+  grid-column: span 2;
 }
 
 .remark-span-3 {
@@ -2164,7 +2837,7 @@ export default {
 .grid-3 {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
+  gap: 10px 14px;
 }
 
 .grid-3 .el-select,
@@ -2172,6 +2845,10 @@ export default {
 .grid-4 .el-select,
 .grid-4 .el-date-editor {
   width: 100%;
+}
+
+.items-card {
+  margin-bottom: 0;
 }
 
 .items-card .section-title {
@@ -2186,17 +2863,92 @@ export default {
 .title-with-bar {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
 }
 
 .line-actions {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
+}
+
+.batch-toolbar-strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 8px 12px;
+  margin-bottom: 12px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+}
+
+.batch-strip-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.batch-check-indicator {
+  font-size: 12px;
+  color: #475569;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.batch-check-indicator strong {
+  color: #008b4b;
+}
+
+.batch-strip-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.batch-priority-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.plan-balance-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 999px;
+}
+
+.plan-balance-pill.is-complete {
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  color: #008b4b;
+}
+
+.plan-balance-pill.is-pending {
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  color: #b45309;
 }
 
 .items-table {
   width: 100%;
+}
+
+.items-table ::v-deep th.el-table__cell {
+  background: #f8fafc !important;
+  color: #334155;
+  font-weight: 600;
 }
 
 .items-table ::v-deep .el-table__row td {
@@ -2207,6 +2959,55 @@ export default {
 .items-table ::v-deep .el-input__inner {
   height: 32px !important;
   line-height: 32px !important;
+}
+
+.items-table ::v-deep .el-table__body tr.current-row > td {
+  background-color: #f0fdf4 !important;
+}
+
+.stock-qty-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  font-size: 12px;
+  line-height: 1.2;
+}
+
+.priority-select-wrap {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.priority-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.priority-urgent .priority-dot {
+  background: #ef4444;
+  box-shadow: 0 0 0 2px #fee2e2;
+}
+
+.priority-high .priority-dot {
+  background: #f59e0b;
+  box-shadow: 0 0 0 2px #fef3c7;
+}
+
+.priority-normal .priority-dot {
+  background: #008b4b;
+  box-shadow: 0 0 0 2px #dcfce7;
+}
+
+.priority-low .priority-dot {
+  background: #94a3b8;
+  box-shadow: 0 0 0 2px #e2e8f0;
 }
 
 .split-editor ::v-deep .el-table .el-input-number,
@@ -2258,7 +3059,7 @@ export default {
 
 .stat-dl {
   display: grid;
-  grid-template-columns: 88px 1fr;
+  grid-template-columns: 110px 1fr;
   gap: 8px;
   margin: 0;
   font-size: 13px;
@@ -2287,9 +3088,8 @@ export default {
 
 .item-cell-box,
 .empty-item-cell {
-  height: 38px;
   min-height: 38px;
-  max-height: 38px;
+  padding: 2px 0;
   display: flex;
   align-items: center;
   box-sizing: border-box;
@@ -2298,7 +3098,6 @@ export default {
 .item-cell-box {
   justify-content: space-between;
   gap: 8px;
-  padding: 0;
 }
 
 .item-cell-info {
@@ -2316,15 +3115,17 @@ export default {
 }
 
 .code-badge {
-  font-family: monospace;
+  font-family: Consolas, monospace;
   font-weight: 600;
   color: #008b4b;
-  font-size: 13px;
+  font-size: 12px;
 }
 
 .item-name-bold {
   color: #1e293b;
   font-size: 13px;
+  line-height: 1.3;
+  word-break: break-word;
 }
 
 .item-spec-sub {
@@ -2359,6 +3160,23 @@ export default {
   gap: 12px;
 }
 
+.summary-left-tip {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 12px;
+  color: #475569;
+}
+
+.summary-left-tip strong {
+  color: #1e293b;
+}
+
+.metric-divider {
+  color: #cbd5e1;
+}
+
 .batch-quick-tools {
   display: flex;
   align-items: center;
@@ -2378,7 +3196,8 @@ export default {
 .summary-metrics {
   display: flex;
   align-items: center;
-  gap: 20px;
+  flex-wrap: wrap;
+  gap: 18px;
   margin-left: auto;
 }
 
@@ -2408,34 +3227,101 @@ export default {
   color: #fff !important;
 }
 
+.purchase-form-page ::v-deep .el-button--success.is-plain {
+  background-color: #f0fdf4 !important;
+  border-color: #bbf7d0 !important;
+  color: #008b4b !important;
+}
+
+.purchase-form-page ::v-deep .el-button--success.is-plain:hover,
+.purchase-form-page ::v-deep .el-button--success.is-plain:focus {
+  background-color: #008b4b !important;
+  border-color: #008b4b !important;
+  color: #fff !important;
+}
+
 .purchase-form-page ::v-deep .el-button--success:hover,
 .purchase-form-page ::v-deep .el-button--success:focus {
   background-color: #00763f !important;
   border-color: #00763f !important;
 }
 
+.purchase-form-page ::v-deep .el-button--default:hover,
+.purchase-form-page ::v-deep .el-button--default:focus {
+  border-color: #008b4b;
+  color: #008b4b;
+  background-color: #f0fdf4;
+}
+
+.purchase-form-page ::v-deep .el-button--text:not(.danger-link) {
+  color: #008b4b;
+}
+
+.purchase-form-page ::v-deep .el-button--text:not(.danger-link):hover,
+.purchase-form-page ::v-deep .el-button--text:not(.danger-link):focus {
+  color: #00763f;
+}
+
+.purchase-form-page ::v-deep .el-input__inner:focus,
+.purchase-form-page ::v-deep .el-textarea__inner:focus,
+.purchase-form-page ::v-deep .el-select .el-input.is-focus .el-input__inner,
+.purchase-form-page ::v-deep .el-range-editor.is-active {
+  border-color: #008b4b !important;
+}
+
+.purchase-form-page ::v-deep .el-input-number__increase:hover,
+.purchase-form-page ::v-deep .el-input-number__decrease:hover {
+  color: #008b4b;
+}
+
 .purchase-form-page ::v-deep .el-checkbox__input.is-checked .el-checkbox__inner,
-.purchase-form-page ::v-deep .el-checkbox__input.is-indeterminate .el-checkbox__inner {
+.purchase-form-page ::v-deep .el-checkbox__input.is-indeterminate .el-checkbox__inner,
+.purchase-form-page ::v-deep .el-radio__input.is-checked .el-radio__inner {
   background-color: #008b4b !important;
   border-color: #008b4b !important;
 }
 
+.purchase-form-page ::v-deep .el-checkbox__input.is-checked + .el-checkbox__label,
+.purchase-form-page ::v-deep .el-radio__input.is-checked + .el-radio__label {
+  color: #008b4b !important;
+}
+
 .bottom-actions {
   box-sizing: border-box;
-  position: fixed;
-  left: 0;
-  right: 0;
+  position: sticky;
   bottom: 0;
-  height: 58px;
+  z-index: 25;
+  margin: auto -20px 0;
+  min-height: 58px;
   padding: 10px 24px;
   display: flex;
-  justify-content: flex-end;
+  justify-content: space-between;
   align-items: center;
-  gap: 10px;
+  flex-wrap: wrap;
+  gap: 12px;
   background: #fff;
   border-top: 1px solid #e2e8f0;
-  box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.05);
-  z-index: 30;
+  box-shadow: 0 -4px 12px rgba(15, 23, 42, 0.05);
+}
+
+.bottom-actions-left {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  min-width: 0;
+}
+
+.bottom-summary-meta {
+  font-size: 13px;
+  color: #475569;
+}
+
+.bottom-actions-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
 }
 
 /* 计划表格内嵌拆分抽屉样式 */
@@ -2925,14 +3811,20 @@ export default {
   .grid-4 {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
-  .remark-span-3 {
+  .remark-span-2,
+  .remark-span-3,
+  .remark-span-4 {
     grid-column: span 2;
+  }
+  .purchase-flow-steps {
+    width: 100%;
+    justify-content: flex-start;
   }
 }
 
 @media (max-width: 760px) {
   .purchase-form-page {
-    padding: 12px 10px 76px;
+    padding: 12px 12px 0;
   }
   .page-head {
     flex-direction: column;
@@ -2967,23 +3859,33 @@ export default {
   .form-layout > aside {
     grid-template-columns: minmax(0, 1fr);
   }
-  .remark-span-3 {
+  .remark-span-2,
+  .remark-span-3,
+  .remark-span-4 {
     grid-column: span 1;
   }
+  .batch-toolbar-strip,
   .table-summary-bar {
     flex-direction: column;
     align-items: stretch;
   }
   .summary-metrics {
     margin-left: 0;
-    justify-content: space-between;
+    justify-content: flex-start;
   }
   .plan-editor {
     grid-template-columns: minmax(0, 1fr);
   }
   .bottom-actions {
-    left: 0;
+    margin: auto -12px 0;
     padding: 10px 14px;
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .bottom-actions-right {
+    margin-left: 0;
+    justify-content: flex-end;
+    flex-wrap: wrap;
   }
   .section-title {
     align-items: flex-start;

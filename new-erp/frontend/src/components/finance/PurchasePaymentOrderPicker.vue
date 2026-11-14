@@ -10,8 +10,10 @@
         <el-table-column prop="supplier_name" label="供应商" min-width="140" />
         <el-table-column prop="currency" label="币种" width="70" />
         <el-table-column label="合同总额" min-width="105" align="right"><template slot-scope="{ row }">{{ money(row.contract_amount) }}</template></el-table-column>
+        <el-table-column label="实际金额修正" min-width="110" align="right"><template slot-scope="{ row }">{{ money(row.actual_amount_adjustment) }}</template></el-table-column>
+        <el-table-column label="当前付款总额" min-width="115" align="right"><template slot-scope="{ row }">{{ money(row.current_payment_amount) }}</template></el-table-column>
         <el-table-column label="已付净额" min-width="105" align="right"><template slot-scope="{ row }">{{ money(row.net_paid_amount) }}</template></el-table-column>
-        <el-table-column label="合同待付" min-width="105" align="right"><template slot-scope="{ row }">{{ money(row.contract_unpaid_amount) }}</template></el-table-column>
+        <el-table-column label="当前待付" min-width="105" align="right"><template slot-scope="{ row }">{{ money(row.contract_unpaid_amount) }}</template></el-table-column>
         <el-table-column label="状态" min-width="145"><template slot-scope="{ row }">{{ disabledReason(row) || (isSelected(row) ? '已选择' : '可选择') }}</template></el-table-column>
       </el-table>
       <el-pagination background layout="total, prev, pager, next" :current-page="page" :page-size="10" :pager-count="5" :total="total" @current-change="changePage" />

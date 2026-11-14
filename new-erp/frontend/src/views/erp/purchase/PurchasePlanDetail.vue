@@ -188,15 +188,15 @@
                     <strong class="highlight-qty">{{ number(scope.row.purchase_conversion_snapshot?.purchase_qty ?? scope.row.purchase_qty) }}</strong> {{ scope.row.purchase_conversion_snapshot?.purchase_unit_name_snapshot || lineUnit(row) }}
                   </template>
                 </el-table-column>
-                <el-table-column label="采购单价" width="115" align="right">
+                <el-table-column label="采购单价（含税）" width="150" align="right">
                   <template slot-scope="scope">
-                    ¥{{ money(scope.row.purchase_conversion_snapshot?.purchase_unit_price ?? scope.row.unit_price) }}
+                    ¥{{ purchasePrice(scope.row.purchase_conversion_snapshot?.purchase_unit_price ?? scope.row.unit_price) }}
                   </template>
                 </el-table-column>
                 <el-table-column prop="tax_rate" label="税率" width="70" align="center">
                   <template slot-scope="scope">{{ number(scope.row.tax_rate) }}%</template>
                 </el-table-column>
-                <el-table-column label="预计金额" width="115" align="right">
+                <el-table-column label="成交总额（含税）" width="135" align="right">
                   <template slot-scope="scope">
                     <strong class="text-money">¥{{ money(scope.row.amount) }}</strong>
                   </template>
@@ -277,7 +277,7 @@
                 <span class="supplier-name-text">{{ split.supplier ? split.supplier.supplier_name : '-' }}</span>
                 <span class="split-detail-text">
                   {{ number(split.purchase_conversion_snapshot?.purchase_qty ?? split.purchase_qty) }} {{ split.purchase_conversion_snapshot?.purchase_unit_name_snapshot || lineUnit(row) }} ·
-                  ¥{{ money(split.purchase_conversion_snapshot?.purchase_unit_price ?? split.unit_price) }}
+                  ¥{{ purchasePrice(split.purchase_conversion_snapshot?.purchase_unit_price ?? split.unit_price) }} · 成交 ¥{{ money(split.amount) }}
                 </span>
                 <el-tag v-if="split.order" size="mini" type="success">{{ split.order.purchase_order_no }}</el-tag>
               </div>
@@ -555,6 +555,7 @@ export default {
     money(v) {
       return Number(v || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
     },
+    purchasePrice(value) { return Number(value || 0).toLocaleString('zh-CN', { maximumFractionDigits: 8 }) },
     number(v) {
       return Number(v || 0).toFixed(6).replace(/0+$/, '').replace(/\.$/, '')
     },

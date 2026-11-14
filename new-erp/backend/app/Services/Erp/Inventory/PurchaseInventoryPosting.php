@@ -18,6 +18,7 @@ use App\Services\Erp\PurchaseReceiptAllocationService;
 use App\Services\Erp\PurchaseReceiptManagementScopeService;
 use App\Services\Erp\PurchaseReceiptPostingEligibilityService;
 use App\Services\Erp\PurchaseReceiptSettlementService;
+use App\Services\Erp\PurchaseFinancialFactService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
@@ -94,14 +95,20 @@ class PurchaseInventoryPosting
                 $qty = $this->qualifiedBaseQuantity($line);
                 if ($qty <= 0) continue;
                 $unitCost = $qty > 0 ? (float) $line->inventory_cost_amount / $qty : 0;
+                app(PurchaseFinancialFactService::class)->assertUnitPrice(bcdiv((string) $line->inventory_cost_amount, number_format($qty, 8, '.', ''), 8));
                 $pipeLotId = $this->pipeLotId($line);
                 $remainingCost = (string) $line->inventory_cost_amount;
                 $remainingQty = number_format($qty, 8, '.', '');
+                $originalQty = (string) ($line->original_received_base_qty ?: $line->actual_base_qty ?: $line->standard_base_qty ?: $line->receipt_qty);
+                $remainingFreight = $line->finance_actual_amount === null
+                    ? CuttingDecimal::share((string) $line->freight_allocated_amount, $originalQty, $remainingQty) : '0.0000';
                 foreach ($line->allocations as $allocation) {
                     $allocationQty = (float) $allocation->base_qty;
                     if ($allocationQty <= 0) continue;
                     $allocationQtyDecimal = (string) $allocation->base_qty;
                     $allocationCost = CuttingDecimal::share($remainingCost, $remainingQty, $allocationQtyDecimal);
+                    app(PurchaseFinancialFactService::class)->assertUnitPrice(bcdiv($allocationCost, $allocationQtyDecimal, 8));
+                    $allocationFreight = CuttingDecimal::share($remainingFreight, $remainingQty, $allocationQtyDecimal);
                     $transactionItem = $this->kernel->apply($transaction, [
                         'item_id' => $line->item_id,
                         'warehouse_id' => $allocation->warehouse_id,
@@ -111,12 +118,8 @@ class PurchaseInventoryPosting
                         'change_qty' => $allocationQty,
                         'unit_cost' => $unitCost,
                         'cost_amount' => $allocationCost,
-                        'purchase_amount_snapshot' => $qty > 0
-                            ? round((float) $line->amount_excl_tax * $allocationQty / $qty, 4)
-                            : 0,
-                        'freight_amount_snapshot' => $qty > 0
-                            ? round((float) $line->freight_allocated_amount * $allocationQty / $qty, 4)
-                            : 0,
+                        'purchase_amount_snapshot' => bcsub($allocationCost, $allocationFreight, 4),
+                        'freight_amount_snapshot' => $allocationFreight,
                         'other_purchase_cost_amount_snapshot' => $qty > 0
                             ? round((float) $line->other_purchase_cost_amount * $allocationQty / $qty, 4)
                             : 0,
@@ -136,11 +139,12 @@ class PurchaseInventoryPosting
                     }
                     $this->registerReceiptSerials($receipt, $line, $allocation);
                     $remainingCost = bcsub($remainingCost, $allocationCost, 4);
+                    $remainingFreight = bcsub($remainingFreight, $allocationFreight, 4);
                     $remainingQty = bcsub($remainingQty, $allocationQtyDecimal, 8);
                 }
             }
 
-            $qualityPending = (float) $receipt->items->sum('quality_hold_amount') > 0.0001;
+            $qualityPending = $receipt->items->contains(fn ($line) => $line->settlement_status === 'quality_hold');
             $receipt->update(['stock_post_status' => 'posted', 'fulfillment_status' => $qualityPending ? 'pending_quality' : 'fulfilled']);
             $postingLog = InventoryPostingLog::create([
                 'source_type' => 'purchase_receipt',
@@ -202,12 +206,17 @@ class PurchaseInventoryPosting
                 ->where('movement.source_type', 'purchase_receipt')->where('movement.source_id', $receipt->id)
                 ->whereIn('posting.transaction_type', ['purchase_receipt_posting', 'purchase_receipt_quality_release'])->where('posting.posting_status', 'posted')
                 ->where('movement.source_item_id', $line->id)
-                ->selectRaw('COALESCE(SUM(movement.change_qty), 0) as qty, COALESCE(SUM(movement.cost_amount), 0) as cost')
+                ->selectRaw('COALESCE(SUM(movement.change_qty), 0) as qty, COALESCE(SUM(movement.cost_amount), 0) as cost, COALESCE(SUM(movement.freight_amount_snapshot), 0) as freight')
                 ->first();
             $delta = bcsub(number_format($this->qualifiedBaseQuantity($line), 8, '.', ''), (string) $posted->qty, 8);
             if (bccomp($delta, '0', 8) <= 0) return null;
             $cost = bcsub((string) $line->inventory_cost_amount, (string) $posted->cost, 4);
             if (bccomp($cost, '0', 4) < 0) $cost = '0.0000';
+            app(PurchaseFinancialFactService::class)->assertUnitPrice(bcdiv($cost, $delta, 8));
+            $originalQty = (string) ($line->original_received_base_qty ?: $line->actual_base_qty ?: $line->standard_base_qty ?: $line->receipt_qty);
+            $freight = $line->finance_actual_amount === null
+                ? bcsub(CuttingDecimal::share((string) $line->freight_allocated_amount, $originalQty, number_format($this->qualifiedBaseQuantity($line), 8, '.', '')), (string) $posted->freight, 4)
+                : '0.0000';
 
             $allocation = $line->allocations->sortBy('id')->first();
             if (!$allocation) {
@@ -241,8 +250,8 @@ class PurchaseInventoryPosting
                 'change_qty' => (float) $delta,
                 'unit_cost' => (float) $delta > 0 ? (float) $cost / (float) $delta : 0,
                 'cost_amount' => $cost,
-                'purchase_amount_snapshot' => (float) $cost,
-                'freight_amount_snapshot' => 0,
+                'purchase_amount_snapshot' => bcsub($cost, $freight, 4),
+                'freight_amount_snapshot' => $freight,
                 'other_purchase_cost_amount_snapshot' => 0,
                 'cost_source_type' => 'purchase_receipt_frozen_fact',
                 'source_type' => 'purchase_receipt',
@@ -420,7 +429,9 @@ class PurchaseInventoryPosting
                     ]);
                     continue;
                 }
-                $this->kernel->apply($transaction, [
+                $returnCost = CuttingDecimal::share((string) $balance->inventory_value, (string) $balance->quantity_on_hand, number_format($quantity, 8, '.', ''));
+                app(PurchaseFinancialFactService::class)->assertUnitPrice(bcdiv($returnCost, number_format($quantity, 8, '.', ''), 8));
+                $transactionItem = $this->kernel->apply($transaction, [
                     'item_id' => $line->item_id,
                     'warehouse_id' => $line->warehouse_id,
                     'location_id' => $line->location_id,
@@ -428,8 +439,8 @@ class PurchaseInventoryPosting
                     'unit_id' => $line->base_unit_id ?: $line->item?->unit_id,
                     'change_qty' => -$quantity,
                     'unit_cost' => $unitCost,
-                    'cost_amount' => -round($quantity * $unitCost, 4),
-                    'purchase_amount_snapshot' => -abs((float) $line->return_amount_excl_tax),
+                    'cost_amount' => bcsub('0', $returnCost, 4),
+                    'purchase_amount_snapshot' => bcsub('0', (string) $line->settlement_amount, 4),
                     'cost_source_type' => 'purchase_return_frozen_fact',
                     'source_type' => 'purchase_return',
                     'source_id' => $purchaseReturn->id,
@@ -456,7 +467,7 @@ class PurchaseInventoryPosting
                 }
                 $line->update([
                     'posted_base_qty' => $quantity,
-                    'inventory_cost_amount' => round($quantity * $unitCost, 4),
+                    'inventory_cost_amount' => ltrim((string) $transactionItem->cost_amount, '-'),
                     'finance_fact_status' => 'frozen',
                 ]);
             }

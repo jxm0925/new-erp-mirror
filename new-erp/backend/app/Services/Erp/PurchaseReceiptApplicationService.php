@@ -80,6 +80,7 @@ class PurchaseReceiptApplicationService
                     'is_stock_item_snapshot' => $stockManaged,
                     'receipt_qty' => $quantity,
                 ]);
+                $amountFacts = app(PurchaseFinancialFactService::class)->orderReceiptFacts($receipt, $line, $quantity);
                 PurchaseReceiptItem::create([
                     'receipt_id' => $receipt->id,
                     'order_item_id' => $line->id,
@@ -88,9 +89,7 @@ class PurchaseReceiptApplicationService
                     ...$policy,
                     'receipt_qty' => $quantity,
                     'qualified_qty' => $quantity,
-                    'unit_price' => $line->unit_price,
-                    'tax_rate' => $line->tax_rate,
-                    'receipt_cost' => $quantity * (float) $line->unit_price,
+                    ...$amountFacts,
                     'inventory_posting_status' => $stockManaged ? 'pending' : 'not_required',
                     ...$conversion,
                     'is_stock_item_snapshot' => $stockManaged,
@@ -99,6 +98,7 @@ class PurchaseReceiptApplicationService
             }
 
             $this->refreshReceiptTotal($receipt->id);
+            app(PurchaseReceiptSettlementService::class)->refresh($receipt->id);
             PurchaseLog::create([
                 'target_type' => 'purchase_receipt',
                 'target_id' => $receipt->id,
@@ -298,7 +298,7 @@ class PurchaseReceiptApplicationService
     {
         $totals = PurchaseReceiptItem::query()
             ->where('receipt_id', $receiptId)
-            ->selectRaw('COALESCE(SUM(receipt_qty),0) qty, COALESCE(SUM(qualified_qty),0) q, COALESCE(SUM(unqualified_qty),0) uq, COALESCE(SUM(receipt_cost),0) amount')
+            ->selectRaw('COALESCE(SUM(receipt_qty),0) qty, COALESCE(SUM(qualified_qty),0) q, COALESCE(SUM(unqualified_qty),0) uq, COALESCE(SUM(COALESCE(amount_incl_tax, receipt_cost)),0) amount')
             ->first();
         PurchaseReceipt::whereKey($receiptId)->update([
             'total_receipt_qty' => $totals->qty,

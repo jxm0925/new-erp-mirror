@@ -36,7 +36,7 @@ class FinanceInvoiceApplicationService
             if ($direction === FinanceConstants::INVOICE_PURCHASE && (($data['currency'] ?? 'CNY') !== 'CNY')) {
                 throw ValidationException::withMessages(['currency' => '采购进项发票 V1 当前仅允许 CNY。']);
             }
-            $facts = $this->invoiceTaxFacts($data);
+            $facts = $this->invoiceTaxFacts($data, $direction === FinanceConstants::INVOICE_PURCHASE ? 2 : 4);
             $excl = $facts['amount_excl_tax'];
             $tax = $facts['tax_amount'];
             $incl = $facts['amount_incl_tax'];
@@ -85,9 +85,10 @@ class FinanceInvoiceApplicationService
                 throw ValidationException::withMessages(['original_invoice_id' => '该蓝票已完成全额红冲，不能再次开具红字发票。']);
             }
 
-            $excl = Money::normalize((string) $data['amount_excl_tax']);
-            $tax = Money::normalize((string) $data['tax_amount']);
-            $incl = Money::normalize((string) $data['amount_incl_tax']);
+            $facts = $this->redInvoiceFacts($original, $data);
+            $excl = $facts['amount_excl_tax'];
+            $tax = $facts['tax_amount'];
+            $incl = $facts['amount_incl_tax'];
             $scope = (string) $data['red_scope'];
             if (!in_array($scope, ['full', 'partial'], true)
                 || Money::compare($excl, '0') < 0 || Money::compare($tax, '0') < 0
@@ -110,7 +111,7 @@ class FinanceInvoiceApplicationService
                 'party_name_snapshot' => $original->party_name_snapshot,
                 'invoice_date' => $data['red_date'], 'received_date' => $data['red_date'], 'currency' => 'CNY',
                 'amount_excl_tax' => $excl, 'tax_amount' => $tax, 'amount_incl_tax' => $incl,
-                'tax_detail' => $data['tax_detail'] ?? null, 'remark' => $data['remark'] ?? null,
+                'tax_detail' => $facts['tax_detail'], 'remark' => $data['remark'] ?? null,
                 'status' => FinanceConstants::STATUS_RED, 'red_invoice_of_id' => $original->id,
                 'red_reason' => trim((string) $data['red_reason']), 'red_date' => $data['red_date'],
                 'red_scope' => $scope, 'red_match_handling' => 'preserve_match_history',
@@ -157,15 +158,15 @@ class FinanceInvoiceApplicationService
                 || $original->status !== FinanceConstants::STATUS_CONFIRMED || $original->red_invoice_of_id !== null) {
                 throw ValidationException::withMessages(['original_invoice_id' => '仅已确认的 CNY 采购蓝票可以创建红冲草稿。']);
             }
-            $this->validateRedAmounts($original, $data, true);
+            $facts = $this->redInvoiceFacts($original, $data);
+            $this->validateRedAmounts($original, [...$data, ...$facts], true);
             $number = $this->numbers->reservedNumber($data['reservation_token'], 'finance_invoice', $operatorId, $data['creation_session_id'] ?? null);
             $draft = FinanceInvoice::create([
                 'invoice_direction' => FinanceConstants::INVOICE_PURCHASE, 'document_no' => $number,
                 'invoice_no' => $data['invoice_no'] ?? null, 'invoice_code' => $data['invoice_code'] ?? null, 'invoice_type' => $data['invoice_type'],
                 'party_type' => $original->party_type, 'party_id' => $original->party_id, 'party_name_snapshot' => $original->party_name_snapshot,
                 'invoice_date' => $data['red_date'], 'received_date' => $data['red_date'], 'currency' => 'CNY',
-                'amount_excl_tax' => Money::normalize((string) $data['amount_excl_tax']), 'tax_amount' => Money::normalize((string) $data['tax_amount']), 'amount_incl_tax' => Money::normalize((string) $data['amount_incl_tax']),
-                'tax_detail' => $data['tax_detail'] ?? null, 'remark' => $data['remark'] ?? null,
+                ...$facts, 'remark' => $data['remark'] ?? null,
                 'status' => FinanceConstants::STATUS_DRAFT, 'red_invoice_of_id' => $original->id,
                 'red_reason' => trim((string) $data['red_reason']), 'red_date' => $data['red_date'], 'red_scope' => $data['red_scope'],
                 'red_match_handling' => 'preserve_match_history', 'created_by' => $operatorId,
@@ -212,7 +213,7 @@ class FinanceInvoiceApplicationService
             $party = isset($data['party_id']) || isset($data['party_type'])
                 ? $this->parties->resolve((string) ($data['party_type'] ?? $invoice->party_type), (int) ($data['party_id'] ?? $invoice->party_id))
                 : [];
-            $facts = $this->invoiceTaxFacts($data);
+            $facts = $this->invoiceTaxFacts($data, $direction === FinanceConstants::INVOICE_PURCHASE ? 2 : 4);
             $excl = $facts['amount_excl_tax'];
             $tax = $facts['tax_amount'];
             $incl = $facts['amount_incl_tax'];
@@ -240,6 +241,8 @@ class FinanceInvoiceApplicationService
                 if ($invoice->status !== FinanceConstants::STATUS_DRAFT) {
                     throw ValidationException::withMessages(['status' => '只有草稿发票可以分摊业务来源。']);
                 }
+                $scale = $invoice->invoice_direction === FinanceConstants::INVOICE_PURCHASE ? 2 : 4;
+                if ($scale === 2) $this->assertCentDraft($invoice);
                 $allocated = $this->activeTotalForInvoice($invoice->id);
                 $remaining = Money::sub((string) $invoice->amount_incl_tax, $allocated);
                 $created = [];
@@ -251,8 +254,8 @@ class FinanceInvoiceApplicationService
                     if ($invoice->party_type !== $source['partyType'] || (int) $invoice->party_id !== $source['partyId'] || $invoice->currency !== $source['currency']) {
                         throw ValidationException::withMessages(['source_document_id' => '发票与业务来源的交易对手或币种不一致。']);
                     }
-                    $amount = Money::normalize((string) $row['allocated_amount']);
-                    $sourceRemaining = Money::sub($source['amount'], $this->activeTotalForSource($source['type'], $source['id']));
+                    $amount = Money::normalize((string) $row['allocated_amount'], $scale);
+                    $sourceRemaining = Money::normalize(Money::sub($source['amount'], $this->activeTotalForSource($source['type'], $source['id'])), $scale);
                     if (Money::compare($amount, '0') <= 0 || Money::compare($amount, $remaining) > 0 || Money::compare($amount, $sourceRemaining) > 0) {
                         throw ValidationException::withMessages(['allocated_amount' => '发票分摊金额无效或超过可开票余额。']);
                     }
@@ -299,6 +302,7 @@ class FinanceInvoiceApplicationService
         return DB::transaction(function () use ($invoiceId, $operatorId): FinanceInvoice {
             $invoice = FinanceInvoice::query()->lockForUpdate()->findOrFail($invoiceId);
             if ($invoice->status !== FinanceConstants::STATUS_DRAFT) throw ValidationException::withMessages(['status' => '只有草稿发票可以确认。']);
+            if ($invoice->invoice_direction === FinanceConstants::INVOICE_PURCHASE) $this->assertCentDraft($invoice);
             if (Money::compare($this->activeTotalForInvoice($invoice->id), (string) $invoice->amount_incl_tax) !== 0) {
                 throw ValidationException::withMessages(['allocations' => '发票必须完整分摊到业务来源后才能确认。']);
             }
@@ -356,7 +360,7 @@ class FinanceInvoiceApplicationService
      * figures are accepted only as a cross-check so callers cannot submit an
      * empty or unrelated tax-detail list.
      */
-    private function invoiceTaxFacts(array $data): array
+    private function invoiceTaxFacts(array $data, int $scale): array
     {
         $rows = $data['tax_detail'] ?? [];
         if (!is_array($rows) || $rows === []) {
@@ -373,12 +377,12 @@ class FinanceInvoiceApplicationService
             if (!preg_match('/^\d+(\.\d{1,4})?$/', $rawExcl) || !preg_match('/^\d+(\.\d{1,4})?$/', $rawTax)) {
                 throw ValidationException::withMessages(["tax_detail.$index" => '税率明细中的未税金额和税额必须为有效金额。']);
             }
-            $lineExcl = Money::normalize($rawExcl);
-            $lineTax = Money::normalize($rawTax);
+            $lineExcl = Money::normalize($rawExcl, $scale);
+            $lineTax = Money::normalize($rawTax, $scale);
             if ($rate < 0 || $rate > 100 || Money::compare($lineExcl, '0') < 0 || Money::compare($lineTax, '0') < 0) {
                 throw ValidationException::withMessages(["tax_detail.$index" => '税率明细金额无效。']);
             }
-            $calculatedTax = Money::normalize(number_format(round((float) $lineExcl * $rate / 100, 4), 4, '.', ''));
+            $calculatedTax = Money::normalize(bcdiv(bcmul($lineExcl, number_format($rate, 8, '.', ''), Money::CALC_SCALE), '100', Money::CALC_SCALE), $scale);
             if (Money::compare($lineTax, $calculatedTax) !== 0) {
                 throw ValidationException::withMessages(["tax_detail.$index.tax_amount" => "税额必须按本行未税金额和税率自动计算：申报 {$lineTax}，应为 {$calculatedTax}。"]);
             }
@@ -387,9 +391,11 @@ class FinanceInvoiceApplicationService
             $normalizedRows[] = ['tax_rate' => $rate, 'amount_excl_tax' => $lineExcl, 'tax_amount' => $lineTax];
         }
 
-        $incl = Money::add($excl, $tax);
+        $excl = Money::normalize($excl, $scale);
+        $tax = Money::normalize($tax, $scale);
+        $incl = Money::normalize(Money::add($excl, $tax), $scale);
         foreach (['amount_excl_tax' => $excl, 'tax_amount' => $tax, 'amount_incl_tax' => $incl] as $key => $value) {
-            if (array_key_exists($key, $data) && Money::compare(Money::normalize((string) $data[$key]), $value) !== 0) {
+            if (array_key_exists($key, $data) && Money::compare(Money::normalize((string) $data[$key], $scale), $value) !== 0) {
                 throw ValidationException::withMessages([$key => '发票金额必须由税率明细汇总生成，不能与明细不一致。']);
             }
         }
@@ -403,6 +409,19 @@ class FinanceInvoiceApplicationService
     private function activeTotalForInvoice(int $invoiceId): string
     {
         return Money::normalize((string) FinanceInvoiceAllocation::query()->where('invoice_id', $invoiceId)->where('status', FinanceConstants::ALLOCATION_ACTIVE)->sum('allocated_amount'));
+    }
+
+    private function assertCentDraft(FinanceInvoice $invoice): void
+    {
+        foreach (['amount_excl_tax', 'tax_amount', 'amount_incl_tax'] as $field) {
+            if (Money::compare((string) $invoice->$field, Money::normalize((string) $invoice->$field, 2)) !== 0) {
+                throw ValidationException::withMessages(['amount_incl_tax' => '该草稿仍有分以下金额，请返回编辑页核对税率明细并保存草稿后重新匹配。']);
+            }
+        }
+        if ($invoice->allocations()->where('status', FinanceConstants::ALLOCATION_ACTIVE)
+            ->whereRaw('allocated_amount <> ROUND(allocated_amount, 2)')->exists()) {
+            throw ValidationException::withMessages(['allocations' => '该草稿含原四位小数的匹配记录，请到发票详情撤销这些匹配，再重新匹配。']);
+        }
     }
 
     private function validateRedAmounts(FinanceInvoice $original, array $data, bool $includeDrafts = false, ?int $excludeId = null): void
@@ -420,6 +439,26 @@ class FinanceInvoiceApplicationService
             || ((string) $data['red_scope'] === 'full' && Money::compare($incl, $remaining) !== 0)) {
             throw ValidationException::withMessages(['amount_incl_tax' => '红冲金额无效、超出可红冲余额，或全额红冲未覆盖剩余金额。']);
         }
+    }
+
+    private function redInvoiceFacts(FinanceInvoice $original, array $data): array
+    {
+        $scale = 2;
+        // 历史蓝票的分以下金额仍按原精度红冲，不能舍掉已经确认的财务事实。
+        foreach (['amount_excl_tax', 'tax_amount', 'amount_incl_tax'] as $field) {
+            if (Money::compare((string) $original->$field, Money::normalize((string) $original->$field, 2)) !== 0) $scale = 4;
+        }
+        if ($scale === 2 && $original->redInvoices()->where('status', FinanceConstants::STATUS_RED)
+            ->whereRaw('(amount_excl_tax <> ROUND(amount_excl_tax, 2) OR tax_amount <> ROUND(tax_amount, 2) OR amount_incl_tax <> ROUND(amount_incl_tax, 2))')->exists()) $scale = 4;
+        $facts = [];
+        foreach (['amount_excl_tax', 'tax_amount', 'amount_incl_tax'] as $field) $facts[$field] = Money::normalize((string) $data[$field], $scale);
+        $facts['tax_detail'] = isset($data['tax_detail']) ? array_map(function (array $row) use ($scale): array {
+            foreach (['amount_excl_tax', 'tax_amount'] as $field) {
+                if (isset($row[$field])) $row[$field] = Money::normalize((string) $row[$field], $scale);
+            }
+            return $row;
+        }, $data['tax_detail']) : null;
+        return $facts;
     }
 
     private function applyRedMatchFacts(FinanceInvoice $original, FinanceInvoice $red, ?int $operatorId): void

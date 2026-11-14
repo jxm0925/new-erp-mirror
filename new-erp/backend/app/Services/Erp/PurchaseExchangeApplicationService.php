@@ -41,8 +41,8 @@ class PurchaseExchangeApplicationService
 
             $source = PurchaseReceiptItem::query()->with(['receipt.order', 'item.unit'])->lockForUpdate()->findOrFail($source->id);
             $managementScope = InheritedManagementScopeGuard::nullable($source->receipt?->management_scope);
-            $facts = $this->finance->proportionalFacts($source, (float) $event->issue_qty);
-            $cost = (float) $facts['return_amount_excl_tax'];
+            $facts = $this->finance->dispositionFacts($source, (float) $event->issue_qty);
+            $cost = $facts['inventory_cost_amount'];
             $order = PurchaseExchangeOrder::create([
                 'exchange_no' => $this->nextExchangeNo(),
                 'management_scope' => $managementScope,
@@ -56,7 +56,7 @@ class PurchaseExchangeApplicationService
                 'exchange_base_qty' => $event->issue_qty,
                 'base_unit_name_snapshot' => $event->unit_name_snapshot ?: $source->base_unit_name_snapshot,
                 'original_contract_amount' => $facts['return_amount_incl_tax'],
-                'original_payable_amount' => $facts['return_amount_incl_tax'],
+                'original_payable_amount' => $facts['settlement_amount'],
                 'exchange_additional_payable_amount' => 0,
                 'replacement_payable_amount' => 0,
                 'replacement_inventory_cost' => $cost,
@@ -93,9 +93,9 @@ class PurchaseExchangeApplicationService
             if ($existing) return $this->load($existing);
 
             $managementScope = InheritedManagementScopeGuard::nullable($handling->receipt?->management_scope);
-            $line = $handling->receiptItem;
-            $facts = $this->finance->proportionalFacts($line, (float) $handling->handling_qty);
-            $cost = (float) $facts['return_amount_excl_tax'];
+            $line = PurchaseReceiptItem::query()->lockForUpdate()->findOrFail($handling->receipt_item_id);
+            $facts = $this->finance->dispositionFacts($line, (float) $handling->handling_qty);
+            $cost = $facts['inventory_cost_amount'];
             $exchangeNo = $this->nextExchangeNo($handling->business_doc_no);
             $order = PurchaseExchangeOrder::create([
                 'exchange_no' => $exchangeNo,
@@ -109,7 +109,7 @@ class PurchaseExchangeApplicationService
                 'exchange_base_qty' => $handling->handling_qty,
                 'base_unit_name_snapshot' => $line->base_unit_name_snapshot ?: $line->item?->unit?->unit_name,
                 'original_contract_amount' => $facts['return_amount_incl_tax'],
-                'original_payable_amount' => $facts['return_amount_incl_tax'],
+                'original_payable_amount' => $facts['settlement_amount'],
                 'exchange_additional_payable_amount' => 0,
                 'replacement_payable_amount' => 0,
                 'replacement_inventory_cost' => $cost,
@@ -187,7 +187,9 @@ class PurchaseExchangeApplicationService
             $baseUnitId = $source?->base_unit_id ?: $source?->item?->unit_id;
             $baseUnitName = $source?->base_unit_name_snapshot ?: $source?->item?->unit?->unit_name;
             $quantity = round((float) $order->exchange_base_qty, 8);
-            $unitPrice = $quantity > 0 ? round((float) $order->replacement_inventory_cost / $quantity, 8) : 0;
+            $unitPrice = $quantity > 0 ? bcdiv((string) $order->replacement_inventory_cost, number_format($quantity, 8, '.', ''), 8) : '0.00000000';
+            $this->finance->assertUnitPrice($unitPrice);
+            abort_if(bccomp((string) $unitPrice, '9999999999.9999', 8) > 0, 422, '换货成本反算单价超出系统允许范围');
             foreach ($receipt->items as $line) {
                 $line->update([
                     'purchase_unit_id' => $baseUnitId,
@@ -403,6 +405,9 @@ class PurchaseExchangeApplicationService
             app(WarehouseManagementScopeService::class)->assertWarehouseItem($item, (int) $source->warehouse_id, 'warehouse_id', $scope);
         }
         $purchaseQty = round((float) $order->exchange_base_qty, 8);
+        $unitPrice = bcdiv((string) $order->replacement_inventory_cost, number_format($purchaseQty, 8, '.', ''), 8);
+        $this->finance->assertUnitPrice($unitPrice);
+        abort_if(bccomp($unitPrice, '9999999999.9999', 8) > 0, 422, '换货成本反算单价超出系统允许范围');
         $baseUnitId = $source->base_unit_id ?: $source->item?->unit_id;
         $baseUnitName = $source->base_unit_name_snapshot ?: $source->item?->unit?->unit_name;
         $receipt = PurchaseReceipt::create([
@@ -436,7 +441,7 @@ class PurchaseExchangeApplicationService
             'standard_base_qty' => $order->exchange_base_qty, 'actual_base_qty' => $order->exchange_base_qty,
             'qualified_base_qty' => 0, 'unqualified_base_qty' => 0, 'difference_qty' => 0,
             'allow_actual_conversion' => false, 'inventory_posting_status' => 'pending',
-            'unit_price' => $purchaseQty > 0 ? $order->replacement_inventory_cost / $purchaseQty : 0,
+            'unit_price' => $unitPrice,
             'tax_rate' => $source->tax_rate, 'receipt_cost' => $order->replacement_inventory_cost,
             'is_stock_item_snapshot' => (bool) $source->is_stock_item_snapshot,
             'physical_received_base_qty' => $purchaseQty,

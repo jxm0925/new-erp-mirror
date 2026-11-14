@@ -127,6 +127,7 @@
                   size="small"
                   class="table-cell-input"
                   @input="syncGross"
+                  @blur="normalizeAmounts"
                 />
               </td>
               <td class="col-center">
@@ -136,6 +137,7 @@
                   size="small"
                   class="table-cell-input"
                   @input="syncGross"
+                  @blur="normalizeAmounts"
                 />
               </td>
               <td class="col-center cell-bold">{{ money(form.amount_incl_tax) }}</td>
@@ -279,6 +281,7 @@ import {
   createFinanceRedInvoiceDraft,
   confirmFinanceRedInvoiceDraft
 } from '../../../api/erp/finance'
+import { roundInvoiceAmount } from '../../../utils/financeInvoiceAmount'
 
 const today = () => new Date().toISOString().slice(0, 10)
 
@@ -301,13 +304,18 @@ export default {
       red_date: today(),
       red_reason: '开票有误',
       invoice_type: 'vat_special',
-      amount_excl_tax: '0.0000',
-      tax_amount: '0.0000',
-      amount_incl_tax: '0.0000',
+      amount_excl_tax: '0.00',
+      tax_amount: '0.00',
+      amount_incl_tax: '0.00',
       remark: '供应商申报不需要此发票，予以红冲。'
     }
   }),
   computed: {
+    amountScale() {
+      const amounts = [this.original.amount_excl_tax, this.original.tax_amount, this.original.amount_incl_tax,
+        this.preview.red_remaining_excl_tax, this.preview.red_remaining_tax_amount, this.preview.red_remaining_amount]
+      return amounts.some(value => roundInvoiceAmount(value || 0, 4) !== roundInvoiceAmount(roundInvoiceAmount(value || 0), 4)) ? 4 : 2
+    },
     blueLabel() {
       return [this.original.document_no, this.original.invoice_no || this.original.invoice_code].filter(Boolean).join(' / ')
     },
@@ -364,14 +372,16 @@ export default {
             throw new Error('草稿不存在或不属于当前蓝票')
           }
           this.draftId = draftId
+          const draftScale = ['amount_excl_tax', 'tax_amount', 'amount_incl_tax'].some(key =>
+            roundInvoiceAmount(invoice[key] || 0, 4) !== roundInvoiceAmount(roundInvoiceAmount(invoice[key] || 0), 4)) ? 4 : this.amountScale
           Object.assign(this.form, {
             red_scope: invoice.red_scope || 'full',
             red_date: invoice.invoice_date || today(),
             red_reason: invoice.red_reason || '开票有误',
             invoice_type: invoice.invoice_type || this.form.invoice_type,
-            amount_excl_tax: String(invoice.amount_excl_tax || 0),
-            tax_amount: String(invoice.tax_amount || 0),
-            amount_incl_tax: String(invoice.amount_incl_tax || 0),
+            amount_excl_tax: roundInvoiceAmount(invoice.amount_excl_tax || 0, draftScale),
+            tax_amount: roundInvoiceAmount(invoice.tax_amount || 0, draftScale),
+            amount_incl_tax: roundInvoiceAmount(invoice.amount_incl_tax || 0, draftScale),
             remark: invoice.remark || ''
           })
         } else {
@@ -393,13 +403,20 @@ export default {
     },
     changeScope() {
       if (this.form.red_scope === 'full') {
-        this.form.amount_excl_tax = Number(this.preview.red_remaining_excl_tax || 0).toFixed(2)
-        this.form.tax_amount = Number(this.preview.red_remaining_tax_amount || 0).toFixed(2)
-        this.syncGross()
+        this.form.amount_excl_tax = roundInvoiceAmount(this.preview.red_remaining_excl_tax || 0, this.amountScale)
+        this.form.tax_amount = roundInvoiceAmount(this.preview.red_remaining_tax_amount || 0, this.amountScale)
+        this.form.amount_incl_tax = roundInvoiceAmount(this.preview.red_remaining_amount || 0, this.amountScale)
       }
     },
     syncGross() {
-      this.form.amount_incl_tax = (Number(this.form.amount_excl_tax || 0) + Number(this.form.tax_amount || 0)).toFixed(2)
+      const excl = roundInvoiceAmount(this.form.amount_excl_tax || 0, this.amountScale)
+      const tax = roundInvoiceAmount(this.form.tax_amount || 0, this.amountScale)
+      this.form.amount_incl_tax = (Number(excl) + Number(tax)).toFixed(this.amountScale)
+    },
+    normalizeAmounts() {
+      this.form.amount_excl_tax = roundInvoiceAmount(this.form.amount_excl_tax || 0, this.amountScale)
+      this.form.tax_amount = roundInvoiceAmount(this.form.tax_amount || 0, this.amountScale)
+      this.syncGross()
     },
     selectOriginal() {
       this.$message.info('红冲必须从已确认蓝票详情发起；当前已锁定原蓝票。')
@@ -408,6 +425,7 @@ export default {
       this.$message.warning('该动作需由对应采购退货或原业务事实触发，红冲页不会制造退款或篡改原匹配。')
     },
     validForm() {
+      if (!this.draftId) this.normalizeAmounts()
       if (!this.form.red_reason || !this.amountValid || !this.taxValid || !this.scopeValid) {
         this.$message.error('请完成必填信息与金额校验')
         return false

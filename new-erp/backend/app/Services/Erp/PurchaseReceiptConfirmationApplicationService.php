@@ -30,10 +30,14 @@ class PurchaseReceiptConfirmationApplicationService
     public function confirm(int $receiptId, ?int $operatorId, ?string $operatorName): PurchaseReceipt
     {
         return DB::transaction(function () use ($receiptId, $operatorId, $operatorName): PurchaseReceipt {
+            $orderId = PurchaseReceipt::query()->whereKey($receiptId)->value('order_id');
+            $sourceOrder = $orderId ? PurchaseOrder::query()->lockForUpdate()->findOrFail($orderId) : null;
             $receipt = PurchaseReceipt::query()
                 ->with(['items.baseUnit', 'items.item', 'order.items'])
                 ->lockForUpdate()
                 ->findOrFail($receiptId);
+            abort_if((int) $receipt->order_id !== (int) $orderId, 422, '到货来源已变化，请刷新后重新确认');
+            if ($sourceOrder) $receipt->setRelation('order', $sourceOrder->load('items'));
             if ($receipt->confirm_status !== 'draft') {
                 throw ValidationException::withMessages(['receipt' => '只有草稿到货单可以确认。']);
             }
@@ -43,10 +47,10 @@ class PurchaseReceiptConfirmationApplicationService
             if (!$isReplacement && !$receipt->order_id && blank($receipt->remark)) {
                 throw ValidationException::withMessages(['remark' => '无采购订单的手工到货必须填写原因备注。']);
             }
-            if (!$isReplacement && $receipt->items->contains(
-                fn (PurchaseReceiptItem $line) => (float) $line->unit_price <= 0 || (float) $line->receipt_cost <= 0
+            if (!$isReplacement && !$receipt->order_id && $receipt->items->contains(
+                fn (PurchaseReceiptItem $line) => bccomp((string) $line->receipt_cost, '0', 4) <= 0
             )) {
-                throw ValidationException::withMessages(['items' => '普通采购到货存在零单价或零成本明细，不能确认。']);
+                throw ValidationException::withMessages(['items' => '无采购订单的到货必须填写正数成交金额。']);
             }
             if (!$isReplacement && $receipt->order) $this->assertOrderCanReceive($receipt->order);
 
@@ -114,6 +118,13 @@ class PurchaseReceiptConfirmationApplicationService
         if (abs(((float) $line->qualified_qty + (float) $line->unqualified_qty) - (float) $line->receipt_qty) > 0.00000001) {
             throw ValidationException::withMessages(['items' => '合格采购数量与不合格采购数量之和必须等于本次到货采购数量。']);
         }
+        $orderItem = null;
+        if (!$isReplacement && $receipt->order_id) {
+            $orderItem = PurchaseOrderItem::query()->lockForUpdate()->find($line->order_item_id);
+            if (!$orderItem || (int) $orderItem->order_id !== (int) $receipt->order_id || (int) $orderItem->item_id !== (int) $line->item_id) {
+                throw ValidationException::withMessages(['items' => '到货明细必须关联当前采购订单的同一物料明细。']);
+            }
+        }
 
         $base = $this->units->calculateReceiptBaseQuantity(
             $line->receipt_qty,
@@ -138,7 +149,7 @@ class PurchaseReceiptConfirmationApplicationService
         $line->update([
             ...$base,
             ...$quality,
-            ...$this->finance->freezeReceiptLine($receipt, $line),
+            ...$this->finance->freezeReceiptLine($receipt, $line, $orderItem),
             'quality_fact_origin' => 'original_inspection',
             'original_received_qty' => $line->receipt_qty,
             'original_qualified_qty' => $line->qualified_qty,
@@ -152,6 +163,7 @@ class PurchaseReceiptConfirmationApplicationService
             'replacement_received_base_qty' => $isReplacement ? $physicalBase : 0,
             'inventory_posting_status' => $stockManaged && $qualifiedBase > 0 ? 'pending' : 'not_required',
         ]);
+        if ($stockManaged && $physicalBase > 0) $this->finance->assertUnitPrice(bcdiv($line->effectiveAmount(), number_format($physicalBase, 8, '.', ''), 8));
 
         if (!$stockManaged) {
             $line->allocations()->delete();
@@ -165,9 +177,7 @@ class PurchaseReceiptConfirmationApplicationService
             ]);
         }
 
-        $orderItem = null;
-        if ($line->order_item_id && !$isReplacement) {
-            $orderItem = PurchaseOrderItem::query()->lockForUpdate()->findOrFail($line->order_item_id);
+        if ($orderItem) {
             if ((float) $line->receipt_qty > (float) $orderItem->remaining_qty + 0.00000001) {
                 throw ValidationException::withMessages(['items' => '到货数量不能超过订单剩余数量。']);
             }
@@ -176,7 +186,7 @@ class PurchaseReceiptConfirmationApplicationService
             $orderItem->update([
                 'received_qty' => $received,
                 'remaining_qty' => $remaining,
-                'receipt_cost' => (float) $orderItem->receipt_cost + (float) $line->receipt_cost,
+                'receipt_cost' => bcadd((string) $orderItem->receipt_cost, (string) $line->receipt_cost, 4),
                 'line_status' => $remaining > 0 ? 'partial' : 'received',
             ]);
         }

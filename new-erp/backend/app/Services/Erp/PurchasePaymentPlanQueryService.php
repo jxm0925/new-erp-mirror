@@ -12,7 +12,7 @@ use Illuminate\Support\Facades\DB;
 class PurchasePaymentPlanQueryService
 {
     public const SUMMARY_FIELDS = [
-        'contract_amount', 'planned_amount', 'unplanned_amount', 'paid_amount', 'refund_amount', 'net_paid_amount',
+        'contract_amount', 'current_payment_amount', 'actual_amount_adjustment', 'planned_amount', 'unplanned_amount', 'paid_amount', 'refund_amount', 'net_paid_amount',
         'contract_unpaid_amount', 'overpaid_amount', 'allocated_payment_amount', 'allocated_refund_amount',
         'unallocated_payment_amount', 'unallocated_refund_amount', 'prepaid_amount', 'current_payable_amount', 'unpaid_payable_amount',
     ];
@@ -68,8 +68,8 @@ class PurchasePaymentPlanQueryService
     public static function paymentStatus(string $net, string $amount): string
     {
         if (Money::compare($net, $amount) > 0) return 'overpaid';
-        if (Money::compare($net, '0') <= 0) return 'unpaid';
-        return Money::compare($net, $amount) >= 0 ? 'paid' : 'partial';
+        if (Money::compare($net, $amount) === 0) return 'paid';
+        return Money::compare($net, '0') <= 0 ? 'unpaid' : 'partial';
     }
 
     private function ordersQuery(array $filters, bool $approvedOnly = true): Builder
@@ -86,6 +86,12 @@ class PurchasePaymentPlanQueryService
             SUM(GREATEST(eligible_amount - ap_offset_amount - allocated_amount, 0)) AS unpaid_payable_amount')
             ->groupBy('purchase_order_id');
         $contract = 'COALESCE(orders.amount_incl_tax, orders.total_amount, 0)';
+        $actualAmounts = DB::table('erp_purchase_receipt_items as actual_line')
+            ->join('erp_purchase_receipts as actual_receipt', 'actual_receipt.id', '=', 'actual_line.receipt_id')
+            ->where('actual_receipt.confirm_status', 'confirmed')->where('actual_receipt.settlement_mode', 'normal')
+            ->whereNotNull('actual_line.finance_actual_amount')->select('actual_receipt.order_id')
+            ->selectRaw('SUM(actual_line.finance_actual_amount - actual_line.amount_incl_tax) AS amount_delta')->groupBy('actual_receipt.order_id');
+        $payment = '('.$contract.' + COALESCE(actual_amounts.amount_delta, 0))';
         $net = 'COALESCE(cash.net_paid_amount, 0)';
         $query = DB::table('erp_purchase_orders as orders')
             ->leftJoin('erp_suppliers as supplier', 'supplier.id', '=', 'orders.supplier_id')
@@ -94,16 +100,18 @@ class PurchasePaymentPlanQueryService
             })
             ->leftJoinSub($plans, 'plans', 'plans.purchase_order_id', '=', 'orders.id')
             ->leftJoinSub($payables, 'payables', 'payables.purchase_order_id', '=', 'orders.id')
+            ->leftJoinSub($actualAmounts, 'actual_amounts', 'actual_amounts.order_id', '=', 'orders.id')
             ->select(['orders.id', 'orders.id as purchase_order_id', 'orders.purchase_order_no', 'orders.supplier_id',
                 'supplier.supplier_name', 'orders.order_date', 'orders.currency', 'orders.purchase_status', 'orders.audit_status',
                 'orders.payment_plan_version', 'plans.next_due_date', 'plans.trigger_types'])
-            ->selectRaw($contract.' AS contract_amount, COALESCE(plans.planned_amount, 0) AS planned_amount,
-                GREATEST('.$contract.' - COALESCE(plans.planned_amount, 0), 0) AS unplanned_amount,
-                GREATEST('.$contract.' - '.$net.', 0) AS contract_unpaid_amount,
-                GREATEST('.$net.' - '.$contract.', 0) AS overpaid_amount,
+            ->selectRaw($contract.' AS contract_amount, '.$payment.' AS current_payment_amount,
+                COALESCE(actual_amounts.amount_delta, 0) AS actual_amount_adjustment, COALESCE(plans.planned_amount, 0) AS planned_amount,
+                GREATEST('.$payment.' - COALESCE(plans.planned_amount, 0), 0) AS unplanned_amount,
+                GREATEST('.$payment.' - '.$net.', 0) AS contract_unpaid_amount,
+                GREATEST('.$net.' - '.$payment.', 0) AS overpaid_amount,
                 COALESCE(payables.current_payable_amount, 0) AS current_payable_amount,
                 COALESCE(payables.unpaid_payable_amount, 0) AS unpaid_payable_amount,
-                CASE WHEN '.$net.' > '.$contract.' THEN "overpaid" WHEN '.$net.' <= 0 THEN "unpaid" WHEN '.$net.' >= '.$contract.' THEN "paid" ELSE "partial" END AS payment_status');
+                CASE WHEN '.$net.' > '.$payment.' THEN "overpaid" WHEN '.$net.' >= '.$payment.' THEN "paid" WHEN '.$net.' <= 0 THEN "unpaid" ELSE "partial" END AS payment_status');
         foreach (PurchasePaymentBalanceQueryService::FIELDS as $field) $query->selectRaw('COALESCE(cash.'.$field.', 0) AS '.$field);
         if ($approvedOnly) $query->where('orders.audit_status', 'approved')->where('orders.finance_fact_status', 'frozen')->whereNotIn('orders.purchase_status', ['draft', 'submitted', 'cancelled']);
         if (! empty($filters['supplier_id'])) $query->where('orders.supplier_id', $filters['supplier_id']);

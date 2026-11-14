@@ -62,7 +62,7 @@ class PurchasePaymentPlanApplicationService
                 $kept[] = $item->id;
                 $total = Money::add($total, $amount);
             }
-            if (Money::compare($total, FinanceCashPurchaseAllocationApplicationService::contractAmount($order)) > 0) throw ValidationException::withMessages(['items' => '付款安排合计不能超过采购合同金额；可保留尚未安排的余款。']);
+            if (Money::compare($total, FinanceCashPurchaseAllocationApplicationService::paymentAmount($order)) > 0) throw ValidationException::withMessages(['items' => '付款安排合计不能超过当前核定付款总额；可保留尚未安排的余款。']);
             $removed = $existing->except($kept);
             $removedIds = $removed->pluck('id')->all();
             if ($uses->whereIn('payment_plan_id', $removedIds)->isNotEmpty()) throw ValidationException::withMessages(['items' => '已有正式付款或退款用途的期次必须保留，不能移除。']);

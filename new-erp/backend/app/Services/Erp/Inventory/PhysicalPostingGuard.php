@@ -6,6 +6,8 @@ use App\Models\Erp\InventoryBalance;
 use App\Models\Erp\InventoryTransaction;
 use App\Models\Erp\Item;
 use App\Services\Erp\MaterialPhysicalService;
+use App\Models\Erp\PurchaseLog;
+use App\Services\Erp\PurchaseReceiptCostAdjustmentService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
@@ -15,6 +17,89 @@ use Illuminate\Validation\ValidationException;
  */
 class PhysicalPostingGuard
 {
+    /** 纯金额过账必须逐行匹配同事务正式更正日志，不能用零数量绕过实物动作守卫。 */
+    public function assertCostAdjustment(InventoryTransaction $transaction, array $line, Item $item, InventoryBalance $balance): array
+    {
+        $log = PurchaseLog::query()->lockForUpdate()->find($transaction->source_id);
+        $receiptItem = $log ? DB::table('erp_purchase_receipt_items')->where('id', (int) data_get($log->evidence, 'receipt_item_id'))
+            ->where('receipt_id', $log->target_id)->where('item_id', $item->id)->lockForUpdate()->first() : null;
+        $plan = collect(data_get($log?->evidence, 'inventory_adjustments', []));
+        $rows = $plan->where('balance_id', $balance->id);
+        $row = $rows->count() === 1 ? $rows->first() : null;
+        $valid = $balance->exists && $transaction->transaction_type === PurchaseReceiptCostAdjustmentService::TYPE
+            && $transaction->source_type === PurchaseReceiptCostAdjustmentService::SOURCE && $transaction->posting_status === 'posted'
+            && ($line['cost_source_type'] ?? null) === PurchaseReceiptCostAdjustmentService::SOURCE
+            && ($line['source_type'] ?? null) === PurchaseReceiptCostAdjustmentService::SOURCE
+            && (int) ($line['source_id'] ?? 0) === (int) $transaction->source_id
+            && bccomp((string) $line['change_qty'], '0', 8) === 0 && $log && $log->action === PurchaseReceiptCostAdjustmentService::ACTION
+            && $log->target_type === 'purchase_receipt' && $receiptItem && $row
+            && (int) ($line['source_item_id'] ?? 0) === (int) $receiptItem->id
+            && (int) $row['item_id'] === (int) $item->id
+            && (int) $row['warehouse_id'] === (int) $line['warehouse_id'] && (int) $row['location_id'] === (int) $line['location_id']
+            && (string) $row['batch_no'] === (string) $line['batch_no'] && (int) $row['unit_id'] === (int) $line['unit_id']
+            && (int) $row['material_lot_id'] === (int) ($line['material_lot_id'] ?? 0)
+            && bccomp((string) $row['quantity'], (string) $balance->quantity_on_hand, 8) === 0
+            && bccomp((string) $row['old_value'], (string) $balance->inventory_value, 4) === 0
+            && bccomp((string) $row['cost_amount'], (string) $line['cost_amount'], 4) === 0
+            && bccomp(bcadd((string) $row['old_value'], (string) $row['cost_amount'], 4), (string) $row['new_value'], 4) === 0
+            && bccomp((string) $row['new_value'], '0', 4) >= 0
+            && bccomp($plan->reduce(fn ($sum, $entry) => bcadd($sum, (string) $entry['old_value'], 4), '0'),
+                (string) data_get($log->evidence, 'old_inventory_cost_amount', '-1'), 4) === 0
+            && bccomp($plan->reduce(fn ($sum, $entry) => bcadd($sum, (string) $entry['new_value'], 4), '0'),
+                (string) data_get($log->evidence, 'new_inventory_cost_amount', '-1'), 4) === 0
+            && ! DB::table('erp_inventory_transaction_items')->where('transaction_id', $transaction->id)
+                ->where('item_id', $item->id)->where('warehouse_id', $balance->warehouse_id)
+                ->where('location_id', $balance->location_id)->where('batch_no', $balance->batch_no)->exists();
+        if (! $valid) throw ValidationException::withMessages(['cost_amount' => '库存补差与正式财务更正记录或当前库存金额不一致。']);
+        foreach (['quantity_locked', 'quantity_defective', 'quantity_pending'] as $bucket) {
+            if (bccomp((string) $balance->{$bucket}, '0', 8) !== 0) throw ValidationException::withMessages(['cost_amount' => '库存已被占用或冻结，不能更正在库成本。']);
+        }
+        if ($item->materialManagementMode() !== 'physical') {
+            if ($row['physicals'] !== []) throw ValidationException::withMessages(['cost_amount' => '普通库存补差不能携带实物身份。']);
+            return $row;
+        }
+        $holding = DB::table('erp_material_holdings')->where('id', $row['holding_id'])->lockForUpdate()->first();
+        if (! $holding || (int) $holding->inventory_balance_id !== (int) $balance->id
+            || $holding->position_type !== 'WAREHOUSE' || $holding->status !== 'ACTIVE' || $holding->quantity !== null || $holding->total_cost !== null
+            || (int) $holding->business_version !== (int) $row['holding_version']) {
+            throw ValidationException::withMessages(['cost_amount' => '实物持有位置已变化，请刷新后重新核对。']);
+        }
+        $quantity = '0';
+        $oldCost = '0';
+        $newCost = '0';
+        $ids = [];
+        foreach ($row['physicals'] as $target) {
+            $physical = DB::table('erp_material_physicals')->where('id', $target['id'])->lockForUpdate()->first();
+            $source = $physical ? DB::table('erp_inventory_transaction_items as source')
+                ->join('erp_inventory_transactions as tx', 'tx.id', '=', 'source.transaction_id')
+                ->where('source.id', $physical->source_transaction_item_id)->where('source.source_type', 'purchase_receipt')
+                ->where('source.source_id', $log->target_id)->where('source.source_item_id', $receiptItem->id)
+                ->where('source.item_id', $item->id)->where('tx.posting_status', 'posted')
+                ->whereIn('tx.transaction_type', ['purchase_receipt_posting', 'purchase_receipt_quality_release'])->exists() : false;
+            if (! $physical || ! $source || in_array($physical->id, $ids)
+                || ! in_array($physical->source_transaction_item_id, $row['source_transaction_item_ids'])
+                || (int) $physical->source_transaction_item_id !== (int) $target['source_transaction_item_id']
+                || (int) $physical->item_id !== (int) $item->id || (int) $physical->material_lot_id !== (int) $balance->material_lot_id
+                || (int) $physical->current_holding_id !== (int) $holding->id || (int) $physical->business_version !== (int) $target['business_version']
+                || $physical->status !== 'AVAILABLE' || $physical->first_cut_at || $physical->parent_physical_id || $physical->material_form !== 'FULL_STOCK'
+                || bccomp((string) $physical->total_cost, (string) $target['old_cost'], 4) !== 0
+                || bccomp((string) $target['new_cost'], '0', 4) < 0
+                || bccomp(app(MaterialPhysicalService::class)->inventoryQuantity($item, $physical), (string) $target['quantity'], 8) !== 0) {
+                throw ValidationException::withMessages(['cost_amount' => '实物身份、版本或成本与财务更正记录不一致。']);
+            }
+            $ids[] = $physical->id;
+            $quantity = bcadd($quantity, (string) $target['quantity'], 8);
+            $oldCost = bcadd($oldCost, (string) $target['old_cost'], 4);
+            $newCost = bcadd($newCost, (string) $target['new_cost'], 4);
+        }
+        if ($ids === [] || bccomp($quantity, (string) $row['quantity'], 8) !== 0 || bccomp($oldCost, (string) $row['old_value'], 4) !== 0
+            || bccomp($newCost, (string) $row['new_value'], 4) !== 0
+            || DB::table('erp_material_physicals')->where('current_holding_id', $holding->id)->whereNotIn('id', $ids)->exists()) {
+            throw ValidationException::withMessages(['cost_amount' => '实物补差数量及金额必须与整笔库存余额守恒。']);
+        }
+        return $row;
+    }
+
     /** 实物总成本只允许正式包装/调拨身份与开料批次；返回 [实物权威总成本, 开料实物总成本]。 */
     public function assertAuthoritativeTotal(InventoryTransaction $transaction, array $line, Item $item): array
     {

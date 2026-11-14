@@ -13,7 +13,9 @@ use App\Services\Erp\CuttingDecimal;
 use App\Services\Erp\DocumentNumberService;
 use App\Services\Erp\InventoryAlertApplicationService;
 use App\Services\Erp\InventoryAvailabilityService;
+use App\Services\Erp\PurchaseReceiptCostAdjustmentService;
 use App\Services\Erp\WarehouseManagementScopeService;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
 /**
@@ -61,6 +63,11 @@ class InventoryPostingKernel
             'batch_no' => $line['batch_no'],
         ];
         $balance = InventoryBalance::query()->where($locator)->lockForUpdate()->first() ?? new InventoryBalance($locator);
+
+        if ($transaction->transaction_type === PurchaseReceiptCostAdjustmentService::TYPE
+            || ($line['cost_source_type'] ?? null) === PurchaseReceiptCostAdjustmentService::SOURCE) {
+            return $this->applyCostAdjustment($transaction, $line, $item, $balance);
+        }
 
         if ($item->materialManagementMode() === 'physical') {
             $this->physicalGuard->assertChange($transaction, $line, $item, $balance);
@@ -171,6 +178,43 @@ class InventoryPostingKernel
         );
 
         return $transactionItem;
+    }
+
+    private function applyCostAdjustment(InventoryTransaction $transaction, array $line, Item $item, InventoryBalance $balance): InventoryTransactionItem
+    {
+        $proof = $this->physicalGuard->assertCostAdjustment($transaction, $line, $item, $balance);
+        $value = bcadd((string) $balance->inventory_value, (string) $line['cost_amount'], 4);
+        $quantity = (string) $balance->quantity_on_hand;
+        if (bccomp($value, '0', 4) < 0 || bccomp($quantity, '0', 8) <= 0) {
+            throw ValidationException::withMessages(['cost_amount' => '成本补差后金额不能为负，且必须存在完整在库数量。']);
+        }
+        $average = bcdiv($value, $quantity, 8);
+        if (bccomp($average, '9999999999.99999999', 8) > 0) {
+            throw ValidationException::withMessages(['cost_amount' => '更正后的单位成本超过库存金额精度范围，请核对金额及入库数量。']);
+        }
+        // 金额补差不重存任何数量或库位汇总，避免浮点重算改变原库存事实。
+        $balance->update(['inventory_value' => $value, 'average_unit_cost' => $average, 'last_transaction_at' => now()]);
+        foreach ($proof['physicals'] as $physical) {
+            DB::table('erp_material_physicals')->where('id', $physical['id'])->update([
+                'total_cost' => $physical['new_cost'], 'business_version' => (int) $physical['business_version'] + 1, 'updated_at' => now(),
+            ]);
+        }
+        if ($proof['holding_id']) {
+            // 仓库持有位置通过余额引用权威金额；保持 quantity/total_cost 为 NULL。
+            DB::table('erp_material_holdings')->where('id', $proof['holding_id'])->update([
+                'business_version' => (int) $proof['holding_version'] + 1, 'updated_at' => now(),
+            ]);
+        }
+        return InventoryTransactionItem::create([
+            'transaction_id' => $transaction->id, 'transaction_no' => $transaction->transaction_no,
+            'item_id' => $item->id, 'item_code' => $item->item_code, 'item_name' => $item->item_name,
+            'warehouse_id' => $balance->warehouse_id, 'location_id' => $balance->location_id, 'batch_no' => $balance->batch_no,
+            'unit_id' => $balance->unit_id, 'material_lot_id' => $balance->material_lot_id,
+            'change_qty' => '0', 'unit_cost' => $balance->average_unit_cost, 'cost_amount' => (string) $line['cost_amount'],
+            'balance_after_qty' => $quantity, 'cost_source_type' => PurchaseReceiptCostAdjustmentService::SOURCE,
+            'source_type' => $line['source_type'], 'source_id' => $line['source_id'], 'source_item_id' => $line['source_item_id'],
+            'remark' => $line['remark'] ?? null,
+        ]);
     }
 
     private function assertForwardStockLocator(array $line): Item

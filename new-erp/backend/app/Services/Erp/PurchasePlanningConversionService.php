@@ -77,8 +77,13 @@ class PurchasePlanningConversionService
             // Legacy quantity columns store four decimals; reject instead of silently truncating a stock fact.
             $this->assertPrecision($planned, min(4, $basePrecision), 'purchase_quantity', $snapshot['base_unit_name_snapshot']);
             abort_if($quantity <= 0 || $planned + 0.00000001 < $required, 422, '采购数量换算后不能少于本次分配的需求数量');
-            $price = (float) ($line['purchase_unit_price'] ?? ((float) ($line['base_unit_price'] ?? 0) * $factor));
-            abort_if($price < 0, 422, '采购单价不能小于0');
+            $commercial = app(PurchaseFinancialFactService::class)->commercialLine(
+                $quantity, $line['amount'] ?? null,
+                $line['purchase_unit_price'] ?? ((float) ($line['base_unit_price'] ?? 0) * $factor),
+            );
+            $price = $commercial['unit_price'];
+            $basePrice = $this->domain->calculateBaseUnitPrice($price, $factor);
+            app(PurchaseFinancialFactService::class)->assertUnitPrice($basePrice);
             $fingerprint = hash('sha256', json_encode(Arr::only($snapshot, [
                 'item_id', 'conversion_id', 'conversion_version', 'purchase_unit_id', 'base_unit_id',
                 'conversion_factor_snapshot', 'purchase_decimal_places', 'base_decimal_places', 'allow_actual_conversion_snapshot',
@@ -95,8 +100,8 @@ class PurchasePlanningConversionService
                 'purchase_qty' => $quantity, 'planned_base_qty' => $planned,
                 'excess_base_qty' => round($planned - $required, 8),
                 'purchase_unit_price' => $price,
-                'base_unit_price' => $this->domain->calculateBaseUnitPrice($price, $factor),
-                'amount' => round($quantity * $price, 4),
+                'base_unit_price' => $basePrice,
+                'amount' => $commercial['amount'],
             ]);
         });
     }
