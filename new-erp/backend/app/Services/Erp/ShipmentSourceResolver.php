@@ -7,10 +7,71 @@ use App\Models\Erp\ProductionRouting;
 use App\Models\Erp\SalesShipmentLine;
 use App\Models\Erp\ShipmentPackingContent;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 
 /** 发货打包用的库存来源与包装工艺解析（不依赖生产执行数据）。 */
 class ShipmentSourceResolver
 {
+    /** 只在原证明仍成立时重签成本部分；设备、数量、来源截止和已选工艺保持原事实。 */
+    public function repriceLegacyCostEvidence(array $movementCosts): array
+    {
+        if ($movementCosts === []) return [];
+        $changed = DB::table('erp_inventory_transaction_items')->whereIn('id', array_keys($movementCosts))
+            ->get(['id', 'item_id', 'batch_no'])->groupBy(fn ($row) => $row->item_id.':'.$row->batch_no);
+        if ($changed->isEmpty()) return [];
+        $lines = SalesShipmentLine::query()->whereNotNull('packing_source_snapshot')->where(function ($query) use ($changed): void {
+            foreach ($changed as $rows) $query->orWhere(fn ($locator) => $locator->where('item_id', $rows->first()->item_id)->where('batch_no', $rows->first()->batch_no));
+        })->orderBy('id')->lockForUpdate()->get();
+        $audit = [];
+        foreach ($lines as $line) {
+            $before = $line->packing_source_snapshot; $after = $before;
+            foreach ($after as &$source) {
+                $frozen = $source['source_evidence'] ?? null;
+                if (($source['source_origin'] ?? '') !== 'legacy_production_stock' || ($frozen['version'] ?? null) !== 2) continue;
+                if (! $changed->get($line->item_id.':'.$line->batch_no)->contains(fn ($row) => (int) $row->id <= (int) ($frozen['ledger_through_id'] ?? 0))) continue;
+                $current = $this->legacyProductionEvidence($line, $frozen);
+                if (! $current || ! $this->sameEvidence($frozen, $current)) $this->costEvidenceFailure();
+                $repriced = $this->legacyProductionEvidence($line, $frozen, $movementCosts);
+                if (! $repriced || $this->costIndependentEvidence($current) !== $this->costIndependentEvidence($repriced)) $this->costEvidenceFailure();
+                $source['source_evidence'] = $repriced;
+            }
+            unset($source);
+            if ($this->canonicalSnapshot($before) === $this->canonicalSnapshot($after)) continue;
+            $hash = fn (array $value): string => hash('sha256', json_encode($this->canonicalSnapshot($value), JSON_UNESCAPED_UNICODE | JSON_PRESERVE_ZERO_FRACTION | JSON_THROW_ON_ERROR));
+            foreach (DB::table('erp_shipment_packing_contents')->where('shipment_line_id', $line->id)->orderBy('id')->lockForUpdate()->get() as $content) {
+                $contentBefore = json_decode($content->source_snapshot ?: '[]', true);
+                if (! is_array($contentBefore) || $this->canonicalSnapshot($contentBefore) !== $this->canonicalSnapshot($before)) $this->costEvidenceFailure();
+                $routeBefore = json_decode($content->routing_snapshot ?: 'null', true); $routeAfter = $routeBefore;
+                if (isset($routeAfter['packing_route_selection'])) {
+                    if (! hash_equals((string) ($routeAfter['packing_route_selection']['source_snapshot_hash'] ?? ''), $hash($before))) $this->costEvidenceFailure();
+                    $routeAfter['packing_route_selection']['source_snapshot_hash'] = $hash($after);
+                }
+                DB::table('erp_shipment_packing_contents')->where('id', $content->id)->update([
+                    'source_snapshot' => json_encode($after, JSON_THROW_ON_ERROR), 'routing_snapshot' => $routeAfter === null ? null : json_encode($routeAfter, JSON_THROW_ON_ERROR),
+                ]);
+                $audit[] = ['table' => 'erp_shipment_packing_contents', 'id' => (int) $content->id,
+                    'before' => ['source_snapshot' => $contentBefore, 'routing_snapshot' => $routeBefore],
+                    'after' => ['source_snapshot' => $after, 'routing_snapshot' => $routeAfter]];
+            }
+            DB::table('erp_sales_shipment_lines')->where('id', $line->id)->update(['packing_source_snapshot' => json_encode($after, JSON_THROW_ON_ERROR)]);
+            $audit[] = ['table' => 'erp_sales_shipment_lines', 'id' => (int) $line->id,
+                'before' => ['packing_source_snapshot' => $before], 'after' => ['packing_source_snapshot' => $after]];
+        }
+        return $audit;
+    }
+
+    private function costIndependentEvidence(array $evidence): array
+    {
+        unset($evidence['ledger_hash'], $evidence['cost_amount']);
+        foreach ($evidence as &$value) if (is_array($value)) $value = $this->costIndependentEvidence($value);
+        return $this->canonicalSnapshot($evidence);
+    }
+
+    private function costEvidenceFailure(): never
+    {
+        throw ValidationException::withMessages(['inventory_cost_amount' => '历史成品包装来源证明与原数量、身份或工艺关联不一致，不能自动重算成本。']);
+    }
+
     public function contextForShipmentLine(SalesShipmentLine $line): array
     {
         $sources = $this->sources($line);
@@ -299,7 +360,7 @@ class ShipmentSourceResolver
             'inventory_transaction_id' => (int) $posted->id, 'routing_snapshot' => json_decode($wo->routing_snapshot ?: 'null', true)];
     }
 
-    private function legacyProductionEvidence(SalesShipmentLine $line, ?array $frozen = null): ?array
+    private function legacyProductionEvidence(SalesShipmentLine $line, ?array $frozen = null, array $movementCosts = []): ?array
     {
         $balanceId = data_get($line->preparation_snapshot, 'inventory_balance_id');
         if (! $balanceId) $balanceId = DB::table('erp_inventory_reservations')->where('id', $line->inventory_reservation_id)->value('inventory_balance_id');
@@ -308,7 +369,7 @@ class ShipmentSourceResolver
         $lot = $balance?->material_lot_id ? DB::table('erp_material_lots')->where('id', $balance->material_lot_id)->where('item_id', $line->item_id)
             ->where('material_form', 'PRODUCT')->where('source_type', 'production_output_record')->whereNull('configuration_id')->whereNull('stage_id')->first() : null;
         if (! $lot || $item?->item_type !== 'finished_product' || $item->materialManagementMode() !== 'quantity') return null;
-        if (($frozen['version'] ?? null) === 2) return $this->legacyTransferredEvidence($line, $balance, $lot, $frozen);
+        if (($frozen['version'] ?? null) === 2) return $this->legacyTransferredEvidence($line, $balance, $lot, $frozen, $movementCosts);
         if ($frozen !== null && (($frozen['version'] ?? null) !== 1 || ! is_array($frozen['inbound_facts'] ?? null))) return null;
         $facts = DB::table('erp_inventory_transaction_items as inbound')->join('erp_inventory_transactions as tx', 'tx.id', '=', 'inbound.transaction_id')
             ->where('inbound.item_id', $line->item_id)->where('inbound.material_lot_id', $lot->id)->where('inbound.warehouse_id', $balance->warehouse_id)
@@ -325,7 +386,7 @@ class ShipmentSourceResolver
     }
 
     /** 历史无号成品按正式流水守恒追溯；冻结截止后自身待发移位、出库不能改写原来源。 */
-    private function legacyTransferredEvidence(SalesShipmentLine $line, object $balance, object $lot, ?array $frozen = null): ?array
+    private function legacyTransferredEvidence(SalesShipmentLine $line, object $balance, object $lot, ?array $frozen = null, array $movementCosts = []): ?array
     {
         if ((string) $balance->batch_no !== (string) $line->batch_no || (int) $balance->unit_id !== (int) $line->unit_id
             || bccomp((string) $line->base_qty, '0', 8) <= 0) return null;
@@ -340,6 +401,11 @@ class ShipmentSourceResolver
             ->map(fn ($fact) => (array) $fact)->all();
         if ($facts === [] || ($cutoff !== null && (int) end($facts)['id'] !== $cutoff)) return null;
         $pairs = $this->legacyMovementPairs($facts, (int) $lot->id, (int) $line->unit_id);
+        // 原证明先按旧流水和调拨缓存核实；改价只替换金额，成对移位的新成本仍须守恒。
+        foreach ($facts as &$fact) if (array_key_exists($fact['id'], $movementCosts)) $fact['cost_amount'] = (string) $movementCosts[$fact['id']];
+        unset($fact);
+        $byId = array_column($facts, null, 'id');
+        foreach ($pairs as $outId => $inId) if (bccomp(bcadd((string) $byId[$outId]['cost_amount'], (string) $byId[$inId]['cost_amount'], 4), '0', 4) !== 0) return null;
         $returns = $this->legacyReturnLinks($facts);
         $proven = []; $moving = []; $sold = []; $returned = []; $restocked = []; $receipts = []; $returnProof = [];
         foreach ($facts as $fact) {

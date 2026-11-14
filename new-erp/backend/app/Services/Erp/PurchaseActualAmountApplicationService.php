@@ -4,6 +4,7 @@ namespace App\Services\Erp;
 
 use App\Domain\Finance\FinanceConstants;
 use App\Domain\Finance\Money;
+use App\Exceptions\Erp\WorkOrderDomainException;
 use App\Models\Erp\FinanceInvoiceAllocation;
 use App\Models\Erp\PurchaseDefectHandling;
 use App\Models\Erp\PurchaseExchangeOrder;
@@ -77,9 +78,11 @@ class PurchaseActualAmountApplicationService
                 return [...$previous->evidence['result'], 'replayed' => true];
             }
 
-            $preview = $this->previewLocked($source, $receipt, $line, $data['actual_amount'], $actor);
+            $recalculator = app(PurchaseCostInventoryRecalculator::class);
+            $costPlan = null;
+            $preview = $this->previewLocked($source, $receipt, $line, $data['actual_amount'], $actor, $recalculator, $costPlan);
             if (! hash_equals($preview['expected_fingerprint'], $data['expected_fingerprint'])) {
-                abort(409, '到货、核销、发票或库存状态已变化，请重新预览后确认实际金额。');
+                abort(409, '到货、核销、发票或实际用料去向已变化，请重新预览后确认实际金额。');
             }
             if ($preview['block_reasons']) {
                 throw ValidationException::withMessages(['actual_amount' => array_column($preview['block_reasons'], 'message')]);
@@ -95,6 +98,9 @@ class PurchaseActualAmountApplicationService
             $this->settlements->refresh($receipt);
             $line->refresh()->setRelation('receipt', $receipt);
             $newCost = Money::normalize((string) $line->inventory_cost_amount);
+            if (Money::compare($newCost, $preview['target_inventory_cost']) !== 0) {
+                abort(409, '到货结算后的实际入库成本与预览不一致，请重新核对质量及入库记录。');
+            }
             $operatorId = (int) $actor->legacy_id;
             $operatorName = (string) ($actor->nickname ?: $actor->username ?: '系统');
             $log = PurchaseLog::create([
@@ -109,17 +115,24 @@ class PurchaseActualAmountApplicationService
                     'reason' => $data['reason'], 'operator_id' => $operatorId, 'operator_name' => $operatorName,
                     'idempotency_key' => $data['idempotency_key'], 'request_hash' => $requestHash,
                     'expected_fingerprint' => $data['expected_fingerprint'],
+                    'cost_calculation_mode' => 'actual_source_recalculation',
                 ],
             ]);
-            $costTransaction = $preview['inventory_posted']
-                ? app(PurchaseReceiptCostAdjustmentService::class)->apply($line, $oldCost, $newCost, $log->id, $operatorId)
-                : null;
+            // One source edit recalculates all actual destinations in this transaction; no separate financial difference entry.
+            $recalculated = $preview['inventory_posted'] && $costPlan
+                ? $recalculator->apply($costPlan, $log)
+                : ['impact_summary' => [], 'evidence' => []];
             $this->sources->syncReceipt($receipt->id, $operatorId, $operatorName);
             [$source, $receipt, $line] = $this->lockContext($sourceId);
-            $result = [...$this->previewLocked($source, $receipt, $line, null, $actor),
-                'log_id' => $log->id, 'cost_transaction_id' => $costTransaction?->id, 'replayed' => false];
-            $log->refresh();
-            $log->update(['evidence' => [...$log->evidence, 'cost_transaction_id' => $costTransaction?->id, 'result' => $result]]);
+            $impact = $recalculated['impact_summary'] ?? $preview['impact_summary'];
+            $result = [...$preview, 'current_actual_amount' => $line->effectiveAmount(), 'finance_actual_amount' => $line->finance_actual_amount,
+                'actual_amount_delta' => '0.0000', 'old_inventory_cost' => $newCost, 'cost_adjustment_amount' => '0.0000',
+                'current_payable_amount' => Money::maxZero(Money::sub((string) $source->eligible_amount, (string) $source->ap_offset_amount)),
+                'current_order_payment_amount' => $preview['target_order_payment_amount'],
+                'expected_fingerprint' => null, 'has_amount_change' => false, 'has_cost_change' => false, 'can_apply' => false,
+                'impact_summary' => $impact, 'log_id' => $log->id, 'cost_transaction_id' => null, 'replayed' => false];
+            $log->update(['evidence' => [...$log->evidence, 'impact_summary' => $impact,
+                'cost_recalculation' => ['version' => $costPlan['version'] ?? 'not_posted', 'changes' => $recalculated['evidence'] ?? []], 'result' => $result]]);
             return $result;
         }, 5);
     }
@@ -128,7 +141,7 @@ class PurchaseActualAmountApplicationService
     {
         $this->authorize($actor, 'finance.payable.view');
         $source = PurchaseSettlementSource::query()->findOrFail($sourceId);
-        $page = PurchaseLog::query()->where('target_type', 'purchase_receipt')->where('target_id', $source->source_receipt_id)
+        $page = PurchaseLog::query()->withoutCostDetails()->where('target_type', 'purchase_receipt')->where('target_id', $source->source_receipt_id)
             ->where('action', self::ACTION)->where('evidence->receipt_item_id', $source->source_line_id)
             ->latest('id')->paginate(min(100, max(1, $perPage)));
         $page->setCollection($page->getCollection()->map(function (PurchaseLog $log): array {
@@ -139,6 +152,8 @@ class PurchaseActualAmountApplicationService
                 'old_inventory_cost_amount' => $fact['old_inventory_cost_amount'] ?? null,
                 'new_inventory_cost_amount' => $fact['new_inventory_cost_amount'] ?? null,
                 'cost_transaction_id' => $fact['cost_transaction_id'] ?? null,
+                'impact_summary' => $fact['impact_summary'] ?? [],
+                'cost_calculation_mode' => $fact['cost_calculation_mode'] ?? null,
                 'business_date' => $fact['business_date'] ?? null, 'reason' => $fact['reason'] ?? '',
                 'operator_id' => $fact['operator_id'] ?? null, 'operator_name' => $fact['operator_name'] ?? $log->operator,
                 'created_at' => $log->created_at?->toISOString()];
@@ -165,7 +180,8 @@ class PurchaseActualAmountApplicationService
         return [$source, $receipt, $line];
     }
 
-    private function previewLocked(PurchaseSettlementSource $source, PurchaseReceipt $receipt, PurchaseReceiptItem $line, ?string $amount, object $actor): array
+    private function previewLocked(PurchaseSettlementSource $source, PurchaseReceipt $receipt, PurchaseReceiptItem $line, ?string $amount, object $actor,
+        ?PurchaseCostInventoryRecalculator $recalculator = null, ?array &$costPlan = null): array
     {
         $target = $amount === null ? $line->effectiveAmount() : Money::normalize($amount);
         $current = $line->effectiveAmount();
@@ -205,14 +221,14 @@ class PurchaseActualAmountApplicationService
             ->orderBy('erp_purchase_return_items.id')->lockForUpdate()->get(['erp_purchase_return_items.id', 'actual_return.return_status']);
         $exchanges = PurchaseExchangeOrder::query()->where('source_receipt_item_id', $line->id)
             ->where('exchange_status', '!=', 'cancelled')->orderBy('id')->lockForUpdate()->get(['id', 'exchange_status']);
-        if ($returns->isNotEmpty() || $exchanges->isNotEmpty()) {
-            $this->reason($reasons, 'return_exchange_exists', '该行已有退货或换货事实，请先核对原结算，不能直接重算已有退换货金额。');
+        $targetPayable = Money::maxZero(Money::sub($target, (string) $source->ap_offset_amount));
+        if (Money::compare((string) $source->ap_offset_amount, $target) > 0) {
+            $this->reason($reasons, 'offset_exceeds_actual', '已生效的退货抵应付金额超过本次实际总额，请先核对原退货抵扣。');
         }
-
         $paid = $this->balances->forSource(FinanceConstants::SOURCE_PURCHASE_SETTLEMENT_SOURCE, $source->id, FinanceConstants::DIRECTION_PAYMENT);
         $legacyPaid = $this->balances->forSource(FinanceConstants::SOURCE_PURCHASE_RECEIPT, $receipt->id, FinanceConstants::DIRECTION_PAYMENT);
         if (Money::compare($legacyPaid, '0') > 0) $this->reason($reasons, 'legacy_receipt_allocation', '原到货存在历史整单付款核销，请先在往来核销中更正到具体结算来源。');
-        if (Money::compare($paid, $target) > 0) $this->reason($reasons, 'payment_exceeds_actual', '已核销付款超过本行最终金额，请先在往来核销中正式撤销或更正核销；原付款金额保留。');
+        if (Money::compare($paid, $targetPayable) > 0) $this->reason($reasons, 'payment_exceeds_actual', '已核销付款超过本行修正后应付金额，请先在往来核销中正式撤销或更正核销；原付款金额保留。');
         $invoices = FinanceInvoiceAllocation::query()->join('erp_finance_invoices as actual_invoice', 'actual_invoice.id', '=', 'erp_finance_invoice_allocations.invoice_id')
             ->where('erp_finance_invoice_allocations.status', FinanceConstants::ALLOCATION_ACTIVE)
             ->whereIn('actual_invoice.status', [FinanceConstants::STATUS_DRAFT, FinanceConstants::STATUS_CONFIRMED, FinanceConstants::STATUS_RED])
@@ -230,7 +246,7 @@ class PurchaseActualAmountApplicationService
             if ($invoice->invoice_status === FinanceConstants::STATUS_DRAFT) $reserved = Money::add($reserved, (string) $invoice->allocated_amount);
             else $matched = Money::add($matched, (string) $invoice->allocated_amount);
         }
-        if (Money::compare(Money::add($matched, $reserved), $target) > 0) {
+        if (Money::compare(Money::add($matched, $reserved), $targetPayable) > 0) {
             $this->reason($reasons, 'invoice_exceeds_actual', '已确认发票和草稿匹配合计超过最终金额，请先在发票管理中撤销草稿匹配或办理正式红冲。');
         }
 
@@ -244,15 +260,27 @@ class PurchaseActualAmountApplicationService
             $this->reason($reasons, 'payment_plan_exceeds_actual', '现有付款安排合计超过修正后的订单付款总额，请先在原采购订单的付款安排中调整期次金额；不会自动减少分期尾款。');
         }
 
-        $cost = (bool) $line->is_stock_item_snapshot
-            ? app(PurchaseReceiptCostAdjustmentService::class)->preview($line)
-            : ['supported' => true, 'reason' => null, 'posted' => false, 'version' => 'not_stock_managed'];
-        if (! $cost['supported']) $this->reason($reasons, 'cost_adjustment_unavailable', $cost['reason'] ?: '当前库存成本无法安全追溯修正。');
         $targetCost = (bool) $line->is_stock_item_snapshot && bccomp($base, '0', 8) > 0 && bccomp($stockable, '0', 8) > 0
             && bccomp($stockable, $base, 8) <= 0
             ? CuttingDecimal::share($target, $base, $stockable) : '0.0000';
         if (bccomp($stockable, '0', 8) > 0 && bccomp(bcdiv($targetCost, $stockable, 8), '9999999999.99999999', 8) > 0) {
             $this->reason($reasons, 'unit_cost_out_of_range', '实际金额反算的库存单价超过系统允许范围，请核对金额和到货数量。');
+        }
+        $posted = (bool) $line->is_stock_item_snapshot && $receipt->stock_post_status === 'posted';
+        $cost = ['supported' => true, 'posted' => $posted, 'version' => 'not_posted', 'impact_summary' => []];
+        if ($posted && $reasons === [] && (Money::compare($target, $current) !== 0 || Money::compare($targetCost, (string) $line->inventory_cost_amount) !== 0)) {
+            try {
+                $costPlan = ($recalculator ?? app(PurchaseCostInventoryRecalculator::class))->plan($line, $targetCost);
+                $cost = [...$cost, ...$costPlan];
+                if (! ($cost['supported'] ?? true)) $this->reason($reasons, 'cost_trace_unavailable', $cost['reason'] ?? '实际用料来源不完整，暂不能重算成本。');
+            } catch (ValidationException $exception) {
+                $costPlan = null;
+                foreach (collect($exception->errors())->flatten() as $message) $this->reason($reasons, 'cost_trace_unavailable', $message);
+            } catch (WorkOrderDomainException $exception) {
+                if ($exception->status !== 422) throw $exception;
+                $costPlan = null;
+                $this->reason($reasons, 'cost_trace_unavailable', $exception->getMessage());
+            }
         }
         $revision = PurchaseLog::query()->where('target_type', 'purchase_receipt')->where('target_id', $receipt->id)
             ->where('action', self::ACTION)->latest('id')->lockForUpdate()->first(['id']);
@@ -279,11 +307,12 @@ class PurchaseActualAmountApplicationService
             'current_actual_amount' => $current, 'finance_actual_amount' => $line->finance_actual_amount,
             'target_actual_amount' => $target, 'actual_amount_delta' => Money::sub($target, $current),
             'current_payable_amount' => Money::maxZero(Money::sub((string) $line->settlement_amount, (string) $source->ap_offset_amount)),
-            'target_payable_amount' => Money::maxZero(Money::sub($target, (string) $source->ap_offset_amount)),
+            'target_payable_amount' => $targetPayable,
             'paid_amount' => $paid, 'invoice_matched_amount' => $matched, 'invoice_reserved_amount' => $reserved,
             'current_order_payment_amount' => $paymentAmount, 'target_order_payment_amount' => $targetPaymentAmount, 'planned_amount' => $planned,
             'old_inventory_cost' => Money::normalize((string) $line->inventory_cost_amount), 'target_inventory_cost' => $targetCost,
             'cost_adjustment_amount' => Money::sub($targetCost, (string) $line->inventory_cost_amount), 'inventory_posted' => (bool) $cost['posted'],
+            'impact_summary' => $cost['impact_summary'] ?? [],
             'expected_fingerprint' => $fingerprint, 'has_amount_change' => $hasAmountChange, 'has_cost_change' => $hasCostChange,
             'can_apply' => $reasons === [] && ($hasAmountChange || $hasCostChange),
             'block_reasons' => array_values(array_unique($reasons, SORT_REGULAR)),

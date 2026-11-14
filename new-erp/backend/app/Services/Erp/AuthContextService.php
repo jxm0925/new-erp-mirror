@@ -155,7 +155,7 @@ class AuthContextService
     {
         $rows = DB::table('erp_rbac_permissions')->where('enabled', true)
             ->orderBy('sort')->orderBy('id')
-            ->get(['id', 'parent_id', 'code', 'name', 'type', 'path', 'icon']);
+            ->get(['id', 'parent_id', 'code', 'name', 'type', 'path', 'icon', 'remark']);
         $granted = array_flip($this->permissionCodes($user));
         $super = $this->isSuperAdmin($user);
         $children = [];
@@ -168,6 +168,7 @@ class AuthContextService
                 if ($row->type !== 'menu') continue;
                 $subMenus = array_values(array_filter($sub, fn ($node) => $node['is_menu']));
                 $visible = $super || isset($granted[$row->code]) || array_filter($sub, fn ($node) => $node['granted']);
+                $groupName = trim((string) ($row->remark ?? ''));
                 $nodes[] = [
                     'is_menu' => true,
                     'granted' => (bool) $visible,
@@ -175,6 +176,7 @@ class AuthContextService
                     'name' => $row->name,
                     'path' => $row->path ?: null,
                     'icon' => $row->icon ?: null,
+                    'group_name' => $groupName !== '' ? $groupName : null,
                     'children' => $subMenus,
                 ];
             }
@@ -194,7 +196,7 @@ class AuthContextService
                 if (! $node['is_menu']) continue;
                 $kids = $prune($node['children']);
                 if (! $node['path'] && ! $kids) continue;
-                $out[] = ['code' => $node['code'], 'name' => $node['name'], 'path' => $node['path'], 'icon' => $node['icon'], 'granted' => $node['granted'], 'children' => $kids];
+                $out[] = ['code' => $node['code'], 'name' => $node['name'], 'path' => $node['path'], 'icon' => $node['icon'], 'group_name' => $node['group_name'], 'granted' => $node['granted'], 'children' => $kids];
             }
 
             return $out;

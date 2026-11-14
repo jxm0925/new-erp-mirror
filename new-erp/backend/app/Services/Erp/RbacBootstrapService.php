@@ -13,6 +13,7 @@ class RbacBootstrapService
             $this->syncDepartments(true);
         }
         $created = $this->seedPermissions($force);
+        $this->ensureDefaultMenuGroups();
         $grantableCreated = array_values(array_diff($created, ['inventory.amount.view', 'inventory.inbound.confirm']));
         // 全新安装（种子只建目录、整库还没有任何授权）时内置角色按默认矩阵初始化一次；已有授权的库绝不重置。
         $freshInstall = Schema::hasTable('erp_rbac_role_permissions') && ! DB::table('erp_rbac_role_permissions')->exists();
@@ -291,16 +292,16 @@ class RbacBootstrapService
             ['approval', '审核中心', 'menu', null, null, null, 'el-icon-circle-check', 700],
             ['system', '系统管理', 'menu', null, null, null, 'el-icon-setting', 900],
 
-            ['production.work_order', '工单管理', 'menu', 'production', '/production/work-orders', 'WorkOrderList', 'el-icon-s-order', 802],
-            ['production.board', '生产作业看板', 'menu', 'production', '/production/board', 'ProductionBoard', 'el-icon-data-board', 802],
-            ['production.tech', '定制工艺管理', 'menu', 'production', '/production/tech', 'ProductionTechList', 'el-icon-edit-outline', 802],
-            ['production.drawing_stats', '图纸统计', 'menu', 'production', '/production/drawing-statistics', 'TechnicalDrawingStatistics', 'el-icon-data-analysis', 802],
-            ['production.serial', '序列号查询', 'menu', 'production', '/production/serials', 'ProductionSerialTrace', 'el-icon-search', 802],
-            ['production.performance_stats', '提成与工时统计', 'menu', 'production', '/production/performance/orders', 'ProductionPerformanceStats', 'el-icon-money', 802],
-            ['production.base', '生产基础', 'menu', 'production', null, null, 'el-icon-setting', 803],
-            ['production.operation', '工序管理', 'menu', 'production.base', '/production/operations', 'ProductionOperationList', 'el-icon-set-up', 804],
-            ['production.routing', '工艺路线', 'menu', 'production.base', '/production/routings', 'ProductionRoutingList', 'el-icon-guide', 805],
-            ['production.performance', '提成模板', 'menu', 'production.base', '/production/performance/templates', 'ProductionPerformanceTemplates', 'el-icon-coin', 806],
+            ['production.work_order', '工单管理', 'menu', 'production', '/production/work-orders', 'WorkOrderList', 'el-icon-s-order', 51],
+            ['production.board', '生产作业看板', 'menu', 'production', '/production/board', 'ProductionBoard', 'el-icon-data-board', 52],
+            ['production.serial', '序列号查询', 'menu', 'production', '/production/serials', 'ProductionSerialTrace', 'el-icon-search', 53],
+            ['production.tech', '定制工艺管理', 'menu', 'production', '/production/tech', 'ProductionTechList', 'el-icon-edit-outline', 54],
+            ['production.drawing_stats', '图纸统计', 'menu', 'production', '/production/drawing-statistics', 'TechnicalDrawingStatistics', 'el-icon-data-analysis', 55],
+            ['production.performance_stats', '提成与工时统计', 'menu', 'production', '/production/performance/orders', 'ProductionPerformanceStats', 'el-icon-money', 56],
+            ['production.base', '生产基础', 'menu', 'production', null, null, 'el-icon-setting', 57],
+            ['production.operation', '工序管理', 'menu', 'production.base', '/production/operations', 'ProductionOperationList', 'el-icon-set-up', 58],
+            ['production.routing', '工艺路线', 'menu', 'production.base', '/production/routings', 'ProductionRoutingList', 'el-icon-guide', 59],
+            ['production.performance', '提成模板', 'menu', 'production.base', '/production/performance/templates', 'ProductionPerformanceTemplates', 'el-icon-coin', 60],
 
             // 1. 主数据中心 二级菜单
             ['master.product', '商品管理', 'menu', 'master', '/master/products', 'ProductList', 'el-icon-goods', 101],
@@ -308,9 +309,9 @@ class RbacBootstrapService
             ['master.item', '物料管理', 'menu', 'master', '/master/items', 'ItemList', 'el-icon-coin', 103],
             ['item_category.view', '物料类目', 'menu', 'master', '/master/categories', 'ItemCategoryList', 'el-icon-folder-opened', 104],
             ['master.sku_item_relation', 'SKU-物料默认关系', 'menu', 'master', '/master/sku-item-relations', 'SkuItemRelationList', 'el-icon-connection', 105],
-            ['master.base_archive', '基础档案', 'menu', 'master', '/master/base-archives', 'BaseArchives', 'el-icon-files', 106],
-            ['master.supplier', '供应商管理', 'menu', 'master', '/master/suppliers', 'SupplierList', 'el-icon-truck', 107],
-            ['master.warehouse_location', '仓库与库位', 'menu', 'master', '/master/warehouse-locations', 'WarehouseList', 'el-icon-office-building', 108],
+            ['master.supplier', '供应商管理', 'menu', 'master', '/master/suppliers', 'SupplierList', 'el-icon-truck', 106],
+            ['master.warehouse_location', '仓库与库位', 'menu', 'master', '/master/warehouse-locations', 'WarehouseList', 'el-icon-office-building', 107],
+            ['master.base_archive', '基础档案', 'menu', 'master', '/master/base-archives', 'BaseArchives', 'el-icon-files', 108],
             ['master.import', '数据导入', 'menu', 'master', '/master/imports', 'ImportWorkbench', 'el-icon-upload2', 109],
 
             // 主数据中心 按钮
@@ -362,12 +363,12 @@ class RbacBootstrapService
             ['master.import.delete', '删除未确认导入批次', 'button', 'master.import', null, null, 'el-icon-delete', 3],
 
             // 2. 采购管理 二级菜单
-            ['purchase.request', '采购需求', 'menu', 'purchase', '/purchase/requests', 'PurchaseRequestList', 'el-icon-shopping-cart-2', 201],
-            ['purchase.plan', '采购计划', 'menu', 'purchase', '/purchase/plans', 'PurchasePlanList', 'el-icon-document', 202],
-            ['purchase.order', '采购订单', 'menu', 'purchase', '/purchase/orders', 'PurchaseOrderList', 'el-icon-s-order', 203],
-            ['purchase.receipt', '采购到货', 'menu', 'purchase', '/purchase/receipts', 'PurchaseReceiptList', 'el-icon-box', 204],
-            ['purchase.return', '采购退货', 'menu', 'purchase', '/purchase/returns', 'PurchaseReturnList', 'el-icon-refresh-left', 205],
-            ['purchase.production_shortage', '生产缺料', 'menu', 'purchase', '/purchase/production-shortages', 'ProductionShortageList', 'el-icon-warning-outline', 206],
+            ['purchase.production_shortage', '生产缺料', 'menu', 'purchase', '/purchase/production-shortages', 'ProductionShortageList', 'el-icon-warning-outline', 201],
+            ['purchase.request', '采购需求', 'menu', 'purchase', '/purchase/requests', 'PurchaseRequestList', 'el-icon-shopping-cart-2', 202],
+            ['purchase.plan', '采购计划', 'menu', 'purchase', '/purchase/plans', 'PurchasePlanList', 'el-icon-document', 203],
+            ['purchase.order', '采购订单', 'menu', 'purchase', '/purchase/orders', 'PurchaseOrderList', 'el-icon-s-order', 204],
+            ['purchase.receipt', '采购到货', 'menu', 'purchase', '/purchase/receipts', 'PurchaseReceiptList', 'el-icon-box', 205],
+            ['purchase.return', '采购退货', 'menu', 'purchase', '/purchase/returns', 'PurchaseReturnList', 'el-icon-refresh-left', 206],
 
             // 采购管理 按钮
             ['purchase.request.view', '查看需求', 'button', 'purchase.request', null, null, 'el-icon-mouse', 1],
@@ -415,15 +416,15 @@ class RbacBootstrapService
 
             // 3. 库存管理 二级菜单
             ['inventory.posting', '库存过账工作台', 'menu', 'inventory', '/inventory/posting', 'InventoryBoard', 'el-icon-finished', 301],
-            ['inventory.balance', '库存余额', 'menu', 'inventory', '/inventory/balances', 'InventoryBoard', 'el-icon-coin', 302],
-            ['inventory.transaction', '库存流水', 'menu', 'inventory', '/inventory/transactions', 'InventoryBoard', 'el-icon-tickets', 303],
-            ['inventory.adjustment', '手工调整', 'menu', 'inventory', '/inventory/adjustments', 'InventoryBoard', 'el-icon-edit-outline', 304],
-            ['inventory.alert', '库存预警', 'menu', 'inventory', '/inventory/alerts', 'InventoryAlertWorkbench', 'el-icon-warning-outline', 305],
-            ['inventory.material_return', '生产退料审核', 'menu', 'inventory', '/inventory/material-returns', 'ProductionMaterialReturnList', 'el-icon-refresh-left', 306],
-            ['inventory.material_delivery', '生产配料', 'menu', 'inventory', '/inventory/material-deliveries', 'ProductionMaterialDeliveryList', 'el-icon-truck', 307],
+            ['inventory.inbound.confirm', '入库确认', 'menu', 'inventory', '/inventory/inbound-confirmations', 'InventoryInboundList', 'el-icon-finished', 302],
+            ['inventory.material_delivery', '生产配料', 'menu', 'inventory', '/inventory/material-deliveries', 'ProductionMaterialDeliveryList', 'el-icon-truck', 303],
+            ['inventory.material_return', '生产退料审核', 'menu', 'inventory', '/inventory/material-returns', 'ProductionMaterialReturnList', 'el-icon-refresh-left', 304],
+            ['inventory.balance', '库存余额', 'menu', 'inventory', '/inventory/balances', 'InventoryBoard', 'el-icon-coin', 305],
+            ['inventory.transaction', '库存流水', 'menu', 'inventory', '/inventory/transactions', 'InventoryBoard', 'el-icon-tickets', 306],
+            ['inventory.alert', '库存预警', 'menu', 'inventory', '/inventory/alerts', 'InventoryAlertWorkbench', 'el-icon-warning-outline', 307],
             ['inventory.stocktake', '库存盘点', 'menu', 'inventory', '/inventory/stocktakes', 'InventoryStocktakeList', 'el-icon-s-check', 308],
             ['inventory.transfer', '库存调拨', 'menu', 'inventory', '/inventory/transfers', 'InventoryTransferList', 'el-icon-sort', 309],
-            ['inventory.inbound.confirm', '入库确认', 'menu', 'inventory', '/inventory/inbound-confirmations', 'InventoryInboundList', 'el-icon-finished', 310],
+            ['inventory.adjustment', '手工调整', 'menu', 'inventory', '/inventory/adjustments', 'InventoryBoard', 'el-icon-edit-outline', 310],
 
             // 库存管理 按钮
             ['inventory.amount.view', '查看库存金额与成本', 'button', 'inventory', null, null, 'el-icon-mouse', 1],
@@ -474,16 +475,16 @@ class RbacBootstrapService
             ['bom.expand.export', '导出BOM展开表', 'button', 'bom.expand', null, null, 'el-icon-mouse', 2],
 
             // 5. 销售管理 二级菜单
-            ['crm.workbench', '销售工作台', 'menu', 'sales', '/sales/workbench', 'CrmWorkbench', 'el-icon-s-home', 499],
-            ['crm.dashboard', '经营看板', 'menu', 'sales', '/sales/crm-dashboard', 'CrmDashboard', 'el-icon-data-analysis', 506],
-            ['crm.lead', '线索中心', 'menu', 'sales', '/sales/leads', 'CrmLeadList', 'el-icon-connection', 500],
-            ['sales.customer', '客户管理', 'menu', 'sales', '/sales/customers', 'SalesCustomerList', 'el-icon-user', 501],
-            ['crm.team', '团队管理', 'menu', 'sales', '/sales/crm-team', 'CrmTeam', 'el-icon-s-custom', 505],
+            ['crm.workbench', '销售工作台', 'menu', 'sales', '/sales/workbench', 'CrmWorkbench', 'el-icon-s-home', 501],
+            ['crm.dashboard', '经营看板', 'menu', 'sales', '/sales/crm-dashboard', 'CrmDashboard', 'el-icon-data-analysis', 502],
+            ['crm.lead', '线索中心', 'menu', 'sales', '/sales/leads', 'CrmLeadList', 'el-icon-connection', 503],
             ['crm.opportunity', '商机中心', 'menu', 'sales', '/sales/opportunities', 'CrmOpportunityList', 'el-icon-trophy', 504],
-            ['sales.order', '销售订单', 'menu', 'sales', '/sales/orders', 'SalesOrderList', 'el-icon-s-order', 502],
-            ['sales.shipment', '销售发货单', 'menu', 'sales', '/sales/shipments', 'SalesShipmentBoard', 'el-icon-truck', 503],
-            ['sales.return', '销售退货', 'menu', 'sales', '/sales/returns', 'ReturnList', 'el-icon-refresh-left', 503],
-            ['sales.aftersales', '售后单', 'menu', 'sales', '/sales/aftersales', 'AftersalesList', 'el-icon-service', 504],
+            ['sales.customer', '客户管理', 'menu', 'sales', '/sales/customers', 'SalesCustomerList', 'el-icon-user', 505],
+            ['crm.team', '团队管理', 'menu', 'sales', '/sales/crm-team', 'CrmTeam', 'el-icon-s-custom', 506],
+            ['sales.order', '销售订单', 'menu', 'sales', '/sales/orders', 'SalesOrderList', 'el-icon-s-order', 507],
+            ['sales.shipment', '销售发货单', 'menu', 'sales', '/sales/shipments', 'SalesShipmentBoard', 'el-icon-truck', 508],
+            ['sales.return', '销售退货', 'menu', 'sales', '/sales/returns', 'ReturnList', 'el-icon-refresh-left', 509],
+            ['sales.aftersales', '售后单', 'menu', 'sales', '/sales/aftersales', 'AftersalesList', 'el-icon-service', 510],
 
             // 销售管理 按钮
             ['crm.workbench.view', '查看销售工作台', 'button', 'crm.workbench', null, null, 'el-icon-view', 1],
@@ -603,14 +604,14 @@ class RbacBootstrapService
             ['finance.receipt', '收款管理', 'menu', 'finance', '/finance/receipts', 'FinanceCashList', 'el-icon-money', 601],
             ['finance.payment', '付款管理', 'menu', 'finance', '/finance/payments', 'FinanceCashList', 'el-icon-wallet', 602],
             ['finance.payable', '应付管理', 'menu', 'finance', '/finance/payables', 'FinancePayableList', 'el-icon-tickets', 603],
-            ['finance.statistics', '财务统计', 'menu', 'finance', '/finance/statistics', 'FinanceDashboard', 'el-icon-data-analysis', 603],
-            ['finance.supplier-ledger', '供应商往来', 'menu', 'finance', '/finance/supplier-ledgers', 'FinanceSupplierLedgerList', 'el-icon-office-building', 604],
-            ['finance.invoice', '发票管理', 'menu', 'finance', '/finance/invoices', 'FinanceInvoiceList', 'el-icon-document-copy', 605],
+            ['finance.invoice', '发票管理', 'menu', 'finance', '/finance/invoices', 'FinanceInvoiceList', 'el-icon-document-copy', 604],
+            ['finance.supplier-ledger', '供应商往来', 'menu', 'finance', '/finance/supplier-ledgers', 'FinanceSupplierLedgerList', 'el-icon-office-building', 605],
             ['finance.allocation', '往来核销', 'menu', 'finance', '/finance/allocations', 'FinanceAllocationList', 'el-icon-connection', 606],
             ['finance.account', '资金账户', 'menu', 'finance', '/finance/accounts', 'FinanceAccountList', 'el-icon-bank-card', 607],
             ['finance.transfer', '资金转账 / 换汇', 'menu', 'finance', '/finance/transfers', 'FinanceTransferList', 'el-icon-sort', 608],
             ['finance.account_valuation', '资金账户估值', 'menu', 'finance', '/finance/account-valuations', 'FinanceAccountValuation', 'el-icon-pie-chart', 609],
-            ['finance.funding_policy', '付款条件', 'menu', 'finance', '/finance/funding-policies', 'FinanceFundingPolicyList', 'el-icon-document-checked', 610],
+            ['finance.statistics', '财务统计', 'menu', 'finance', '/finance/statistics', 'FinanceDashboard', 'el-icon-data-analysis', 610],
+            ['finance.funding_policy', '付款条件', 'menu', 'finance', '/finance/funding-policies', 'FinanceFundingPolicyList', 'el-icon-document-checked', 611],
 
             // 财务管理 按钮
             // 收付款列表、核销、财务统计等资金数据的统一查看权限（前后端已普遍校验，此前未登记导致只有超级管理员可用）。
@@ -678,12 +679,12 @@ class RbacBootstrapService
             ['approval.flow.delete', '删除未发布审核流程', 'button', 'approval.flow', null, null, 'el-icon-delete', 5],
 
             // 8. 系统管理 二级菜单
-            ['system.admin', '管理员管理', 'menu', 'system', '/system/admins', 'SystemAdminManagement', 'el-icon-user', 901],
-            ['system.role', '角色权限', 'menu', 'system', '/system/roles', 'SystemRolePermission', 'el-icon-user-solid', 902],
-            ['system.menu', '菜单管理', 'menu', 'system', '/system/menus', 'SystemMenuManagement', 'el-icon-menu', 903],
-            ['system.department', '部门管理', 'menu', 'system', '/system/departments', 'SystemDepartmentManagement', 'el-icon-office-building', 904],
-            ['system.document_number_rule', '编号规则', 'menu', 'system', '/system/document-number-rules', 'DocumentNumberRuleList', 'el-icon-postcard', 905],
-            ['system.business_staff', '业务员档案', 'menu', 'system', '/system/business-staff', 'SystemBusinessStaff', 'el-icon-s-custom', 906],
+            ['system.department', '部门管理', 'menu', 'system', '/system/departments', 'SystemDepartmentManagement', 'el-icon-office-building', 901],
+            ['system.business_staff', '业务员档案', 'menu', 'system', '/system/business-staff', 'SystemBusinessStaff', 'el-icon-s-custom', 902],
+            ['system.admin', '管理员管理', 'menu', 'system', '/system/admins', 'SystemAdminManagement', 'el-icon-user', 903],
+            ['system.role', '角色权限', 'menu', 'system', '/system/roles', 'SystemRolePermission', 'el-icon-user-solid', 904],
+            ['system.menu', '菜单管理', 'menu', 'system', '/system/menus', 'SystemMenuManagement', 'el-icon-menu', 905],
+            ['system.document_number_rule', '编号规则', 'menu', 'system', '/system/document-number-rules', 'DocumentNumberRuleList', 'el-icon-postcard', 906],
 
             // 系统管理 按钮
             ['system.admin.view', '查看管理员列表', 'button', 'system.admin', null, null, 'el-icon-mouse', 1],
@@ -714,6 +715,106 @@ class RbacBootstrapService
             ['document_number_rule.edit', '编辑编号规则', 'button', 'system.document_number_rule', null, null, 'el-icon-mouse', 2],
             ['document_number_rule.delete', '删除未使用编号规则', 'button', 'system.document_number_rule', null, null, 'el-icon-delete', 3],
         ];
+    }
+
+    private const DEFAULT_MENU_GROUPS = [
+        // 生产管理
+        'production.work_order' => '工单与车间执行',
+        'production.board' => '工单与车间执行',
+        'production.serial' => '工单与车间执行',
+        'production.tech' => '技术与绩效统计',
+        'production.drawing_stats' => '技术与绩效统计',
+        'production.performance_stats' => '技术与绩效统计',
+        'production.operation' => '生产基础配置',
+        'production.routing' => '生产基础配置',
+        'production.performance' => '生产基础配置',
+        // 主数据中心
+        'master.product' => '商品与物料体系',
+        'master.sku' => '商品与物料体系',
+        'master.item' => '商品与物料体系',
+        'master.sku_item_relation' => '商品与物料体系',
+        'master.supplier' => '往来与基础档案',
+        'master.warehouse_location' => '往来与基础档案',
+        'master.base_archive' => '往来与基础档案',
+        'master.import' => '往来与基础档案',
+        // 采购管理
+        'purchase.production_shortage' => '需求与采购计划',
+        'purchase.request' => '需求与采购计划',
+        'purchase.plan' => '需求与采购计划',
+        'purchase.order' => '订单与到货退货',
+        'purchase.receipt' => '订单与到货退货',
+        'purchase.return' => '订单与到货退货',
+        // 库存管理
+        'inventory.posting' => '出入库与生产供料',
+        'inventory.inbound.confirm' => '出入库与生产供料',
+        'inventory.material_delivery' => '出入库与生产供料',
+        'inventory.material_return' => '出入库与生产供料',
+        'inventory.balance' => '库存查询与预警',
+        'inventory.transaction' => '库存查询与预警',
+        'inventory.alert' => '库存查询与预警',
+        'inventory.stocktake' => '盘点调拨与调整',
+        'inventory.transfer' => '盘点调拨与调整',
+        'inventory.adjustment' => '盘点调拨与调整',
+        // 销售管理
+        'crm.workbench' => '工作台与看板',
+        'crm.dashboard' => '工作台与看板',
+        'crm.lead' => '客户与商机 (CRM)',
+        'crm.opportunity' => '客户与商机 (CRM)',
+        'sales.customer' => '客户与商机 (CRM)',
+        'crm.team' => '客户与商机 (CRM)',
+        'sales.order' => '订单与履约交付',
+        'sales.shipment' => '订单与履约交付',
+        'sales.return' => '订单与履约交付',
+        'sales.aftersales' => '订单与履约交付',
+        // 财务管理
+        'finance.receipt' => '收付款与往来结算',
+        'finance.payment' => '收付款与往来结算',
+        'finance.payable' => '收付款与往来结算',
+        'finance.invoice' => '收付款与往来结算',
+        'finance.account' => '资金账户与换汇',
+        'finance.transfer' => '资金账户与换汇',
+        'finance.account_valuation' => '资金账户与换汇',
+        'finance.statistics' => '财务统计与规则',
+        'finance.funding_policy' => '财务统计与规则',
+        // 审核中心
+        'approval.todo' => '待办与审批',
+        'approval.flow' => '流程与表单配置',
+        // 系统管理
+        'system.department' => '组织与账号权限',
+        'system.business_staff' => '组织与账号权限',
+        'system.admin' => '组织与账号权限',
+        'system.role' => '组织与账号权限',
+        'system.menu' => '系统与菜单配置',
+        'system.document_number_rule' => '系统与菜单配置',
+    ];
+
+    /**
+     * 将初始左侧导航分组名称落库到 erp_rbac_permissions.remark；
+     * 仅回填 remark 为空的节点，绝不覆盖管理员在后台修改或清空过的分组配置。
+     */
+    private function ensureDefaultMenuGroups(): void
+    {
+        if (! Schema::hasTable('erp_rbac_permissions') || ! Schema::hasColumn('erp_rbac_permissions', 'remark')) {
+            return;
+        }
+        $missing = DB::table('erp_rbac_permissions')
+            ->whereIn('code', array_keys(self::DEFAULT_MENU_GROUPS))
+            ->where(function ($q): void {
+                $q->whereNull('remark')->orWhere('remark', '');
+            })
+            ->get(['id', 'code']);
+        foreach ($missing as $row) {
+            $groupName = self::DEFAULT_MENU_GROUPS[$row->code] ?? null;
+            if (! $groupName) {
+                continue;
+            }
+            DB::table('erp_rbac_permissions')
+                ->where('id', $row->id)
+                ->where(function ($q): void {
+                    $q->whereNull('remark')->orWhere('remark', '');
+                })
+                ->update(['remark' => $groupName]);
+        }
     }
 
     /** @return array<int, string> 本次新建（$force 时为全部）的权限码 */

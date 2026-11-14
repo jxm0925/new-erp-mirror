@@ -7,6 +7,7 @@ use App\Models\Erp\InventoryPostingLog;
 use App\Models\Erp\InventorySerial;
 use App\Models\Erp\InventorySerialEvent;
 use App\Models\Erp\InventoryTransaction;
+use App\Models\Erp\InventoryTransactionItem;
 use App\Models\Erp\PurchaseReceipt;
 use App\Models\Erp\PurchaseReceiptItemAllocation;
 use App\Models\Erp\PurchaseReturn;
@@ -137,7 +138,7 @@ class PurchaseInventoryPosting
                     if ($line->item?->materialManagementMode() === 'physical') {
                         $this->physicalMaterials->createPurchaseReceiptPhysicals($line, $allocation, $transactionItem);
                     }
-                    $this->registerReceiptSerials($receipt, $line, $allocation);
+                    $this->registerReceiptSerials($receipt, $line, $allocation, $transactionItem);
                     $remainingCost = bcsub($remainingCost, $allocationCost, 4);
                     $remainingFreight = bcsub($remainingFreight, $allocationFreight, 4);
                     $remainingQty = bcsub($remainingQty, $allocationQtyDecimal, 8);
@@ -445,6 +446,9 @@ class PurchaseInventoryPosting
                     'source_type' => 'purchase_return',
                     'source_id' => $purchaseReturn->id,
                     'source_item_id' => $line->id,
+                    'outbound_serial_ids' => $line->sourceInventoryQualityEvent?->inventory_serial_id
+                        ? [(int) $line->sourceInventoryQualityEvent->inventory_serial_id]
+                        : ($lockedReturnSerials[$line->id] ?? collect())->pluck('id')->map(fn ($id) => (int) $id)->all(),
                     'remark' => '采购退货出库',
                 ]);
                 foreach ($lockedReturnSerials[$line->id] ?? [] as $serial) {
@@ -512,7 +516,7 @@ class PurchaseInventoryPosting
         return round($baseTotal * $qualifiedQty / $receiptQty, 8);
     }
 
-    private function registerReceiptSerials(PurchaseReceipt $receipt, object $line, PurchaseReceiptItemAllocation $allocation): void
+    private function registerReceiptSerials(PurchaseReceipt $receipt, object $line, PurchaseReceiptItemAllocation $allocation, InventoryTransactionItem $fact): void
     {
         $balance = InventoryBalance::query()
             ->where('item_id', $line->item_id)
@@ -521,5 +525,19 @@ class PurchaseInventoryPosting
             ->where('batch_no', $line->batch_no)
             ->firstOrFail();
         $this->serials->attachPostedReceiptAllocation($receipt, $line, $allocation, $balance);
+        $serials = InventorySerial::query()->where('source_receipt_item_id', $line->id)->whereIn('serial_no', $allocation->serial_nos ?: [])
+            ->orderBy('id')->lockForUpdate()->get();
+        $amount = (string) $fact->cost_amount; $quantity = (string) $fact->change_qty;
+        foreach ($serials as $serial) {
+            $cost = CuttingDecimal::share($amount, $quantity, '1');
+            $event = InventorySerialEvent::query()->where('inventory_serial_id', $serial->id)->where('event_type', 'inventory_posted')
+                ->where('document_type', 'purchase_receipt')->where('document_id', $receipt->id)
+                ->where('warehouse_id', $allocation->warehouse_id)->where('location_id', $allocation->location_id)->where('batch_no', $line->batch_no)
+                ->latest('id')->lockForUpdate()->first();
+            if (! $event) throw ValidationException::withMessages(['serials' => '采购编号缺少本次正式入库事件，不能初始化逐件成本。']);
+            $event->update(['event_payload' => array_replace($event->event_payload ?? [],
+                ['actual_material_cost' => $cost, 'inventory_transaction_item_id' => (int) $fact->id])]);
+            $amount = bcsub($amount, $cost, 4); $quantity = bcsub($quantity, '1', 8);
+        }
     }
 }

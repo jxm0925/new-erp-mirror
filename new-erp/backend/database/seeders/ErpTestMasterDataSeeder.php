@@ -31,8 +31,6 @@ class ErpTestMasterDataSeeder extends Seeder
         'erp_item_material_policies' => 'item_id',
         'erp_item_purchase_conversions' => 'item_id',
         'erp_sku_item_relations' => 'sku_id',
-        'erp_sales_customer_contacts' => 'customer_id',
-        'erp_sales_customer_addresses' => 'customer_id',
     ];
 
     private function seed(): void

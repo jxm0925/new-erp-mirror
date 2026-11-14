@@ -21,45 +21,10 @@
 
     <div class="erp-page-tip">
       <i class="el-icon-info" />
-      <span>业务说明：待配料工序按先入先用自动推荐拣货库位与批次；生成配料单后可在发出前核对实物，也可“配好直接发出”。点击下方统计卡片可快速切换对应状态。</span>
+      <span>业务说明：待配料工序按先入先用自动推荐拣货库位与批次；生成配料单后可在发出前核对实物，也可“配好直接发出”。点击下方状态标签可快速切换对应状态。</span>
     </div>
 
     <stocktake-freeze-alert />
-
-    <div class="metric-overview-grid">
-      <article class="metric-card" :class="{ active: status === 'pending' }" @click="pickTab('pending')">
-        <div class="metric-icon primary"><i class="el-icon-box" /></div>
-        <div class="metric-copy">
-          <span>待配料工序</span>
-          <strong>{{ status === 'pending' ? total : (summary.pending !== undefined ? summary.pending : '--') }}</strong>
-          <small>点击查看需配料工序</small>
-        </div>
-      </article>
-      <article class="metric-card" :class="{ active: status === 'prepared' }" @click="pickTab('prepared')">
-        <div class="metric-icon amber"><i class="el-icon-document-checked" /></div>
-        <div class="metric-copy">
-          <span>待发出配料单</span>
-          <strong class="warning-num">{{ summary.prepared || 0 }}</strong>
-          <small>已生成拣货单待出库</small>
-        </div>
-      </article>
-      <article class="metric-card" :class="{ active: status === 'dispatched' }" @click="pickTab('dispatched')">
-        <div class="metric-icon blue"><i class="el-icon-truck" /></div>
-        <div class="metric-copy">
-          <span>已发出待签收</span>
-          <strong>{{ summary.dispatched || 0 }}</strong>
-          <small>已扣库存等待车间签收</small>
-        </div>
-      </article>
-      <article class="metric-card" :class="{ active: status === 'rejected' }" @click="pickTab('rejected')">
-        <div class="metric-icon danger"><i class="el-icon-warning-outline" /></div>
-        <div class="metric-copy">
-          <span>拒收待处理</span>
-          <strong :class="{ 'danger-num': (summary.rejected || 0) > 0 }">{{ summary.rejected || 0 }}</strong>
-          <small>需重新送达或收回入库</small>
-        </div>
-      </article>
-    </div>
 
     <div class="main-card">
       <div class="tabs-bar">
@@ -401,22 +366,6 @@ export default {
 .erp-page-tip { display: flex; align-items: center; gap: 8px; padding: 10px 14px; margin-bottom: 12px; background: #f0f9f4; border: 1px solid #cce8d8; border-radius: 8px; color: #1f4d36; font-size: 13px; }
 .erp-page-tip i { color: #008b4b; font-size: 16px; flex-shrink: 0; }
 
-.metric-overview-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 12px; }
-.metric-card { display: flex; align-items: center; gap: 12px; padding: 14px 16px; background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; cursor: pointer; transition: all .18s ease; }
-.metric-card:hover { border-color: #86efac; box-shadow: 0 4px 12px rgba(15, 23, 42, .05); }
-.metric-card.active { border-color: #008b4b; background: #f3fbf6; box-shadow: 0 0 0 1px #008b4b inset; }
-.metric-icon { width: 42px; height: 42px; border-radius: 10px; display: grid; place-items: center; font-size: 20px; flex-shrink: 0; }
-.metric-icon.primary { color: #008b4b; background: #e8f7ee; }
-.metric-icon.amber { color: #d97706; background: #fef3c7; }
-.metric-icon.blue { color: #2563eb; background: #eff6ff; }
-.metric-icon.danger { color: #dc2626; background: #fee2e2; }
-.metric-copy { display: flex; flex-direction: column; min-width: 0; }
-.metric-copy span { color: #6b7280; font-size: 12px; }
-.metric-copy strong { font-size: 22px; line-height: 1.25; color: #111827; font-weight: 700; margin: 2px 0; }
-.metric-copy small { color: #9ca3af; font-size: 11px; }
-.warning-num { color: #d97706 !important; }
-.danger-num { color: #dc2626 !important; }
-
 .main-card { background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; padding: 14px 16px; }
 .tabs-bar { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; border-bottom: 1px solid #e5e7eb; padding-bottom: 10px; margin-bottom: 14px; }
 .tabs { display: flex; gap: 6px; overflow-x: auto; }
@@ -470,12 +419,8 @@ export default {
 .remark { margin-top: 4px; }
 .pg { display: flex; justify-content: space-between; align-items: center; margin-top: 12px; padding-top: 10px; border-top: 1px solid #eef2f6; color: #6b7280; font-size: 12px; flex-wrap: wrap; gap: 8px; }
 
-@media (max-width: 1100px) {
-  .metric-overview-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-}
 @media (max-width: 767px) {
   .delivery-page { padding: 12px; }
-  .metric-overview-grid { grid-template-columns: 1fr; }
   .flt .w { width: 100%; }
 }
 </style>

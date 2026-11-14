@@ -94,7 +94,7 @@ class SalesInventoryPosting
                 'unit_cost' => $source->average_unit_cost, 'material_lot_id' => $source->material_lot_id,
                 'cost_source_type' => 'shipment_internal_transfer', 'source_type' => 'sales_shipment_movement', 'source_id' => $movement->id, 'source_item_id' => $line->id];
             $outbound = $this->kernel->apply($transaction, $common + ['warehouse_id' => $source->warehouse_id, 'location_id' => $source->location_id,
-                'change_qty' => -$qty, 'cost_amount' => bcsub('0', $cost, 4)]);
+                'change_qty' => -$qty, 'cost_amount' => bcsub('0', $cost, 4), 'outbound_serial_ids' => $serialIds]);
             $this->kernel->apply($transaction, $common + ['warehouse_id' => $target->warehouse_id, 'location_id' => $target->id,
                 'change_qty' => $qty, 'cost_amount' => bcsub('0', (string) $outbound->cost_amount, 4)]);
             $targetBalance = InventoryBalance::query()->where('item_id', $line->item_id)->where('warehouse_id', $target->warehouse_id)
@@ -162,11 +162,13 @@ class SalesInventoryPosting
             if ((float) $location->quantity_locked + 0.00000001 < $qty) throw ValidationException::withMessages(['stock' => '待发区汇总占用不足。']);
             $location->update(['quantity_locked' => (float) $location->quantity_locked - $qty]);
             $cost = CuttingDecimal::share((string) $balance->inventory_value, (string) $balance->quantity_on_hand, (string) $line->base_qty);
+            $serialCosts = [];
             $posted = $this->kernel->apply($transaction, ['item_id' => $line->item_id, 'warehouse_id' => $line->warehouse_id, 'location_id' => $line->location_id,
                 'batch_no' => $line->batch_no, 'unit_id' => $line->unit_id, 'material_lot_id' => $balance->material_lot_id, 'change_qty' => -$qty,
                 'unit_cost' => $balance->average_unit_cost, 'cost_amount' => bcsub('0', $cost, 4), 'cost_source_type' => 'sales_shipment_frozen_fact',
-                'source_type' => 'sales_shipment', 'source_id' => $shipment->id, 'source_item_id' => $line->id]);
-            $line->update(['unit_cost_snapshot' => $balance->average_unit_cost, 'cost_amount_snapshot' => bcsub('0', (string) $posted->cost_amount, 4)]);
+                'source_type' => 'sales_shipment', 'source_id' => $shipment->id, 'source_item_id' => $line->id, 'outbound_serial_ids' => $serialIds], $serialCosts);
+            $line->update(['unit_cost_snapshot' => $posted->unit_cost, 'cost_amount_snapshot' => bcsub('0', (string) $posted->cost_amount, 4)]
+                + ($serialCosts ? ['serial_snapshot' => array_replace($line->serial_snapshot ?? [], ['actual_material_costs' => $serialCosts])] : []));
             $reservation->update(['reservation_status' => 'consumed', 'released_at' => now(), 'release_reason' => '确认发货或提货，正式销售出库']);
             foreach ($serials as $serial) {
                 $serial->update(['serial_status' => 'shipped', 'outbound_at' => now()]);
@@ -253,7 +255,7 @@ class SalesInventoryPosting
                     'location_id' => $balance->location_id, 'batch_no' => $balance->batch_no, 'unit_id' => $balance->unit_id,
                     'change_qty' => bcsub('0', $quantity, 8), 'unit_cost' => bcdiv($cost, $quantity, 8), 'cost_amount' => bcsub('0', $cost, 4),
                     'cost_source_type' => $physicalCost !== null ? 'shipment_packing_physical_total' : 'shipment_packing_material_fact',
-                    'source_type' => 'shipment_packing_operation', 'source_id' => $op->id, 'source_item_id' => $row->id, 'remark' => '包装实际材料耗用']);
+                    'source_type' => 'shipment_packing_operation', 'source_id' => $op->id, 'source_item_id' => $row->id, 'outbound_serial_ids' => $serialIds, 'remark' => '包装实际材料耗用']);
                 foreach ($physicalIds as $physicalId) {
                     $physical = DB::table('erp_material_physicals')->where('id', $physicalId)->first();
                     $sourceHolding = DB::table('erp_material_holdings')->where('id', $physical->current_holding_id)->lockForUpdate()->first();

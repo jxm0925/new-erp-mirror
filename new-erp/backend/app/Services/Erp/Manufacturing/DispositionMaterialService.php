@@ -3,6 +3,7 @@
 namespace App\Services\Erp\Manufacturing;
 
 use App\Models\Erp\{CancellationProductionDisposition as Disposition, MfgMaterialIssue, MfgMaterialReturn, MfgWorkOrder, MfgWorkOrderUnit, MfgUnitComponent};
+use App\Services\Erp\CuttingDecimal;
 use Illuminate\Support\Facades\DB;
 
 /** 逐台停产份额沿真实领料来源冻结；共同投入按当时参与编号分摊，不冒充逐台实耗。 */
@@ -47,8 +48,13 @@ final class DispositionMaterialService
                 $unboundQuota = max(0, $pool['original'] * $ratio - $pool['own'] - $returnedShare);
                 $unboundQty = $pool['unbound'] ? sprintf('%.8F', $unboundQuota * count($unboundSerials) / $pool['unbound']) : '0';
                 $qty = bcadd(bcadd(bcmul($unserialized, sprintf('%.12F', $ratio), 8), $unboundQty, 8), (string) count($ownSerials), 8);
-                $cost = bccomp((string) $source->change_qty, '0', 8) !== 0
-                    ? bcdiv(bcmul(bcsub('0', (string) $source->cost_amount, 4), $qty, 12), bcsub('0', (string) $source->change_qty, 8), 4) : '0';
+                $serialCosts = $this->sourceSerialCosts($source, $originalSerials);
+                $serialTotal = $this->sumCosts($serialCosts);
+                $nonSerialCost = bcsub(bcsub('0', (string) $source->cost_amount, 4), $serialTotal, 4);
+                abort_if(bccomp($nonSerialCost, '0', 4) < 0, 422, '原领料编号成本超过该批次正式出库金额，请先核对来源。');
+                $unboundCost = $this->quantityCost($this->sumCosts(array_intersect_key($serialCosts, array_flip($unboundSerials))), (string) count($unboundSerials), $unboundQty);
+                $cost = bcadd(bcadd($this->sumCosts(array_intersect_key($serialCosts, array_flip($ownSerials))), $unboundCost, 4),
+                    $this->quantityCost($nonSerialCost, $unserialized, bcmul($unserialized, sprintf('%.12F', $ratio), 8)), 4);
                 $returns = DB::table('erp_mfg_material_return_lines as l')->join('erp_mfg_material_returns as r', 'r.id', '=', 'l.return_id')
                     ->where('l.source_transaction_item_id', $source->id)->whereNull('l.inventory_serial_id')->where('r.status', 'approved')->get(['l.unit_id', 'l.qty', 'l.cost_amount']);
                 foreach ($returns as $returned) {
@@ -63,7 +69,7 @@ final class DispositionMaterialService
                     'allocated_qty' => $qty, 'allocated_cost' => $cost, 'unit_ids' => $cohort, 'serial_ids' => $ownSerials,
                     'unbound_qty' => $unboundQty, 'unbound_serial_ids' => $unboundSerials,
                     'fixed_allocated_qty' => bcsub($qty, $unboundQty, 8),
-                    'fixed_allocated_cost' => bcsub($cost, bcmul(bcdiv(bcsub('0', (string) $source->cost_amount, 4), bcsub('0', (string) $source->change_qty, 8), 12), $unboundQty, 4), 4),
+                    'fixed_allocated_cost' => bcsub($cost, $unboundCost, 4),
                     'allocation_method' => isset($line['unit_ids']) ? 'recorded_unit_count' : 'legacy_work_order_unit_count'];
             }
         }
@@ -206,6 +212,7 @@ final class DispositionMaterialService
             if ($binding && !array_key_exists($key, $claims)) $claims[$key] = $unitOwners[(int) $binding->unit_id] ?? 0;
         }
         foreach ($groups as $group) {
+            $costPools = [];
             foreach ($group['units'] as $dispositionId => $sources) {
                 $quota = array_sum(array_map(fn ($s) => (float) $s['unbound_qty'], $sources));
                 $allowed = [];
@@ -228,7 +235,14 @@ final class DispositionMaterialService
                     $source['fixed_allocated_qty'] ??= bcsub((string) $source['allocated_qty'], (string) $source['unbound_qty'], 8);
                     $source['fixed_allocated_cost'] ??= bcsub((string) $source['allocated_cost'], bcmul($unitCost, (string) $source['unbound_qty'], 4), 4);
                     $source['allocated_qty'] = bcadd((string) $source['fixed_allocated_qty'], $allocated, 8);
-                    $source['allocated_cost'] = bcadd((string) $source['fixed_allocated_cost'], bcmul($unitCost, $allocated, 4), 4);
+                    $serialCosts = $this->sourceSerialCosts($item, $source['unbound_serial_ids']);
+                    if (!isset($costPools[$sourceId])) {
+                        $freeIds = array_values(array_intersect_key($available, $sourceKeys));
+                        $costPools[$sourceId] = ['cost' => $this->sumCosts(array_intersect_key($serialCosts, array_flip($freeIds))), 'qty' => (string) count($freeIds)];
+                    }
+                    $commonCost = $this->quantityCost($costPools[$sourceId]['cost'], $costPools[$sourceId]['qty'], sprintf('%.8F', $shared));
+                    $costPools[$sourceId]['cost'] = bcsub($costPools[$sourceId]['cost'], $commonCost, 4); $costPools[$sourceId]['qty'] = bcsub($costPools[$sourceId]['qty'], sprintf('%.8F', $shared), 8);
+                    $source['allocated_cost'] = bcadd(bcadd((string) $source['fixed_allocated_cost'], $this->sumCosts(array_intersect_key($serialCosts, array_flip($own))), 4), $commonCost, 4);
                     $source['claimed_serial_ids'] = $own;
                     $snapshots[$dispositionId]['sources'][$index] = $source;
                 }
@@ -274,6 +288,36 @@ final class DispositionMaterialService
         }
         return [$original, $own, $unbound];
     }
+
+    /** 具体编号沿原领用事件计价；未绑定的共同份额只在其真实候选池内分配。 */
+    private function sourceSerialCosts(object $source, array $ids): array
+    {
+        if (!$ids) return [];
+        $events = DB::table('erp_inventory_serial_events')->whereIn('inventory_serial_id', $ids)->where('event_type', 'production_material_issued')
+            ->where('document_type', 'mfg_material_issue')->where('document_id', $source->source_id)->where('warehouse_id', $source->warehouse_id)
+            ->where('location_id', $source->location_id)->where('batch_no', $source->batch_no)->orderBy('id')->lockForUpdate()->get()->keyBy('inventory_serial_id');
+        $costs = []; $leftCost = bcsub('0', (string) $source->cost_amount, 4); $leftQty = bcsub('0', (string) $source->change_qty, 8);
+        foreach ($ids as $id) {
+            $payload = isset($events[$id]) ? (json_decode($events[$id]->event_payload ?: '{}', true) ?: []) : [];
+            if (!isset($payload['actual_material_cost'])) continue;
+            if (isset($payload['transaction_item_id']) && (int) $payload['transaction_item_id'] !== (int) $source->id) continue;
+            $costs[(int) $id] = (string) $payload['actual_material_cost'];
+            $leftCost = bcsub($leftCost, $costs[$id], 4); $leftQty = bcsub($leftQty, '1', 8);
+        }
+        abort_if(bccomp($leftCost, '0', 4) < 0 || bccomp($leftQty, '0', 8) < 0, 422, '原领用编号的逐件成本与批次金额不一致。');
+        foreach ($ids as $id) if (!isset($costs[$id])) {
+            $costs[(int) $id] = $this->quantityCost($leftCost, $leftQty, '1');
+            $leftCost = bcsub($leftCost, $costs[$id], 4); $leftQty = bcsub($leftQty, '1', 8);
+        }
+        return $costs;
+    }
+
+    private function quantityCost(string $cost, string $qty, string $take): string
+    {
+        return bccomp($take, '0', 8) === 0 ? '0.0000' : bcadd(CuttingDecimal::share($cost, $qty, $take), '0', 4);
+    }
+
+    private function sumCosts(array $costs): string { return array_reduce($costs, fn ($sum, $value) => bcadd($sum, (string) $value, 4), '0.0000'); }
 
     public function outstanding(Disposition $d): bool
     {

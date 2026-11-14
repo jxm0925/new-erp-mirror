@@ -13,7 +13,7 @@ class DatabaseSeeder extends Seeder
     /**
      * Seed only stable ERP bootstrap/reference data.
      *
-     * User-approved supplier/category, sales references and deduplicated customers
+     * User-approved supplier/category and sales references
      * are permanent master-data baselines. Do not add other customers, suppliers,
      * warehouses, items, SKUs, BOMs, QA fixtures, or acceptance accounts.
      */
@@ -29,7 +29,6 @@ class DatabaseSeeder extends Seeder
             ErpApprovedMasterDataSeeder::class,
             ErpApprovedSalesReferenceSeeder::class,
             ErpRegionSeeder::class,
-            ErpOfficialCustomersSeeder::class,
             ErpFinanceReferenceSeeder::class,
             ErpProductionCatalogSeeder::class,
             ErpSalesReferenceSeeder::class,

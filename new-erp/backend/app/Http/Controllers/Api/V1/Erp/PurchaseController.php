@@ -703,7 +703,7 @@ class PurchaseController extends Controller
         return response()->json(PurchaseReceipt::with([
             'supplier', 'order', 'items.item.unit', 'items.orderItem', 'items.warehouse', 'items.location', 'items.allocations.warehouse', 'items.allocations.location', 'items.allocations.physicalEntries', 'items.defectHandlings',
             'attachments' => fn ($query) => $query->where('status', 'active')->latest('id'),
-            'logs',
+            'logs' => fn ($query) => $query->withoutCostDetails(),
         ])->findOrFail($id));
     }
 

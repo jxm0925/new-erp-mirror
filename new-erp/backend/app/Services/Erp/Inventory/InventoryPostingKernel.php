@@ -47,7 +47,7 @@ class InventoryPostingKernel
      * 更新批次余额与库位汇总、写流水明细并刷新预警。业务单据只负责组装行。
      * 盘点冻结等全局校验统一在入口执行。
      */
-    public function apply(InventoryTransaction $transaction, array $line): InventoryTransactionItem
+    public function apply(InventoryTransaction $transaction, array $line, ?array &$serialCosts = null): InventoryTransactionItem
     {
         $item = Item::query()->whereKey($line['item_id'])->lockForUpdate()->firstOrFail();
         $this->freeze->assertWritable($transaction, $line);
@@ -80,6 +80,14 @@ class InventoryPostingKernel
             : (float) $line['change_qty'] * (float) ($line['unit_cost'] ?? 0);
         $decimalLot = $item->materialManagementMode() === 'physical'
             || ! empty($line['material_lot_id']) || ! empty($balance->material_lot_id);
+        $bySerial = isset($line['outbound_serial_ids']) && $item->materialManagementMode() !== 'physical'
+            && ($line['outbound_serial_ids'] || $item->serialTrackingMode() !== 'none') && (float) $line['change_qty'] < 0;
+        if ($bySerial) {
+            $take = bcsub('0', (string) $line['change_qty'], 8); $serialCosts = [];
+            $cost = SerialInventoryCost::outbound($balance, $take, $line['outbound_serial_ids'], $serialCosts);
+            $costAmount = $line['cost_amount'] = bcsub('0', $cost, 4);
+            $line['unit_cost'] = bcdiv($cost, $take, 8);
+        }
         if ($decimalLot) {
             if (empty($line['material_lot_id'])) $line['material_lot_id'] = $balance->material_lot_id;
             if ($balance->material_lot_id && (int) $balance->material_lot_id !== (int) $line['material_lot_id'])
@@ -87,13 +95,14 @@ class InventoryPostingKernel
             if (! array_key_exists('cost_amount', $line)) throw ValidationException::withMessages(['cost_amount' => '可追溯材料批次必须传入权威总金额。']);
             $costAmount = (string) $line['cost_amount'];
             [$packingPhysicalTotal, $cuttingPhysicalTotal] = $this->physicalGuard->assertAuthoritativeTotal($transaction, $line, $item);
-            if ((float) $line['change_qty'] < 0 && ! $packingPhysicalTotal && ! $cuttingPhysicalTotal) {
+            if ((float) $line['change_qty'] < 0 && ! $packingPhysicalTotal && ! $cuttingPhysicalTotal && ! $bySerial) {
                 $consumedQty = number_format(abs((float) $line['change_qty']), 8, '.', '');
                 $costAmount = bcsub('0', CuttingDecimal::share((string) $balance->inventory_value, (string) $balance->quantity_on_hand, $consumedQty), 4);
             }
             $inventoryValue = bcadd((string) ($balance->inventory_value ?? '0'), $costAmount, 4);
             if (bccomp($inventoryValue, '0', 4) < 0) throw ValidationException::withMessages(['cost_amount' => '库存总金额不足，不能用归零掩盖成本差额。']);
-        } else $inventoryValue = max(0, $previousValue + $costAmount);
+        } elseif ($bySerial) $inventoryValue = bcadd((string) $balance->inventory_value, $costAmount, 4);
+        else $inventoryValue = max(0, $previousValue + $costAmount);
         $locked = (float) ($balance->quantity_locked ?? 0);
         if ($onHand < 0 || $onHand - $locked < 0) {
             throw ValidationException::withMessages(['stock' => '当前库存不足，不能执行该调整。']);

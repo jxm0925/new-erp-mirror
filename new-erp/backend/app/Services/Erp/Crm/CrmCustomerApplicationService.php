@@ -5,6 +5,7 @@ namespace App\Services\Erp\Crm;
 use App\Models\Erp\SalesCustomer;
 use App\Models\Erp\SalesCustomerAddress;
 use App\Models\Erp\SalesCustomerContact;
+use App\Services\Erp\CustomerRegionService;
 use App\Services\Erp\DocumentNumberService;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Exceptions\HttpResponseException;
@@ -35,6 +36,7 @@ final class CrmCustomerApplicationService
     public function create(array $data, object $actor, ?string $reservationToken = null, ?string $creationSessionId = null): SalesCustomer
     {
         return DB::transaction(function () use ($data, $actor, $reservationToken, $creationSessionId) {
+            if (!empty($data['region_id'])) app(CustomerRegionService::class)->selectablePath((int) $data['region_id']);
             $contacts = $data['contacts'] ?? null;
             $addresses = $data['addresses'] ?? null;
             $this->guardDuplicates($data, $contacts, $addresses, null, $actor);
@@ -70,6 +72,7 @@ final class CrmCustomerApplicationService
                 throw ValidationException::withMessages(['crm_version' => '客户资料已被其他人修改，请刷新后重新编辑。']);
             }
             $before = $this->snapshot($customer);
+            if (!empty($data['region_id'])) app(CustomerRegionService::class)->selectablePath((int) $data['region_id'], (int) $customer->region_id);
             $values = array_intersect_key($data, array_flip(self::EDITABLE));
             if (array_key_exists('credit_code', $values)) $values['credit_code'] = $this->dedupe->normalizeCode($values['credit_code']);
             if (array_key_exists('customer_name', $values)) $values['dedupe_name_key'] = CrmCustomerDedupeService::dedupeKey($values['customer_name']);
@@ -197,6 +200,11 @@ final class CrmCustomerApplicationService
             $payload = array_intersect_key($row, array_flip($allowed));
             $payload['is_default'] = !empty($row['is_default']);
             $record = !empty($row['id']) ? $model::where('customer_id', $customer->id)->findOrFail($row['id']) : new $model(['customer_id' => $customer->id]);
+            if ($model === SalesCustomerAddress::class && !empty($payload['region_id'])) {
+                $payload = array_merge($payload, app(CustomerRegionService::class)->address(
+                    (int) $payload['region_id'], (string) ($payload['detail_address'] ?? $record->detail_address),
+                    $record->exists ? (int) $record->region_id : null));
+            }
             $record->fill($payload)->save();
             $keep[] = $record->id;
         }

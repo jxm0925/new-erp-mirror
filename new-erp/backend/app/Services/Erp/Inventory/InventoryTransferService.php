@@ -130,7 +130,7 @@ class InventoryTransferService
                 $outbound = $this->kernel->apply($transaction, $common + [
                     'warehouse_id' => $source->warehouse_id, 'location_id' => $source->location_id,
                     'change_qty' => -(float) $line->quantity, 'cost_amount' => bcsub('0', $cost, 4),
-                    'cost_source_type' => ShipmentDirectSourcePolicy::TRANSFER_NONE,
+                    'cost_source_type' => ShipmentDirectSourcePolicy::TRANSFER_NONE, 'outbound_serial_ids' => $line->serial_ids ?? [],
                 ]);
                 $frozenCost = bcsub('0', (string) $outbound->cost_amount, 4);
                 $snapshot = array_replace($source->only(['item_id', 'warehouse_id', 'location_id', 'batch_no', 'unit_id', 'material_lot_id']), [

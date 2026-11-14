@@ -57,12 +57,12 @@ final class CrmDuplicateReviewApplicationService
             $purpose = $data['purpose'];
             $snapshot = array_intersect_key($data['input_snapshot'] ?? [], array_flip(['customer_kind', 'customer_name', 'phones', 'wechat', 'email',
                 'credit_code', 'region_id', 'full_address', 'detail_address', 'platform_legacy_id', 'platform_buyer_id']));
-            if (!empty($snapshot['region_id']) && array_key_exists('detail_address', $snapshot)) {
-                $snapshot['full_address'] = app(CustomerRegionService::class)->address((int) $snapshot['region_id'], trim((string) $snapshot['detail_address']))['full_address'];
-            }
             $source = $this->subject($data, $actor);
             $channel = $source['channel'];
             if ($data['subject_type'] === 'lead') $snapshot = $source['snapshot'];
+            elseif (!empty($snapshot['region_id']) && array_key_exists('detail_address', $snapshot)) {
+                $snapshot['full_address'] = app(CustomerRegionService::class)->address((int) $snapshot['region_id'], trim((string) $snapshot['detail_address']))['full_address'];
+            }
             if ($purpose === 'collaboration') {
                 abort_unless($this->assignments->activeSales((int) $actor->legacy_id), 422, '只有有效销售可申请客户协作。');
                 $target = SalesCustomer::query()->lockForUpdate()->findOrFail((int) ($data['target_customer_id'] ?? 0));

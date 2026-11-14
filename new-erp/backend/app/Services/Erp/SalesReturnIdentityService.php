@@ -182,6 +182,12 @@ class SalesReturnIdentityService
             $serial->update(['serial_status' => self::STATES[$disposition], 'inventory_balance_id' => null]);
             $this->event($serial, $receiptLine, $identity, 'sales_return_received', 'shipped', self::STATES[$disposition], $operatorId);
         }
+        foreach ($allocations as $allocation) {
+            $bound = SalesReturnSerialIdentity::where('cost_allocation_id', $allocation->id)->orderBy('id')->lockForUpdate()->get();
+            if (bccomp((string) $bound->count(), (string) $allocation->allocated_base_qty, 8) === 0) {
+                $allocation->update(['cost_amount_snapshot' => $bound->reduce(fn ($sum, $identity) => bcadd($sum, (string) $identity->cost_amount_snapshot, 4), '0.0000')]);
+            }
+        }
     }
 
     private function bindOriginalCosts(SalesReturnItem $line, Collection $facts): Collection
@@ -354,17 +360,30 @@ class SalesReturnIdentityService
 
     private function serialCost(object $fact): string
     {
-        $ids = array_values(array_unique(array_map('intval', json_decode($fact->serial_snapshot ?: '{}', true)['inventory_serial_ids'] ?? [])));
+        $snapshot = json_decode($fact->serial_snapshot ?: '{}', true);
+        $ids = array_values(array_unique(array_map('intval', $snapshot['inventory_serial_ids'] ?? [])));
         $quantity = abs((float) $fact->change_qty);
-        if ($quantity <= 0 || abs($quantity - round($quantity)) > 0.00000001 || count($ids) !== (int) $quantity) $this->fail('原发货逐件序列与出库数量不完整，无法确定该序列的原成本。');
+        if ($quantity <= 0 || count($ids) > $quantity + 0.00000001) $this->fail('原发货逐件序列与出库数量不完整，无法确定该序列的原成本。');
         sort($ids);
         $index = array_search((int) $fact->id, $ids, true);
         if ($index === false) $this->fail('序列号不在原发货快照中。');
         // Deterministic partition of the frozen outbound total avoids manufacturing or
         // losing the final 0.0001 when serials from one shipment return in separate receipts.
         $total = $this->absolute((string) $fact->cost_amount, 4);
-        $share = bcdiv($total, (string) count($ids), 4);
-        return $index === count($ids) - 1 ? bcsub($total, bcmul($share, (string) (count($ids) - 1), 4), 4) : $share;
+        if (isset($snapshot['actual_material_costs'])) {
+            $costs = $snapshot['actual_material_costs'];
+            if (! is_array($costs) || count($costs) !== count($ids)
+                || count(array_intersect(array_map('intval', array_keys($costs)), $ids)) !== count($ids)) $this->fail('原发货逐台成本与设备编号不一致。');
+            $sum = '0.0000';
+            foreach ($costs as $cost) {
+                if (! is_string($cost) || ! preg_match('/^\d+(?:\.\d{1,4})?$/D', $cost)) $this->fail('原发货逐台成本金额无效。');
+                $sum = bcadd($sum, $cost, 4);
+            }
+            if (bccomp($sum, $total, 4) > 0 || (bccomp((string) count($ids), (string) $quantity, 8) === 0 && bccomp($sum, $total, 4) !== 0)) $this->fail('原发货逐台成本合计与实际出库金额不一致。');
+            return (string) $costs[(int) $fact->id];
+        }
+        $share = bcdiv($total, (string) $quantity, 4);
+        return bccomp((string) count($ids), (string) $quantity, 8) === 0 && $index === count($ids) - 1 ? bcsub($total, bcmul($share, (string) (count($ids) - 1), 4), 4) : $share;
     }
 
     private function event(InventorySerial $serial, SalesReturnReceiptItem $line, SalesReturnSerialIdentity $identity, string $type, string $from, string $to, ?int $operatorId): void

@@ -15,20 +15,21 @@
                 <el-input v-model.trim="actualAmount" inputmode="decimal" maxlength="13" placeholder="输入本行最终总额，最多两位小数" :disabled="loading || saving || Boolean(pendingRequest) || Boolean(recoveryError)" @input="invalidatePreview" />
               </el-form-item>
               <el-form-item label="修正原因" required>
-                <el-input v-model.trim="reason" type="textarea" :rows="2" maxlength="1000" show-word-limit placeholder="填写本次实际金额或库存成本修正原因" :disabled="loading || saving || Boolean(pendingRequest) || Boolean(recoveryError)" />
+                <el-input v-model.trim="reason" type="textarea" :rows="2" maxlength="1000" show-word-limit placeholder="填写本次实际金额修正原因" :disabled="loading || saving || Boolean(pendingRequest) || Boolean(recoveryError)" />
               </el-form-item>
             </el-form>
-            <div class="actual-preview-action"><el-button type="success" plain size="small" :loading="previewing" :disabled="loading || saving || Boolean(pendingRequest) || Boolean(recoveryError) || Boolean(amountError) || !actualAmount" @click="previewChange">预览金额变化</el-button><el-button v-if="!facts && !loading" size="small" :disabled="saving" @click="loadFacts">重新载入</el-button></div>
+            <div class="actual-preview-action"><el-button type="success" plain size="small" :loading="previewing" :disabled="loading || saving || Boolean(pendingRequest) || Boolean(recoveryError) || Boolean(amountError) || !actualAmount" @click="previewChange">预览金额与成本变化</el-button><el-button v-if="!facts && !loading" size="small" :disabled="saving" @click="loadFacts">重新载入</el-button></div>
             <template v-if="preview">
               <div class="actual-summary actual-impact">
                 <span>应付金额<strong>{{ money(preview.current_payable_amount) }} → {{ money(preview.target_payable_amount) }}</strong></span>
                 <span>实际金额变动<strong>{{ money(preview.actual_amount_delta) }}</strong></span>
-                <span>库存成本<strong>{{ money(preview.old_inventory_cost) }} → {{ money(preview.target_inventory_cost) }}</strong></span>
-                <span>{{ preview.inventory_posted ? '在库成本补差' : '待入库成本变动' }}<strong>{{ money(preview.cost_adjustment_amount) }}</strong></span>
+                <span>采购入库成本<strong>{{ money(preview.old_inventory_cost) }} → {{ money(preview.target_inventory_cost) }}</strong></span>
+                <span>自动重算成本变动<strong>{{ money(preview.cost_adjustment_amount) }}</strong></span>
                 <span v-if="preview.current_order_payment_amount != null">订单付款总额<strong>{{ money(preview.current_order_payment_amount) }} → {{ money(preview.target_order_payment_amount) }}</strong></span>
+                <span v-for="impact in impactCounts(preview.impact_summary)" :key="impact.key">{{ impact.label }}<strong>{{ impact.count }}</strong></span>
               </div>
               <ul v-if="preview.block_reasons && preview.block_reasons.length" class="actual-block-reasons"><li v-for="(block, index) in preview.block_reasons" :key="block.code + ':' + index">{{ block.message }}</li></ul>
-              <p v-else-if="!canConfirmPreview" class="actual-note">当前金额和库存成本均无需修正。</p>
+              <p v-else-if="!canConfirmPreview" class="actual-note">当前实际金额与采购入库成本均无需修正。</p>
             </template>
           </div>
         </el-tab-pane>
@@ -39,7 +40,8 @@
             <el-table-column prop="business_date" label="业务日期" width="105" />
             <el-table-column prop="operator_name" label="操作人" min-width="95" />
             <el-table-column label="实际金额（元）" min-width="180" align="right"><template slot-scope="{ row }">{{ money(row.old_actual_amount) }} → {{ money(row.new_actual_amount) }}</template></el-table-column>
-            <el-table-column label="库存成本（元）" min-width="180" align="right"><template slot-scope="{ row }">{{ money(row.old_inventory_cost_amount) }} → {{ money(row.new_inventory_cost_amount) }}</template></el-table-column>
+            <el-table-column label="采购入库成本（元）" min-width="180" align="right"><template slot-scope="{ row }">{{ money(row.old_inventory_cost_amount) }} → {{ money(row.new_inventory_cost_amount) }}</template></el-table-column>
+            <el-table-column label="自动重算影响" min-width="220"><template slot-scope="{ row }">{{ impactText(row.impact_summary) }}</template></el-table-column>
             <el-table-column prop="reason" label="修正原因" min-width="210" />
           </el-table>
           <el-pagination background layout="total, prev, pager, next" :current-page="historyPage" :page-size="10" :pager-count="5" :total="historyTotal" @current-change="changeHistoryPage" />
@@ -70,6 +72,16 @@ export default {
   beforeDestroy() { this.contextRevision += 1; this.previewRevision += 1; this.historyRevision += 1 },
   methods: {
     money,
+    impactCounts(summary) {
+      if (!summary || typeof summary !== 'object') return []
+      return [['inventory_balance_count', '库存批次'], ['work_order_count', '生产工单'], ['finished_receipt_count', '成品及半成品入库'],
+        ['sales_shipment_count', '销售发货单'], ['sales_return_count', '销售退货单'], ['packing_material_count', '包装耗材明细'],
+        ['aftersales_reship_count', '售后补发单']].map(([key, label]) => ({ key, label, count: Number(summary[key] || 0) }))
+    },
+    impactText(summary) {
+      const impacts = this.impactCounts(summary)
+      return impacts.length ? impacts.filter(impact => impact.count > 0).map(impact => `${impact.label} ${impact.count}`).join('、') || '无下游成本变化' : '—'
+    },
     pendingStore() {
       const user = JSON.parse(localStorage.getItem('erp_user') || '{}')
       const actor = Number(user.legacy_id || user.id || 0)

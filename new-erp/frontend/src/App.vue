@@ -253,9 +253,11 @@ export default {
     this.loadVisitedViews()
     this.addVisitedView(this.$route)
     window.addEventListener('erp:inventory-alert-read', this.refreshInventoryAlerts)
+    window.addEventListener('erp:menus-updated', this.refreshSession)
   },
   beforeDestroy() {
     window.removeEventListener('erp:inventory-alert-read', this.refreshInventoryAlerts)
+    window.removeEventListener('erp:menus-updated', this.refreshSession)
     if (this.stopRealtime) this.stopRealtime()
     if (this.stopApprovalRealtime) this.stopApprovalRealtime()
   },

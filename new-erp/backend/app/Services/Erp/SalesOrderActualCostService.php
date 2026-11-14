@@ -10,7 +10,7 @@ use App\Models\Erp\SalesShipment;
 /** Keeps the order's displayed actual cost derived from immutable shipment/return facts. */
 class SalesOrderActualCostService
 {
-    public function refresh(int $salesOrderId): void
+    public function refresh(int $salesOrderId, array $movementCosts = []): void
     {
         if (SalesOrder::find($salesOrderId)?->isLegacyHistory()) return;
         // 根订单锁由协调器持有；锁读明细避免沿用业务入口更早的 RR 快照。
@@ -30,8 +30,8 @@ class SalesOrderActualCostService
             ->where('erp_sales_returns.sales_order_id', $salesOrderId)
             ->where('erp_inventory_transactions.transaction_type', 'sales_return_inbound')
             ->where('erp_inventory_transactions.posting_status', 'posted')
-            ->orderBy('erp_inventory_transaction_items.id')->lockForUpdate()->get(['erp_inventory_transaction_items.cost_amount'])
-            ->reduce(fn (string $sum, InventoryTransactionItem $row): string => Money::add($sum, (string) $row->cost_amount), '0.0000');
+            ->orderBy('erp_inventory_transaction_items.id')->lockForUpdate()->get(['erp_inventory_transaction_items.id', 'erp_inventory_transaction_items.cost_amount'])
+            ->reduce(fn (string $sum, InventoryTransactionItem $row): string => Money::add($sum, (string) ($movementCosts[$row->id] ?? $row->cost_amount)), '0.0000');
 
         SalesOrder::query()->whereKey($salesOrderId)->update([
             'actual_sales_cost_amount' => Money::maxZero(Money::sub($outboundCost, $reversedReturnCost)),

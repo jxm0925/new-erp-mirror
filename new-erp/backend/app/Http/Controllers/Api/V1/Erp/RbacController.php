@@ -62,7 +62,16 @@ class RbacController extends Controller
             'sort' => 'nullable|integer',
             'enabled' => 'nullable|boolean',
             'remark' => 'nullable|string',
+            'group_name' => 'nullable|string|max:120',
         ]);
+        if (array_key_exists('group_name', $data)) {
+            $groupName = trim((string) ($data['group_name'] ?? ''));
+            $data['remark'] = $groupName !== '' ? $groupName : null;
+            unset($data['group_name']);
+        } elseif (array_key_exists('remark', $data)) {
+            $remark = trim((string) ($data['remark'] ?? ''));
+            $data['remark'] = $remark !== '' ? $remark : null;
+        }
         $id = $data['id'] ?? null;
         unset($data['id']);
         $data['enabled'] = (bool) ($data['enabled'] ?? true);
@@ -83,7 +92,12 @@ class RbacController extends Controller
             $data['created_at'] = now();
             return (int) DB::table('erp_rbac_permissions')->insertGetId($data);
         });
-        return response()->json(DB::table('erp_rbac_permissions')->find($id));
+        $saved = DB::table('erp_rbac_permissions')->find($id);
+        if ($saved) {
+            $groupName = trim((string) ($saved->remark ?? ''));
+            $saved->group_name = $groupName !== '' ? $groupName : null;
+        }
+        return response()->json($saved);
     }
 
     public function deletePermission(Request $request, int $id, RbacBootstrapService $rbac)
@@ -248,6 +262,8 @@ class RbacController extends Controller
         $build = function (int $parentId) use (&$build, $byParent): array {
             return $byParent->get($parentId, collect())->map(function ($item) use (&$build) {
                 $node = (array) $item;
+                $groupName = trim((string) ($item->remark ?? ''));
+                $node['group_name'] = $groupName !== '' ? $groupName : null;
                 $node['children'] = $build((int) $item->id);
                 return $node;
             })->all();
@@ -262,6 +278,7 @@ class RbacController extends Controller
                     $node['name'] ?? '',
                     $node['code'] ?? '',
                     $node['path'] ?? '',
+                    $node['group_name'] ?? '',
                 ]));
                 return str_contains($haystack, $keyword) || $node['children'] ? $node : null;
             };

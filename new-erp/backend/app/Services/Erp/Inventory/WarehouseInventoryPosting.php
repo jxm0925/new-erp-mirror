@@ -174,6 +174,8 @@ class WarehouseInventoryPosting
                     'source_type' => 'inventory_adjustment',
                     'source_id' => $adjustment->id,
                     'source_item_id' => $line->id,
+                    'outbound_serial_ids' => $line->serials->where('direction', 'decrease')->pluck('inventory_serial_id')
+                        ->filter()->map(fn ($id) => (int) $id)->values()->all(),
                     'remark' => $line->remark,
                 ]);
                 $this->applyAdjustmentSerials($adjustment, $line, $balance);
@@ -294,6 +296,7 @@ class WarehouseInventoryPosting
                 'source_type' => 'inventory_quality_event',
                 'source_id' => $event->id,
                 'source_item_id' => $event->source_receipt_item_id,
+                'outbound_serial_ids' => $event->inventory_serial_id ? [(int) $event->inventory_serial_id] : [],
                 'remark' => "质量事件 {$event->event_no} 原品退回供应商",
             ]);
             return $transaction->fresh(['items.item', 'items.warehouse', 'items.location']);

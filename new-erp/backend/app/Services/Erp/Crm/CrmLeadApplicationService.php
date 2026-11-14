@@ -169,7 +169,8 @@ final class CrmLeadApplicationService
             }
             $lead->fill($values);
             if ($lead->region_id) {
-                $address = app(CustomerRegionService::class)->address((int) $lead->region_id, (string) $lead->detail_address);
+                $address = app(CustomerRegionService::class)->address((int) $lead->region_id, (string) $lead->detail_address,
+                    $id ? (int) $lead->getRawOriginal('region_id') : null);
                 $lead->fill(array_intersect_key($address, array_flip(['province', 'city', 'district', 'full_address'])));
             } elseif (!trim((string) $lead->full_address)) {
                 $lead->full_address = trim(implode('', [$lead->province, $lead->city, $lead->district, $lead->detail_address])) ?: null;

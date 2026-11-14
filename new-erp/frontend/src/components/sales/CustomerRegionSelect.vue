@@ -14,7 +14,7 @@
           clearable
           @change="selectRegion(level, $event)"
         >
-          <el-option v-for="region in options[level]" :key="region.id" :value="Number(region.id)" :label="region.name" />
+          <el-option v-for="region in options[level]" :key="region.id" :value="Number(region.id)" :label="region.name" :disabled="region.disabled" />
         </el-select>
       </div>
     </div>
@@ -64,6 +64,11 @@ export default {
         if (sequence !== this.sequence) return
         this.selected = path.map(row => Number(row.id))
         this.options = [[], [], [], []].map((_, index) => lists[index] ? lists[index].data : [])
+        path.forEach((row, index) => {
+          if (!this.options[index].some(option => Number(option.id) === Number(row.id))) {
+            this.options[index].push({ ...row, disabled: true })
+          }
+        })
         this.currentId = value ? Number(value) : null
       } catch (error) {
         if (sequence !== this.sequence) return

@@ -34,6 +34,8 @@ select {
 
 #app {
   display: flex;
+  width: 100%;
+  max-width: 100%;
   min-height: 100vh;
 }
 
@@ -156,6 +158,7 @@ select {
 
 .master-menu {
   display: grid;
+  padding: 4px 0 6px;
   background: rgba(0, 0, 0, 0.22);
   overflow-x: hidden;
   overflow-y: auto;
@@ -163,32 +166,58 @@ select {
 }
 
 .master-menu a {
-  height: 38px;
-  padding: 0 18px 0 34px;
+  height: 35px;
+  padding: 0 12px 0 28px;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   color: #b0c2d4;
   text-decoration: none;
   font-size: 13px;
   font-weight: 400;
   border-left: 3px solid transparent;
+  white-space: nowrap;
   transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
+.master-menu .sub-menu-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .menu-subgroup {
-  display: grid
+  display: grid;
 }
 
-.menu-subgroup>span {
-  padding: 8px 18px 5px 44px;
-  color: #8ea0b2;
+.menu-subgroup + .menu-subgroup {
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.menu-subgroup > span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px 3px 18px;
+  color: #7ee0b3;
   font-size: 11px;
-  letter-spacing: .08em
+  font-weight: 600;
+  letter-spacing: 0.04em;
 }
 
-.menu-subgroup>a {
-  padding-left: 30px !important
+.menu-subgroup > span::before {
+  content: '';
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #20b56e;
+  flex-shrink: 0;
+}
+
+.master-menu .menu-subgroup > a {
+  padding-left: 26px;
 }
 
 .sub-menu-icon {
@@ -210,7 +239,11 @@ select {
 .master-menu a:hover {
   background: rgba(255, 255, 255, 0.06);
   color: #ffffff;
-  padding-left: 38px;
+  padding-left: 32px;
+}
+
+.master-menu .menu-subgroup > a:hover {
+  padding-left: 30px;
 }
 
 .master-menu a:hover .sub-menu-icon {
@@ -277,6 +310,7 @@ select {
 
 .sidebar-collapsed .erp-shell {
   width: calc(100% - 64px);
+  max-width: calc(100% - 64px);
   margin-left: 64px;
 }
 
@@ -305,11 +339,14 @@ select {
    全局统一顶部栏 (Top Bar)
    ========================================================================== */
 .erp-shell {
+  flex: 1 1 auto;
   width: calc(100% - var(--sidebar-width));
+  max-width: calc(100% - var(--sidebar-width));
   min-width: 0;
   margin-left: var(--sidebar-width);
   overflow-x: clip;
-  transition: width 0.24s cubic-bezier(0.22, 0.61, 0.36, 1), margin-left 0.24s cubic-bezier(0.22, 0.61, 0.36, 1);
+  box-sizing: border-box;
+  transition: margin-left 0.24s cubic-bezier(0.22, 0.61, 0.36, 1);
 }
 
 /* ==========================================================================
@@ -608,8 +645,33 @@ select {
 }
 
 .erp-content-container {
+  position: relative;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
   min-height: calc(100vh - 90px);
   background: #f8fafc;
+  box-sizing: border-box;
+  overflow-x: clip;
+}
+
+.erp-content-container > * {
+  position: relative;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+/* 页面与局部卡片加载遮罩层严格限制在内容区内，层级低于侧边菜单栏(1000)、顶栏(50)与标签栏(40)，
+   防止页面打开加载时遮罩越界或覆盖侧边菜单栏边缘；弹窗/抽屉内部遮罩保持原高层级。 */
+.erp-content-container .el-loading-mask:not(.is-fullscreen) {
+  z-index: 30;
+}
+
+.el-dialog__wrapper .el-loading-mask:not(.is-fullscreen),
+.el-drawer__wrapper .el-loading-mask:not(.is-fullscreen) {
+  z-index: 2000;
 }
 
 /* ==========================================================================
@@ -617,7 +679,7 @@ select {
    ========================================================================== */
 .master-page {
   padding: 16px 20px;
-  min-height: calc(100vh - 54px);
+  min-height: calc(100vh - 90px);
 }
 
 .page-heading {
@@ -824,6 +886,7 @@ select {
 
 #app.erp-layout .erp-shell {
   width: calc(100% - 192px);
+  max-width: calc(100% - 192px);
   margin-left: 192px;
 }
 
@@ -907,6 +970,7 @@ select {
 
 #app.erp-layout.sidebar-collapsed .erp-shell {
   width: calc(100% - 64px);
+  max-width: calc(100% - 64px);
   margin-left: 64px;
 }
 
@@ -921,6 +985,7 @@ select {
 
   #app.erp-layout .erp-shell {
     width: calc(100% - 64px);
+    max-width: calc(100% - 64px);
     margin-left: 64px;
   }
 
@@ -1019,6 +1084,7 @@ select {
 
   #app .erp-shell {
     width: calc(100% - 64px) !important;
+    max-width: calc(100% - 64px) !important;
     margin-left: 64px !important;
   }
 

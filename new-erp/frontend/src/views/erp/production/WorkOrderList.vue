@@ -572,10 +572,15 @@ export default {
 
 <style scoped>
 .work-order-page {
+  position: relative;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
   padding: 16px 20px 24px;
   background: #f8fafc;
-  min-height: calc(100vh - 54px);
+  min-height: calc(100vh - 90px);
   box-sizing: border-box;
+  overflow-x: clip;
 }
 
 /* 顶部标头卡片 (100% 对齐主数据中心 / SkuList.vue 风格) */
@@ -704,12 +709,13 @@ export default {
 /* 顶部概览指标卡片组 (5 列响应式) */
 .metric-overview-grid {
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 14px;
   margin-bottom: 16px;
 }
 
 .metric-card {
+  min-width: 0;
   background: #ffffff;
   border: 1px solid #e2e8f0;
   border-radius: 8px;
@@ -778,6 +784,9 @@ export default {
 
 /* 列表表格主容器卡片 */
 .table-container-card {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
   background: #ffffff;
   border: 1px solid #e2e8f0;
   border-radius: 8px;
@@ -900,6 +909,8 @@ export default {
 /* 表格主体 */
 .main-table-wrap {
   width: 100%;
+  max-width: 100%;
+  min-width: 0;
   overflow-x: auto;
 }
 

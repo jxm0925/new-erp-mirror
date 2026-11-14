@@ -262,7 +262,10 @@ class PurchaseExchangeApplicationService
             if (!$event) {
                 throw ValidationException::withMessages(['inventory_quality_event_id' => '库存质量换货单缺少来源质量事件。']);
             }
-            $this->inventory->postInventoryQualityOutbound($event, $order->exchange_no, $operatorName);
+            $outbound = $this->inventory->postInventoryQualityOutbound($event, $order->exchange_no, $operatorName);
+            // 退回之后已知原品的实际成本；稍后生成的零应付替换到货直接延续这笔金额。
+            $cost = $outbound->items->reduce(fn ($sum, $item) => bcsub($sum, (string) $item->cost_amount, 4), '0.0000');
+            $order->update(['replacement_inventory_cost' => $cost]);
             app(InventoryQualityApplicationService::class)->markExternalOutbound(
                 $event->id,
                 '换货原品已退回供应商，等待替换品到货。',

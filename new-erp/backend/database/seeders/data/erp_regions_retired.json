@@ -1,0 +1,3176 @@
+[
+    {
+        "id": 2760,
+        "parent_id": 2596,
+        "name": "莱芜市",
+        "level": 2
+    },
+    {
+        "id": 2976,
+        "parent_id": 2615,
+        "name": "南海岛",
+        "level": 2
+    },
+    {
+        "id": 3020,
+        "parent_id": 2618,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 3040,
+        "parent_id": 2618,
+        "name": "石家庄高新技术产业开发区",
+        "level": 3
+    },
+    {
+        "id": 3041,
+        "parent_id": 2618,
+        "name": "石家庄循环化工园区",
+        "level": 3
+    },
+    {
+        "id": 3045,
+        "parent_id": 2619,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 3057,
+        "parent_id": 2619,
+        "name": "唐山市芦台经济技术开发区",
+        "level": 3
+    },
+    {
+        "id": 3058,
+        "parent_id": 2619,
+        "name": "唐山市汉沽管理区",
+        "level": 3
+    },
+    {
+        "id": 3059,
+        "parent_id": 2619,
+        "name": "唐山高新技术产业开发区",
+        "level": 3
+    },
+    {
+        "id": 3060,
+        "parent_id": 2619,
+        "name": "河北唐山海港经济开发区",
+        "level": 3
+    },
+    {
+        "id": 3064,
+        "parent_id": 2620,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 3072,
+        "parent_id": 2620,
+        "name": "秦皇岛市经济技术开发区",
+        "level": 3
+    },
+    {
+        "id": 3073,
+        "parent_id": 2620,
+        "name": "北戴河新区",
+        "level": 3
+    },
+    {
+        "id": 3074,
+        "parent_id": 2621,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 3092,
+        "parent_id": 2621,
+        "name": "邯郸经济技术开发区",
+        "level": 3
+    },
+    {
+        "id": 3093,
+        "parent_id": 2621,
+        "name": "邯郸冀南新区",
+        "level": 3
+    },
+    {
+        "id": 3095,
+        "parent_id": 2622,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 3096,
+        "parent_id": 2622,
+        "name": "桥东区",
+        "level": 3
+    },
+    {
+        "id": 3097,
+        "parent_id": 2622,
+        "name": "桥西区",
+        "level": 3
+    },
+    {
+        "id": 3098,
+        "parent_id": 2622,
+        "name": "邢台县",
+        "level": 3
+    },
+    {
+        "id": 3103,
+        "parent_id": 2622,
+        "name": "任县",
+        "level": 3
+    },
+    {
+        "id": 3104,
+        "parent_id": 2622,
+        "name": "南和县",
+        "level": 3
+    },
+    {
+        "id": 3113,
+        "parent_id": 2622,
+        "name": "河北邢台经济开发区",
+        "level": 3
+    },
+    {
+        "id": 3116,
+        "parent_id": 2623,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 3137,
+        "parent_id": 2623,
+        "name": "保定高新技术产业开发区",
+        "level": 3
+    },
+    {
+        "id": 3138,
+        "parent_id": 2623,
+        "name": "保定白沟新城",
+        "level": 3
+    },
+    {
+        "id": 3143,
+        "parent_id": 2624,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 3160,
+        "parent_id": 2624,
+        "name": "张家口市高新技术产业开发区",
+        "level": 3
+    },
+    {
+        "id": 3161,
+        "parent_id": 2624,
+        "name": "张家口市察北管理区",
+        "level": 3
+    },
+    {
+        "id": 3162,
+        "parent_id": 2624,
+        "name": "张家口市塞北管理区",
+        "level": 3
+    },
+    {
+        "id": 3163,
+        "parent_id": 2625,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 3174,
+        "parent_id": 2625,
+        "name": "承德高新技术产业开发区",
+        "level": 3
+    },
+    {
+        "id": 3176,
+        "parent_id": 2626,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 3189,
+        "parent_id": 2626,
+        "name": "河北沧州经济开发区",
+        "level": 3
+    },
+    {
+        "id": 3190,
+        "parent_id": 2626,
+        "name": "沧州高新技术产业开发区",
+        "level": 3
+    },
+    {
+        "id": 3191,
+        "parent_id": 2626,
+        "name": "沧州渤海新区",
+        "level": 3
+    },
+    {
+        "id": 3196,
+        "parent_id": 2627,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 3205,
+        "parent_id": 2627,
+        "name": "廊坊经济技术开发区",
+        "level": 3
+    },
+    {
+        "id": 3208,
+        "parent_id": 2628,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 3219,
+        "parent_id": 2628,
+        "name": "河北衡水高新技术产业开发区",
+        "level": 3
+    },
+    {
+        "id": 3220,
+        "parent_id": 2628,
+        "name": "衡水滨湖新区",
+        "level": 3
+    },
+    {
+        "id": 3222,
+        "parent_id": 2629,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 3232,
+        "parent_id": 2629,
+        "name": "山西转型综合改革示范区",
+        "level": 3
+    },
+    {
+        "id": 3234,
+        "parent_id": 2630,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 3245,
+        "parent_id": 2630,
+        "name": "山西大同经济开发区",
+        "level": 3
+    },
+    {
+        "id": 3246,
+        "parent_id": 2631,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 3252,
+        "parent_id": 2632,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 3265,
+        "parent_id": 2632,
+        "name": "山西长治高新技术产业园区",
+        "level": 3
+    },
+    {
+        "id": 3266,
+        "parent_id": 2633,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 3273,
+        "parent_id": 2634,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 3279,
+        "parent_id": 2634,
+        "name": "山西朔州经济开发区",
+        "level": 3
+    },
+    {
+        "id": 3281,
+        "parent_id": 2635,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 3288,
+        "parent_id": 2635,
+        "name": "太谷县",
+        "level": 3
+    },
+    {
+        "id": 3293,
+        "parent_id": 2636,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 3307,
+        "parent_id": 2637,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 3321,
+        "parent_id": 2637,
+        "name": "五台山风景名胜区",
+        "level": 3
+    },
+    {
+        "id": 3323,
+        "parent_id": 2638,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 3341,
+        "parent_id": 2639,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 3355,
+        "parent_id": 2640,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 3365,
+        "parent_id": 2640,
+        "name": "呼和浩特金海工业园区",
+        "level": 3
+    },
+    {
+        "id": 3366,
+        "parent_id": 2640,
+        "name": "呼和浩特经济技术开发区",
+        "level": 3
+    },
+    {
+        "id": 3367,
+        "parent_id": 2641,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 3377,
+        "parent_id": 2641,
+        "name": "包头稀土高新技术产业开发区",
+        "level": 3
+    },
+    {
+        "id": 3378,
+        "parent_id": 2642,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 3382,
+        "parent_id": 2643,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 3395,
+        "parent_id": 2644,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 3403,
+        "parent_id": 2644,
+        "name": "通辽经济技术开发区",
+        "level": 3
+    },
+    {
+        "id": 3405,
+        "parent_id": 2645,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 3415,
+        "parent_id": 2646,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 3430,
+        "parent_id": 2647,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 3438,
+        "parent_id": 2648,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 3468,
+        "parent_id": 2650,
+        "name": "乌拉盖管委会",
+        "level": 3
+    },
+    {
+        "id": 3472,
+        "parent_id": 2651,
+        "name": "内蒙古阿拉善经济开发区",
+        "level": 3
+    },
+    {
+        "id": 3473,
+        "parent_id": 2652,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 3487,
+        "parent_id": 2653,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 3498,
+        "parent_id": 2654,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 3506,
+        "parent_id": 2655,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 3514,
+        "parent_id": 2656,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 3521,
+        "parent_id": 2657,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 3528,
+        "parent_id": 2658,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 3536,
+        "parent_id": 2659,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 3543,
+        "parent_id": 2660,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 3551,
+        "parent_id": 2661,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 3559,
+        "parent_id": 2662,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 3564,
+        "parent_id": 2663,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 3572,
+        "parent_id": 2664,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 3580,
+        "parent_id": 2665,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 3587,
+        "parent_id": 2666,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 3596,
+        "parent_id": 2666,
+        "name": "长春经济技术开发区",
+        "level": 3
+    },
+    {
+        "id": 3597,
+        "parent_id": 2666,
+        "name": "长春净月高新技术产业开发区",
+        "level": 3
+    },
+    {
+        "id": 3598,
+        "parent_id": 2666,
+        "name": "长春高新技术产业开发区",
+        "level": 3
+    },
+    {
+        "id": 3599,
+        "parent_id": 2666,
+        "name": "长春汽车经济技术开发区",
+        "level": 3
+    },
+    {
+        "id": 3602,
+        "parent_id": 2667,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 3608,
+        "parent_id": 2667,
+        "name": "吉林经济开发区",
+        "level": 3
+    },
+    {
+        "id": 3609,
+        "parent_id": 2667,
+        "name": "吉林高新技术产业开发区",
+        "level": 3
+    },
+    {
+        "id": 3610,
+        "parent_id": 2667,
+        "name": "吉林中国新加坡食品区",
+        "level": 3
+    },
+    {
+        "id": 3615,
+        "parent_id": 2668,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 3620,
+        "parent_id": 2668,
+        "name": "公主岭市",
+        "level": 3
+    },
+    {
+        "id": 3622,
+        "parent_id": 2669,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 3627,
+        "parent_id": 2670,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 3635,
+        "parent_id": 2671,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 3642,
+        "parent_id": 2672,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 3647,
+        "parent_id": 2672,
+        "name": "吉林松原经济开发区",
+        "level": 3
+    },
+    {
+        "id": 3649,
+        "parent_id": 2673,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 3653,
+        "parent_id": 2673,
+        "name": "吉林白城经济开发区",
+        "level": 3
+    },
+    {
+        "id": 3664,
+        "parent_id": 2675,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 3683,
+        "parent_id": 2676,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 3700,
+        "parent_id": 2677,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 3710,
+        "parent_id": 2678,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 3719,
+        "parent_id": 2679,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 3728,
+        "parent_id": 2680,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 3738,
+        "parent_id": 2680,
+        "name": "大庆高新技术产业开发区",
+        "level": 3
+    },
+    {
+        "id": 3739,
+        "parent_id": 2681,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 3740,
+        "parent_id": 2681,
+        "name": "伊春区",
+        "level": 3
+    },
+    {
+        "id": 3741,
+        "parent_id": 2681,
+        "name": "南岔区",
+        "level": 3
+    },
+    {
+        "id": 3743,
+        "parent_id": 2681,
+        "name": "西林区",
+        "level": 3
+    },
+    {
+        "id": 3744,
+        "parent_id": 2681,
+        "name": "翠峦区",
+        "level": 3
+    },
+    {
+        "id": 3745,
+        "parent_id": 2681,
+        "name": "新青区",
+        "level": 3
+    },
+    {
+        "id": 3747,
+        "parent_id": 2681,
+        "name": "金山屯区",
+        "level": 3
+    },
+    {
+        "id": 3748,
+        "parent_id": 2681,
+        "name": "五营区",
+        "level": 3
+    },
+    {
+        "id": 3749,
+        "parent_id": 2681,
+        "name": "乌马河区",
+        "level": 3
+    },
+    {
+        "id": 3750,
+        "parent_id": 2681,
+        "name": "汤旺河区",
+        "level": 3
+    },
+    {
+        "id": 3751,
+        "parent_id": 2681,
+        "name": "带岭区",
+        "level": 3
+    },
+    {
+        "id": 3752,
+        "parent_id": 2681,
+        "name": "乌伊岭区",
+        "level": 3
+    },
+    {
+        "id": 3753,
+        "parent_id": 2681,
+        "name": "红星区",
+        "level": 3
+    },
+    {
+        "id": 3754,
+        "parent_id": 2681,
+        "name": "上甘岭区",
+        "level": 3
+    },
+    {
+        "id": 3757,
+        "parent_id": 2682,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 3768,
+        "parent_id": 2683,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 3773,
+        "parent_id": 2684,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 3779,
+        "parent_id": 2684,
+        "name": "牡丹江经济技术开发区",
+        "level": 3
+    },
+    {
+        "id": 3785,
+        "parent_id": 2685,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 3792,
+        "parent_id": 2686,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 3806,
+        "parent_id": 2687,
+        "name": "加格达奇区",
+        "level": 3
+    },
+    {
+        "id": 3807,
+        "parent_id": 2687,
+        "name": "松岭区",
+        "level": 3
+    },
+    {
+        "id": 3808,
+        "parent_id": 2687,
+        "name": "新林区",
+        "level": 3
+    },
+    {
+        "id": 3809,
+        "parent_id": 2687,
+        "name": "呼中区",
+        "level": 3
+    },
+    {
+        "id": 3826,
+        "parent_id": 2689,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 3838,
+        "parent_id": 2690,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 3846,
+        "parent_id": 2691,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 3855,
+        "parent_id": 2691,
+        "name": "徐州经济技术开发区",
+        "level": 3
+    },
+    {
+        "id": 3858,
+        "parent_id": 2692,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 3865,
+        "parent_id": 2693,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 3871,
+        "parent_id": 2693,
+        "name": "苏州工业园区",
+        "level": 3
+    },
+    {
+        "id": 3876,
+        "parent_id": 2694,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 3878,
+        "parent_id": 2694,
+        "name": "港闸区",
+        "level": 3
+    },
+    {
+        "id": 3881,
+        "parent_id": 2694,
+        "name": "南通经济技术开发区",
+        "level": 3
+    },
+    {
+        "id": 3884,
+        "parent_id": 2694,
+        "name": "海门市",
+        "level": 3
+    },
+    {
+        "id": 3886,
+        "parent_id": 2695,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 3893,
+        "parent_id": 2695,
+        "name": "连云港经济技术开发区",
+        "level": 3
+    },
+    {
+        "id": 3894,
+        "parent_id": 2695,
+        "name": "连云港高新技术产业开发区",
+        "level": 3
+    },
+    {
+        "id": 3895,
+        "parent_id": 2696,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 3903,
+        "parent_id": 2696,
+        "name": "淮安经济技术开发区",
+        "level": 3
+    },
+    {
+        "id": 3904,
+        "parent_id": 2697,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 3913,
+        "parent_id": 2697,
+        "name": "盐城经济技术开发区",
+        "level": 3
+    },
+    {
+        "id": 3915,
+        "parent_id": 2698,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 3920,
+        "parent_id": 2698,
+        "name": "扬州经济技术开发区",
+        "level": 3
+    },
+    {
+        "id": 3923,
+        "parent_id": 2699,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 3927,
+        "parent_id": 2699,
+        "name": "镇江新区",
+        "level": 3
+    },
+    {
+        "id": 3931,
+        "parent_id": 2700,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 3935,
+        "parent_id": 2700,
+        "name": "泰州医药高新技术产业开发区",
+        "level": 3
+    },
+    {
+        "id": 3939,
+        "parent_id": 2701,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 3945,
+        "parent_id": 2701,
+        "name": "宿迁经济技术开发区",
+        "level": 3
+    },
+    {
+        "id": 3946,
+        "parent_id": 2702,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 3948,
+        "parent_id": 2702,
+        "name": "下城区",
+        "level": 3
+    },
+    {
+        "id": 3949,
+        "parent_id": 2702,
+        "name": "江干区",
+        "level": 3
+    },
+    {
+        "id": 3960,
+        "parent_id": 2703,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 3971,
+        "parent_id": 2704,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 3981,
+        "parent_id": 2704,
+        "name": "温州经济技术开发区",
+        "level": 3
+    },
+    {
+        "id": 3984,
+        "parent_id": 2705,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 3992,
+        "parent_id": 2706,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 3998,
+        "parent_id": 2707,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4005,
+        "parent_id": 2708,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4015,
+        "parent_id": 2709,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4022,
+        "parent_id": 2710,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4027,
+        "parent_id": 2711,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4037,
+        "parent_id": 2712,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4047,
+        "parent_id": 2713,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4056,
+        "parent_id": 2713,
+        "name": "合肥高新技术产业开发区",
+        "level": 3
+    },
+    {
+        "id": 4057,
+        "parent_id": 2713,
+        "name": "合肥经济技术开发区",
+        "level": 3
+    },
+    {
+        "id": 4058,
+        "parent_id": 2713,
+        "name": "合肥新站高新技术产业开发区",
+        "level": 3
+    },
+    {
+        "id": 4060,
+        "parent_id": 2714,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4064,
+        "parent_id": 2714,
+        "name": "三山区",
+        "level": 3
+    },
+    {
+        "id": 4065,
+        "parent_id": 2714,
+        "name": "芜湖县",
+        "level": 3
+    },
+    {
+        "id": 4066,
+        "parent_id": 2714,
+        "name": "繁昌县",
+        "level": 3
+    },
+    {
+        "id": 4068,
+        "parent_id": 2714,
+        "name": "无为县",
+        "level": 3
+    },
+    {
+        "id": 4069,
+        "parent_id": 2714,
+        "name": "芜湖经济技术开发区",
+        "level": 3
+    },
+    {
+        "id": 4070,
+        "parent_id": 2714,
+        "name": "安徽芜湖长江大桥经济开发区",
+        "level": 3
+    },
+    {
+        "id": 4071,
+        "parent_id": 2715,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4079,
+        "parent_id": 2715,
+        "name": "蚌埠市高新技术开发区",
+        "level": 3
+    },
+    {
+        "id": 4080,
+        "parent_id": 2715,
+        "name": "蚌埠市经济开发区",
+        "level": 3
+    },
+    {
+        "id": 4081,
+        "parent_id": 2716,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4089,
+        "parent_id": 2717,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4096,
+        "parent_id": 2718,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4101,
+        "parent_id": 2719,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4106,
+        "parent_id": 2720,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4115,
+        "parent_id": 2720,
+        "name": "安徽安庆经济开发区",
+        "level": 3
+    },
+    {
+        "id": 4118,
+        "parent_id": 2721,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4126,
+        "parent_id": 2722,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4133,
+        "parent_id": 2722,
+        "name": "苏滁现代产业园",
+        "level": 3
+    },
+    {
+        "id": 4134,
+        "parent_id": 2722,
+        "name": "滁州经济技术开发区",
+        "level": 3
+    },
+    {
+        "id": 4137,
+        "parent_id": 2723,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4145,
+        "parent_id": 2723,
+        "name": "阜阳合肥现代产业园区",
+        "level": 3
+    },
+    {
+        "id": 4146,
+        "parent_id": 2723,
+        "name": "阜阳经济技术开发区",
+        "level": 3
+    },
+    {
+        "id": 4148,
+        "parent_id": 2724,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4154,
+        "parent_id": 2724,
+        "name": "宿州马鞍山现代产业园区",
+        "level": 3
+    },
+    {
+        "id": 4155,
+        "parent_id": 2724,
+        "name": "宿州经济技术开发区",
+        "level": 3
+    },
+    {
+        "id": 4156,
+        "parent_id": 2725,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4164,
+        "parent_id": 2726,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4169,
+        "parent_id": 2727,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4174,
+        "parent_id": 2728,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4177,
+        "parent_id": 2728,
+        "name": "广德县",
+        "level": 3
+    },
+    {
+        "id": 4181,
+        "parent_id": 2728,
+        "name": "宣城市经济开发区",
+        "level": 3
+    },
+    {
+        "id": 4183,
+        "parent_id": 2729,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4197,
+        "parent_id": 2730,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4204,
+        "parent_id": 2731,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4210,
+        "parent_id": 2732,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4211,
+        "parent_id": 2732,
+        "name": "梅列区",
+        "level": 3
+    },
+    {
+        "id": 4218,
+        "parent_id": 2732,
+        "name": "沙县",
+        "level": 3
+    },
+    {
+        "id": 4223,
+        "parent_id": 2733,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4236,
+        "parent_id": 2734,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4242,
+        "parent_id": 2734,
+        "name": "长泰县",
+        "level": 3
+    },
+    {
+        "id": 4247,
+        "parent_id": 2734,
+        "name": "龙海市",
+        "level": 3
+    },
+    {
+        "id": 4248,
+        "parent_id": 2735,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4259,
+        "parent_id": 2736,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4267,
+        "parent_id": 2737,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4277,
+        "parent_id": 2738,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4281,
+        "parent_id": 2738,
+        "name": "湾里区",
+        "level": 3
+    },
+    {
+        "id": 4287,
+        "parent_id": 2739,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4292,
+        "parent_id": 2740,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4298,
+        "parent_id": 2741,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4312,
+        "parent_id": 2742,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4315,
+        "parent_id": 2743,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4319,
+        "parent_id": 2744,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4328,
+        "parent_id": 2744,
+        "name": "龙南县",
+        "level": 3
+    },
+    {
+        "id": 4338,
+        "parent_id": 2745,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4352,
+        "parent_id": 2746,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4363,
+        "parent_id": 2747,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4375,
+        "parent_id": 2748,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4378,
+        "parent_id": 2748,
+        "name": "上饶县",
+        "level": 3
+    },
+    {
+        "id": 4388,
+        "parent_id": 2749,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4399,
+        "parent_id": 2749,
+        "name": "济南高新技术产业开发区",
+        "level": 3
+    },
+    {
+        "id": 4400,
+        "parent_id": 2750,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4408,
+        "parent_id": 2750,
+        "name": "青岛高新技术产业开发区",
+        "level": 3
+    },
+    {
+        "id": 4412,
+        "parent_id": 2751,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4421,
+        "parent_id": 2752,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4428,
+        "parent_id": 2753,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4434,
+        "parent_id": 2753,
+        "name": "东营经济技术开发区",
+        "level": 3
+    },
+    {
+        "id": 4435,
+        "parent_id": 2753,
+        "name": "东营港经济开发区",
+        "level": 3
+    },
+    {
+        "id": 4436,
+        "parent_id": 2754,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4441,
+        "parent_id": 2754,
+        "name": "长岛县",
+        "level": 3
+    },
+    {
+        "id": 4442,
+        "parent_id": 2754,
+        "name": "烟台高新技术产业开发区",
+        "level": 3
+    },
+    {
+        "id": 4443,
+        "parent_id": 2754,
+        "name": "烟台经济技术开发区",
+        "level": 3
+    },
+    {
+        "id": 4451,
+        "parent_id": 2755,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4458,
+        "parent_id": 2755,
+        "name": "潍坊滨海经济技术开发区",
+        "level": 3
+    },
+    {
+        "id": 4465,
+        "parent_id": 2756,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4475,
+        "parent_id": 2756,
+        "name": "济宁高新技术产业开发区",
+        "level": 3
+    },
+    {
+        "id": 4478,
+        "parent_id": 2757,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4485,
+        "parent_id": 2758,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4488,
+        "parent_id": 2758,
+        "name": "威海火炬高技术产业开发区",
+        "level": 3
+    },
+    {
+        "id": 4489,
+        "parent_id": 2758,
+        "name": "威海经济技术开发区",
+        "level": 3
+    },
+    {
+        "id": 4490,
+        "parent_id": 2758,
+        "name": "威海临港经济技术开发区",
+        "level": 3
+    },
+    {
+        "id": 4493,
+        "parent_id": 2759,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4498,
+        "parent_id": 2759,
+        "name": "日照经济技术开发区",
+        "level": 3
+    },
+    {
+        "id": 4499,
+        "parent_id": 2760,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4500,
+        "parent_id": 2760,
+        "name": "莱城区",
+        "level": 3
+    },
+    {
+        "id": 4501,
+        "parent_id": 2760,
+        "name": "钢城区",
+        "level": 3
+    },
+    {
+        "id": 4502,
+        "parent_id": 2761,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4515,
+        "parent_id": 2761,
+        "name": "临沂高新技术产业开发区",
+        "level": 3
+    },
+    {
+        "id": 4516,
+        "parent_id": 2761,
+        "name": "临沂经济技术开发区",
+        "level": 3
+    },
+    {
+        "id": 4517,
+        "parent_id": 2761,
+        "name": "临沂临港经济开发区",
+        "level": 3
+    },
+    {
+        "id": 4518,
+        "parent_id": 2762,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4528,
+        "parent_id": 2762,
+        "name": "德州经济技术开发区",
+        "level": 3
+    },
+    {
+        "id": 4529,
+        "parent_id": 2762,
+        "name": "德州运河经济开发区",
+        "level": 3
+    },
+    {
+        "id": 4532,
+        "parent_id": 2763,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4536,
+        "parent_id": 2763,
+        "name": "茌平县",
+        "level": 3
+    },
+    {
+        "id": 4541,
+        "parent_id": 2764,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4549,
+        "parent_id": 2765,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4559,
+        "parent_id": 2765,
+        "name": "菏泽经济技术开发区",
+        "level": 3
+    },
+    {
+        "id": 4560,
+        "parent_id": 2765,
+        "name": "菏泽高新技术开发区",
+        "level": 3
+    },
+    {
+        "id": 4561,
+        "parent_id": 2766,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4569,
+        "parent_id": 2766,
+        "name": "郑州经济技术开发区",
+        "level": 3
+    },
+    {
+        "id": 4570,
+        "parent_id": 2766,
+        "name": "郑州高新技术产业开发区",
+        "level": 3
+    },
+    {
+        "id": 4571,
+        "parent_id": 2766,
+        "name": "郑州航空港经济综合实验区",
+        "level": 3
+    },
+    {
+        "id": 4577,
+        "parent_id": 2767,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4587,
+        "parent_id": 2768,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4592,
+        "parent_id": 2768,
+        "name": "吉利区",
+        "level": 3
+    },
+    {
+        "id": 4594,
+        "parent_id": 2768,
+        "name": "孟津县",
+        "level": 3
+    },
+    {
+        "id": 4602,
+        "parent_id": 2768,
+        "name": "洛阳高新技术产业开发区",
+        "level": 3
+    },
+    {
+        "id": 4603,
+        "parent_id": 2768,
+        "name": "偃师市",
+        "level": 3
+    },
+    {
+        "id": 4604,
+        "parent_id": 2769,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4613,
+        "parent_id": 2769,
+        "name": "平顶山高新技术产业开发区",
+        "level": 3
+    },
+    {
+        "id": 4614,
+        "parent_id": 2769,
+        "name": "平顶山市新城区",
+        "level": 3
+    },
+    {
+        "id": 4617,
+        "parent_id": 2770,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4626,
+        "parent_id": 2770,
+        "name": "安阳高新技术产业开发区",
+        "level": 3
+    },
+    {
+        "id": 4628,
+        "parent_id": 2771,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4634,
+        "parent_id": 2771,
+        "name": "鹤壁经济技术开发区",
+        "level": 3
+    },
+    {
+        "id": 4635,
+        "parent_id": 2772,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4645,
+        "parent_id": 2772,
+        "name": "长垣县",
+        "level": 3
+    },
+    {
+        "id": 4646,
+        "parent_id": 2772,
+        "name": "新乡高新技术产业开发区",
+        "level": 3
+    },
+    {
+        "id": 4647,
+        "parent_id": 2772,
+        "name": "新乡经济技术开发区",
+        "level": 3
+    },
+    {
+        "id": 4648,
+        "parent_id": 2772,
+        "name": "新乡市平原城乡一体化示范区",
+        "level": 3
+    },
+    {
+        "id": 4651,
+        "parent_id": 2773,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4660,
+        "parent_id": 2773,
+        "name": "焦作城乡一体化示范区",
+        "level": 3
+    },
+    {
+        "id": 4663,
+        "parent_id": 2774,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4670,
+        "parent_id": 2774,
+        "name": "河南濮阳工业园区",
+        "level": 3
+    },
+    {
+        "id": 4671,
+        "parent_id": 2774,
+        "name": "濮阳经济技术开发区",
+        "level": 3
+    },
+    {
+        "id": 4672,
+        "parent_id": 2775,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4677,
+        "parent_id": 2775,
+        "name": "许昌经济技术开发区",
+        "level": 3
+    },
+    {
+        "id": 4680,
+        "parent_id": 2776,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4686,
+        "parent_id": 2776,
+        "name": "漯河经济技术开发区",
+        "level": 3
+    },
+    {
+        "id": 4687,
+        "parent_id": 2777,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4692,
+        "parent_id": 2777,
+        "name": "河南三门峡经济开发区",
+        "level": 3
+    },
+    {
+        "id": 4695,
+        "parent_id": 2778,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4708,
+        "parent_id": 2778,
+        "name": "南阳高新技术产业开发区",
+        "level": 3
+    },
+    {
+        "id": 4709,
+        "parent_id": 2778,
+        "name": "南阳市城乡一体化示范区",
+        "level": 3
+    },
+    {
+        "id": 4711,
+        "parent_id": 2779,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4720,
+        "parent_id": 2779,
+        "name": "豫东综合物流产业聚集区",
+        "level": 3
+    },
+    {
+        "id": 4721,
+        "parent_id": 2779,
+        "name": "河南商丘经济开发区",
+        "level": 3
+    },
+    {
+        "id": 4723,
+        "parent_id": 2780,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4734,
+        "parent_id": 2780,
+        "name": "信阳高新技术产业开发区",
+        "level": 3
+    },
+    {
+        "id": 4735,
+        "parent_id": 2781,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4742,
+        "parent_id": 2781,
+        "name": "淮阳县",
+        "level": 3
+    },
+    {
+        "id": 4745,
+        "parent_id": 2781,
+        "name": "河南周口经济开发区",
+        "level": 3
+    },
+    {
+        "id": 4747,
+        "parent_id": 2782,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4758,
+        "parent_id": 2782,
+        "name": "河南驻马店经济开发区",
+        "level": 3
+    },
+    {
+        "id": 4760,
+        "parent_id": 2784,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4774,
+        "parent_id": 2785,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4781,
+        "parent_id": 2786,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4790,
+        "parent_id": 2787,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4804,
+        "parent_id": 2788,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4814,
+        "parent_id": 2789,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4818,
+        "parent_id": 2790,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4824,
+        "parent_id": 2791,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4832,
+        "parent_id": 2792,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4836,
+        "parent_id": 2792,
+        "name": "监利县",
+        "level": 3
+    },
+    {
+        "id": 4838,
+        "parent_id": 2792,
+        "name": "荆州经济技术开发区",
+        "level": 3
+    },
+    {
+        "id": 4842,
+        "parent_id": 2793,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4851,
+        "parent_id": 2793,
+        "name": "龙感湖管理区",
+        "level": 3
+    },
+    {
+        "id": 4854,
+        "parent_id": 2794,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4861,
+        "parent_id": 2795,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4877,
+        "parent_id": 2798,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4887,
+        "parent_id": 2799,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4896,
+        "parent_id": 2799,
+        "name": "云龙示范区",
+        "level": 3
+    },
+    {
+        "id": 4898,
+        "parent_id": 2800,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4902,
+        "parent_id": 2800,
+        "name": "湖南湘潭高新技术产业园区",
+        "level": 3
+    },
+    {
+        "id": 4903,
+        "parent_id": 2800,
+        "name": "湘潭昭山示范区",
+        "level": 3
+    },
+    {
+        "id": 4904,
+        "parent_id": 2800,
+        "name": "湘潭九华示范区",
+        "level": 3
+    },
+    {
+        "id": 4907,
+        "parent_id": 2801,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4918,
+        "parent_id": 2801,
+        "name": "衡阳综合保税区",
+        "level": 3
+    },
+    {
+        "id": 4919,
+        "parent_id": 2801,
+        "name": "湖南衡阳高新技术产业园区",
+        "level": 3
+    },
+    {
+        "id": 4920,
+        "parent_id": 2801,
+        "name": "湖南衡阳松木经济开发区",
+        "level": 3
+    },
+    {
+        "id": 4923,
+        "parent_id": 2802,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4927,
+        "parent_id": 2802,
+        "name": "邵东县",
+        "level": 3
+    },
+    {
+        "id": 4936,
+        "parent_id": 2803,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4944,
+        "parent_id": 2803,
+        "name": "岳阳市屈原管理区",
+        "level": 3
+    },
+    {
+        "id": 4947,
+        "parent_id": 2804,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4956,
+        "parent_id": 2804,
+        "name": "常德市西洞庭管理区",
+        "level": 3
+    },
+    {
+        "id": 4958,
+        "parent_id": 2805,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4963,
+        "parent_id": 2806,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4969,
+        "parent_id": 2806,
+        "name": "益阳市大通湖管理区",
+        "level": 3
+    },
+    {
+        "id": 4970,
+        "parent_id": 2806,
+        "name": "湖南益阳高新技术产业园区",
+        "level": 3
+    },
+    {
+        "id": 4972,
+        "parent_id": 2807,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4984,
+        "parent_id": 2808,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 4987,
+        "parent_id": 2808,
+        "name": "祁阳县",
+        "level": 3
+    },
+    {
+        "id": 4996,
+        "parent_id": 2808,
+        "name": "永州经济技术开发区",
+        "level": 3
+    },
+    {
+        "id": 4997,
+        "parent_id": 2808,
+        "name": "永州市金洞管理区",
+        "level": 3
+    },
+    {
+        "id": 4998,
+        "parent_id": 2808,
+        "name": "永州市回龙圩管理区",
+        "level": 3
+    },
+    {
+        "id": 4999,
+        "parent_id": 2809,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 5011,
+        "parent_id": 2809,
+        "name": "怀化市洪江管理区",
+        "level": 3
+    },
+    {
+        "id": 5013,
+        "parent_id": 2810,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 5027,
+        "parent_id": 2811,
+        "name": "湖南吉首经济开发区",
+        "level": 3
+    },
+    {
+        "id": 5028,
+        "parent_id": 2811,
+        "name": "湖南永顺经济开发区",
+        "level": 3
+    },
+    {
+        "id": 5029,
+        "parent_id": 2812,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 5041,
+        "parent_id": 2813,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 5052,
+        "parent_id": 2814,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 5062,
+        "parent_id": 2815,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 5066,
+        "parent_id": 2816,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 5074,
+        "parent_id": 2817,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 5080,
+        "parent_id": 2818,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 5088,
+        "parent_id": 2819,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 5098,
+        "parent_id": 2820,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 5104,
+        "parent_id": 2821,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 5113,
+        "parent_id": 2822,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 5119,
+        "parent_id": 2823,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 5128,
+        "parent_id": 2824,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 5133,
+        "parent_id": 2825,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 5140,
+        "parent_id": 2826,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 5145,
+        "parent_id": 2827,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 5154,
+        "parent_id": 2828,
+        "name": "东城街道办事处",
+        "level": 3
+    },
+    {
+        "id": 5155,
+        "parent_id": 2828,
+        "name": "南城街道办事处",
+        "level": 3
+    },
+    {
+        "id": 5156,
+        "parent_id": 2828,
+        "name": "万江街道办事处",
+        "level": 3
+    },
+    {
+        "id": 5157,
+        "parent_id": 2828,
+        "name": "莞城街道办事处",
+        "level": 3
+    },
+    {
+        "id": 5186,
+        "parent_id": 2828,
+        "name": "松山湖管委会",
+        "level": 3
+    },
+    {
+        "id": 5187,
+        "parent_id": 2828,
+        "name": "东莞港",
+        "level": 3
+    },
+    {
+        "id": 5188,
+        "parent_id": 2828,
+        "name": "东莞生态园",
+        "level": 3
+    },
+    {
+        "id": 5189,
+        "parent_id": 2829,
+        "name": "石岐区街道办事处",
+        "level": 3
+    },
+    {
+        "id": 5190,
+        "parent_id": 2829,
+        "name": "东区街道办事处",
+        "level": 3
+    },
+    {
+        "id": 5191,
+        "parent_id": 2829,
+        "name": "火炬开发区街道办事处",
+        "level": 3
+    },
+    {
+        "id": 5192,
+        "parent_id": 2829,
+        "name": "西区街道办事处",
+        "level": 3
+    },
+    {
+        "id": 5193,
+        "parent_id": 2829,
+        "name": "南区街道办事处",
+        "level": 3
+    },
+    {
+        "id": 5194,
+        "parent_id": 2829,
+        "name": "五桂山街道办事处",
+        "level": 3
+    },
+    {
+        "id": 5197,
+        "parent_id": 2829,
+        "name": "民众镇",
+        "level": 3
+    },
+    {
+        "id": 5199,
+        "parent_id": 2829,
+        "name": "东升镇",
+        "level": 3
+    },
+    {
+        "id": 5208,
+        "parent_id": 2829,
+        "name": "南朗镇",
+        "level": 3
+    },
+    {
+        "id": 5213,
+        "parent_id": 2830,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 5217,
+        "parent_id": 2831,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 5223,
+        "parent_id": 2832,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 5229,
+        "parent_id": 2833,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 5241,
+        "parent_id": 2833,
+        "name": "横县",
+        "level": 3
+    },
+    {
+        "id": 5242,
+        "parent_id": 2834,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 5253,
+        "parent_id": 2835,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 5271,
+        "parent_id": 2836,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 5279,
+        "parent_id": 2837,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 5284,
+        "parent_id": 2838,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 5289,
+        "parent_id": 2839,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 5294,
+        "parent_id": 2840,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 5300,
+        "parent_id": 2841,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 5308,
+        "parent_id": 2842,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 5310,
+        "parent_id": 2842,
+        "name": "田阳县",
+        "level": 3
+    },
+    {
+        "id": 5312,
+        "parent_id": 2842,
+        "name": "平果县",
+        "level": 3
+    },
+    {
+        "id": 5321,
+        "parent_id": 2843,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 5327,
+        "parent_id": 2844,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 5339,
+        "parent_id": 2845,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 5346,
+        "parent_id": 2846,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 5354,
+        "parent_id": 2847,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 5359,
+        "parent_id": 2848,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 5364,
+        "parent_id": 2849,
+        "name": "西沙群岛",
+        "level": 3
+    },
+    {
+        "id": 5365,
+        "parent_id": 2849,
+        "name": "南沙群岛",
+        "level": 3
+    },
+    {
+        "id": 5366,
+        "parent_id": 2849,
+        "name": "中沙群岛的岛礁及其海域",
+        "level": 3
+    },
+    {
+        "id": 5383,
+        "parent_id": 2850,
+        "name": "洋浦经济开发区",
+        "level": 3
+    },
+    {
+        "id": 5384,
+        "parent_id": 2850,
+        "name": "华南热作学院",
+        "level": 3
+    },
+    {
+        "id": 5404,
+        "parent_id": 2852,
+        "name": "江北区",
+        "level": 3
+    },
+    {
+        "id": 5411,
+        "parent_id": 2852,
+        "name": "渝北区",
+        "level": 3
+    },
+    {
+        "id": 5438,
+        "parent_id": 2854,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 5453,
+        "parent_id": 2854,
+        "name": "新津县",
+        "level": 3
+    },
+    {
+        "id": 5459,
+        "parent_id": 2855,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 5466,
+        "parent_id": 2856,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 5472,
+        "parent_id": 2857,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 5480,
+        "parent_id": 2858,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 5487,
+        "parent_id": 2859,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 5497,
+        "parent_id": 2860,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 5505,
+        "parent_id": 2861,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 5509,
+        "parent_id": 2861,
+        "name": "射洪县",
+        "level": 3
+    },
+    {
+        "id": 5511,
+        "parent_id": 2862,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 5516,
+        "parent_id": 2862,
+        "name": "内江经济开发区",
+        "level": 3
+    },
+    {
+        "id": 5518,
+        "parent_id": 2863,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 5530,
+        "parent_id": 2864,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 5540,
+        "parent_id": 2865,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 5547,
+        "parent_id": 2866,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 5558,
+        "parent_id": 2867,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 5565,
+        "parent_id": 2868,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 5572,
+        "parent_id": 2868,
+        "name": "达州经济开发区",
+        "level": 3
+    },
+    {
+        "id": 5574,
+        "parent_id": 2869,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 5583,
+        "parent_id": 2870,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 5589,
+        "parent_id": 2870,
+        "name": "巴中经济开发区",
+        "level": 3
+    },
+    {
+        "id": 5590,
+        "parent_id": 2871,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 5629,
+        "parent_id": 2874,
+        "name": "会理县",
+        "level": 3
+    },
+    {
+        "id": 5642,
+        "parent_id": 2875,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 5655,
+        "parent_id": 2876,
+        "name": "水城县",
+        "level": 3
+    },
+    {
+        "id": 5657,
+        "parent_id": 2877,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 5672,
+        "parent_id": 2878,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 5679,
+        "parent_id": 2879,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 5682,
+        "parent_id": 2879,
+        "name": "黔西县",
+        "level": 3
+    },
+    {
+        "id": 5688,
+        "parent_id": 2880,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 5735,
+        "parent_id": 2884,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 5750,
+        "parent_id": 2885,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 5760,
+        "parent_id": 2886,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 5763,
+        "parent_id": 2886,
+        "name": "澄江县",
+        "level": 3
+    },
+    {
+        "id": 5770,
+        "parent_id": 2887,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 5776,
+        "parent_id": 2888,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 5788,
+        "parent_id": 2889,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 5794,
+        "parent_id": 2890,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 5805,
+        "parent_id": 2891,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 5823,
+        "parent_id": 2892,
+        "name": "禄丰县",
+        "level": 3
+    },
+    {
+        "id": 5872,
+        "parent_id": 2900,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 5881,
+        "parent_id": 2900,
+        "name": "格尔木藏青工业园区",
+        "level": 3
+    },
+    {
+        "id": 5882,
+        "parent_id": 2900,
+        "name": "拉萨经济技术开发区",
+        "level": 3
+    },
+    {
+        "id": 5883,
+        "parent_id": 2900,
+        "name": "西藏文化旅游创意园区",
+        "level": 3
+    },
+    {
+        "id": 5884,
+        "parent_id": 2900,
+        "name": "达孜工业园区",
+        "level": 3
+    },
+    {
+        "id": 5916,
+        "parent_id": 2903,
+        "name": "米林县",
+        "level": 3
+    },
+    {
+        "id": 5921,
+        "parent_id": 2904,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 5932,
+        "parent_id": 2904,
+        "name": "错那县",
+        "level": 3
+    },
+    {
+        "id": 5952,
+        "parent_id": 2907,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 5966,
+        "parent_id": 2908,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 5971,
+        "parent_id": 2909,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 5975,
+        "parent_id": 2909,
+        "name": "凤翔县",
+        "level": 3
+    },
+    {
+        "id": 5984,
+        "parent_id": 2910,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 5999,
+        "parent_id": 2911,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 6011,
+        "parent_id": 2912,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 6016,
+        "parent_id": 2912,
+        "name": "子长县",
+        "level": 3
+    },
+    {
+        "id": 6025,
+        "parent_id": 2913,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 6037,
+        "parent_id": 2914,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 6050,
+        "parent_id": 2915,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 6059,
+        "parent_id": 2915,
+        "name": "旬阳县",
+        "level": 3
+    },
+    {
+        "id": 6061,
+        "parent_id": 2916,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 6069,
+        "parent_id": 2917,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 6078,
+        "parent_id": 2917,
+        "name": "兰州新区",
+        "level": 3
+    },
+    {
+        "id": 6079,
+        "parent_id": 2918,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 6080,
+        "parent_id": 2919,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 6083,
+        "parent_id": 2920,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 6089,
+        "parent_id": 2921,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 6097,
+        "parent_id": 2922,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 6102,
+        "parent_id": 2923,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 6109,
+        "parent_id": 2924,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 6117,
+        "parent_id": 2925,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 6125,
+        "parent_id": 2926,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 6134,
+        "parent_id": 2927,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 6142,
+        "parent_id": 2928,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 6168,
+        "parent_id": 2931,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 6174,
+        "parent_id": 2931,
+        "name": "湟中县",
+        "level": 3
+    },
+    {
+        "id": 6186,
+        "parent_id": 2934,
+        "name": "同仁县",
+        "level": 3
+    },
+    {
+        "id": 6213,
+        "parent_id": 2938,
+        "name": "大柴旦行政委员会",
+        "level": 3
+    },
+    {
+        "id": 6214,
+        "parent_id": 2939,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 6221,
+        "parent_id": 2940,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 6225,
+        "parent_id": 2941,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 6231,
+        "parent_id": 2942,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 6237,
+        "parent_id": 2943,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 6241,
+        "parent_id": 2944,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 6250,
+        "parent_id": 2944,
+        "name": "乌鲁木齐经济技术开发区",
+        "level": 3
+    },
+    {
+        "id": 6251,
+        "parent_id": 2944,
+        "name": "乌鲁木齐高新技术产业开发区",
+        "level": 3
+    },
+    {
+        "id": 6252,
+        "parent_id": 2945,
+        "name": "市辖区",
+        "level": 3
+    },
+    {
+        "id": 6283,
+        "parent_id": 2950,
+        "name": "库尔勒经济技术开发区",
+        "level": 3
+    },
+    {
+        "id": 6286,
+        "parent_id": 2951,
+        "name": "库车县",
+        "level": 3
+    },
+    {
+        "id": 6520,
+        "parent_id": 2976,
+        "name": "东沙群岛",
+        "level": 3
+    },
+    {
+        "id": 6521,
+        "parent_id": 2976,
+        "name": "南沙群岛",
+        "level": 3
+    },
+    {
+        "id": 6588,
+        "parent_id": 2980,
+        "name": "恆春镇",
+        "level": 3
+    },
+    {
+        "id": 6711,
+        "parent_id": 2986,
+        "name": "钓鱼台",
+        "level": 3
+    },
+    {
+        "id": 6730,
+        "parent_id": 2987,
+        "name": "二崙乡",
+        "level": 3
+    },
+    {
+        "id": 6735,
+        "parent_id": 2987,
+        "name": "崙背乡",
+        "level": 3
+    }
+]

@@ -218,7 +218,7 @@ final class ReceiptService
         $location = Location::query()->findOrFail($locationId);
         $semi = self::allowedLocationPurposes($wo) === ['general'];
         $qty = $units->count();
-        // 做完几台设备就能入库几台：成本按目前已领的料暂估分摊，最后一批承接全部差额。
+        // 做完几台设备就能入库几台；材料沿实际领用批次及当时参与编号归集。
         // 还会继续产出的设备 = 没入库、没报废、没取消的设备（含本批）。
         $open = MfgWorkOrderUnit::query()->where('work_order_id', $wo->id)->whereNotIn('status', ['stored', 'scrapped', 'cancelled'])->lockForUpdate()->count();
         $lastBatch = $qty >= $open;
@@ -238,7 +238,7 @@ final class ReceiptService
         foreach (MfgReceipt::query()->where('work_order_id', $wo->id)->where('status', 'confirmed')->whereNotNull('inventory_transaction_id')->lockForUpdate()->get() as $oldReceipt) $alreadyCost = bcadd($alreadyCost, (string) $oldReceipt->cost_amount, 4);
         $remainingCost = bcsub($actualCost, $alreadyCost, 4);
         if (bccomp($remainingCost, '0', 4) < 0) $this->fail('cost_reconciliation_required', '已入库暂估金额超过当前实际材料净耗，请先按正式成本调整核对，不能改写历史入库。');
-        // 早批按已领材料暂估，尾批承接全部差额；人工、外协和后到费用仍未结算，不能把实际材料成本称为最终制造成本。
+        // 人工、外协和后到费用仍未结算，不能把实际材料成本称为最终制造成本。
         $dispositions = Disposition::where('work_order_id', $wo->id)->lockForUpdate()->get();
         $reserved = '0'; $loss = '0'; $stockCost = '0'; $stockIds = [];
         foreach ($dispositions as $d) {
@@ -250,17 +250,17 @@ final class ReceiptService
             }
         }
         $normalQty = $units->whereNotIn('id', $stockIds)->count();
-        $normalOpen = MfgWorkOrderUnit::where('work_order_id', $wo->id)->whereNotIn('status', ['stored', 'scrapped', 'cancelled'])
-            ->whereNotIn('id', [...$stockIds, ...CancellationProductionService::blockedUnitIds((int) $wo->id)])->count();
         $normalPool = bcsub(bcsub($remainingCost, $reserved, 4), $loss, 4);
         if ($normalQty && bccomp($normalPool, '0', 4) < 0) $this->fail('cost_reconciliation_required', '其他设备的已入库成本与本台冻结份额存在差额，请先核对原材料结算，不能挪用待处置设备成本。');
-        $costAmount = bcadd($stockCost, $normalQty ? CuttingDecimal::share($normalPool, (string) max($normalQty, $normalOpen), (string) $normalQty) : '0', 4);
+        $unitMaterialCosts = app(PurchaseCostManufacturingRecalculator::class)->unitMaterialCosts((int) $wo->id);
+        $costAmount = $units->reduce(fn ($total, $unit) => bcadd($total, $unitMaterialCosts[$unit->id] ?? '0', 4), '0.0000');
         $availableForBatch = bcsub(bcsub($remainingCost, $loss, 4), bcsub($reserved, $stockCost, 4), 4);
         if (bccomp($availableForBatch, '0', 4) < 0 || bccomp($costAmount, $availableForBatch, 4) > 0)
             $this->fail('cost_reconciliation_required', '本批入库成本超过扣除其他设备冻结份额后的真实剩余成本，请先办理正式成本调整，不能重复结转原材料成本。');
         $unitCost = bcdiv($costAmount, (string) $qty, 4);
         $receipt->update(['unit_cost' => $unitCost, 'cost_amount' => $costAmount, 'cost_source' => 'actual_materials_provisional']);
-        $posted = $this->inventory->postProductionReceipt($receipt, $wo, $units->pluck('serial_no')->all(), $this->actorId($actor));
+        $posted = $this->inventory->postProductionReceipt($receipt, $wo, $units->pluck('serial_no')->all(), $this->actorId($actor),
+            $units->mapWithKeys(fn ($unit) => [$unit->serial_no => $unitMaterialCosts[$unit->id] ?? '0'])->all());
         $confirmedAt = $posted['transaction']->posted_at ?? now();
         $receipt->update(['inventory_transaction_id' => $posted['transaction']->id, 'confirmed_at' => $confirmedAt]);
         app(InventoryReservationService::class)->reserveProductionReceipt($receipt, $wo);

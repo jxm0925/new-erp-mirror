@@ -205,12 +205,13 @@ class SalesCustomerController extends Controller
             'addresses.*.district' => '区县', 'addresses.*.detail_address' => '详细地址',
         ]);
         foreach ($data['addresses'] ?? [] as $index => $address) {
-            if (!empty($address['region_id'])) {
-                $data['addresses'][$index] = array_merge($address, app(CustomerRegionService::class)->address((int) $address['region_id'], $address['detail_address']));
-                continue;
-            }
             $old = $id && !empty($address['id'])
                 ? SalesCustomerAddress::where('customer_id', $id)->find($address['id']) : null;
+            if (!empty($address['region_id'])) {
+                $data['addresses'][$index] = array_merge($address, app(CustomerRegionService::class)->address(
+                    (int) $address['region_id'], $address['detail_address'], $old ? (int) $old->region_id : null));
+                continue;
+            }
             // 未关联地区的历史地址允许原样保存；新增或改地址必须选择真实地区。
             $unchanged = $old && !$old->region_id;
             foreach (['country', 'province', 'city', 'district', 'detail_address'] as $field) {

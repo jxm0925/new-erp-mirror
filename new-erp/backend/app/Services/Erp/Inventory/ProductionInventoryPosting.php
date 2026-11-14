@@ -33,14 +33,19 @@ class ProductionInventoryPosting
      * 物料需要序列号管理时，同时把每台的序列号登记为可用库存序列号。
      * @return array{transaction: InventoryTransaction, serial_ids: array<string, int>}
      */
-    public function postProductionReceipt(\App\Models\Erp\MfgReceipt $receipt, \App\Models\Erp\MfgWorkOrder $workOrder, array $serialNos, ?int $operatorId = null): array
+    public function postProductionReceipt(\App\Models\Erp\MfgReceipt $receipt, \App\Models\Erp\MfgWorkOrder $workOrder, array $serialNos, ?int $operatorId = null, array $unitCosts = []): array
     {
-        return DB::transaction(function () use ($receipt, $workOrder, $serialNos, $operatorId): array {
+        return DB::transaction(function () use ($receipt, $workOrder, $serialNos, $operatorId, $unitCosts): array {
             $receipt = \App\Models\Erp\MfgReceipt::query()->lockForUpdate()->findOrFail($receipt->id);
             $expected = $receipt->serial_nos ?: [];
             $actual = $serialNos;
             sort($expected, SORT_STRING);
             sort($actual, SORT_STRING);
+            if ($unitCosts && (count($unitCosts) !== count($expected) || array_diff($expected, array_keys($unitCosts))
+                || bccomp(array_reduce($unitCosts, fn ($sum, $amount) => bcadd($sum, (string) $amount, 4), '0'), (string) $receipt->cost_amount, 4) !== 0
+                || collect($unitCosts)->contains(fn ($amount) => bccomp((string) $amount, '0', 4) < 0))) {
+                throw ValidationException::withMessages(['receipt' => '逐台材料成本与本批实际入库设备、总成本不一致。']);
+            }
             if ((int) $receipt->work_order_id !== (int) $workOrder->id || $receipt->status !== 'confirmed'
                 || ! in_array($receipt->confirmation_source, ['manual', 'auto_handoff'], true)
                 || ($receipt->confirmation_source === 'manual' && ! $receipt->confirmed_by_legacy_id)
@@ -104,7 +109,7 @@ class ProductionInventoryPosting
                         'inventory_serial_id' => $serial->id, 'event_type' => 'production_receipt_in', 'document_type' => 'mfg_receipt',
                         'document_id' => $receipt->id, 'document_no' => $receipt->receipt_no, 'from_status' => null, 'to_status' => 'available',
                         'warehouse_id' => $receipt->warehouse_id, 'location_id' => $receipt->location_id, 'batch_no' => $workOrder->work_order_no,
-                        'event_payload' => ['work_order_no' => $workOrder->work_order_no], 'occurred_at' => now(),
+                        'event_payload' => ['work_order_no' => $workOrder->work_order_no] + (isset($unitCosts[$serialNo]) ? ['actual_material_cost' => $unitCosts[$serialNo]] : []), 'occurred_at' => now(),
                     ]);
                     $serialIds[$serialNo] = $serial->id;
                 }
@@ -164,13 +169,14 @@ class ProductionInventoryPosting
                 }
                 // 制造领料始终分配权威余额总金额，最后一次领完时承接全部尾差，避免零数量仍留成本。
                 $cost = CuttingDecimal::share((string) $balance->inventory_value, (string) $balance->quantity_on_hand, $quantity);
+                $serialCosts = [];
                 $fact = $this->kernel->apply($transaction, [
                     'item_id' => $item->id, 'warehouse_id' => $balance->warehouse_id, 'location_id' => $balance->location_id,
                     'batch_no' => $balance->batch_no, 'unit_id' => $balance->unit_id,
                     'change_qty' => bcsub('0', $quantity, 8), 'unit_cost' => (float) $balance->average_unit_cost, 'cost_amount' => bcsub('0', $cost, 4),
                     'cost_source_type' => 'production_issue_average', 'source_type' => 'mfg_material_issue', 'source_id' => $issue->id,
-                    'source_item_id' => $row['material_id'] ?? null, 'remark' => '工单 '.$workOrder->work_order_no.' 工序收料',
-                ]);
+                    'source_item_id' => $row['material_id'] ?? null, 'remark' => '工单 '.$workOrder->work_order_no.' 工序收料', 'outbound_serial_ids' => $serialIds,
+                ], $serialCosts);
                 $total = bcadd($total, bcsub('0', (string) $fact->cost_amount, 4), 4);
                 foreach ($serials as $serial) {
                     $serial->update(['serial_status' => 'production_consumed', 'outbound_at' => now()]);
@@ -178,7 +184,7 @@ class ProductionInventoryPosting
                         'inventory_serial_id' => $serial->id, 'event_type' => 'production_material_issued', 'document_type' => 'mfg_material_issue',
                         'document_id' => $issue->id, 'document_no' => $issue->issue_no, 'from_status' => 'available', 'to_status' => 'production_consumed',
                         'warehouse_id' => $balance->warehouse_id, 'location_id' => $balance->location_id, 'batch_no' => $balance->batch_no,
-                        'event_payload' => ['work_order_no' => $workOrder->work_order_no], 'occurred_at' => now(),
+                        'event_payload' => ['work_order_no' => $workOrder->work_order_no, 'actual_material_cost' => $serialCosts[$serial->id], 'transaction_item_id' => (int) $fact->id], 'occurred_at' => now(),
                     ]);
                 }
             }
@@ -263,6 +269,7 @@ class ProductionInventoryPosting
                 'remark' => '生产退料，工单 '.$workOrder->work_order_no,
             ]);
             $total = '0.0000';
+            $thisReceipt = [];
             foreach ($lines as $line) {
                 $source = InventoryTransactionItem::query()->with('transaction')->whereKey($line->source_transaction_item_id)->lockForUpdate()->first();
                 if (! $source || $source->transaction?->transaction_type !== 'production_material_issue_outbound' || $source->source_type !== 'mfg_material_issue'
@@ -273,11 +280,23 @@ class ProductionInventoryPosting
                     ->whereHas('materialReturn', fn ($q) => $q->where('status', 'approved'))->selectRaw('COALESCE(SUM(qty), 0) AS q, COALESCE(SUM(cost_amount), 0) AS c')->first();
                 $remainingQty = bcsub(number_format(abs((float) $source->change_qty), 8, '.', ''), (string) $returned->q, 8);
                 $remainingCost = bcsub(bcsub('0', (string) $source->cost_amount, 4), (string) $returned->c, 4);
+                $remainingQty = bcsub($remainingQty, $thisReceipt[$source->id]['qty'] ?? '0', 8);
+                $remainingCost = bcsub($remainingCost, $thisReceipt[$source->id]['cost'] ?? '0', 4);
                 $quantity = number_format((float) $line->qty, 8, '.', '');
                 if (bccomp($quantity, '0', 8) <= 0 || bccomp($quantity, $remainingQty, 8) > 0) {
                     throw ValidationException::withMessages(['return' => $line->component_item_name.' 退料数量超过原收料未退数量，请刷新后重试。']);
                 }
                 $cost = CuttingDecimal::share($remainingCost, $remainingQty, $quantity);
+                if ($line->inventory_serial_id) {
+                    $event = InventorySerialEvent::query()->where('inventory_serial_id', $line->inventory_serial_id)->where('event_type', 'production_material_issued')
+                        ->where('document_type', 'mfg_material_issue')->where('document_id', $source->source_id)->where('event_payload->transaction_item_id', $source->id)->lockForUpdate()->first();
+                    if (isset($event->event_payload['actual_material_cost'])) {
+                        $cost = (string) $event->event_payload['actual_material_cost'];
+                        if (bccomp($quantity, '1', 8) !== 0 || bccomp($cost, $remainingCost, 4) > 0 || bccomp($cost, '0', 4) < 0
+                            || (bccomp($quantity, $remainingQty, 8) === 0 && bccomp($cost, $remainingCost, 4) !== 0))
+                            throw ValidationException::withMessages(['return' => '本台原领用成本与剩余可退金额不一致。']);
+                    }
+                }
                 $warehouseId = (int) ($return->target_location_id ? $return->target_warehouse_id : $source->warehouse_id);
                 $locationId = (int) ($return->target_location_id ?: $source->location_id);
                 $change = [
@@ -289,6 +308,8 @@ class ProductionInventoryPosting
                 ];
                 if ($source->material_lot_id) $change['material_lot_id'] = $source->material_lot_id;
                 $this->kernel->apply($transaction, $change);
+                $thisReceipt[$source->id] = ['qty' => bcadd($thisReceipt[$source->id]['qty'] ?? '0', $quantity, 8),
+                    'cost' => bcadd($thisReceipt[$source->id]['cost'] ?? '0', $cost, 4)];
                 $total = bcadd($total, $cost, 4);
                 $line->update(['warehouse_id' => $warehouseId, 'location_id' => $locationId, 'unit_cost' => bcdiv($cost, $quantity, 4), 'cost_amount' => $cost]);
                 if ($hold) $this->changeDefective((int) $source->item_id, $warehouseId, $locationId, (string) $source->batch_no, (float) $quantity);

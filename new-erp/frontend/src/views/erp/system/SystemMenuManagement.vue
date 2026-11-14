@@ -26,6 +26,7 @@
       </div>
       <div class="head-actions">
         <el-button size="small" icon="el-icon-refresh" class="btn-refresh" :loading="loading" @click="load">刷新</el-button>
+        <el-button size="small" icon="el-icon-collection-tag" class="btn-refresh" @click="openGroupManager()">导航分组管理</el-button>
         <el-button
           size="small"
           type="success"
@@ -236,6 +237,8 @@
             <dl class="detail-dl">
               <dt>所属上级</dt><dd>{{ parentName(selected) }}</dd>
               <dt>节点类型</dt><dd><span class="node-type-badge">{{ typeText(selected.type) }}</span></dd>
+              <dt v-if="selected.type === 'menu' && selected.parent_id && selected.path">所属分组</dt>
+              <dd v-if="selected.type === 'menu' && selected.parent_id && selected.path">{{ effectiveGroupName(selected) || '未分组' }}</dd>
               <dt>路由地址</dt><dd class="code-mono">{{ selected.path || '-' }}</dd>
               <dt>页面组件</dt><dd class="code-mono">{{ selected.component || '-' }}</dd>
               <dt>图标类名</dt><dd>{{ selected.icon || '-' }}</dd>
@@ -350,6 +353,25 @@
           </el-form-item>
         </div>
 
+        <el-form-item v-if="editForm.type === 'menu' && editForm.parent_id && (!!editForm.path || !editForm.id)" label="所属分组">
+          <el-select
+            v-model="editForm.group_input"
+            filterable
+            allow-create
+            default-first-option
+            clearable
+            placeholder="选择已有分组或直接输入新分组名称（清空不分组）"
+            style="width: 100%;"
+          >
+            <el-option
+              v-for="gName in groupOptionsForParent(editForm.parent_id)"
+              :key="gName"
+              :label="gName"
+              :value="gName"
+            />
+          </el-select>
+        </el-form-item>
+
         <div class="form-grid-row">
           <el-form-item label="图标类名">
             <el-input v-model.trim="editForm.icon" placeholder="例如：el-icon-shopping-cart-2" />
@@ -370,22 +392,189 @@
         <el-button size="small" type="success" class="btn-theme-submit" :loading="saving" @click="save">保存权限</el-button>
       </span>
     </el-dialog>
+
+    <!-- 左侧导航不可点击分组管理弹窗 -->
+    <el-dialog
+      :visible.sync="groupDialogVisible"
+      title="左侧导航分组管理"
+      width="760px"
+      top="5vh"
+      custom-class="erp-themed-dialog system-management-dialog"
+      :close-on-click-modal="false"
+      append-to-body
+    >
+      <div class="group-manager-body">
+        <div class="dialog-header-banner">
+          <div class="dialog-banner-icon">
+            <i class="el-icon-collection-tag" />
+          </div>
+          <div class="dialog-banner-text">
+            <span class="dialog-banner-title">修改或新增左侧导航「不可点击分组名称」</span>
+            <span class="dialog-banner-desc">直接修改下方分组名称、调整组内菜单或点击新增分组，保存后左侧导航栏实时生效并写入数据库。</span>
+          </div>
+        </div>
+
+        <div class="gm-module-bar">
+          <span class="gm-module-label">选择一级模块</span>
+          <el-select
+            v-model="groupManager.moduleId"
+            size="small"
+            filterable
+            class="gm-module-select"
+            @change="onGroupModuleChange"
+          >
+            <el-option
+              v-for="mod in menuTree"
+              :key="mod.id"
+              :label="`${mod.name} (${mod.code})`"
+              :value="mod.id"
+            />
+          </el-select>
+          <div class="gm-module-tools">
+            <el-button
+              v-if="hasSystemDefaultGroups"
+              size="small"
+              icon="el-icon-refresh-left"
+              class="btn-default"
+              @click="resetGroupsToDefault"
+            >
+              恢复默认分组
+            </el-button>
+            <el-button
+              size="small"
+              type="success"
+              icon="el-icon-plus"
+              class="btn-theme-submit"
+              @click="addGroupCard"
+            >
+              新增导航分组
+            </el-button>
+          </div>
+        </div>
+
+        <div class="gm-groups-scroll">
+          <div
+            v-for="(grp, gIdx) in groupManager.groups"
+            :key="grp.uid"
+            class="group-editor-card"
+          >
+            <div class="group-card-head">
+              <span class="group-index-badge">分组 {{ gIdx + 1 }}</span>
+              <el-input
+                v-model="grp.name"
+                size="small"
+                maxlength="60"
+                placeholder="输入不可点击分组标题（例如：客户与商机 (CRM)）"
+                class="group-name-input"
+                @input="groupManager.restoreSystemDefault = false"
+              />
+              <div class="group-card-ops">
+                <el-button
+                  size="mini"
+                  icon="el-icon-top"
+                  title="上移分组"
+                  :disabled="gIdx === 0"
+                  @click="moveGroupCard(gIdx, -1)"
+                />
+                <el-button
+                  size="mini"
+                  icon="el-icon-bottom"
+                  title="下移分组"
+                  :disabled="gIdx === groupManager.groups.length - 1"
+                  @click="moveGroupCard(gIdx, 1)"
+                />
+                <el-button
+                  size="mini"
+                  type="danger"
+                  plain
+                  icon="el-icon-delete"
+                  title="删除该分组（组内菜单将改为未分组平铺，不会删除菜单）"
+                  @click="removeGroupCard(gIdx)"
+                />
+              </div>
+            </div>
+
+            <div class="group-card-menus">
+              <span class="group-menus-label">包含菜单</span>
+              <el-select
+                v-model="grp.menuIds"
+                multiple
+                filterable
+                size="small"
+                placeholder="选择要归入此分组的业务菜单..."
+                class="group-menus-select"
+                @change="onGroupMenuIdsChange(gIdx)"
+              >
+                <el-option
+                  v-for="m in activeModuleLeafMenus"
+                  :key="m.id"
+                  :label="`${m.name}${m.path ? ' (' + m.path + ')' : ''}`"
+                  :value="m.id"
+                />
+              </el-select>
+            </div>
+          </div>
+
+          <div v-if="!groupManager.groups.length" class="gm-empty-groups">
+            <i class="el-icon-folder-opened" />
+            <span>当前模块暂无命名分组，所有菜单将平铺显示；可点击右上角「新增导航分组」创建。</span>
+          </div>
+        </div>
+
+        <div class="gm-ungrouped-box">
+          <div class="gm-ungrouped-title">
+            <i class="el-icon-info" />
+            <span>未归入上方分组的菜单（将平铺显示）：</span>
+          </div>
+          <div v-if="ungroupedModuleMenus.length" class="gm-ungrouped-tags">
+            <el-tag
+              v-for="m in ungroupedModuleMenus"
+              :key="m.id"
+              size="small"
+              effect="plain"
+              class="gm-ungrouped-tag"
+            >
+              {{ m.name }}
+            </el-tag>
+          </div>
+          <span v-else class="gm-all-grouped-tip">当前模块全部有效菜单均已分配到上方分组中。</span>
+        </div>
+      </div>
+
+      <span slot="footer" class="dialog-footer">
+        <el-button size="small" class="btn-default" @click="groupDialogVisible = false">取消</el-button>
+        <el-button size="small" type="success" class="btn-theme-submit" :loading="groupSaving" @click="saveGroupManager">
+          保存分组配置
+        </el-button>
+      </span>
+    </el-dialog>
   </div>
 </template>
 
 <script>
 import { listPermissions, savePermission } from '@/api/erp/rbac'
+import { SECTION_GROUPS, UNGROUPED_MENU_MARKER, defaultGroupNameForMenu, defaultGroupsForSection } from '@/utils/menuNav'
 import '@/styles/system-management.css'
+
+let groupCardUid = 0
+const nextGroupUid = () => `grp-${++groupCardUid}`
 
 export default {
   name: 'SystemMenuManagement',
   data: () => ({
     loading: false,
     saving: false,
+    groupSaving: false,
     menuTree: [],
     permissions: [],
     selected: null,
     dialogVisible: false,
+    groupDialogVisible: false,
+    groupManager: {
+      moduleId: null,
+      groups: [],
+      restoreSystemDefault: false
+    },
     editForm: {},
     keyword: '',
     filterType: 'all',
@@ -434,6 +623,24 @@ export default {
         data = this.filterTreeByKeyword(data, kw)
       }
       return data
+    },
+    activeGroupModule() {
+      if (!this.groupManager.moduleId) return null
+      return this.menuTree.find(mod => mod.id === this.groupManager.moduleId) || null
+    },
+    activeModuleLeafMenus() {
+      return this.collectModuleLeafMenus(this.activeGroupModule)
+    },
+    hasSystemDefaultGroups() {
+      const mod = this.activeGroupModule
+      return !!(mod && SECTION_GROUPS[mod.code] && SECTION_GROUPS[mod.code].length)
+    },
+    ungroupedModuleMenus() {
+      const assigned = new Set()
+      ;(this.groupManager.groups || []).forEach(grp => {
+        ;(grp.menuIds || []).forEach(id => assigned.add(id))
+      })
+      return this.activeModuleLeafMenus.filter(menu => !assigned.has(menu.id))
     }
   },
   created() {
@@ -487,10 +694,12 @@ export default {
     },
     filterTreeByKeyword(nodes, kw) {
       return (nodes || []).reduce((res, node) => {
+        const effectiveGroup = this.effectiveGroupName(node).toLowerCase()
         const match =
           (node.name && node.name.toLowerCase().includes(kw)) ||
           (node.code && node.code.toLowerCase().includes(kw)) ||
-          (node.path && node.path.toLowerCase().includes(kw))
+          (node.path && node.path.toLowerCase().includes(kw)) ||
+          (effectiveGroup && effectiveGroup.includes(kw))
         const children = this.filterTreeByKeyword(node.children || [], kw)
         if (match || children.length) {
           res.push({ ...node, children })
@@ -520,6 +729,342 @@ export default {
       if (parent && !parent.parent_id) return 2
       return 3
     },
+    rootModuleOf(row) {
+      if (!row) return null
+      let cursor = row
+      const visited = new Set()
+      while (cursor && cursor.parent_id && !visited.has(cursor.id)) {
+        visited.add(cursor.id)
+        cursor = this.permissions.find(item => item.id === cursor.parent_id)
+      }
+      return cursor && !cursor.parent_id ? cursor : null
+    },
+    rawLeafMenus(rootNode) {
+      if (!rootNode) return []
+      const result = []
+      const walk = nodes => {
+        ;(nodes || []).forEach(node => {
+          if (node.type === 'menu' && node.path) {
+            result.push(node)
+          }
+          if (node.children && node.children.length) {
+            walk(node.children)
+          }
+        })
+      }
+      walk(rootNode.children)
+      return result
+    },
+    resolveMenuRoute(path) {
+      if (!path || !this.$router) return path || ''
+      try {
+        const resolved = this.$router.resolve(path)
+        return (resolved && resolved.route && resolved.route.path) || path
+      } catch (e) {
+        return path
+      }
+    },
+    collectModuleLeafMenus(rootNode) {
+      const raw = this.rawLeafMenus(rootNode)
+      if (!raw.length) return []
+      const byRoute = new Map()
+      raw.forEach(node => {
+        const resolvedPath = this.resolveMenuRoute(node.path)
+        const existing = byRoute.get(resolvedPath)
+        if (!existing) {
+          byRoute.set(resolvedPath, node)
+          return
+        }
+        const nodeIsDirect = node.path === resolvedPath
+        const existingIsDirect = existing.path === resolvedPath
+        if (nodeIsDirect && !existingIsDirect) {
+          byRoute.set(resolvedPath, node)
+        } else if (nodeIsDirect === existingIsDirect && node.enabled && !existing.enabled) {
+          byRoute.set(resolvedPath, node)
+        }
+      })
+      return Array.from(byRoute.values()).sort((a, b) => {
+        const sa = Number.isFinite(Number(a.sort)) ? Number(a.sort) : 0
+        const sb = Number.isFinite(Number(b.sort)) ? Number(b.sort) : 0
+        if (sa !== sb) return sa - sb
+        return (a.id || 0) - (b.id || 0)
+      })
+    },
+    effectiveGroupName(row) {
+      if (!row || row.type !== 'menu' || !row.parent_id || !row.path) return ''
+      const raw = typeof row.group_name === 'string'
+        ? row.group_name.trim()
+        : (typeof row.remark === 'string' ? row.remark.trim() : '')
+      if (raw === UNGROUPED_MENU_MARKER) return ''
+      if (raw) return raw
+      const root = this.rootModuleOf(row)
+      const fallback = defaultGroupNameForMenu(root ? root.code : '', row.path)
+      if (fallback) return fallback
+      return root && SECTION_GROUPS[root.code] ? '其他功能' : ''
+    },
+    groupOptionsForParent(parentId) {
+      const parent = this.permissions.find(item => item.id === parentId)
+      const root = parent ? (parent.parent_id ? this.rootModuleOf(parent) : parent) : null
+      if (!root) return []
+      const options = []
+      const seen = new Set()
+      const addOpt = name => {
+        const clean = (name || '').trim()
+        if (clean && clean !== UNGROUPED_MENU_MARKER && !seen.has(clean)) {
+          seen.add(clean)
+          options.push(clean)
+        }
+      }
+      this.collectModuleLeafMenus(root).forEach(menu => addOpt(this.effectiveGroupName(menu)))
+      defaultGroupsForSection(root.code).forEach(addOpt)
+      return options
+    },
+    buildModuleGroupDraft(moduleNode) {
+      if (!moduleNode) {
+        return { moduleId: null, groups: [], restoreSystemDefault: false }
+      }
+      const leafMenus = this.collectModuleLeafMenus(moduleNode)
+      const groupMap = new Map()
+      leafMenus.forEach(menu => {
+        const groupName = this.effectiveGroupName(menu)
+        if (!groupName) return
+        if (!groupMap.has(groupName)) {
+          groupMap.set(groupName, [])
+        }
+        groupMap.get(groupName).push(menu.id)
+      })
+      const groups = Array.from(groupMap.entries()).map(([name, menuIds]) => ({
+        uid: nextGroupUid(),
+        name,
+        menuIds
+      }))
+      return {
+        moduleId: moduleNode.id,
+        groups,
+        restoreSystemDefault: false
+      }
+    },
+    openGroupManager(target = null) {
+      let targetRoot = null
+      if (target && target.id) {
+        targetRoot = !target.parent_id ? target : this.rootModuleOf(target)
+      } else if (this.selected && this.selected.id) {
+        targetRoot = !this.selected.parent_id ? this.selected : this.rootModuleOf(this.selected)
+      }
+      if (!targetRoot && this.menuTree.length) {
+        targetRoot = this.menuTree[0]
+      }
+      if (!targetRoot) {
+        this.$message.warning('暂无可配置分组的一级模块')
+        return
+      }
+      this.groupManager = this.buildModuleGroupDraft(targetRoot)
+      this.groupDialogVisible = true
+    },
+    onGroupModuleChange(moduleId) {
+      const mod = this.menuTree.find(item => item.id === moduleId) || null
+      this.groupManager = this.buildModuleGroupDraft(mod)
+    },
+    addGroupCard() {
+      this.groupManager.restoreSystemDefault = false
+      this.groupManager.groups.push({
+        uid: nextGroupUid(),
+        name: '',
+        menuIds: []
+      })
+    },
+    removeGroupCard(index) {
+      this.groupManager.restoreSystemDefault = false
+      this.groupManager.groups.splice(index, 1)
+    },
+    moveGroupCard(index, delta) {
+      const targetIndex = index + delta
+      if (targetIndex < 0 || targetIndex >= this.groupManager.groups.length) return
+      const groups = [...this.groupManager.groups]
+      const [moved] = groups.splice(index, 1)
+      groups.splice(targetIndex, 0, moved)
+      this.groupManager.groups = groups
+      this.groupManager.restoreSystemDefault = false
+    },
+    onGroupMenuIdsChange(changedIndex) {
+      const current = this.groupManager.groups[changedIndex]
+      const selectedIds = new Set((current && current.menuIds) || [])
+      this.groupManager.groups.forEach((grp, idx) => {
+        if (idx !== changedIndex && Array.isArray(grp.menuIds)) {
+          grp.menuIds = grp.menuIds.filter(id => !selectedIds.has(id))
+        }
+      })
+      this.groupManager.restoreSystemDefault = false
+    },
+    resetGroupsToDefault() {
+      const mod = this.activeGroupModule
+      if (!mod) return
+      const defaultTitles = defaultGroupsForSection(mod.code)
+      if (!defaultTitles.length) {
+        this.groupManager.groups = []
+        this.groupManager.restoreSystemDefault = true
+        return
+      }
+      const buckets = new Map()
+      defaultTitles.forEach(title => buckets.set(title, []))
+      this.activeModuleLeafMenus.forEach(menu => {
+        const title = defaultGroupNameForMenu(mod.code, menu.path) || '其他功能'
+        if (!buckets.has(title)) {
+          buckets.set(title, [])
+        }
+        buckets.get(title).push(menu.id)
+      })
+      this.groupManager.groups = Array.from(buckets.entries())
+        .filter(([, ids]) => ids.length > 0)
+        .map(([name, menuIds]) => ({
+          uid: nextGroupUid(),
+          name,
+          menuIds
+        }))
+      this.groupManager.restoreSystemDefault = true
+    },
+    async saveGroupManager() {
+      const mod = this.activeGroupModule
+      if (!mod || this.groupSaving) return
+      const cleanedGroups = []
+      const seenNames = new Set()
+      const groups = this.groupManager.groups || []
+      for (let i = 0; i < groups.length; i++) {
+        const cleanName = (groups[i].name || '').trim()
+        if (!cleanName) {
+          this.$message.warning(`第 ${i + 1} 个分组名称不能为空，请填写或删除空白分组`)
+          return
+        }
+        if (cleanName === UNGROUPED_MENU_MARKER) {
+          this.$message.warning('分组名称不能使用系统保留标识')
+          return
+        }
+        if (seenNames.has(cleanName)) {
+          this.$message.warning(`分组名称「${cleanName}」重复，请合并或使用不同名称`)
+          return
+        }
+        seenNames.add(cleanName)
+        cleanedGroups.push({
+          name: cleanName,
+          menuIds: Array.isArray(groups[i].menuIds) ? [...groups[i].menuIds] : []
+        })
+      }
+
+      const leafMenus = this.activeModuleLeafMenus
+      const menuById = new Map(leafMenus.map(menu => [menu.id, menu]))
+      const assignedIds = new Set()
+      const targetGroupById = new Map()
+      const orderedMenus = []
+      const sortMenus = (a, b) => {
+        const sa = Number.isFinite(Number(a.sort)) ? Number(a.sort) : 0
+        const sb = Number.isFinite(Number(b.sort)) ? Number(b.sort) : 0
+        if (sa !== sb) return sa - sb
+        return (a.id || 0) - (b.id || 0)
+      }
+
+      cleanedGroups.forEach(grp => {
+        const groupMenus = grp.menuIds
+          .filter(id => menuById.has(id) && !assignedIds.has(id))
+          .map(id => {
+            assignedIds.add(id)
+            targetGroupById.set(id, grp.name)
+            return menuById.get(id)
+          })
+          .sort(sortMenus)
+        orderedMenus.push(...groupMenus)
+      })
+
+      const ungroupedMenus = leafMenus.filter(menu => !assignedIds.has(menu.id)).sort(sortMenus)
+      orderedMenus.push(...ungroupedMenus)
+
+      const targetSortById = new Map()
+      orderedMenus.forEach((menu, index) => {
+        targetSortById.set(menu.id, (index + 1) * 10)
+      })
+
+      const restoreDefault = !!this.groupManager.restoreSystemDefault
+      const updates = []
+      leafMenus.forEach(menu => {
+        const currentRaw = typeof menu.group_name === 'string'
+          ? menu.group_name.trim()
+          : (typeof menu.remark === 'string' ? menu.remark.trim() : '')
+        const targetGroup = restoreDefault
+          ? null
+          : (targetGroupById.has(menu.id) ? targetGroupById.get(menu.id) : UNGROUPED_MENU_MARKER)
+        const targetSort = targetSortById.get(menu.id)
+        const currentSort = Number.isFinite(Number(menu.sort)) ? Number(menu.sort) : 0
+        const normalizedCurrent = currentRaw || null
+        const normalizedTarget = targetGroup || null
+        if (normalizedCurrent !== normalizedTarget || currentSort !== targetSort) {
+          updates.push(this.permissionPayload(menu, {
+            sort: targetSort,
+            group_name: targetGroup
+          }))
+        }
+      })
+
+      const collectContainerUpdates = node => {
+        if (!node) return Infinity
+        let minSort = targetSortById.has(node.id) ? targetSortById.get(node.id) : Infinity
+        ;(node.children || []).forEach(child => {
+          if (child.type === 'menu') {
+            minSort = Math.min(minSort, collectContainerUpdates(child))
+          }
+        })
+        if (node.id !== mod.id && node.type === 'menu' && !node.path && Number.isFinite(minSort)) {
+          const currentSort = Number.isFinite(Number(node.sort)) ? Number(node.sort) : 0
+          if (currentSort !== minSort) {
+            const currentRaw = typeof node.group_name === 'string'
+              ? node.group_name.trim()
+              : (typeof node.remark === 'string' ? node.remark.trim() : '')
+            updates.push(this.permissionPayload(node, {
+              sort: minSort,
+              group_name: currentRaw || null
+            }))
+          }
+        }
+        return minSort
+      }
+      collectContainerUpdates(mod)
+
+      if (!updates.length) {
+        this.groupDialogVisible = false
+        this.$message.info('当前分组配置未发生变化')
+        return
+      }
+
+      this.groupSaving = true
+      try {
+        for (const payload of updates) {
+          await savePermission(payload)
+        }
+        this.$message.success(`已保存「${mod.name}」的导航分组配置`)
+        this.groupDialogVisible = false
+        await this.load()
+        window.dispatchEvent(new CustomEvent('erp:menus-updated'))
+      } catch (e) {
+        this.$message.error((e && e.userMessage) || '保存导航分组失败')
+        await this.load()
+      } finally {
+        this.groupSaving = false
+      }
+    },
+    permissionPayload(node, overrides = {}) {
+      const merged = { ...node, ...overrides }
+      return {
+        id: merged.id || undefined,
+        parent_id: merged.parent_id || null,
+        code: merged.code,
+        name: merged.name,
+        type: merged.type,
+        path: merged.path || null,
+        component: merged.component || null,
+        icon: merged.icon || null,
+        sort: Number.isFinite(Number(merged.sort)) ? Number(merged.sort) : 0,
+        enabled: !!merged.enabled,
+        group_name: merged.group_name !== undefined ? merged.group_name : null
+      }
+    },
     openAddRoot() {
       this.editForm = {
         name: '',
@@ -530,7 +1075,8 @@ export default {
         component: '',
         icon: 'el-icon-s-grid',
         sort: (this.menuTree.length + 1) * 10,
-        enabled: true
+        enabled: true,
+        group_input: ''
       }
       this.dialogVisible = true
     },
@@ -544,7 +1090,8 @@ export default {
         component: '',
         icon: 'el-icon-menu',
         sort: 10,
-        enabled: true
+        enabled: true,
+        group_input: ''
       }
       this.dialogVisible = true
     },
@@ -558,7 +1105,8 @@ export default {
         component: '',
         icon: 'el-icon-mouse',
         sort: 10,
-        enabled: true
+        enabled: true,
+        group_input: ''
       }
       this.dialogVisible = true
     },
@@ -566,6 +1114,7 @@ export default {
       this.editForm = {
         ...row,
         enabled: !!row.enabled,
+        group_input: this.effectiveGroupName(row),
         children: undefined
       }
       this.dialogVisible = true
@@ -587,12 +1136,27 @@ export default {
       if (!this.editForm.name || !this.editForm.code) {
         return this.$message.warning('请填写权限名称和权限标识码')
       }
+      const payload = this.permissionPayload(this.editForm)
+      if (payload.type === 'menu' && payload.parent_id && !!payload.path) {
+        const inputGroup = (this.editForm.group_input || '').trim()
+        if (inputGroup === UNGROUPED_MENU_MARKER) {
+          return this.$message.warning('分组名称不能使用系统保留标识')
+        }
+        if (inputGroup) {
+          payload.group_name = inputGroup
+        } else {
+          const root = this.rootModuleOf({ id: payload.id, parent_id: payload.parent_id })
+          const hasDefault = !!(root && (defaultGroupNameForMenu(root.code, payload.path) || SECTION_GROUPS[root.code]))
+          payload.group_name = hasDefault ? UNGROUPED_MENU_MARKER : null
+        }
+      }
       this.saving = true
       try {
-        await savePermission(this.editForm)
+        await savePermission(payload)
         this.$message.success('权限节点已保存')
         this.dialogVisible = false
         await this.load()
+        window.dispatchEvent(new CustomEvent('erp:menus-updated'))
       } catch (e) {
         this.$message.error(e.userMessage || '保存权限失败')
       } finally {
@@ -1136,6 +1700,143 @@ export default {
 .btn-theme-submit:hover {
   background: #00763f !important;
   border-color: #00763f !important;
+}
+
+/* 左侧导航分组管理弹窗 */
+.group-manager-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.gm-module-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 10px 12px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+}
+.gm-module-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: #334155;
+  white-space: nowrap;
+}
+.gm-module-select {
+  width: 240px;
+}
+.gm-module-tools {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.gm-groups-scroll {
+  max-height: 360px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-right: 4px;
+}
+.group-editor-card {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  transition: border-color 0.15s ease;
+}
+.group-editor-card:hover {
+  border-color: #86efac;
+}
+.group-card-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.group-index-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #008b4b;
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+.group-name-input {
+  flex: 1;
+}
+.group-card-ops {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.group-card-menus {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+.group-menus-label {
+  font-size: 12px;
+  color: #64748b;
+  line-height: 32px;
+  white-space: nowrap;
+}
+.group-menus-select {
+  flex: 1;
+}
+.gm-empty-groups {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 28px 16px;
+  color: #64748b;
+  font-size: 13px;
+  background: #f8fafc;
+  border: 1px dashed #cbd5e1;
+  border-radius: 6px;
+}
+.gm-ungrouped-box {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  padding: 10px 12px;
+}
+.gm-ungrouped-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #475569;
+  margin-bottom: 8px;
+}
+.gm-ungrouped-title i {
+  color: #008b4b;
+}
+.gm-ungrouped-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.gm-ungrouped-tag {
+  background: #ffffff;
+  border-color: #cbd5e1;
+  color: #334155;
+}
+.gm-all-grouped-tip {
+  font-size: 12px;
+  color: #008b4b;
 }
 
 /* 响应式断点 (2026-09-08 锁定) */

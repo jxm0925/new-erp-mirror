@@ -4,6 +4,7 @@ namespace App\Services\Erp;
 
 use App\Domain\Finance\Money;
 use App\Models\Erp\PurchaseDefectHandling;
+use App\Models\Erp\PurchaseExchangeOrder;
 use App\Models\Erp\PurchaseReceipt;
 use App\Models\Erp\PurchaseReceiptItem;
 
@@ -98,9 +99,14 @@ class PurchaseReceiptSettlementService
         $baseDecimal = number_format($base, 8, '.', '');
         $stockableDecimal = number_format($stockableBase, 8, '.', '');
         $costBasis = $amountIncl;
+        // 零应付替换品延续原品重估后的成本，普通刷新不能把采购更正回退成旧快照。
+        if ($replacementNoCharge) {
+            $replacementCost = PurchaseExchangeOrder::query()->where('replacement_receipt_id', $line->receipt_id)->value('replacement_inventory_cost');
+            if ($replacementCost !== null) $costBasis = (string) $replacementCost;
+        }
         $legacyPostedCost = false;
         $previousStockable = (string) $line->final_stockable_base_qty;
-        if ($posted && $line->finance_actual_amount === null && $base > 0 && bccomp($previousStockable, '0', 8) > 0) {
+        if ($posted && ! $replacementNoCharge && $line->finance_actual_amount === null && $base > 0 && bccomp($previousStockable, '0', 8) > 0) {
             $legacyBasis = (string) ($line->amount_excl_tax ?? $line->receipt_cost);
             $legacyCost = Money::normalize(bcdiv(bcmul($legacyBasis, $previousStockable, 16), $baseDecimal, 16));
             $grossCost = CuttingDecimal::share($amountIncl, $baseDecimal, $previousStockable);

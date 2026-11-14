@@ -188,23 +188,24 @@ final class AftersalesReshipApplicationService
             foreach ($postRows as $post) {
                 $row = $post['row']; $balance = $post['balance']; $qty = $post['qty'];
                 $cost = CuttingDecimal::share((string) $balance->inventory_value, (string) $balance->quantity_on_hand, (string) $qty);
+                $parts = [];
                 $posted = $this->kernel->apply($transaction, [
                     'item_id' => $row->item_id, 'warehouse_id' => $balance->warehouse_id, 'location_id' => $balance->location_id,
                     'batch_no' => $balance->batch_no, 'unit_id' => $row->unit_id, 'material_lot_id' => $balance->material_lot_id,
                     'change_qty' => -$qty, 'unit_cost' => $balance->average_unit_cost,
                     'cost_amount' => bcsub('0', $cost, 4), 'cost_source_type' => 'aftersales_reship',
-                    'source_type' => 'aftersales_reship', 'source_id' => $reship->id, 'source_item_id' => $row->id,
-                ]);
+                    'source_type' => 'aftersales_reship', 'source_id' => $reship->id, 'source_item_id' => $row->id, 'outbound_serial_ids' => $post['serials']->pluck('id')->all(),
+                ], $parts);
                 $row->update([
                     'warehouse_id' => $balance->warehouse_id, 'location_id' => $balance->location_id, 'batch_no' => $balance->batch_no,
                     'inventory_balance_id' => $balance->id,
-                    'unit_cost' => $balance->average_unit_cost, 'cost_amount' => bcsub('0', $cost, 4),
+                    'unit_cost' => $posted->unit_cost, 'cost_amount' => bcsub('0', (string) $posted->cost_amount, 4),
                     'transaction_item_id' => $posted->id,
                 ]);
                 // 序列设备逐台拆行：一行一条序列号，便于补发件后续再开售后单时按台认领。
                 $serialList = $post['serials']->values();
                 if ($serialList->isNotEmpty()) {
-                    $this->assignSerials($row, $serialList, $reship, $transaction, $posted, $actor);
+                    $this->assignSerials($row, $serialList, $reship, $transaction, $posted, $actor, $parts);
                 }
             }
             $reship->update([
@@ -229,21 +230,19 @@ final class AftersalesReshipApplicationService
     }
 
     /** 序列行拆分：原行留第一台并记下序列，其余按台新增行；序列事件记 shipped。 */
-    private function assignSerials(AftersalesReshipItem $row, $serials, AftersalesReship $reship, InventoryTransaction $transaction, object $posted, object $actor): void
+    private function assignSerials(AftersalesReshipItem $row, $serials, AftersalesReship $reship, InventoryTransaction $transaction, object $posted, object $actor, array $parts): void
     {
         $list = $serials->values();
-        $row->update(['inventory_serial_id' => $list->first()->id, 'serial_no' => $list->first()->serial_no]);
-        if ($list->count() > 1) {
-            // 序列行拆成一行一台：成本整笔挂在原 transaction_item_id，拆行只记设备身份。
-            foreach ($list->slice(1) as $serial) {
-                $clone = $row->replicate(['transaction_item_id']);
-                $clone->qty = 1;
-                $clone->inventory_serial_id = $serial->id;
-                $clone->serial_no = $serial->serial_no;
-                $clone->transaction_item_id = $posted->id;
-                $clone->save();
-            }
-            $row->update(['qty' => 1]);
+        $untracked = bcsub((string) $row->qty, (string) $list->count(), 8);
+        if (bccomp($untracked, '0', 8) > 0) {
+            $remaining = array_reduce($parts, fn ($sum, $part) => bcsub($sum, $part, 4), (string) $row->cost_amount);
+            $row->replicate()->fill(['qty' => $untracked, 'inventory_serial_id' => null, 'serial_no' => null,
+                'cost_amount' => $remaining, 'unit_cost' => bcdiv($remaining, $untracked, 8)])->save();
+        }
+        foreach ($list as $index => $serial) {
+            $part = $parts[$serial->id];
+            ($index === 0 ? $row : $row->replicate())->fill(['qty' => 1, 'inventory_serial_id' => $serial->id, 'serial_no' => $serial->serial_no,
+                'cost_amount' => $part, 'unit_cost' => $part])->save();
         }
         foreach ($list as $serial) {
             $serial->update(['serial_status' => 'shipped', 'outbound_at' => now()]);

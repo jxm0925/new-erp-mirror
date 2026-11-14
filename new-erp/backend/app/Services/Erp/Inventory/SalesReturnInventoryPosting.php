@@ -7,6 +7,8 @@ use App\Models\Erp\InventoryTransaction;
 use App\Models\Erp\SalesReturnCostAllocation;
 use App\Models\Erp\SalesReturnReceipt;
 use App\Services\Erp\SalesReturnIdentityService;
+use App\Services\Erp\SalesReturnCostTraceService;
+use App\Services\Erp\CuttingDecimal;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
@@ -158,6 +160,9 @@ class SalesReturnInventoryPosting
 
         $remaining = $restockQty;
         $segments = [];
+        $costStates = [];
+        foreach ($allocations->filter(fn ($allocation) => bccomp((string) $allocation->allocated_base_qty, (string) $allocation->posted_base_qty, 8) > 0)
+            ->pluck('outbound_transaction_item_id')->unique() as $sourceId) $costStates[$sourceId] = $this->quantityReturnCostState((int) $sourceId);
         foreach ($allocations as $allocation) {
             if ($remaining <= 0.00000001) {
                 break;
@@ -167,6 +172,16 @@ class SalesReturnInventoryPosting
                 continue;
             }
             $quantity = min($remaining, $available);
+            $quantityDecimal = number_format($quantity, 8, '.', '');
+            $state = &$costStates[$allocation->outbound_transaction_item_id];
+            $nextQuantity = bcadd($state['returned_quantity'], $quantityDecimal, 8);
+            if (bccomp($nextQuantity, $state['source_quantity'], 8) > 0) throw ValidationException::withMessages(['items' => '累计退货数量超过原出库数量。']);
+            // 以真实已退金额抵扣累计应退成本，末次退完吃掉尾差，不能逐次用舍入单价乘数量。
+            $cost = bcsub(CuttingDecimal::share($state['source_cost'], $state['source_quantity'], $nextQuantity), $state['returned_cost'], 4);
+            if (bccomp($cost, '0', 4) < 0) throw ValidationException::withMessages(['items' => '原退货已入库成本超过本次可退成本，请先核对原成本事实。']);
+            $state['returned_quantity'] = $nextQuantity;
+            $state['returned_cost'] = bcadd($state['returned_cost'], $cost, 4);
+            unset($state);
             $newPosted = round((float) $allocation->posted_base_qty + $quantity, 8);
             $allocation->update([
                 'posted_base_qty' => $newPosted,
@@ -174,8 +189,8 @@ class SalesReturnInventoryPosting
             ]);
             $segments[] = [
                 'base_qty' => $quantity,
-                'unit_cost' => (float) $allocation->unit_cost_snapshot,
-                'cost_amount' => round($quantity * (float) $allocation->unit_cost_snapshot, 4),
+                'unit_cost' => bcdiv($cost, $quantityDecimal, 8),
+                'cost_amount' => $cost,
                 'shipment_line_id' => $allocation->sales_shipment_line_id,
                 'outbound_transaction_item_id' => $allocation->outbound_transaction_item_id,
             ];
@@ -188,5 +203,23 @@ class SalesReturnInventoryPosting
         }
 
         return $segments;
+    }
+
+    private function quantityReturnCostState(int $sourceId): array
+    {
+        $source = DB::table('erp_inventory_transaction_items')->where('id', $sourceId)->lockForUpdate()->first();
+        if (! $source || $source->source_type !== 'sales_shipment' || bccomp((string) $source->change_qty, '0', 8) >= 0) {
+            throw ValidationException::withMessages(['items' => '退货缺少真实原销售出库成本。']);
+        }
+        $allocations = DB::table('erp_sales_return_cost_allocations')->where('outbound_transaction_item_id', $sourceId)->orderBy('id')->lockForUpdate()->get();
+        $returnedCost = '0.0000'; $returnedQuantity = '0.00000000';
+        foreach (app(SalesReturnCostTraceService::class)->postedSegments($allocations->pluck('sales_return_item_id')->unique()->all()) as $segment) {
+            if ((int) $segment['source']->id !== $sourceId || $segment['serial_id'] !== null) continue;
+            $returnedCost = bcadd($returnedCost, (string) $segment['movement']->cost_amount, 4);
+            $returnedQuantity = bcadd($returnedQuantity, $segment['quantity'], 8);
+        }
+        $pool = app(SalesReturnCostTraceService::class)->quantityPool($source);
+        return ['source_cost' => $pool['cost'], 'source_quantity' => $pool['quantity'],
+            'returned_cost' => $returnedCost, 'returned_quantity' => $returnedQuantity];
     }
 }

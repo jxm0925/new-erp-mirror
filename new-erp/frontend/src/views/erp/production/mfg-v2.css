@@ -1,5 +1,5 @@
 /* 生产 v2 页面（工单、序列号、订单生产确认）共用样式：深蓝头部 + 白色圆角卡片。 */
-.mfg-page { background: #eef1f5; min-height: calc(100vh - 54px); color: #172033; font-size: 13px; }
+.mfg-page { position: relative; width: 100%; max-width: 100%; min-width: 0; box-sizing: border-box; background: #eef1f5; min-height: calc(100vh - 90px); color: #172033; font-size: 13px; }
 .mfg-hero { background: #14213d; color: #fff; padding: 18px 26px; }
 .mfg-crumb { color: #8fa0bf; font-size: 12px; }
 .mfg-crumb a { color: #8fa0bf; cursor: pointer; }

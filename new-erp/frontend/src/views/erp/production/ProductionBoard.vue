@@ -729,11 +729,16 @@ export default {
 
 <style scoped>
 .production-board-page {
-  min-height: calc(100vh - 52px);
+  position: relative;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  min-height: calc(100vh - 90px);
   padding: 16px 20px 30px;
   background: #f8fafc;
   color: #1e293b;
   box-sizing: border-box;
+  overflow-x: clip;
 }
 
 /* 顶部页面标头 (.page-head) */
@@ -880,8 +885,16 @@ export default {
 .text-info    { color: #3b82f6 !important; }
 .text-purple  { color: #8b5cf6 !important; }
 
+.board-body {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+}
+
 /* 筛选工具栏卡片 */
 .toolbar-card {
+  min-width: 0;
+  max-width: 100%;
   background: #ffffff;
   border: 1px solid #e2e8f0;
   border-radius: 8px;
