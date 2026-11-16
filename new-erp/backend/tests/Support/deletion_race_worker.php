@@ -58,7 +58,7 @@ try {
         'cash_create' => $app->make(FinanceCashDocumentApplicationService::class)->create($payload['direction'], $payload, null, '并发测试'),
         'invoice_create' => $app->make(FinanceInvoiceApplicationService::class)->create($payload, null),
         'supplier_delete' => $app->make(MasterDataApplicationService::class)->deleteUnused('suppliers', Supplier::findOrFail($id)),
-        'customer_delete' => $app->make(SalesCustomerDeletionApplicationService::class)->delete($id),
+        'customer_delete' => $app->make(SalesCustomerDeletionApplicationService::class)->delete($id, (object) ['legacy_id' => 0, 'username' => 'admin']),
         'plan_submit' => $app->make(PurchaseWorkflowApplicationService::class)->submitPlan($id, '并发测试'),
         // 直接调用控制器不经过登录中间件；这里只验证行锁顺序，用测试替身放行按钮权限。
         'plan_update' => (function () use ($app, $payload, $id) {

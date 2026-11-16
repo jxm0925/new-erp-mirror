@@ -1,9 +1,9 @@
 <template>
   <div class="crm-page">
     <header class="crm-head"><span class="crm-head-icon"><i class="el-icon-user" /></span><h1>团队管理</h1></header>
-    <el-tabs v-model="tab" @tab-click="search"><el-tab-pane label="销售人员" name="staff" /><el-tab-pane v-if="abilities.grant" label="分配授权" name="grants" /></el-tabs>
+    <el-tabs v-model="tab" @tab-click="search"><el-tab-pane label="销售人员" name="staff" /><el-tab-pane v-if="abilities.grant" label="分配授权" name="grants" /><el-tab-pane v-if="abilities.grant" label="销售代班" name="sales-delegations" /></el-tabs>
     <el-alert v-if="error" :title="error" type="error" :closable="false" show-icon />
-    <div v-loading="initialLoading" class="team-layout">
+    <div v-if="tab !== 'sales-delegations'" v-loading="initialLoading" class="team-layout">
       <aside v-if="tab === 'staff'" class="crm-box team-departments"><h3 class="crm-section-title">部门组织</h3><el-tree :data="departmentTree" node-key="id" :props="{ label: 'name', children: 'children' }" default-expand-all highlight-current :expand-on-click-node="false" @node-click="chooseDepartment" /><el-button v-if="query.department_id" type="text" size="small" @click="chooseDepartment({id:null})">全部授权部门</el-button></aside>
       <main class="team-main">
         <div class="crm-inline"><span class="crm-muted">{{ tab === 'staff' ? departmentName + ' · 销售 ' + total + ' 人' : 'CRM 分配授权' }}</span><el-button v-if="tab === 'grants' && abilities.grant" class="crm-actions" size="small" type="success" icon="el-icon-plus" @click="openGrant()">新增授权</el-button></div>
@@ -26,6 +26,7 @@
         </section>
       </main>
     </div>
+    <crm-sales-delegations v-else-if="abilities.grant" :departments="metadata.departments || []" />
     <el-dialog class="crm-dialog" title="编辑销售能力" :visible.sync="capability.visible" width="960px" append-to-body :close-on-click-modal="false" :before-close="closeCapability">
       <div v-loading="capability.loading"><p class="crm-muted">{{ capability.person.name }} / {{ capability.person.department_name }}</p><h3 class="crm-section-title">能力标签</h3>
         <el-form size="small" label-width="106px" :disabled="capability.saving || capability.loading || !!capability.error"><div class="crm-form-grid"><el-form-item v-for="group in metadata.tag_groups || []" :key="group.value" :label="group.label"><div class="capability-tags"><el-tag v-for="tag in capability.form.tags[group.value] || []" :key="tag" size="small" type="success" closable class="crm-tag" @close="removeTag(group.value,tag)">{{ tag }}</el-tag><el-input v-if="tagInput.group === group.value" ref="tagInput" v-model.trim="tagInput.value" size="mini" class="tag-input" maxlength="80" @keyup.enter.native="addTag" @blur="addTag" /><el-button v-else type="text" size="mini" @click="showTagInput(group.value)">+ 添加</el-button></div></el-form-item></div>
@@ -58,11 +59,13 @@
 <script>
 import { getCrmTeamMetadata, listCrmTeamStaff, getCrmTeamStaff, saveCrmStaffCapability, listCrmGrants, saveCrmGrant, listCrmTeamUsers, crmError, crmDate } from '@/api/erp/crm'
 import { erpDateTime } from '@/utils/dateTime'
+import CrmSalesDelegations from '@/components/crm/CrmSalesDelegations.vue'
 import '@/styles/crm.css'
 const blankQuery = (size = 10) => ({ keyword: '', accepting: null, status: '', department_id: null, page: 1, per_page: size })
 const blankGrant = () => ({ id: null, user_legacy_id: null, department_ids: [], channels: [], actions: [], assignee_mode: 'all', assignee_ids: [], effective_from: erpDateTime(new Date().toISOString(), 10), effective_to: null, status: 'active' })
 export default {
   name: 'CrmTeam',
+  components: { CrmSalesDelegations },
   data: () => ({ tab: 'staff', metadata: {}, initialLoading: false, rows: [], total: 0, query: blankQuery(), loading: false, error: '', sequence: 0, switching: null, capSession: 0, grantSession: 0, grantPeopleSequence: 0, userSequence: 0, capability: { visible: false, loading: false, saving: false, error: '', person: {}, form: { tags: {} } }, tagInput: { group: '', value: '' }, grant: { visible: false, saving: false, form: blankGrant(), userName: '', allChannels: true, longTerm: true, people: [], peopleTotal: 0, peopleLoading: false, peopleQuery: { page: 1, per_page: 10, keyword: '' }, selectedNames: {} }, users: { visible: false, loading: false, selected: null, rows: [], total: 0, query: { keyword: '', page: 1, per_page: 10 } }, confirmationOptions: { disabledDate: date => date.getTime() > Date.now() } }),
   computed: {
     abilities() { return this.metadata.abilities || {} },
@@ -85,6 +88,7 @@ export default {
     reset() { this.query = { ...blankQuery(this.query.per_page), department_id: this.query.department_id }; this.load() },
     async load() {
       const sequence = ++this.sequence
+      if (this.tab === 'sales-delegations') { this.loading = false; this.error = ''; return }
       this.loading = true
       this.error = ''
       try { const { data } = await (this.tab === 'staff' ? listCrmTeamStaff({ ...this.query }) : listCrmGrants({ ...this.query })); if (sequence !== this.sequence) return; this.rows = data.data || []; this.total = data.total || 0 } catch (error) { if (sequence === this.sequence) this.error = crmError(error, '团队列表加载失败') } finally { if (sequence === this.sequence) this.loading = false }

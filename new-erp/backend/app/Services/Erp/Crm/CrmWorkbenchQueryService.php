@@ -44,7 +44,11 @@ final class CrmWorkbenchQueryService
         $pools = (clone $leadQuery)->whereNotNull('customer_pool')->selectRaw('customer_pool, COUNT(*) AS total')->groupBy('customer_pool')->pluck('total', 'customer_pool');
         $statuses = (clone $leadQuery)->selectRaw('status, COUNT(*) AS total')->groupBy('status')->pluck('total', 'status');
         $department = $this->staff->departmentOf((int) $actor->legacy_id);
+        $isSales = $this->assignments->activeSales((int) $actor->legacy_id);
         return [
+            'can_self_delegate' => $isSales,
+            'delegation_departments' => $isSales ? DB::table('erp_departments')->whereNull('deleted_at')->where('status', 'normal')
+                ->orderBy('sort')->orderBy('legacy_id')->get(['legacy_id as id', 'parent_legacy_id as parent_id', 'name']) : [],
             'date' => today()->toDateString(),
             'current_user' => ['id' => (int) $actor->legacy_id, 'name' => ($actor->nickname ?? null) ?: $actor->username,
                 'department_legacy_id' => $department, 'department_name' => $this->access->departmentName($department)],
@@ -86,7 +90,8 @@ final class CrmWorkbenchQueryService
         $type = $filters['type'] ?? 'closing';
         abort_unless(isset(self::PRIORITIES[$type]), 422, '请选择有效的重点推进分类。');
         $this->opportunities->permission($actor, 'crm.opportunity.view');
-        $query = CrmOpportunity::query()->where('owner_legacy_id', $actor->legacy_id)->where('status', 'open');
+        $query = CrmOpportunity::query()->where('status', 'open')->where(fn ($assigned) => $assigned->where('owner_legacy_id', $actor->legacy_id)
+            ->orWhere(fn ($delegated) => $this->opportunities->applyDelegated($delegated, $actor)));
         $this->opportunities->applyVisible($query, $actor);
         if ($type === 'closing') {
             // 原商机没有近期截止口径，按真实预计成交日优先展示，逾期也保留。
@@ -112,6 +117,8 @@ final class CrmWorkbenchQueryService
                 'stalled_days' => $opportunity->stage_entered_at && $opportunity->stage_entered_at->lte(now())
                     ? (int) $opportunity->stage_entered_at->diffInDays(now()) : null,
                 'abilities' => $this->opportunities->abilities($opportunity, $actor),
+                'delegated' => $this->opportunities->delegated($opportunity, $actor),
+                'delegated_owner' => $this->opportunities->delegated($opportunity, $actor) ? ['id' => (int) $opportunity->owner_legacy_id, 'name' => $opportunity->owner_name] : null,
                 'contact_name' => $followup?->contact_name ?: $opportunity->contact_name,
             ];
         });
@@ -136,16 +143,17 @@ final class CrmWorkbenchQueryService
         $this->leads->applyVisible($lead, $actor);
         if (!$this->access->can($actor, 'crm.lead.view')) $lead->whereRaw('1 = 0');
         $types = $type === 'all' ? array_values(array_diff(array_keys(self::TASKS), ['all'])) : [$type];
+        $handlingOwners = array_merge([(int) $actor->legacy_id], app(CrmSalesDelegationService::class)->activeOwnerIds($actor));
         // 一个线索可能同时待确认有效线索和到期；全部待办按对象只列一次，各卡片保留自己的办理范围。
-        $lead->where(function ($matches) use ($actor, $types) {
-            foreach ($types as $kind) $matches->orWhere(function ($q) use ($actor, $kind) {
+        $lead->where(function ($matches) use ($actor, $types, $handlingOwners) {
+            foreach ($types as $kind) $matches->orWhere(function ($q) use ($actor, $kind, $handlingOwners) {
                 if (in_array($kind, ['today', 'overdue'], true)) {
-                    $q->where('status', 'active')->where('owner_legacy_id', $actor->legacy_id);
+                    $q->where('status', 'active')->whereIn('owner_legacy_id', $handlingOwners);
                     CrmContactPlanQueryService::applyDue($q, 'next_contact_at', $kind);
                 } elseif ($kind === 'pending_receive') {
-                    $q->where('status', 'pending_acceptance')->where('pending_user_legacy_id', $actor->legacy_id);
+                    $q->where('status', 'pending_acceptance')->whereIn('pending_user_legacy_id', $handlingOwners);
                 } elseif ($kind === 'pending_confirm') {
-                    $q->where('status', 'active')->where('owner_legacy_id', $actor->legacy_id)->whereNull('confirmed_at');
+                    $q->where('status', 'active')->whereIn('owner_legacy_id', $handlingOwners)->whereNull('confirmed_at');
                 } elseif ($kind === 'pending_assign') {
                     $q->where('status', 'pending_assignment');
                     $this->managementRange($q, $actor, 'assign', 'department_legacy_id', 'source_channel');
@@ -159,7 +167,8 @@ final class CrmWorkbenchQueryService
             });
         });
         $lead->selectRaw("'lead' AS target_type, id AS target_id, COALESCE(next_contact_at, created_at) AS planned_at");
-        $opportunity = CrmOpportunity::query()->where('owner_legacy_id', $actor->legacy_id)->where('status', 'open');
+        $opportunity = CrmOpportunity::query()->where('status', 'open')->where(fn ($assigned) => $assigned->where('owner_legacy_id', $actor->legacy_id)
+            ->orWhere(fn ($delegated) => $this->opportunities->applyDelegated($delegated, $actor)));
         $this->opportunities->applyVisible($opportunity, $actor);
         if (!$this->access->can($actor, 'crm.opportunity.view')) $opportunity->whereRaw('1 = 0');
         CrmContactPlanQueryService::applyDue($opportunity, 'next_contact_at', $type);
@@ -216,6 +225,8 @@ final class CrmWorkbenchQueryService
         $customerId = null;
         $contactName = null;
         $taskKinds = [];
+        $delegated = false;
+        $delegatedOwner = null;
         if ($task->target_type === 'lead') {
             $lead = $target;
             $pending = match ($lead->status) {
@@ -227,6 +238,8 @@ final class CrmWorkbenchQueryService
             $customerId = $lead->customer_id;
             $contactName = $lead->contact_name;
             $allowed = $this->leads->abilities($lead, $actor);
+            $delegated = $this->leads->delegated($lead, $actor);
+            if ($delegated) $delegatedOwner = ['id' => (int) ($lead->pending_user_legacy_id ?: $lead->owner_legacy_id), 'name' => $lead->pending_user_name ?: $lead->owner_name];
             if ($lead->customer_id) $allowed['transfer_customer'] = $lead->customer && $this->access->abilities($lead->customer, $actor)['transfer'];
             $review = $lead->status === 'pending_review' ? app(CrmDuplicateReviewApplicationService::class)->forLead($lead, $actor) : null;
             $allowed['verify'] = (bool) ($review['can_resolve'] ?? false);
@@ -241,6 +254,8 @@ final class CrmWorkbenchQueryService
             $title = $opportunity->name;
             $customerId = $opportunity->customer_id;
             $allowed = $this->opportunities->abilities($opportunity, $actor);
+            $delegated = $this->opportunities->delegated($opportunity, $actor);
+            if ($delegated) $delegatedOwner = ['id' => (int) $opportunity->owner_legacy_id, 'name' => $opportunity->owner_name];
             $contactName = $opportunity->contact_name;
             $contactMethod = null;
             $canContact = $opportunity->status === 'open';
@@ -277,6 +292,7 @@ final class CrmWorkbenchQueryService
         }
         return ['id' => $task->target_type.':'.$task->target_id, 'target_type' => $task->target_type, 'target_id' => (int) $task->target_id,
             'customer_id' => $customerId, 'customer_name' => $customerName, 'title' => $title,
+            'delegated' => $delegated, 'delegated_owner' => $delegatedOwner,
             'contact_name' => $latest?->contact_name ?: $contactName, 'planned_at' => $task->planned_at,
             'is_overdue' => (bool) $isOverdue,
             'contact_method_label' => $latest?->method ?: $contactMethod,

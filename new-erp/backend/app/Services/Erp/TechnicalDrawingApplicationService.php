@@ -17,7 +17,7 @@ use Throwable;
 /** 图纸完成事实只追加；来源单据保留自己的附件、状态与可见范围。 */
 final class TechnicalDrawingApplicationService
 {
-    public const SOURCES = ['opportunity' => '商机', 'bom' => 'BOM', 'work_order' => '工单'];
+    public const SOURCES = ['opportunity' => '商机', 'drawing_request' => '绘图需求', 'bom' => 'BOM', 'work_order' => '工单'];
     public const TYPES = ['structure' => '结构图', 'part' => '零件图', 'assembly' => '装配图', 'other' => '其他技术图'];
     private const EXTENSIONS = ['pdf', 'png', 'jpg', 'jpeg', 'webp', 'gif', 'dwg', 'dxf', 'step', 'stp', 'zip'];
 
@@ -151,32 +151,38 @@ final class TechnicalDrawingApplicationService
     public function register(array $data, object $actor, ?UploadedFile $upload = null): array
     {
         $data = $this->registrationData($data, $upload);
+        if (($data['source']['type'] ?? '') === 'drawing_request' && $data['action'] !== 'reuse') {
+            abort_unless((int) $data['designer_legacy_id'] === (int) $actor->legacy_id, 403, '绘制人只能是当前交图的技术人员本人。');
+        }
         $uploadHash = $upload ? hash_file('sha256', $upload->getRealPath()) : null;
         $hash = hash('sha256', json_encode([$data, $uploadHash], JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR));
-        if ($existing = TechnicalDrawingUsage::query()->where('request_key', $data['request_key'])->first()) return $this->replay($existing, $hash, $actor);
+        if ($existing = TechnicalDrawingUsage::query()->where('request_key', $data['request_key'])->first()) return $this->replay($existing, $hash, $actor, $data, $uploadHash);
         $source = $this->sources->resolve($data['source'], $actor, true);
         $storedPath = null;
         $storedInRevision = false;
         try {
             $file = $source['file'] ?? null;
             if ($upload) {
-                abort_unless($source['type'] === 'bom' && !$file && empty($source['file_id']), 422, '只有BOM图纸可以直接上传，其他来源请使用已上传的技术附件。');
+                abort_unless(in_array($source['type'], ['bom', 'drawing_request'], true) && !$file && empty($source['file_id']), 422, '请从BOM或绘图需求上传技术图纸。');
                 $storedPath = Storage::disk('local')->putFileAs('technical-drawings/'.now()->format('Ym'), $upload, Str::uuid().'.'.strtolower($upload->getClientOriginalExtension()));
                 abort_unless($storedPath, 500, '图纸文件保存失败。');
                 $file = ['storage_disk' => 'local', 'storage_path' => $storedPath, 'original_name' => mb_substr(basename($upload->getClientOriginalName()), 0, 255),
                     'mime_type' => $upload->getMimeType(), 'file_size' => (int) $upload->getSize(), 'file_hash' => $uploadHash];
             }
             if ($data['action'] !== 'reuse') $file = $this->verifiedFile($file);
-            $result = DB::transaction(function () use ($data, $hash, $actor, $file, &$storedInRevision) {
+            $result = DB::transaction(function () use ($data, $hash, $actor, $file, $uploadHash, &$storedInRevision) {
                 $storedInRevision = false;
                 // 锁来源再锁图纸；与来源确认/复制钩子保持顺序，重放不重复落文件或版本。
                 $source = $this->sources->resolve($data['source'], $actor, true, true);
-                if ($existing = TechnicalDrawingUsage::query()->where('request_key', $data['request_key'])->lockForUpdate()->first()) return $this->replay($existing, $hash, $actor);
+                if ($existing = TechnicalDrawingUsage::query()->where('request_key', $data['request_key'])->lockForUpdate()->first()) return $this->replay($existing, $hash, $actor, $data, $uploadHash);
                 // 内容身份跨图号唯一；重复上传不能通过另填图号增加工作量，也不透露原图纸归属。
                 if ($data['action'] !== 'reuse') abort_if(TechnicalDrawingRevision::query()->where('file_hash', $file['file_hash'])->exists(), 422, '该文件内容已经登记，请核对并沿用已有版本。');
                 if ($data['action'] === 'new') {
-                    abort_if(TechnicalDrawing::query()->where('drawing_no', $data['drawing_no'])->exists(), 422, '图纸编号已经存在，请选择修改或沿用已有图纸。');
-                    $drawing = TechnicalDrawing::create(['drawing_no' => $data['drawing_no'], 'drawing_name' => $data['drawing_name'], 'drawing_type' => $data['drawing_type'],
+                    // 旧手填图号可能占用流水；在同一事务中跳过，失败回滚不会卡在同一个历史号码。
+                    do {
+                        $drawingNo = app(DocumentNumberService::class)->next('technical_drawing', 'TZ');
+                    } while (TechnicalDrawing::query()->where('drawing_no', $drawingNo)->lockForUpdate()->first(['id']));
+                    $drawing = TechnicalDrawing::create(['drawing_no' => $drawingNo, 'drawing_name' => $data['drawing_name'], 'drawing_type' => $data['drawing_type'],
                         'created_by_legacy_id' => $actor->legacy_id, 'created_by_name' => $this->actorName($actor)]);
                     $previous = null;
                 } else {
@@ -222,7 +228,7 @@ final class TechnicalDrawingApplicationService
         } catch (QueryException $error) {
             if ($storedPath) Storage::disk('local')->delete($storedPath);
             if (($error->errorInfo[1] ?? null) !== 1062) throw $error;
-            if ($existing = TechnicalDrawingUsage::query()->where('request_key', $data['request_key'])->first()) return $this->replay($existing, $hash, $actor);
+            if ($existing = TechnicalDrawingUsage::query()->where('request_key', $data['request_key'])->first()) return $this->replay($existing, $hash, $actor, $data, $uploadHash);
             abort(422, '图纸编号、文件内容或来源附件已经登记，请刷新核对；重复内容请沿用已有版本。');
         } catch (Throwable $error) {
             if ($storedPath) Storage::disk('local')->delete($storedPath);
@@ -232,6 +238,7 @@ final class TechnicalDrawingApplicationService
 
     public function confirm(int $revisionId, array $source, object $actor, ?string $remark = null): array
     {
+        abort_if(($source['type'] ?? '') === 'drawing_request', 422, '请在绘图需求中登记客户确认的具体版本。');
         return DB::transaction(function () use ($revisionId, $source, $actor, $remark) {
             $resolved = $this->sources->resolve($source, $actor, true, true);
             $usage = TechnicalDrawingUsage::query()->where('revision_id', $revisionId)->where('source_type', $resolved['type'])->where('source_id', $resolved['id'])->where('active', true)
@@ -243,10 +250,11 @@ final class TechnicalDrawingApplicationService
     }
 
     /** 仅由已经完成来源鉴权并持有来源锁的正式确认用例调用。 */
-    public function confirmLinked(string $type, int $sourceId, int $sourceFileId, object $actor, ?string $remark = null): void
+    public function confirmLinked(string $type, int $sourceId, int $sourceFileId, object $actor, ?string $remark = null, ?int $revisionId = null): void
     {
         abort_unless(DB::transactionLevel() > 0, 500, '图纸确认必须在来源业务事务中执行。');
-        $usages = TechnicalDrawingUsage::query()->where('source_type', $type)->where('source_id', $sourceId)->where('source_file_id', $sourceFileId)->where('active', true)->orderBy('drawing_id')->get();
+        $usages = TechnicalDrawingUsage::query()->where('source_type', $type)->where('source_id', $sourceId)->where('source_file_id', $sourceFileId)->where('active', true)
+            ->when($revisionId, fn ($query) => $query->where('revision_id', $revisionId))->orderBy('drawing_id')->get();
         foreach ($usages as $usage) $this->markConfirmed((int) $usage->revision_id, $actor, $remark);
     }
 
@@ -275,16 +283,16 @@ final class TechnicalDrawingApplicationService
     private function registrationData(array $data, ?UploadedFile $upload): array
     {
         $data = Validator::make($data, ['request_key' => 'required|string|max:64|regex:/^[A-Za-z0-9_-]+$/', 'action' => 'required|in:new,modify,reuse',
-            'source' => 'required|array', 'source.type' => 'required|in:opportunity,bom,work_order', 'source.id' => 'required|integer|min:1',
+            'source' => 'required|array', 'source.type' => 'required|in:opportunity,bom,work_order,drawing_request', 'source.id' => 'required|integer|min:1',
             'source.file_id' => 'nullable|integer|min:1', 'source.position_uid' => 'nullable|string|max:80', 'source.version' => 'nullable',
-            'drawing_no' => 'required_if:action,new|nullable|string|max:80', 'drawing_name' => 'required_if:action,new|nullable|string|max:200',
+            'drawing_name' => 'required_if:action,new|nullable|string|max:200',
             'drawing_type' => 'required_if:action,new|nullable|in:structure,part,assembly,other', 'drawing_id' => 'required_if:action,modify|nullable|integer|min:1',
             'revision_id' => 'required_if:action,reuse|nullable|integer|min:1', 'expected_revision_id' => 'required_if:action,modify|nullable|integer|min:1',
             'designer_legacy_id' => 'required_unless:action,reuse|nullable|integer|min:1', 'completed_date' => 'required_unless:action,reuse|nullable|date_format:Y-m-d|before_or_equal:today',
             'remark' => 'required_if:action,modify|nullable|string|max:1000'])->validate();
         if (isset($data['source']['version'])) abort_unless(is_scalar($data['source']['version']) && mb_strlen((string) $data['source']['version']) <= 40, 422, '来源版本无效。');
-        foreach (['drawing_no', 'drawing_name', 'remark'] as $field) if (isset($data[$field])) $data[$field] = trim($data[$field]);
-        if ($data['action'] === 'new') abort_unless($data['drawing_no'] !== '' && $data['drawing_name'] !== '', 422, '请填写图纸编号和名称。');
+        foreach (['drawing_name', 'remark'] as $field) if (isset($data[$field])) $data[$field] = trim($data[$field]);
+        if ($data['action'] === 'new') abort_unless($data['drawing_name'] !== '', 422, '请填写图纸名称。');
         if ($data['action'] === 'modify') abort_unless(trim($data['remark'] ?? '') !== '', 422, '请说明图纸实际修改的内容。');
         if ($data['action'] === 'reuse') abort_if($upload || !empty($data['source']['file_id']) || !empty($data['designer_legacy_id']) || !empty($data['completed_date']), 422, '沿用已有版本只选择版本和使用位置，不重复登记文件、绘制人或完成日期。');
         if ($upload) {
@@ -318,16 +326,25 @@ final class TechnicalDrawingApplicationService
         return array_intersect_key($file, array_flip(['storage_disk', 'storage_path', 'original_name', 'mime_type', 'file_size', 'file_hash']));
     }
 
-    private function replay(TechnicalDrawingUsage $usage, string $hash, object $actor): array
+    private function replay(TechnicalDrawingUsage $usage, string $hash, object $actor, array $data, ?string $uploadHash): array
     {
-        abort_unless((int) $usage->created_by_legacy_id === (int) $actor->legacy_id && hash_equals($usage->request_hash, $hash), 422, '提交标识已经用于其他登记，请重新打开登记窗口。');
+        $matches = hash_equals($usage->request_hash, $hash);
+        if (!$matches && $data['action'] === 'new') {
+            // 旧登记指纹包含手填图号；仅用已落库图号重建，客户端不能借重试改写历史。
+            $data['drawing_no'] = $usage->drawing()->value('drawing_no');
+            ksort($data);
+            $legacyHash = hash('sha256', json_encode([$data, $uploadHash], JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR));
+            $matches = hash_equals($usage->request_hash, $legacyHash);
+        }
+        abort_unless((int) $usage->created_by_legacy_id === (int) $actor->legacy_id && $matches, 422, '提交标识已经用于其他登记，请重新打开登记窗口。');
         abort_unless($this->sources->canRead($usage, $actor), 403, '无权读取该登记结果。');
         return $this->registrationResult($usage, $usage->revision()->firstOrFail());
     }
 
     private function registrationResult(TechnicalDrawingUsage $usage, TechnicalDrawingRevision $revision): array
     {
-        return ['drawing_id' => (int) $revision->drawing_id, 'revision_id' => (int) $revision->id, 'usage_id' => (int) $usage->id, 'version_no' => $revision->version_no];
+        return ['drawing_id' => (int) $revision->drawing_id, 'drawing_no' => $revision->drawing->drawing_no,
+            'revision_id' => (int) $revision->id, 'usage_id' => (int) $usage->id, 'version_no' => $revision->version_no];
     }
 
     private function visibleDrawings(Builder $query, object $actor): void
@@ -358,6 +375,7 @@ final class TechnicalDrawingApplicationService
         $usage = $this->readableUsage($revision, $actor);
         $confirmSource = null;
         foreach ($revision->usages()->where('active', true)->get() as $candidate) {
+            if ($candidate->source_type === 'drawing_request') continue;
             if (!$this->sources->canRead($candidate, $actor)) continue;
             try {
                 $source = ['type' => $candidate->source_type, 'id' => $candidate->source_id, 'file_id' => $candidate->source_file_id ?: null, 'position_uid' => $candidate->position_uid];

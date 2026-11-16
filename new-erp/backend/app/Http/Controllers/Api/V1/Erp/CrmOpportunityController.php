@@ -47,7 +47,7 @@ final class CrmOpportunityController extends Controller
     {
         $actor = $this->user($request, 'view');
         $data = $request->validate([
-            'keyword' => 'nullable|string|max:160', 'tab' => 'nullable|in:all,mine,collaborating,won,lost',
+            'keyword' => 'nullable|string|max:160', 'tab' => 'nullable|in:all,mine,delegated,collaborating,won,lost',
             'status' => ['nullable', Rule::in(array_keys(CrmOpportunityApplicationService::STATUSES))],
             'stage' => ['nullable', Rule::in(array_keys(CrmOpportunityApplicationService::STAGES))],
             'customer_id' => 'nullable|integer|min:1', 'source_lead_id' => 'nullable|integer|min:1', 'business_line' => 'nullable|string|max:120',
@@ -57,7 +57,12 @@ final class CrmOpportunityController extends Controller
         ] + $this->pageRules() + $this->idsRules() + CrmListViewQueryService::rules('opportunities'));
         $query = CrmOpportunity::query()->with('customer');
         $this->opportunities->applyVisible($query, $actor);
-        if (!empty($data['collaboratable'])) $this->opportunities->applyManageable($query, $actor);
+        if (!empty($data['collaboratable'])) {
+            $this->opportunities->applyManageable($query, $actor);
+            if (!app(CrmCustomerAccessService::class)->can($actor, 'sales.customer.collaborate')) {
+                $query->where('owner_legacy_id', $actor->legacy_id)->whereHas('customer', fn ($customer) => $customer->where('owner_legacy_id', $actor->legacy_id));
+            }
+        }
         if (!empty($data['ids'])) $query->whereIn('id', $data['ids']);
         foreach (['customer_id', 'source_lead_id', 'business_line', 'stage', 'status'] as $field) if (!empty($data[$field])) $query->where($field, $data[$field]);
         if (!empty($data['expected_close_from'])) $query->whereDate('expected_close_date', '>=', $data['expected_close_from']);
@@ -68,10 +73,14 @@ final class CrmOpportunityController extends Controller
         }
         $collaborating = clone $query;
         $this->opportunities->applyCollaborating($collaborating, $actor);
+        $delegated = clone $query;
+        $this->opportunities->applyDelegated($delegated, $actor);
         $tabs = ['all' => (clone $query)->count(), 'mine' => (clone $query)->where('owner_legacy_id', $actor->legacy_id)->where('status', 'open')->count(),
-            'collaborating' => $collaborating->where('status', 'open')->count(), 'won' => (clone $query)->where('status', 'won')->count(), 'lost' => (clone $query)->where('status', 'lost')->count()];
-        $tab = $data['tab'] ?? (!empty($data['collaboratable']) || !empty($data['ids']) || !empty($data['customer_id']) ? 'all' : 'mine');
+            'delegated' => $delegated->where('status', 'open')->count(), 'collaborating' => $collaborating->where('status', 'open')->count(),
+            'won' => (clone $query)->where('status', 'won')->count(), 'lost' => (clone $query)->where('status', 'lost')->count()];
+        $tab = $data['tab'] ?? 'all';
         if ($tab === 'mine') $query->where('owner_legacy_id', $actor->legacy_id)->where('status', 'open');
+        elseif ($tab === 'delegated') { $this->opportunities->applyDelegated($query, $actor); $query->where('status', 'open'); }
         elseif ($tab === 'collaborating') { $this->opportunities->applyCollaborating($query, $actor); $query->where('status', 'open'); }
         elseif (in_array($tab, ['won', 'lost'], true)) $query->where('status', $tab);
         $open = (clone $query)->where('status', 'open');

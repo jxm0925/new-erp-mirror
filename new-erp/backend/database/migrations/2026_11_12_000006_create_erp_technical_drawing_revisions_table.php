@@ -56,6 +56,6 @@ CREATE TABLE `erp_technical_drawing_revisions` (
 SQL;
     public const DECLARED_CHECKS = [
         'technical_revision_action_check' => "((`version_no` = 1 AND `action` = 'new' AND `previous_revision_id` IS NULL) OR (`version_no` > 1 AND `action` = 'modify' AND `previous_revision_id` IS NOT NULL))",
-        'technical_revision_source_check' => "(`source_type` IN ('opportunity', 'bom', 'work_order'))",
+        'technical_revision_source_check' => "(`source_type` IN ('opportunity', 'bom', 'work_order', 'drawing_request'))",
     ];
 };

@@ -27,7 +27,7 @@ class SalesOrderDraftService
         return DB::transaction(function () use ($payload, $operator, $actor) {
             [$header, $lines, $deletedLineIds, $draftToken, $platformPaid] = $this->split($payload);
             $opportunityId = $header['opportunity_id'] ?? null;
-            unset($header['opportunity_id']);
+            app(SalesOrderVisibilityService::class)->prepareCreation($header, $actor);
             $reservationToken = $header['reservation_token'] ?? null;
             $creationSessionId = $header['creation_session_id'] ?? null;
             unset($header['reservation_token'], $header['creation_session_id']);
@@ -36,6 +36,7 @@ class SalesOrderDraftService
                 ? $this->numbers->reservedNumber($reservationToken, 'sales_order', $header['created_by_legacy_id'] ?? null, $creationSessionId)
                 : $this->numbers->next('sales_order');
             $header = $this->normalize($header, null, $actor);
+            unset($header['opportunity_id']);
             $header['sales_order_no'] = $number;
             $header['order_status'] = 'draft';
             $header['confirm_status'] = 'unconfirmed';
@@ -45,6 +46,7 @@ class SalesOrderDraftService
 
             $order = SalesOrder::create($header);
             app(CrmOpportunityOrderService::class)->attachNew($order, $opportunityId, $actor);
+            app(SalesOrderVisibilityService::class)->recordCreation($order, $actor);
             if ($reservationToken) {
                 $this->numbers->consume(
                     $reservationToken,
@@ -55,7 +57,7 @@ class SalesOrderDraftService
                     $order->id
                 );
             }
-            $this->lines->sync($order, $lines, $deletedLineIds, $draftToken, $operator);
+            $this->lines->sync($order, $lines, $deletedLineIds, $draftToken, $operator, actor: $actor);
             $this->attachments->bindOrderDraft($order->id, $draftToken);
             $order = $this->amounts->refresh($order);
             if ($platformPaid !== null) app(SalesOrderPlatformPaymentService::class)->update($order, $platformPaid, $actor);
@@ -83,11 +85,12 @@ class SalesOrderDraftService
             // accepted in the shared form payload, but are not sales-order columns
             // and must never be persisted while editing an existing draft.
             unset($header['reservation_token'], $header['creation_session_id'], $header['created_by_legacy_id'], $header['created_by']);
+            app(CrmOpportunityOrderService::class)->guardOrderUpdate($order, $header, $actor);
             $header = $this->normalize($header, $order, $actor);
-            app(CrmOpportunityOrderService::class)->guardOrderUpdate($order, $header);
             unset($header['sales_order_no']);
             // 草稿也可能已有预收核销，换客户同样要先由财务撤销核销。
             app(SalesOrderEditImpactService::class)->assertCustomerChangeAllowed($order, $header['customer_id'] ?? null);
+            app(SalesOrderConfirmedDrawingService::class)->assertCustomer($order, $lines, (int) ($header['customer_id'] ?? $order->customer_id), $deletedLineIds);
             $header = app(SalesCostVisibilityService::class)->preserveStoredCosts($header, $order->attributesToArray());
             $header['order_status'] = 'draft';
             $header['confirm_status'] = 'unconfirmed';
@@ -96,7 +99,7 @@ class SalesOrderDraftService
             $header['shipment_status'] = 'not_shipped';
 
             $order->update($header);
-            $this->lines->sync($order, $lines, $deletedLineIds, $draftToken, $operator);
+            $this->lines->sync($order, $lines, $deletedLineIds, $draftToken, $operator, actor: $actor);
             $this->attachments->bindOrderDraft($order->id, $draftToken);
             $order = $this->amounts->refresh($order);
             if ($platformPaid !== null) app(SalesOrderPlatformPaymentService::class)->update($order, $platformPaid, $actor);
@@ -321,7 +324,7 @@ class SalesOrderDraftService
         $payload['delay'] = $payload['delay'] || $payload['is_delay'];
         $payload['is_delay'] = $payload['delay'];
 
-        return $this->snapshots->lock($payload, $order);
+        return $this->snapshots->lock($payload, $order, $actor);
     }
 
     private function recordVersion(

@@ -228,6 +228,8 @@
           </div>
         </section>
 
+        <section class="crm-box"><crm-drawing-requests :key="'drawing-requests-' + session" :subject="{ type: 'lead', id: lead.id }" editable @changed="changed" /></section>
+
         <section class="crm-box records-box">
           <div class="records-header">
             <el-tabs v-model="activeRecordTab" class="record-tabs">
@@ -335,6 +337,7 @@ import CrmLeadActionDialog from './CrmLeadActionDialog.vue'
 import CrmLeadFormDialog from './CrmLeadFormDialog.vue'
 import CrmFollowupDialog from './CrmFollowupDialog.vue'
 import CrmIdentityReviewDialog from './CrmIdentityReviewDialog.vue'
+import CrmDrawingRequests from './CrmDrawingRequests.vue'
 import '@/styles/crm.css'
 
 export default {
@@ -345,6 +348,7 @@ export default {
     CrmLeadFormDialog,
     CrmFollowupDialog,
     CrmIdentityReviewDialog,
+    CrmDrawingRequests,
     CrmOpportunityFormDialog: () => import('./CrmOpportunityFormDialog.vue'),
     CrmOpportunityDetailDialog: () => import('./CrmOpportunityDetailDialog.vue'),
     CustomerDetailDialog: () => import('@/components/sales/CustomerDetailDialog.vue')
@@ -470,6 +474,7 @@ export default {
         customer_id: this.lead.customer_id,
         customer_name: this.lead.customer_name,
         lead_no: this.lead.lead_no,
+        delegated: this.lead.delegated,
         contact_name: this.lead.contact_name
       }, row)
     },
@@ -482,7 +487,7 @@ export default {
     },
     opportunitySaved(row) {
       this.changed()
-      if (row && row.id && this.visible) this.$refs.opportunityDetail.open(row.id)
+      if (row && row.id && this.visible && (!row.abilities || row.abilities.view !== false)) this.$refs.opportunityDetail.open(row.id)
     }
   }
 }

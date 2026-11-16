@@ -1,16 +1,16 @@
 {
-    "contract_version": 1,
+    "contract_version": 2,
     "timestamps_timezone": "UTC",
     "captured_at": "2026-11-09T08:46:18+00:00",
     "cleanup_batch_id": 7,
     "table_counts": {
         "accounts": 82,
         "departments": 10,
-        "memberships": 79,
-        "business_staff": 61,
+        "memberships": 81,
+        "business_staff": 34,
         "role_groups": 82,
-        "role_assignments": 78,
-        "role_sources": 78
+        "role_assignments": 86,
+        "role_sources": 89
     },
     "tombstones": {
         "user_legacy_ids": [
@@ -61,10 +61,12 @@
             "department_names": "[]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 2,
             "created_at": "2026-11-08 03:13:49",
             "updated_at": "2026-11-08 09:58:24",
-            "business_version": 2,
-            "local_managed": 1
+            "deleted_at": null,
+            "deleted_by": null
         },
         {
             "id": 2,
@@ -78,13 +80,15 @@
             "sort": 0,
             "is_sales": 1,
             "department_ids": "[31]",
-            "department_names": "[\"内贸销售部\"]",
+            "department_names": "[\"内贸销售C端\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 5,
             "created_at": "2023-06-08 08:10:25",
-            "updated_at": "2026-11-08 09:58:24",
-            "business_version": 2,
-            "local_managed": 1
+            "updated_at": "2026-11-14 03:35:11",
+            "deleted_at": null,
+            "deleted_by": null
         },
         {
             "id": 3,
@@ -101,10 +105,12 @@
             "department_names": "[\"生产仓储部\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 2,
             "created_at": "2024-07-22 07:41:19",
             "updated_at": "2026-11-08 09:58:24",
-            "business_version": 2,
-            "local_managed": 1
+            "deleted_at": null,
+            "deleted_by": null
         },
         {
             "id": 4,
@@ -121,10 +127,12 @@
             "department_names": "[\"生产仓储部\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 2,
             "created_at": "2024-07-22 07:45:39",
             "updated_at": "2026-11-08 09:58:24",
-            "business_version": 2,
-            "local_managed": 1
+            "deleted_at": null,
+            "deleted_by": null
         },
         {
             "id": 5,
@@ -141,10 +149,12 @@
             "department_names": "[\"营销部\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 2,
             "created_at": "2024-11-10 02:11:18",
             "updated_at": "2026-11-08 09:58:24",
-            "business_version": 2,
-            "local_managed": 1
+            "deleted_at": null,
+            "deleted_by": null
         },
         {
             "id": 6,
@@ -161,10 +171,12 @@
             "department_names": "[\"生产仓储部\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 2,
             "created_at": "2024-12-06 06:09:16",
             "updated_at": "2026-11-08 09:58:24",
-            "business_version": 2,
-            "local_managed": 1
+            "deleted_at": null,
+            "deleted_by": null
         },
         {
             "id": 7,
@@ -181,10 +193,12 @@
             "department_names": "[\"生产仓储部\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 2,
             "created_at": "2025-01-07 08:25:10",
             "updated_at": "2026-11-08 09:58:24",
-            "business_version": 2,
-            "local_managed": 1
+            "deleted_at": null,
+            "deleted_by": null
         },
         {
             "id": 8,
@@ -201,10 +215,12 @@
             "department_names": "[\"生产仓储部\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 2,
             "created_at": "2025-01-12 01:46:26",
             "updated_at": "2026-11-08 09:58:24",
-            "business_version": 2,
-            "local_managed": 1
+            "deleted_at": null,
+            "deleted_by": null
         },
         {
             "id": 9,
@@ -218,13 +234,15 @@
             "sort": 0,
             "is_sales": 1,
             "department_ids": "[31]",
-            "department_names": "[\"内贸销售部\"]",
+            "department_names": "[\"内贸销售C端\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 3,
             "created_at": "2023-12-30 01:48:23",
-            "updated_at": "2026-11-08 09:58:24",
-            "business_version": 2,
-            "local_managed": 1
+            "updated_at": "2026-11-14 03:33:52",
+            "deleted_at": null,
+            "deleted_by": null
         },
         {
             "id": 10,
@@ -241,10 +259,12 @@
             "department_names": "[\"生产仓储部\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 2,
             "created_at": "2025-02-28 05:29:49",
             "updated_at": "2026-11-08 09:58:24",
-            "business_version": 2,
-            "local_managed": 1
+            "deleted_at": null,
+            "deleted_by": null
         },
         {
             "id": 11,
@@ -258,13 +278,15 @@
             "sort": 0,
             "is_sales": 1,
             "department_ids": "[31]",
-            "department_names": "[\"内贸销售部\"]",
+            "department_names": "[\"内贸销售C端\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 3,
             "created_at": "2025-03-26 08:17:55",
-            "updated_at": "2026-11-08 09:58:24",
-            "business_version": 2,
-            "local_managed": 1
+            "updated_at": "2026-11-14 03:33:52",
+            "deleted_at": null,
+            "deleted_by": null
         },
         {
             "id": 12,
@@ -278,13 +300,15 @@
             "sort": 0,
             "is_sales": 0,
             "department_ids": "[31]",
-            "department_names": "[\"内贸销售部\"]",
+            "department_names": "[\"内贸销售C端\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 3,
             "created_at": "2025-03-30 02:11:16",
-            "updated_at": "2026-11-08 09:58:24",
-            "business_version": 2,
-            "local_managed": 1
+            "updated_at": "2026-11-14 03:33:52",
+            "deleted_at": null,
+            "deleted_by": null
         },
         {
             "id": 13,
@@ -298,13 +322,15 @@
             "sort": 0,
             "is_sales": 1,
             "department_ids": "[31]",
-            "department_names": "[\"内贸销售部\"]",
+            "department_names": "[\"内贸销售C端\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 3,
             "created_at": "2025-04-25 06:42:05",
-            "updated_at": "2026-11-08 09:58:24",
-            "business_version": 2,
-            "local_managed": 1
+            "updated_at": "2026-11-14 03:33:52",
+            "deleted_at": null,
+            "deleted_by": null
         },
         {
             "id": 14,
@@ -321,10 +347,12 @@
             "department_names": "[\"生产仓储部\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 2,
             "created_at": "2026-05-04 03:24:05",
             "updated_at": "2026-11-08 09:58:24",
-            "business_version": 2,
-            "local_managed": 1
+            "deleted_at": null,
+            "deleted_by": null
         },
         {
             "id": 15,
@@ -341,10 +369,12 @@
             "department_names": "[\"内贸销售B端\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 2,
             "created_at": "2026-06-25 07:34:14",
             "updated_at": "2026-11-08 09:58:24",
-            "business_version": 2,
-            "local_managed": 1
+            "deleted_at": null,
+            "deleted_by": null
         },
         {
             "id": 16,
@@ -358,13 +388,15 @@
             "sort": 0,
             "is_sales": 1,
             "department_ids": "[35]",
-            "department_names": "[\"外贸一部\"]",
+            "department_names": "[\"外贸部\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 3,
             "created_at": "2026-08-25 07:45:13",
-            "updated_at": "2026-11-08 09:58:24",
-            "business_version": 2,
-            "local_managed": 1
+            "updated_at": "2026-11-14 03:33:42",
+            "deleted_at": null,
+            "deleted_by": null
         },
         {
             "id": 17,
@@ -381,10 +413,12 @@
             "department_names": "[\"内贸销售B端\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 2,
             "created_at": "2026-09-05 00:46:19",
             "updated_at": "2026-11-08 09:58:24",
-            "business_version": 2,
-            "local_managed": 1
+            "deleted_at": null,
+            "deleted_by": null
         },
         {
             "id": 18,
@@ -401,10 +435,12 @@
             "department_names": "[\"生产仓储部\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 2,
             "created_at": "2026-09-11 09:13:22",
             "updated_at": "2026-11-08 09:58:24",
-            "business_version": 2,
-            "local_managed": 1
+            "deleted_at": null,
+            "deleted_by": null
         },
         {
             "id": 19,
@@ -421,10 +457,12 @@
             "department_names": "[\"内贸销售B端\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 2,
             "created_at": "2026-10-14 00:58:43",
             "updated_at": "2026-11-08 09:58:24",
-            "business_version": 2,
-            "local_managed": 1
+            "deleted_at": null,
+            "deleted_by": null
         },
         {
             "id": 20,
@@ -441,10 +479,12 @@
             "department_names": "[\"营销部\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 2,
             "created_at": "2024-03-12 00:29:36",
             "updated_at": "2026-11-08 09:58:24",
-            "business_version": 2,
-            "local_managed": 1
+            "deleted_at": null,
+            "deleted_by": null
         },
         {
             "id": 21,
@@ -452,19 +492,21 @@
             "username": "yuping",
             "password_hash": "$2y$12$fAafZ0E6YR9HharoIZlvQ.20gYZ9yrMZn0JQ.TEf/JT7P3VpUJ/XG",
             "nickname": "俞萍",
-            "mobile": "",
+            "mobile": null,
             "email": "1231111@163.com",
             "status": "normal",
             "sort": 0,
             "is_sales": 1,
-            "department_ids": "[28]",
-            "department_names": "[\"文政部\"]",
+            "department_ids": "[28, 35]",
+            "department_names": "[\"文政部\", \"外贸部\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 4,
             "created_at": "2023-12-30 01:40:48",
-            "updated_at": "2026-11-08 09:58:24",
-            "business_version": 2,
-            "local_managed": 1
+            "updated_at": "2026-11-14 03:37:12",
+            "deleted_at": null,
+            "deleted_by": null
         },
         {
             "id": 22,
@@ -478,13 +520,15 @@
             "sort": 0,
             "is_sales": 0,
             "department_ids": "[31]",
-            "department_names": "[\"内贸销售部\"]",
+            "department_names": "[\"内贸销售C端\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 3,
             "created_at": "2023-12-30 01:45:05",
-            "updated_at": "2026-11-08 09:58:24",
-            "business_version": 2,
-            "local_managed": 1
+            "updated_at": "2026-11-14 03:33:52",
+            "deleted_at": null,
+            "deleted_by": null
         },
         {
             "id": 23,
@@ -498,13 +542,15 @@
             "sort": 0,
             "is_sales": 1,
             "department_ids": "[31]",
-            "department_names": "[\"内贸销售部\"]",
+            "department_names": "[\"内贸销售C端\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 3,
             "created_at": "2023-12-30 01:49:33",
-            "updated_at": "2026-11-08 09:58:24",
-            "business_version": 2,
-            "local_managed": 1
+            "updated_at": "2026-11-14 03:33:52",
+            "deleted_at": null,
+            "deleted_by": null
         },
         {
             "id": 24,
@@ -514,17 +560,19 @@
             "nickname": "仓储测试-仓储部",
             "mobile": "17765654551",
             "email": "111131@163.com",
-            "status": "normal",
+            "status": "hidden",
             "sort": 0,
             "is_sales": 0,
             "department_ids": "[29]",
             "department_names": "[\"生产仓储部\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 3,
             "created_at": "2023-12-17 01:31:05",
-            "updated_at": "2026-11-08 09:58:24",
-            "business_version": 2,
-            "local_managed": 1
+            "updated_at": "2026-11-14 03:39:41",
+            "deleted_at": null,
+            "deleted_by": null
         },
         {
             "id": 25,
@@ -538,13 +586,15 @@
             "sort": 0,
             "is_sales": 1,
             "department_ids": "[31]",
-            "department_names": "[\"内贸销售部\"]",
+            "department_names": "[\"内贸销售C端\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 3,
             "created_at": "2023-12-30 01:47:33",
-            "updated_at": "2026-11-08 09:58:24",
-            "business_version": 2,
-            "local_managed": 1
+            "updated_at": "2026-11-14 03:33:52",
+            "deleted_at": null,
+            "deleted_by": null
         },
         {
             "id": 26,
@@ -558,13 +608,15 @@
             "sort": 0,
             "is_sales": 0,
             "department_ids": "[31]",
-            "department_names": "[\"内贸销售部\"]",
+            "department_names": "[\"内贸销售C端\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 3,
             "created_at": "2024-03-21 01:54:55",
-            "updated_at": "2026-11-08 09:58:24",
-            "business_version": 2,
-            "local_managed": 1
+            "updated_at": "2026-11-14 03:33:52",
+            "deleted_at": null,
+            "deleted_by": null
         },
         {
             "id": 27,
@@ -581,10 +633,12 @@
             "department_names": "[\"生产仓储部\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 2,
             "created_at": "2024-06-17 07:53:12",
             "updated_at": "2026-11-08 09:58:24",
-            "business_version": 2,
-            "local_managed": 1
+            "deleted_at": null,
+            "deleted_by": null
         },
         {
             "id": 28,
@@ -601,10 +655,12 @@
             "department_names": "[\"文政部\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 2,
             "created_at": "2024-07-16 02:41:06",
             "updated_at": "2026-11-08 09:58:24",
-            "business_version": 2,
-            "local_managed": 1
+            "deleted_at": null,
+            "deleted_by": null
         },
         {
             "id": 29,
@@ -617,14 +673,16 @@
             "status": "normal",
             "sort": 0,
             "is_sales": 1,
-            "department_ids": "[39]",
-            "department_names": "[\"内贸销售B端\"]",
+            "department_ids": "[26, 39]",
+            "department_names": "[\"营销部\", \"内贸销售B端\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 4,
             "created_at": "2023-10-11 08:07:38",
-            "updated_at": "2026-11-08 09:58:24",
-            "business_version": 1,
-            "local_managed": 1
+            "updated_at": "2026-11-14 03:37:18",
+            "deleted_at": null,
+            "deleted_by": null
         },
         {
             "id": 30,
@@ -641,10 +699,12 @@
             "department_names": "[]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 1,
             "created_at": "2023-07-18 08:37:29",
             "updated_at": "2026-11-08 09:58:24",
-            "business_version": 1,
-            "local_managed": 1
+            "deleted_at": null,
+            "deleted_by": null
         },
         {
             "id": 31,
@@ -658,13 +718,15 @@
             "sort": 0,
             "is_sales": 0,
             "department_ids": "[35]",
-            "department_names": "[\"外贸一部\"]",
+            "department_names": "[\"外贸部\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 2,
             "created_at": "2024-01-20 03:00:56",
-            "updated_at": "2026-11-08 09:58:24",
-            "business_version": 1,
-            "local_managed": 1
+            "updated_at": "2026-11-14 03:33:42",
+            "deleted_at": null,
+            "deleted_by": null
         },
         {
             "id": 32,
@@ -678,13 +740,15 @@
             "sort": 0,
             "is_sales": 1,
             "department_ids": "[35]",
-            "department_names": "[\"外贸一部\"]",
+            "department_names": "[\"外贸部\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 3,
             "created_at": "2024-03-02 08:04:14",
-            "updated_at": "2026-11-08 09:58:24",
-            "business_version": 1,
-            "local_managed": 1
+            "updated_at": "2026-11-14 03:36:16",
+            "deleted_at": null,
+            "deleted_by": null
         },
         {
             "id": 34,
@@ -694,17 +758,19 @@
             "nickname": "蔡蔡",
             "mobile": "18214122228",
             "email": "114111aa@qq.com",
-            "status": "normal",
+            "status": "hidden",
             "sort": 0,
             "is_sales": 0,
             "department_ids": "[25, 28]",
             "department_names": "[\"山东简谈\", \"文政部\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 2,
             "created_at": "2024-03-21 00:51:15",
-            "updated_at": "2026-11-08 09:58:24",
-            "business_version": 1,
-            "local_managed": 1
+            "updated_at": "2026-11-14 03:39:35",
+            "deleted_at": null,
+            "deleted_by": null
         },
         {
             "id": 36,
@@ -714,17 +780,19 @@
             "nickname": "江晓霞",
             "mobile": "",
             "email": "923854976@qq.com",
-            "status": "normal",
+            "status": "hidden",
             "sort": 0,
-            "is_sales": 1,
+            "is_sales": 0,
             "department_ids": "[35]",
-            "department_names": "[\"外贸一部\"]",
+            "department_names": "[\"外贸部\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 3,
             "created_at": "2024-04-01 07:25:38",
-            "updated_at": "2026-11-08 09:58:24",
-            "business_version": 1,
-            "local_managed": 1
+            "updated_at": "2026-11-14 03:39:32",
+            "deleted_at": null,
+            "deleted_by": null
         },
         {
             "id": 37,
@@ -738,13 +806,15 @@
             "sort": -1,
             "is_sales": 0,
             "department_ids": "[35]",
-            "department_names": "[\"外贸一部\"]",
+            "department_names": "[\"外贸部\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 2,
             "created_at": "2024-04-23 03:09:02",
-            "updated_at": "2026-11-08 09:58:24",
-            "business_version": 1,
-            "local_managed": 1
+            "updated_at": "2026-11-14 03:33:42",
+            "deleted_at": null,
+            "deleted_by": null
         },
         {
             "id": 42,
@@ -758,13 +828,15 @@
             "sort": 0,
             "is_sales": 0,
             "department_ids": "[31]",
-            "department_names": "[\"内贸销售部\"]",
+            "department_names": "[\"内贸销售C端\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 2,
             "created_at": "2024-06-03 01:04:21",
-            "updated_at": "2026-11-08 09:58:24",
-            "business_version": 1,
-            "local_managed": 1
+            "updated_at": "2026-11-14 03:33:52",
+            "deleted_at": null,
+            "deleted_by": null
         },
         {
             "id": 43,
@@ -774,17 +846,19 @@
             "nickname": "逄涛",
             "mobile": "17855554545",
             "email": "1356968082@qq.com",
-            "status": "normal",
+            "status": "hidden",
             "sort": -1,
             "is_sales": 0,
             "department_ids": "[29]",
             "department_names": "[\"生产仓储部\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 2,
             "created_at": "2024-06-17 07:52:14",
-            "updated_at": "2026-11-08 09:58:24",
-            "business_version": 1,
-            "local_managed": 1
+            "updated_at": "2026-11-14 03:39:29",
+            "deleted_at": null,
+            "deleted_by": null
         },
         {
             "id": 44,
@@ -801,10 +875,12 @@
             "department_names": "[\"文政部\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 2,
             "created_at": "2024-07-01 03:41:32",
             "updated_at": "2026-11-09 08:42:15",
-            "business_version": 2,
-            "local_managed": 1
+            "deleted_at": null,
+            "deleted_by": null
         },
         {
             "id": 48,
@@ -812,7 +888,7 @@
             "username": "JT_cangchuWDM",
             "password_hash": "$2y$12$YkgJJDmv4Mdw.YvLdOvaeO7jAEkK93QKXtFX13FY7M0fcnF7dCsaC",
             "nickname": "王德民",
-            "mobile": "",
+            "mobile": null,
             "email": "ss2e@163.com",
             "status": "normal",
             "sort": 0,
@@ -821,10 +897,12 @@
             "department_names": "[\"生产仓储部\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 2,
             "created_at": "2024-07-22 07:42:39",
-            "updated_at": "2026-11-08 09:58:24",
-            "business_version": 1,
-            "local_managed": 1
+            "updated_at": "2026-11-16 07:55:49",
+            "deleted_at": null,
+            "deleted_by": null
         },
         {
             "id": 52,
@@ -838,13 +916,15 @@
             "sort": 0,
             "is_sales": 0,
             "department_ids": "[31]",
-            "department_names": "[\"内贸销售部\"]",
+            "department_names": "[\"内贸销售C端\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 2,
             "created_at": "2024-07-22 07:44:44",
-            "updated_at": "2026-11-08 09:58:24",
-            "business_version": 1,
-            "local_managed": 1
+            "updated_at": "2026-11-14 03:33:52",
+            "deleted_at": null,
+            "deleted_by": null
         },
         {
             "id": 56,
@@ -861,10 +941,12 @@
             "department_names": "[]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 1,
             "created_at": "2024-07-26 05:59:52",
             "updated_at": "2026-11-08 09:58:24",
-            "business_version": 1,
-            "local_managed": 1
+            "deleted_at": null,
+            "deleted_by": null
         },
         {
             "id": 59,
@@ -881,10 +963,12 @@
             "department_names": "[]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 1,
             "created_at": "2024-10-06 01:53:36",
             "updated_at": "2026-11-08 09:58:24",
-            "business_version": 1,
-            "local_managed": 1
+            "deleted_at": null,
+            "deleted_by": null
         },
         {
             "id": 60,
@@ -894,17 +978,19 @@
             "nickname": "朱俊伟",
             "mobile": "17865132514",
             "email": "00123@163.com",
-            "status": "normal",
+            "status": "hidden",
             "sort": 0,
             "is_sales": 0,
             "department_ids": "[29]",
             "department_names": "[\"生产仓储部\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 2,
             "created_at": "2024-11-17 01:26:44",
-            "updated_at": "2026-11-08 09:58:24",
-            "business_version": 1,
-            "local_managed": 1
+            "updated_at": "2026-11-14 03:39:19",
+            "deleted_at": null,
+            "deleted_by": null
         },
         {
             "id": 62,
@@ -921,10 +1007,12 @@
             "department_names": "[\"文政部\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 1,
             "created_at": "2024-11-25 03:05:35",
             "updated_at": "2026-11-08 09:58:24",
-            "business_version": 1,
-            "local_managed": 1
+            "deleted_at": null,
+            "deleted_by": null
         },
         {
             "id": 63,
@@ -941,10 +1029,12 @@
             "department_names": "[\"生产仓储部\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 1,
             "created_at": "2024-12-05 01:24:26",
             "updated_at": "2026-11-08 09:58:24",
-            "business_version": 1,
-            "local_managed": 1
+            "deleted_at": null,
+            "deleted_by": null
         },
         {
             "id": 64,
@@ -961,10 +1051,12 @@
             "department_names": "[\"文政部\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 1,
             "created_at": "2024-12-25 02:31:30",
             "updated_at": "2026-11-08 09:58:24",
-            "business_version": 1,
-            "local_managed": 1
+            "deleted_at": null,
+            "deleted_by": null
         },
         {
             "id": 66,
@@ -978,13 +1070,15 @@
             "sort": 0,
             "is_sales": 0,
             "department_ids": "[35]",
-            "department_names": "[\"外贸一部\"]",
+            "department_names": "[\"外贸部\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 2,
             "created_at": "2025-01-19 06:18:21",
-            "updated_at": "2026-11-08 09:58:24",
-            "business_version": 1,
-            "local_managed": 1
+            "updated_at": "2026-11-14 03:33:42",
+            "deleted_at": null,
+            "deleted_by": null
         },
         {
             "id": 70,
@@ -998,13 +1092,15 @@
             "sort": 0,
             "is_sales": 0,
             "department_ids": "[31]",
-            "department_names": "[\"内贸销售部\"]",
+            "department_names": "[\"内贸销售C端\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 2,
             "created_at": "2025-01-19 06:21:57",
-            "updated_at": "2026-11-08 09:58:24",
-            "business_version": 1,
-            "local_managed": 1
+            "updated_at": "2026-11-14 03:33:52",
+            "deleted_at": null,
+            "deleted_by": null
         },
         {
             "id": 71,
@@ -1021,10 +1117,12 @@
             "department_names": "[\"营销部\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 1,
             "created_at": "2025-01-19 06:22:26",
             "updated_at": "2026-11-08 09:58:24",
-            "business_version": 1,
-            "local_managed": 1
+            "deleted_at": null,
+            "deleted_by": null
         },
         {
             "id": 72,
@@ -1041,10 +1139,12 @@
             "department_names": "[\"营销部\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 1,
             "created_at": "2025-01-19 06:22:57",
             "updated_at": "2026-11-08 09:58:24",
-            "business_version": 1,
-            "local_managed": 1
+            "deleted_at": null,
+            "deleted_by": null
         },
         {
             "id": 73,
@@ -1061,10 +1161,12 @@
             "department_names": "[\"文政部\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 1,
             "created_at": "2025-03-03 09:02:51",
             "updated_at": "2026-11-08 09:58:24",
-            "business_version": 1,
-            "local_managed": 1
+            "deleted_at": null,
+            "deleted_by": null
         },
         {
             "id": 74,
@@ -1078,13 +1180,15 @@
             "sort": 0,
             "is_sales": 0,
             "department_ids": "[31]",
-            "department_names": "[\"内贸销售部\"]",
+            "department_names": "[\"内贸销售C端\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 2,
             "created_at": "2025-03-30 02:10:37",
-            "updated_at": "2026-11-08 09:58:24",
-            "business_version": 1,
-            "local_managed": 1
+            "updated_at": "2026-11-14 03:33:52",
+            "deleted_at": null,
+            "deleted_by": null
         },
         {
             "id": 75,
@@ -1101,10 +1205,12 @@
             "department_names": "[\"山东简谈\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 1,
             "created_at": "2025-05-21 08:49:08",
             "updated_at": "2026-11-08 09:58:24",
-            "business_version": 1,
-            "local_managed": 1
+            "deleted_at": null,
+            "deleted_by": null
         },
         {
             "id": 77,
@@ -1118,13 +1224,15 @@
             "sort": 0,
             "is_sales": 1,
             "department_ids": "[35]",
-            "department_names": "[\"外贸一部\"]",
+            "department_names": "[\"外贸部\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 2,
             "created_at": "2025-09-09 00:53:08",
-            "updated_at": "2026-11-08 09:58:24",
-            "business_version": 1,
-            "local_managed": 1
+            "updated_at": "2026-11-14 03:33:42",
+            "deleted_at": null,
+            "deleted_by": null
         },
         {
             "id": 78,
@@ -1138,13 +1246,15 @@
             "sort": 0,
             "is_sales": 0,
             "department_ids": "[35]",
-            "department_names": "[\"外贸一部\"]",
+            "department_names": "[\"外贸部\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 2,
             "created_at": "2025-09-09 06:18:55",
-            "updated_at": "2026-11-08 09:58:24",
-            "business_version": 1,
-            "local_managed": 1
+            "updated_at": "2026-11-14 03:33:42",
+            "deleted_at": null,
+            "deleted_by": null
         },
         {
             "id": 79,
@@ -1161,10 +1271,12 @@
             "department_names": "[\"营销部\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 1,
             "created_at": "2025-10-21 02:37:02",
             "updated_at": "2026-11-08 09:58:24",
-            "business_version": 1,
-            "local_managed": 1
+            "deleted_at": null,
+            "deleted_by": null
         },
         {
             "id": 81,
@@ -1177,14 +1289,16 @@
             "status": "hidden",
             "sort": 0,
             "is_sales": 0,
-            "department_ids": "[36]",
-            "department_names": "[\"外贸二部\"]",
+            "department_ids": "[35]",
+            "department_names": "[\"外贸部\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 3,
             "created_at": "2026-01-16 05:30:13",
-            "updated_at": "2026-11-08 09:58:24",
-            "business_version": 1,
-            "local_managed": 1
+            "updated_at": "2026-11-14 03:33:42",
+            "deleted_at": null,
+            "deleted_by": null
         },
         {
             "id": 82,
@@ -1194,17 +1308,19 @@
             "nickname": "高翠翠",
             "mobile": "17765663115",
             "email": "jx3lzxc@163.com",
-            "status": "normal",
+            "status": "hidden",
             "sort": 0,
-            "is_sales": 1,
-            "department_ids": "[36]",
-            "department_names": "[\"外贸二部\"]",
+            "is_sales": 0,
+            "department_ids": "[35]",
+            "department_names": "[\"外贸部\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 4,
             "created_at": "2026-01-16 05:30:42",
-            "updated_at": "2026-11-08 09:58:24",
-            "business_version": 1,
-            "local_managed": 1
+            "updated_at": "2026-11-14 03:33:42",
+            "deleted_at": null,
+            "deleted_by": null
         },
         {
             "id": 83,
@@ -1221,10 +1337,12 @@
             "department_names": "[\"山东简谈\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 2,
             "created_at": "2026-01-19 14:08:59",
-            "updated_at": "2026-11-08 09:58:24",
-            "business_version": 1,
-            "local_managed": 1
+            "updated_at": "2026-11-14 03:37:44",
+            "deleted_at": null,
+            "deleted_by": null
         },
         {
             "id": 84,
@@ -1234,17 +1352,19 @@
             "nickname": "秦泗方",
             "mobile": "17865941512",
             "email": "jxmlzxc@16341.com",
-            "status": "normal",
+            "status": "hidden",
             "sort": 0,
             "is_sales": 0,
-            "department_ids": "[37]",
-            "department_names": "[\"外贸运营\"]",
+            "department_ids": "[35]",
+            "department_names": "[\"外贸部\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 4,
             "created_at": "2026-01-23 01:57:53",
-            "updated_at": "2026-11-08 09:58:24",
-            "business_version": 1,
-            "local_managed": 1
+            "updated_at": "2026-11-14 03:33:42",
+            "deleted_at": null,
+            "deleted_by": null
         },
         {
             "id": 85,
@@ -1258,20 +1378,22 @@
             "sort": 0,
             "is_sales": 0,
             "department_ids": "[31]",
-            "department_names": "[\"内贸销售部\"]",
+            "department_names": "[\"内贸销售C端\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 2,
             "created_at": "2026-01-28 02:45:50",
-            "updated_at": "2026-11-08 09:58:24",
-            "business_version": 1,
-            "local_managed": 1
+            "updated_at": "2026-11-14 03:33:52",
+            "deleted_at": null,
+            "deleted_by": null
         },
         {
             "id": 86,
             "legacy_id": 150,
-            "username": "JT_cangchuCWJ",
+            "username": "JT_cangchuQCG",
             "password_hash": "$2y$12$DxMvSlHqVK6Jbj0kX30zFOWzTOtUxUMVILRefajS4yvXvmq9wFmlC",
-            "nickname": "丛维巨",
+            "nickname": "戚传根",
             "mobile": "17765743662",
             "email": "cwj@sdjiantran.com",
             "status": "normal",
@@ -1281,10 +1403,12 @@
             "department_names": "[\"生产仓储部\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 3,
             "created_at": "2026-02-28 02:46:41",
-            "updated_at": "2026-11-08 09:58:24",
-            "business_version": 1,
-            "local_managed": 1
+            "updated_at": "2026-11-14 03:37:03",
+            "deleted_at": null,
+            "deleted_by": null
         },
         {
             "id": 88,
@@ -1301,10 +1425,12 @@
             "department_names": "[\"营销部\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 1,
             "created_at": "2026-03-02 01:37:34",
             "updated_at": "2026-11-08 09:58:24",
-            "business_version": 1,
-            "local_managed": 1
+            "deleted_at": null,
+            "deleted_by": null
         },
         {
             "id": 89,
@@ -1321,10 +1447,12 @@
             "department_names": "[\"文政部\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 1,
             "created_at": "2026-03-02 01:38:29",
             "updated_at": "2026-11-08 09:58:24",
-            "business_version": 1,
-            "local_managed": 1
+            "deleted_at": null,
+            "deleted_by": null
         },
         {
             "id": 90,
@@ -1337,14 +1465,16 @@
             "status": "hidden",
             "sort": 0,
             "is_sales": 0,
-            "department_ids": "[36]",
-            "department_names": "[\"外贸二部\"]",
+            "department_ids": "[35]",
+            "department_names": "[\"外贸部\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 3,
             "created_at": "2026-03-24 07:23:38",
-            "updated_at": "2026-11-08 09:58:24",
-            "business_version": 1,
-            "local_managed": 1
+            "updated_at": "2026-11-14 03:33:42",
+            "deleted_at": null,
+            "deleted_by": null
         },
         {
             "id": 93,
@@ -1361,10 +1491,12 @@
             "department_names": "[\"内贸销售B端\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 1,
             "created_at": "2026-04-11 06:33:55",
             "updated_at": "2026-11-08 09:58:24",
-            "business_version": 1,
-            "local_managed": 1
+            "deleted_at": null,
+            "deleted_by": null
         },
         {
             "id": 94,
@@ -1381,10 +1513,12 @@
             "department_names": "[\"内贸销售B端\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 1,
             "created_at": "2026-04-11 06:35:44",
             "updated_at": "2026-11-08 09:58:24",
-            "business_version": 1,
-            "local_managed": 1
+            "deleted_at": null,
+            "deleted_by": null
         },
         {
             "id": 95,
@@ -1401,10 +1535,12 @@
             "department_names": "[\"内贸销售B端\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 1,
             "created_at": "2026-04-11 07:40:22",
             "updated_at": "2026-11-08 09:58:24",
-            "business_version": 1,
-            "local_managed": 1
+            "deleted_at": null,
+            "deleted_by": null
         },
         {
             "id": 96,
@@ -1421,10 +1557,12 @@
             "department_names": "[\"文政部\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 2,
             "created_at": "2026-04-28 01:59:38",
             "updated_at": "2026-11-08 10:55:39",
-            "business_version": 2,
-            "local_managed": 1
+            "deleted_at": null,
+            "deleted_by": null
         },
         {
             "id": 98,
@@ -1441,10 +1579,12 @@
             "department_names": "[\"文政部\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 1,
             "created_at": "2026-05-13 00:29:59",
             "updated_at": "2026-11-08 09:58:24",
-            "business_version": 1,
-            "local_managed": 1
+            "deleted_at": null,
+            "deleted_by": null
         },
         {
             "id": 99,
@@ -1458,13 +1598,15 @@
             "sort": 0,
             "is_sales": 0,
             "department_ids": "[31]",
-            "department_names": "[\"内贸销售部\"]",
+            "department_names": "[\"内贸销售C端\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 2,
             "created_at": "2026-05-19 02:05:11",
-            "updated_at": "2026-11-08 09:58:24",
-            "business_version": 1,
-            "local_managed": 1
+            "updated_at": "2026-11-14 03:33:52",
+            "deleted_at": null,
+            "deleted_by": null
         },
         {
             "id": 100,
@@ -1481,10 +1623,12 @@
             "department_names": "[\"文政部\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 1,
             "created_at": "2026-05-30 00:52:16",
             "updated_at": "2026-11-08 09:58:24",
-            "business_version": 1,
-            "local_managed": 1
+            "deleted_at": null,
+            "deleted_by": null
         },
         {
             "id": 101,
@@ -1498,13 +1642,15 @@
             "sort": 0,
             "is_sales": 0,
             "department_ids": "[35]",
-            "department_names": "[\"外贸一部\"]",
+            "department_names": "[\"外贸部\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 2,
             "created_at": "2026-08-07 07:33:38",
-            "updated_at": "2026-11-08 09:58:24",
-            "business_version": 1,
-            "local_managed": 1
+            "updated_at": "2026-11-14 03:33:42",
+            "deleted_at": null,
+            "deleted_by": null
         },
         {
             "id": 102,
@@ -1518,13 +1664,15 @@
             "sort": 0,
             "is_sales": 0,
             "department_ids": "[35]",
-            "department_names": "[\"外贸一部\"]",
+            "department_names": "[\"外贸部\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 2,
             "created_at": "2026-08-07 08:43:48",
-            "updated_at": "2026-11-08 09:58:24",
-            "business_version": 1,
-            "local_managed": 1
+            "updated_at": "2026-11-14 03:33:42",
+            "deleted_at": null,
+            "deleted_by": null
         },
         {
             "id": 103,
@@ -1538,13 +1686,15 @@
             "sort": 0,
             "is_sales": 0,
             "department_ids": "[35]",
-            "department_names": "[\"外贸一部\"]",
+            "department_names": "[\"外贸部\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 2,
             "created_at": "2026-09-11 09:11:21",
-            "updated_at": "2026-11-08 09:58:24",
-            "business_version": 1,
-            "local_managed": 1
+            "updated_at": "2026-11-14 03:33:42",
+            "deleted_at": null,
+            "deleted_by": null
         },
         {
             "id": 104,
@@ -1561,10 +1711,12 @@
             "department_names": "[\"生产仓储部\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 1,
             "created_at": "2026-09-11 09:12:51",
             "updated_at": "2026-11-08 09:58:24",
-            "business_version": 1,
-            "local_managed": 1
+            "deleted_at": null,
+            "deleted_by": null
         },
         {
             "id": 105,
@@ -1578,13 +1730,15 @@
             "sort": 0,
             "is_sales": 1,
             "department_ids": "[35]",
-            "department_names": "[\"外贸一部\"]",
+            "department_names": "[\"外贸部\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 2,
             "created_at": "2026-09-11 09:13:55",
-            "updated_at": "2026-11-08 09:58:24",
-            "business_version": 1,
-            "local_managed": 1
+            "updated_at": "2026-11-14 03:33:42",
+            "deleted_at": null,
+            "deleted_by": null
         },
         {
             "id": 106,
@@ -1594,17 +1748,19 @@
             "nickname": "张念伟",
             "mobile": "17641329317",
             "email": "jxmlz41133xc@gmail.com",
-            "status": "normal",
+            "status": "hidden",
             "sort": 0,
             "is_sales": 0,
             "department_ids": "[31]",
-            "department_names": "[\"内贸销售部\"]",
+            "department_names": "[\"内贸销售C端\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 3,
             "created_at": "2026-09-11 09:14:57",
-            "updated_at": "2026-11-08 09:58:24",
-            "business_version": 1,
-            "local_managed": 1
+            "updated_at": "2026-11-14 03:38:43",
+            "deleted_at": null,
+            "deleted_by": null
         },
         {
             "id": 107,
@@ -1621,10 +1777,12 @@
             "department_names": "[\"内贸销售B端\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 1,
             "created_at": "2026-10-07 00:46:41",
             "updated_at": "2026-11-08 09:58:24",
-            "business_version": 1,
-            "local_managed": 1
+            "deleted_at": null,
+            "deleted_by": null
         },
         {
             "id": 108,
@@ -1638,13 +1796,15 @@
             "sort": 0,
             "is_sales": 0,
             "department_ids": "[31]",
-            "department_names": "[\"内贸销售部\"]",
+            "department_names": "[\"内贸销售C端\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 2,
             "created_at": "2026-10-14 00:56:52",
-            "updated_at": "2026-11-08 09:58:24",
-            "business_version": 1,
-            "local_managed": 1
+            "updated_at": "2026-11-14 03:33:52",
+            "deleted_at": null,
+            "deleted_by": null
         },
         {
             "id": 109,
@@ -1658,13 +1818,15 @@
             "sort": 0,
             "is_sales": 0,
             "department_ids": "[35]",
-            "department_names": "[\"外贸一部\"]",
+            "department_names": "[\"外贸部\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 2,
             "created_at": "2026-10-15 05:16:00",
-            "updated_at": "2026-11-08 09:58:24",
-            "business_version": 1,
-            "local_managed": 1
+            "updated_at": "2026-11-14 03:33:42",
+            "deleted_at": null,
+            "deleted_by": null
         },
         {
             "id": 110,
@@ -1678,13 +1840,15 @@
             "sort": 0,
             "is_sales": 1,
             "department_ids": "[31]",
-            "department_names": "[\"内贸销售部\"]",
+            "department_names": "[\"内贸销售C端\"]",
             "auth_group_ids": "[]",
             "auth_group_names": "[]",
+            "local_managed": 1,
+            "business_version": 2,
             "created_at": "2026-11-07 00:44:57",
-            "updated_at": "2026-11-08 09:58:24",
-            "business_version": 1,
-            "local_managed": 1
+            "updated_at": "2026-11-14 03:33:52",
+            "deleted_at": null,
+            "deleted_by": null
         }
     ],
     "departments": [
@@ -1698,7 +1862,10 @@
             "local_managed": 1,
             "business_version": 1,
             "created_at": "2023-06-06 06:25:24",
-            "updated_at": "2023-06-06 06:25:24"
+            "updated_at": "2023-06-06 06:25:24",
+            "legacy_payload": "{\"auth_source\": \"local_management\", \"official_users_version\": 1}",
+            "deleted_at": null,
+            "deleted_by": null
         },
         {
             "id": 2,
@@ -1708,9 +1875,12 @@
             "status": "normal",
             "sort": 26,
             "local_managed": 1,
-            "business_version": 1,
+            "business_version": 2,
             "created_at": "2023-06-06 06:25:42",
-            "updated_at": "2023-06-06 06:25:42"
+            "updated_at": "2026-11-14 03:37:18",
+            "legacy_payload": "{\"auth_source\": \"local_management\", \"official_users_version\": 1}",
+            "deleted_at": null,
+            "deleted_by": null
         },
         {
             "id": 3,
@@ -1720,9 +1890,12 @@
             "status": "normal",
             "sort": 28,
             "local_managed": 1,
-            "business_version": 1,
+            "business_version": 2,
             "created_at": "2023-06-06 06:25:56",
-            "updated_at": "2023-06-06 06:25:56"
+            "updated_at": "2026-11-14 03:37:12",
+            "legacy_payload": "{\"auth_source\": \"local_management\", \"official_users_version\": 1}",
+            "deleted_at": null,
+            "deleted_by": null
         },
         {
             "id": 4,
@@ -1732,69 +1905,87 @@
             "status": "normal",
             "sort": 29,
             "local_managed": 1,
-            "business_version": 1,
+            "business_version": 2,
             "created_at": "2023-06-06 06:26:26",
-            "updated_at": "2026-02-28 02:39:27"
+            "updated_at": "2026-11-14 03:37:03",
+            "legacy_payload": "{\"auth_source\": \"local_management\", \"official_users_version\": 1}",
+            "deleted_at": null,
+            "deleted_by": null
         },
         {
             "id": 5,
             "legacy_id": 31,
             "parent_legacy_id": 25,
-            "name": "内贸销售部",
+            "name": "内贸销售C端",
             "status": "normal",
             "sort": 31,
             "local_managed": 1,
-            "business_version": 1,
+            "business_version": 3,
             "created_at": "2024-11-30 08:19:23",
-            "updated_at": "2026-02-28 02:39:14"
+            "updated_at": "2026-11-14 03:33:56",
+            "legacy_payload": "{\"auth_source\": \"local_management\", \"official_users_version\": 1}",
+            "deleted_at": null,
+            "deleted_by": null
         },
         {
             "id": 6,
             "legacy_id": 35,
             "parent_legacy_id": 25,
-            "name": "外贸一部",
+            "name": "外贸部",
             "status": "normal",
             "sort": 35,
             "local_managed": 1,
-            "business_version": 1,
+            "business_version": 3,
             "created_at": "2025-09-09 00:53:26",
-            "updated_at": "2026-02-28 02:38:54"
+            "updated_at": "2026-11-14 03:36:16",
+            "legacy_payload": "{\"auth_source\": \"local_management\", \"official_users_version\": 1}",
+            "deleted_at": null,
+            "deleted_by": null
         },
         {
             "id": 7,
             "legacy_id": 36,
             "parent_legacy_id": 25,
             "name": "外贸二部",
-            "status": "normal",
+            "status": "deleted",
             "sort": 36,
             "local_managed": 1,
-            "business_version": 1,
+            "business_version": 2,
             "created_at": "2026-02-28 02:37:56",
-            "updated_at": "2026-02-28 02:37:56"
+            "updated_at": "2026-11-14 03:33:32",
+            "legacy_payload": "{\"auth_source\": \"local_management\", \"official_users_version\": 1}",
+            "deleted_at": "2026-11-14 03:33:32",
+            "deleted_by": 1
         },
         {
             "id": 8,
             "legacy_id": 37,
             "parent_legacy_id": 25,
             "name": "外贸运营",
-            "status": "normal",
+            "status": "deleted",
             "sort": 37,
             "local_managed": 1,
-            "business_version": 1,
+            "business_version": 2,
             "created_at": "2026-02-28 02:44:51",
-            "updated_at": "2026-02-28 02:44:51"
+            "updated_at": "2026-11-14 03:32:36",
+            "legacy_payload": "{\"auth_source\": \"local_management\", \"official_users_version\": 1}",
+            "deleted_at": "2026-11-14 03:32:36",
+            "deleted_by": 1
         },
         {
             "id": 9,
             "legacy_id": 38,
             "parent_legacy_id": 25,
             "name": "外贸三部",
-            "status": "normal",
+            "status": "deleted",
             "sort": 38,
             "local_managed": 1,
-            "business_version": 1,
+            "business_version": 2,
             "created_at": "2026-03-24 07:25:59",
-            "updated_at": "2026-03-24 07:25:59"
+            "updated_at": "2026-11-14 03:31:54",
+            "legacy_payload": "{\"auth_source\": \"local_management\", \"official_users_version\": 1}",
+            "deleted_at": "2026-11-14 03:31:54",
+            "deleted_by": 1
         },
         {
             "id": 10,
@@ -1804,9 +1995,12 @@
             "status": "normal",
             "sort": 39,
             "local_managed": 1,
-            "business_version": 1,
+            "business_version": 2,
             "created_at": "2026-08-10 06:55:14",
-            "updated_at": "2026-08-10 06:55:14"
+            "updated_at": "2026-11-14 03:34:10",
+            "legacy_payload": "{\"auth_source\": \"local_management\", \"official_users_version\": 1}",
+            "deleted_at": null,
+            "deleted_by": null
         }
     ],
     "memberships": [
@@ -1817,7 +2011,8 @@
             "is_principal": 0,
             "is_owner": 0,
             "created_at": "2024-03-12 00:29:37",
-            "updated_at": "2024-03-12 00:29:37"
+            "updated_at": "2026-11-14 03:37:18",
+            "legacy_payload": "{\"official_users_version\": 1}"
         },
         {
             "id": 4,
@@ -1826,7 +2021,8 @@
             "is_principal": 0,
             "is_owner": 0,
             "created_at": "2024-07-21 02:14:52",
-            "updated_at": "2024-07-21 02:14:52"
+            "updated_at": "2026-11-14 03:37:12",
+            "legacy_payload": "{\"official_users_version\": 1}"
         },
         {
             "id": 7,
@@ -1835,7 +2031,8 @@
             "is_principal": 0,
             "is_owner": 0,
             "created_at": "2024-07-22 07:41:19",
-            "updated_at": "2024-07-22 07:41:19"
+            "updated_at": "2026-11-14 03:37:03",
+            "legacy_payload": "{\"official_users_version\": 1}"
         },
         {
             "id": 9,
@@ -1844,7 +2041,8 @@
             "is_principal": 0,
             "is_owner": 0,
             "created_at": "2024-07-22 07:42:39",
-            "updated_at": "2024-07-22 07:42:39"
+            "updated_at": "2026-11-14 03:37:03",
+            "legacy_payload": "{\"official_users_version\": 1}"
         },
         {
             "id": 14,
@@ -1853,7 +2051,8 @@
             "is_principal": 0,
             "is_owner": 0,
             "created_at": "2024-07-22 07:45:39",
-            "updated_at": "2024-07-22 07:45:39"
+            "updated_at": "2026-11-14 03:37:03",
+            "legacy_payload": "{\"official_users_version\": 1}"
         },
         {
             "id": 18,
@@ -1862,7 +2061,8 @@
             "is_principal": 0,
             "is_owner": 0,
             "created_at": "2024-09-05 01:13:10",
-            "updated_at": "2024-09-05 01:13:10"
+            "updated_at": "2026-11-14 03:37:03",
+            "legacy_payload": "{\"official_users_version\": 1}"
         },
         {
             "id": 19,
@@ -1871,16 +2071,18 @@
             "is_principal": 0,
             "is_owner": 0,
             "created_at": "2024-09-05 01:13:52",
-            "updated_at": "2024-09-05 01:13:52"
+            "updated_at": "2026-11-14 03:37:03",
+            "legacy_payload": "{\"official_users_version\": 1}"
         },
         {
             "id": 21,
             "department_legacy_id": 28,
             "user_legacy_id": 23,
-            "is_principal": 0,
+            "is_principal": 1,
             "is_owner": 0,
             "created_at": "2024-10-10 07:17:53",
-            "updated_at": "2024-10-10 07:17:53"
+            "updated_at": "2026-11-14 03:37:12",
+            "legacy_payload": "{\"official_users_version\": 1}"
         },
         {
             "id": 22,
@@ -1889,7 +2091,8 @@
             "is_principal": 0,
             "is_owner": 0,
             "created_at": "2024-11-10 02:11:18",
-            "updated_at": "2024-11-10 02:11:18"
+            "updated_at": "2026-11-14 03:37:18",
+            "legacy_payload": "{\"official_users_version\": 1}"
         },
         {
             "id": 23,
@@ -1898,7 +2101,8 @@
             "is_principal": 0,
             "is_owner": 0,
             "created_at": "2024-11-17 01:26:44",
-            "updated_at": "2024-11-17 01:26:44"
+            "updated_at": "2026-11-14 03:37:03",
+            "legacy_payload": "{\"official_users_version\": 1}"
         },
         {
             "id": 24,
@@ -1907,7 +2111,8 @@
             "is_principal": 0,
             "is_owner": 0,
             "created_at": "2024-11-25 03:05:35",
-            "updated_at": "2024-11-25 03:05:35"
+            "updated_at": "2026-11-14 03:37:12",
+            "legacy_payload": "{\"official_users_version\": 1}"
         },
         {
             "id": 25,
@@ -1916,7 +2121,8 @@
             "is_principal": 0,
             "is_owner": 0,
             "created_at": "2024-12-05 01:24:26",
-            "updated_at": "2024-12-05 01:24:26"
+            "updated_at": "2026-11-14 03:37:03",
+            "legacy_payload": "{\"official_users_version\": 1}"
         },
         {
             "id": 26,
@@ -1925,7 +2131,8 @@
             "is_principal": 0,
             "is_owner": 0,
             "created_at": "2024-12-06 06:09:16",
-            "updated_at": "2024-12-06 06:09:16"
+            "updated_at": "2026-11-14 03:37:03",
+            "legacy_payload": "{\"official_users_version\": 1}"
         },
         {
             "id": 27,
@@ -1934,7 +2141,8 @@
             "is_principal": 0,
             "is_owner": 0,
             "created_at": "2024-12-06 06:41:53",
-            "updated_at": "2024-12-06 06:41:53"
+            "updated_at": "2024-12-06 06:41:53",
+            "legacy_payload": "{\"official_users_version\": 1}"
         },
         {
             "id": 28,
@@ -1943,7 +2151,8 @@
             "is_principal": 0,
             "is_owner": 0,
             "created_at": "2025-01-07 08:25:10",
-            "updated_at": "2025-01-07 08:25:10"
+            "updated_at": "2026-11-14 03:37:03",
+            "legacy_payload": "{\"official_users_version\": 1}"
         },
         {
             "id": 29,
@@ -1952,7 +2161,8 @@
             "is_principal": 0,
             "is_owner": 0,
             "created_at": "2025-01-12 01:46:26",
-            "updated_at": "2025-01-12 01:46:26"
+            "updated_at": "2026-11-14 03:37:03",
+            "legacy_payload": "{\"official_users_version\": 1}"
         },
         {
             "id": 33,
@@ -1961,7 +2171,8 @@
             "is_principal": 0,
             "is_owner": 0,
             "created_at": "2025-01-19 06:22:26",
-            "updated_at": "2025-01-19 06:22:26"
+            "updated_at": "2026-11-14 03:37:18",
+            "legacy_payload": "{\"official_users_version\": 1}"
         },
         {
             "id": 34,
@@ -1970,7 +2181,8 @@
             "is_principal": 0,
             "is_owner": 0,
             "created_at": "2025-01-19 06:22:57",
-            "updated_at": "2025-01-19 06:22:57"
+            "updated_at": "2026-11-14 03:37:18",
+            "legacy_payload": "{\"official_users_version\": 1}"
         },
         {
             "id": 35,
@@ -1979,7 +2191,8 @@
             "is_principal": 0,
             "is_owner": 0,
             "created_at": "2025-02-28 05:29:49",
-            "updated_at": "2025-02-28 05:29:49"
+            "updated_at": "2026-11-14 03:37:03",
+            "legacy_payload": "{\"official_users_version\": 1}"
         },
         {
             "id": 36,
@@ -1988,7 +2201,8 @@
             "is_principal": 0,
             "is_owner": 0,
             "created_at": "2025-03-03 06:58:32",
-            "updated_at": "2025-03-03 06:58:32"
+            "updated_at": "2026-11-14 03:33:56",
+            "legacy_payload": "{\"official_users_version\": 1}"
         },
         {
             "id": 37,
@@ -1997,7 +2211,8 @@
             "is_principal": 0,
             "is_owner": 0,
             "created_at": "2025-03-03 09:02:51",
-            "updated_at": "2025-03-03 09:02:51"
+            "updated_at": "2026-11-14 03:37:12",
+            "legacy_payload": "{\"official_users_version\": 1}"
         },
         {
             "id": 39,
@@ -2006,7 +2221,8 @@
             "is_principal": 0,
             "is_owner": 0,
             "created_at": "2025-03-26 08:17:55",
-            "updated_at": "2025-03-26 08:17:55"
+            "updated_at": "2026-11-14 03:33:56",
+            "legacy_payload": "{\"official_users_version\": 1}"
         },
         {
             "id": 40,
@@ -2015,7 +2231,8 @@
             "is_principal": 0,
             "is_owner": 0,
             "created_at": "2025-03-30 02:10:37",
-            "updated_at": "2025-03-30 02:10:37"
+            "updated_at": "2026-11-14 03:33:56",
+            "legacy_payload": "{\"official_users_version\": 1}"
         },
         {
             "id": 41,
@@ -2024,7 +2241,8 @@
             "is_principal": 0,
             "is_owner": 0,
             "created_at": "2025-03-30 02:11:16",
-            "updated_at": "2025-03-30 02:11:16"
+            "updated_at": "2026-11-14 03:33:56",
+            "legacy_payload": "{\"official_users_version\": 1}"
         },
         {
             "id": 42,
@@ -2033,7 +2251,8 @@
             "is_principal": 0,
             "is_owner": 0,
             "created_at": "2025-04-09 02:08:45",
-            "updated_at": "2025-04-09 02:08:45"
+            "updated_at": "2026-11-14 03:37:12",
+            "legacy_payload": "{\"official_users_version\": 1}"
         },
         {
             "id": 43,
@@ -2042,7 +2261,8 @@
             "is_principal": 0,
             "is_owner": 0,
             "created_at": "2025-04-25 06:42:05",
-            "updated_at": "2025-04-25 06:42:05"
+            "updated_at": "2026-11-14 03:33:56",
+            "legacy_payload": "{\"official_users_version\": 1}"
         },
         {
             "id": 44,
@@ -2051,7 +2271,8 @@
             "is_principal": 0,
             "is_owner": 0,
             "created_at": "2025-05-21 08:49:08",
-            "updated_at": "2025-05-21 08:49:08"
+            "updated_at": "2025-05-21 08:49:08",
+            "legacy_payload": "{\"official_users_version\": 1}"
         },
         {
             "id": 46,
@@ -2060,7 +2281,8 @@
             "is_principal": 0,
             "is_owner": 0,
             "created_at": "2025-07-28 07:00:13",
-            "updated_at": "2025-07-28 07:00:13"
+            "updated_at": "2026-11-14 03:33:56",
+            "legacy_payload": "{\"official_users_version\": 1}"
         },
         {
             "id": 48,
@@ -2069,7 +2291,8 @@
             "is_principal": 0,
             "is_owner": 0,
             "created_at": "2025-09-09 00:53:38",
-            "updated_at": "2025-09-09 00:53:38"
+            "updated_at": "2026-11-14 03:36:16",
+            "legacy_payload": "{\"official_users_version\": 1}"
         },
         {
             "id": 49,
@@ -2078,7 +2301,8 @@
             "is_principal": 0,
             "is_owner": 0,
             "created_at": "2025-09-09 00:54:11",
-            "updated_at": "2025-09-09 00:54:11"
+            "updated_at": "2026-11-14 03:36:16",
+            "legacy_payload": "{\"official_users_version\": 1}"
         },
         {
             "id": 50,
@@ -2087,7 +2311,8 @@
             "is_principal": 0,
             "is_owner": 0,
             "created_at": "2025-09-09 00:54:35",
-            "updated_at": "2025-09-09 00:54:35"
+            "updated_at": "2026-11-14 03:36:16",
+            "legacy_payload": "{\"official_users_version\": 1}"
         },
         {
             "id": 51,
@@ -2096,7 +2321,8 @@
             "is_principal": 0,
             "is_owner": 0,
             "created_at": "2025-09-09 00:54:47",
-            "updated_at": "2025-09-09 00:54:47"
+            "updated_at": "2026-11-14 03:36:16",
+            "legacy_payload": "{\"official_users_version\": 1}"
         },
         {
             "id": 52,
@@ -2105,7 +2331,8 @@
             "is_principal": 0,
             "is_owner": 0,
             "created_at": "2025-09-09 06:18:55",
-            "updated_at": "2025-09-09 06:18:55"
+            "updated_at": "2026-11-14 03:36:16",
+            "legacy_payload": "{\"official_users_version\": 1}"
         },
         {
             "id": 53,
@@ -2114,7 +2341,8 @@
             "is_principal": 0,
             "is_owner": 0,
             "created_at": "2025-10-22 01:26:12",
-            "updated_at": "2025-10-22 01:26:12"
+            "updated_at": "2026-11-14 03:37:03",
+            "legacy_payload": "{\"official_users_version\": 1}"
         },
         {
             "id": 55,
@@ -2123,7 +2351,8 @@
             "is_principal": 0,
             "is_owner": 0,
             "created_at": "2025-11-08 08:38:10",
-            "updated_at": "2025-11-08 08:38:10"
+            "updated_at": "2026-11-14 03:37:18",
+            "legacy_payload": "{\"official_users_version\": 1}"
         },
         {
             "id": 56,
@@ -2132,7 +2361,8 @@
             "is_principal": 0,
             "is_owner": 0,
             "created_at": "2025-12-28 06:38:17",
-            "updated_at": "2025-12-28 06:38:17"
+            "updated_at": "2026-11-14 03:37:12",
+            "legacy_payload": "{\"official_users_version\": 1}"
         },
         {
             "id": 57,
@@ -2141,7 +2371,8 @@
             "is_principal": 0,
             "is_owner": 0,
             "created_at": "2025-12-28 06:41:50",
-            "updated_at": "2025-12-28 06:41:50"
+            "updated_at": "2026-11-14 03:36:16",
+            "legacy_payload": "{\"official_users_version\": 1}"
         },
         {
             "id": 58,
@@ -2150,7 +2381,8 @@
             "is_principal": 0,
             "is_owner": 0,
             "created_at": "2026-01-19 14:08:59",
-            "updated_at": "2026-01-19 14:08:59"
+            "updated_at": "2026-01-19 14:08:59",
+            "legacy_payload": "{\"official_users_version\": 1}"
         },
         {
             "id": 59,
@@ -2159,25 +2391,8 @@
             "is_principal": 0,
             "is_owner": 0,
             "created_at": "2026-01-28 02:45:50",
-            "updated_at": "2026-01-28 02:45:50"
-        },
-        {
-            "id": 60,
-            "department_legacy_id": 36,
-            "user_legacy_id": 146,
-            "is_principal": 0,
-            "is_owner": 0,
-            "created_at": "2026-02-28 02:39:41",
-            "updated_at": "2026-02-28 02:39:41"
-        },
-        {
-            "id": 61,
-            "department_legacy_id": 36,
-            "user_legacy_id": 145,
-            "is_principal": 0,
-            "is_owner": 0,
-            "created_at": "2026-02-28 02:39:55",
-            "updated_at": "2026-02-28 02:39:55"
+            "updated_at": "2026-11-14 03:33:56",
+            "legacy_payload": "{\"official_users_version\": 1}"
         },
         {
             "id": 62,
@@ -2186,7 +2401,8 @@
             "is_principal": 0,
             "is_owner": 0,
             "created_at": "2026-02-28 02:40:43",
-            "updated_at": "2026-02-28 02:40:43"
+            "updated_at": "2026-11-14 03:33:56",
+            "legacy_payload": "{\"official_users_version\": 1}"
         },
         {
             "id": 63,
@@ -2195,7 +2411,8 @@
             "is_principal": 0,
             "is_owner": 0,
             "created_at": "2026-02-28 02:40:57",
-            "updated_at": "2026-02-28 02:40:57"
+            "updated_at": "2026-11-14 03:33:56",
+            "legacy_payload": "{\"official_users_version\": 1}"
         },
         {
             "id": 64,
@@ -2204,7 +2421,8 @@
             "is_principal": 0,
             "is_owner": 0,
             "created_at": "2026-02-28 02:41:08",
-            "updated_at": "2026-02-28 02:41:08"
+            "updated_at": "2026-11-14 03:33:56",
+            "legacy_payload": "{\"official_users_version\": 1}"
         },
         {
             "id": 65,
@@ -2213,16 +2431,18 @@
             "is_principal": 0,
             "is_owner": 0,
             "created_at": "2026-02-28 02:41:17",
-            "updated_at": "2026-02-28 02:41:17"
+            "updated_at": "2026-11-14 03:33:56",
+            "legacy_payload": "{\"official_users_version\": 1}"
         },
         {
             "id": 66,
             "department_legacy_id": 31,
             "user_legacy_id": 10,
-            "is_principal": 0,
+            "is_principal": 1,
             "is_owner": 0,
             "created_at": "2026-02-28 02:41:25",
-            "updated_at": "2026-02-28 02:41:25"
+            "updated_at": "2026-11-14 03:33:56",
+            "legacy_payload": "{\"official_users_version\": 1}"
         },
         {
             "id": 67,
@@ -2231,25 +2451,18 @@
             "is_principal": 0,
             "is_owner": 0,
             "created_at": "2026-02-28 02:41:39",
-            "updated_at": "2026-02-28 02:41:39"
-        },
-        {
-            "id": 68,
-            "department_legacy_id": 37,
-            "user_legacy_id": 148,
-            "is_principal": 0,
-            "is_owner": 0,
-            "created_at": "2026-02-28 02:45:04",
-            "updated_at": "2026-02-28 02:45:04"
+            "updated_at": "2026-11-14 03:33:56",
+            "legacy_payload": "{\"official_users_version\": 1}"
         },
         {
             "id": 69,
             "department_legacy_id": 29,
             "user_legacy_id": 150,
-            "is_principal": 0,
+            "is_principal": 1,
             "is_owner": 0,
             "created_at": "2026-02-28 02:46:41",
-            "updated_at": "2026-02-28 02:46:41"
+            "updated_at": "2026-11-14 03:37:03",
+            "legacy_payload": "{\"official_users_version\": 1}"
         },
         {
             "id": 71,
@@ -2258,7 +2471,8 @@
             "is_principal": 0,
             "is_owner": 0,
             "created_at": "2026-03-02 01:37:34",
-            "updated_at": "2026-03-02 01:37:34"
+            "updated_at": "2026-11-14 03:37:18",
+            "legacy_payload": "{\"official_users_version\": 1}"
         },
         {
             "id": 72,
@@ -2267,16 +2481,8 @@
             "is_principal": 0,
             "is_owner": 0,
             "created_at": "2026-03-02 01:38:29",
-            "updated_at": "2026-03-02 01:38:29"
-        },
-        {
-            "id": 73,
-            "department_legacy_id": 36,
-            "user_legacy_id": 154,
-            "is_principal": 0,
-            "is_owner": 0,
-            "created_at": "2026-03-24 08:06:12",
-            "updated_at": "2026-03-24 08:06:12"
+            "updated_at": "2026-11-14 03:37:12",
+            "legacy_payload": "{\"official_users_version\": 1}"
         },
         {
             "id": 74,
@@ -2285,7 +2491,8 @@
             "is_principal": 0,
             "is_owner": 0,
             "created_at": "2026-03-30 08:09:43",
-            "updated_at": "2026-03-30 08:09:43"
+            "updated_at": "2026-11-14 03:33:56",
+            "legacy_payload": "{\"official_users_version\": 1}"
         },
         {
             "id": 77,
@@ -2294,7 +2501,8 @@
             "is_principal": 0,
             "is_owner": 0,
             "created_at": "2026-04-28 01:59:38",
-            "updated_at": "2026-04-28 01:59:38"
+            "updated_at": "2026-11-14 03:37:12",
+            "legacy_payload": "{\"official_users_version\": 1}"
         },
         {
             "id": 78,
@@ -2303,7 +2511,8 @@
             "is_principal": 0,
             "is_owner": 0,
             "created_at": "2026-05-04 03:24:05",
-            "updated_at": "2026-05-04 03:24:05"
+            "updated_at": "2026-11-14 03:37:03",
+            "legacy_payload": "{\"official_users_version\": 1}"
         },
         {
             "id": 80,
@@ -2312,7 +2521,8 @@
             "is_principal": 0,
             "is_owner": 0,
             "created_at": "2026-05-13 00:29:59",
-            "updated_at": "2026-05-13 00:29:59"
+            "updated_at": "2026-11-14 03:37:12",
+            "legacy_payload": "{\"official_users_version\": 1}"
         },
         {
             "id": 81,
@@ -2321,7 +2531,8 @@
             "is_principal": 0,
             "is_owner": 0,
             "created_at": "2026-05-19 02:10:43",
-            "updated_at": "2026-05-19 02:10:43"
+            "updated_at": "2026-11-14 03:33:56",
+            "legacy_payload": "{\"official_users_version\": 1}"
         },
         {
             "id": 82,
@@ -2330,7 +2541,8 @@
             "is_principal": 0,
             "is_owner": 0,
             "created_at": "2026-06-30 09:15:47",
-            "updated_at": "2026-06-30 09:15:47"
+            "updated_at": "2026-11-14 03:37:12",
+            "legacy_payload": "{\"official_users_version\": 1}"
         },
         {
             "id": 83,
@@ -2339,7 +2551,8 @@
             "is_principal": 0,
             "is_owner": 0,
             "created_at": "2026-07-24 03:15:14",
-            "updated_at": "2026-07-24 03:15:14"
+            "updated_at": "2026-11-14 03:37:12",
+            "legacy_payload": "{\"official_users_version\": 1}"
         },
         {
             "id": 84,
@@ -2348,7 +2561,8 @@
             "is_principal": 0,
             "is_owner": 0,
             "created_at": "2026-08-07 07:33:38",
-            "updated_at": "2026-08-07 07:33:38"
+            "updated_at": "2026-11-14 03:36:16",
+            "legacy_payload": "{\"official_users_version\": 1}"
         },
         {
             "id": 85,
@@ -2357,7 +2571,8 @@
             "is_principal": 0,
             "is_owner": 0,
             "created_at": "2026-08-07 08:43:48",
-            "updated_at": "2026-08-07 08:43:48"
+            "updated_at": "2026-11-14 03:36:16",
+            "legacy_payload": "{\"official_users_version\": 1}"
         },
         {
             "id": 86,
@@ -2366,7 +2581,8 @@
             "is_principal": 0,
             "is_owner": 0,
             "created_at": "2026-08-10 06:58:16",
-            "updated_at": "2026-08-10 06:58:16"
+            "updated_at": "2026-11-14 03:34:10",
+            "legacy_payload": "{\"official_users_version\": 1}"
         },
         {
             "id": 87,
@@ -2375,7 +2591,8 @@
             "is_principal": 0,
             "is_owner": 0,
             "created_at": "2026-08-10 06:58:27",
-            "updated_at": "2026-08-10 06:58:27"
+            "updated_at": "2026-11-14 03:34:10",
+            "legacy_payload": "{\"official_users_version\": 1}"
         },
         {
             "id": 88,
@@ -2384,7 +2601,8 @@
             "is_principal": 0,
             "is_owner": 0,
             "created_at": "2026-08-10 06:58:37",
-            "updated_at": "2026-08-10 06:58:37"
+            "updated_at": "2026-11-14 03:34:10",
+            "legacy_payload": "{\"official_users_version\": 1}"
         },
         {
             "id": 89,
@@ -2393,16 +2611,18 @@
             "is_principal": 0,
             "is_owner": 0,
             "created_at": "2026-08-10 06:58:46",
-            "updated_at": "2026-08-10 06:58:46"
+            "updated_at": "2026-11-14 03:34:10",
+            "legacy_payload": "{\"official_users_version\": 1}"
         },
         {
             "id": 90,
             "department_legacy_id": 39,
             "user_legacy_id": 5,
-            "is_principal": 0,
+            "is_principal": 1,
             "is_owner": 0,
             "created_at": "2026-08-10 06:59:18",
-            "updated_at": "2026-08-10 06:59:18"
+            "updated_at": "2026-11-14 03:34:10",
+            "legacy_payload": "{\"official_users_version\": 1}"
         },
         {
             "id": 91,
@@ -2411,7 +2631,8 @@
             "is_principal": 0,
             "is_owner": 0,
             "created_at": "2026-08-25 07:45:13",
-            "updated_at": "2026-08-25 07:45:13"
+            "updated_at": "2026-11-14 03:36:16",
+            "legacy_payload": "{\"official_users_version\": 1}"
         },
         {
             "id": 92,
@@ -2420,7 +2641,8 @@
             "is_principal": 0,
             "is_owner": 0,
             "created_at": "2026-09-05 00:46:19",
-            "updated_at": "2026-09-05 00:46:19"
+            "updated_at": "2026-11-14 03:34:10",
+            "legacy_payload": "{\"official_users_version\": 1}"
         },
         {
             "id": 93,
@@ -2429,7 +2651,8 @@
             "is_principal": 0,
             "is_owner": 0,
             "created_at": "2026-09-11 09:11:21",
-            "updated_at": "2026-09-11 09:11:21"
+            "updated_at": "2026-11-14 03:36:16",
+            "legacy_payload": "{\"official_users_version\": 1}"
         },
         {
             "id": 94,
@@ -2438,7 +2661,8 @@
             "is_principal": 0,
             "is_owner": 0,
             "created_at": "2026-09-11 09:12:51",
-            "updated_at": "2026-09-11 09:12:51"
+            "updated_at": "2026-11-14 03:37:03",
+            "legacy_payload": "{\"official_users_version\": 1}"
         },
         {
             "id": 95,
@@ -2447,7 +2671,8 @@
             "is_principal": 0,
             "is_owner": 0,
             "created_at": "2026-09-11 09:13:55",
-            "updated_at": "2026-09-11 09:13:55"
+            "updated_at": "2026-11-14 03:36:16",
+            "legacy_payload": "{\"official_users_version\": 1}"
         },
         {
             "id": 96,
@@ -2456,7 +2681,8 @@
             "is_principal": 0,
             "is_owner": 0,
             "created_at": "2026-09-11 09:14:57",
-            "updated_at": "2026-09-11 09:14:57"
+            "updated_at": "2026-11-14 03:33:56",
+            "legacy_payload": "{\"official_users_version\": 1}"
         },
         {
             "id": 97,
@@ -2465,16 +2691,18 @@
             "is_principal": 0,
             "is_owner": 0,
             "created_at": "2026-10-07 00:46:41",
-            "updated_at": "2026-10-07 00:46:41"
+            "updated_at": "2026-11-14 03:34:10",
+            "legacy_payload": "{\"official_users_version\": 1}"
         },
         {
             "id": 98,
             "department_legacy_id": 35,
             "user_legacy_id": 16,
-            "is_principal": 0,
+            "is_principal": 1,
             "is_owner": 0,
             "created_at": "2026-10-09 05:45:31",
-            "updated_at": "2026-10-09 05:45:31"
+            "updated_at": "2026-11-14 03:36:16",
+            "legacy_payload": "{\"official_users_version\": 1}"
         },
         {
             "id": 99,
@@ -2483,7 +2711,8 @@
             "is_principal": 0,
             "is_owner": 0,
             "created_at": "2026-10-14 00:56:52",
-            "updated_at": "2026-10-14 00:56:52"
+            "updated_at": "2026-11-14 03:33:56",
+            "legacy_payload": "{\"official_users_version\": 1}"
         },
         {
             "id": 100,
@@ -2492,7 +2721,8 @@
             "is_principal": 0,
             "is_owner": 0,
             "created_at": "2026-10-14 00:58:43",
-            "updated_at": "2026-10-14 00:58:43"
+            "updated_at": "2026-11-14 03:34:10",
+            "legacy_payload": "{\"official_users_version\": 1}"
         },
         {
             "id": 101,
@@ -2501,7 +2731,8 @@
             "is_principal": 0,
             "is_owner": 0,
             "created_at": "2026-10-15 05:16:00",
-            "updated_at": "2026-10-15 05:16:00"
+            "updated_at": "2026-11-14 03:36:16",
+            "legacy_payload": "{\"official_users_version\": 1}"
         },
         {
             "id": 102,
@@ -2510,7 +2741,8 @@
             "is_principal": 0,
             "is_owner": 0,
             "created_at": "2026-10-30 08:02:41",
-            "updated_at": "2026-10-30 08:02:41"
+            "updated_at": "2026-11-14 03:37:03",
+            "legacy_payload": "{\"official_users_version\": 1}"
         },
         {
             "id": 103,
@@ -2519,7 +2751,68 @@
             "is_principal": 0,
             "is_owner": 0,
             "created_at": "2026-11-07 00:44:57",
-            "updated_at": "2026-11-07 00:44:57"
+            "updated_at": "2026-11-14 03:33:56",
+            "legacy_payload": "{\"official_users_version\": 1}"
+        },
+        {
+            "id": 104,
+            "department_legacy_id": 35,
+            "user_legacy_id": 148,
+            "is_principal": 0,
+            "is_owner": 0,
+            "created_at": "2026-11-14 03:32:26",
+            "updated_at": "2026-11-14 03:36:16",
+            "legacy_payload": null
+        },
+        {
+            "id": 105,
+            "department_legacy_id": 35,
+            "user_legacy_id": 145,
+            "is_principal": 0,
+            "is_owner": 0,
+            "created_at": "2026-11-14 03:32:56",
+            "updated_at": "2026-11-14 03:36:16",
+            "legacy_payload": null
+        },
+        {
+            "id": 106,
+            "department_legacy_id": 35,
+            "user_legacy_id": 146,
+            "is_principal": 0,
+            "is_owner": 0,
+            "created_at": "2026-11-14 03:33:06",
+            "updated_at": "2026-11-14 03:36:16",
+            "legacy_payload": null
+        },
+        {
+            "id": 107,
+            "department_legacy_id": 35,
+            "user_legacy_id": 154,
+            "is_principal": 0,
+            "is_owner": 0,
+            "created_at": "2026-11-14 03:33:21",
+            "updated_at": "2026-11-14 03:36:16",
+            "legacy_payload": null
+        },
+        {
+            "id": 108,
+            "department_legacy_id": 26,
+            "user_legacy_id": 5,
+            "is_principal": 1,
+            "is_owner": 0,
+            "created_at": "2026-11-14 03:34:50",
+            "updated_at": "2026-11-14 03:37:18",
+            "legacy_payload": null
+        },
+        {
+            "id": 112,
+            "department_legacy_id": 35,
+            "user_legacy_id": 23,
+            "is_principal": 0,
+            "is_owner": 0,
+            "created_at": "2026-11-14 03:35:26",
+            "updated_at": "2026-11-14 03:36:16",
+            "legacy_payload": null
         }
     ],
     "business_staff": [
@@ -2572,56 +2865,8 @@
             "updated_at": "2026-11-08 09:58:55"
         },
         {
-            "id": 4,
-            "user_legacy_id": 14,
-            "staff_type": "sales",
-            "department_legacy_id": null,
-            "status": "disabled",
-            "effective_from": null,
-            "effective_to": null,
-            "source": "legacy_migration",
-            "remark": "旧ERP岗位资料迁入",
-            "business_version": 1,
-            "created_by_legacy_id": 1,
-            "updated_by_legacy_id": 1,
-            "created_at": "2026-11-08 09:58:24",
-            "updated_at": "2026-11-08 09:58:24"
-        },
-        {
-            "id": 5,
-            "user_legacy_id": 15,
-            "staff_type": "sales",
-            "department_legacy_id": 35,
-            "status": "disabled",
-            "effective_from": null,
-            "effective_to": null,
-            "source": "legacy_migration",
-            "remark": "旧ERP岗位资料迁入",
-            "business_version": 1,
-            "created_by_legacy_id": 1,
-            "updated_by_legacy_id": 1,
-            "created_at": "2026-11-08 09:58:24",
-            "updated_at": "2026-11-08 09:58:24"
-        },
-        {
             "id": 6,
             "user_legacy_id": 16,
-            "staff_type": "sales",
-            "department_legacy_id": 35,
-            "status": "enabled",
-            "effective_from": null,
-            "effective_to": null,
-            "source": "manual",
-            "remark": "旧ERP岗位资料迁入",
-            "business_version": 1,
-            "created_by_legacy_id": 1,
-            "updated_by_legacy_id": 1,
-            "created_at": "2026-11-08 09:58:55",
-            "updated_at": "2026-11-08 09:58:55"
-        },
-        {
-            "id": 7,
-            "user_legacy_id": 22,
             "staff_type": "sales",
             "department_legacy_id": 35,
             "status": "enabled",
@@ -2650,38 +2895,6 @@
             "updated_by_legacy_id": 1,
             "created_at": "2026-11-08 09:58:55",
             "updated_at": "2026-11-08 09:58:55"
-        },
-        {
-            "id": 9,
-            "user_legacy_id": 26,
-            "staff_type": "sales",
-            "department_legacy_id": 35,
-            "status": "disabled",
-            "effective_from": null,
-            "effective_to": null,
-            "source": "legacy_migration",
-            "remark": "旧ERP岗位资料迁入",
-            "business_version": 1,
-            "created_by_legacy_id": 1,
-            "updated_by_legacy_id": 1,
-            "created_at": "2026-11-08 09:58:24",
-            "updated_at": "2026-11-08 09:58:24"
-        },
-        {
-            "id": 10,
-            "user_legacy_id": 54,
-            "staff_type": "sales",
-            "department_legacy_id": 31,
-            "status": "disabled",
-            "effective_from": null,
-            "effective_to": null,
-            "source": "legacy_migration",
-            "remark": "旧ERP岗位资料迁入",
-            "business_version": 1,
-            "created_by_legacy_id": 1,
-            "updated_by_legacy_id": 1,
-            "created_at": "2026-11-08 09:58:24",
-            "updated_at": "2026-11-08 09:58:24"
         },
         {
             "id": 11,
@@ -2716,38 +2929,6 @@
             "updated_at": "2026-11-08 09:58:55"
         },
         {
-            "id": 13,
-            "user_legacy_id": 91,
-            "staff_type": "sales",
-            "department_legacy_id": 31,
-            "status": "disabled",
-            "effective_from": null,
-            "effective_to": null,
-            "source": "legacy_migration",
-            "remark": "旧ERP岗位资料迁入",
-            "business_version": 1,
-            "created_by_legacy_id": 1,
-            "updated_by_legacy_id": 1,
-            "created_at": "2026-11-08 09:58:24",
-            "updated_at": "2026-11-08 09:58:24"
-        },
-        {
-            "id": 14,
-            "user_legacy_id": 94,
-            "staff_type": "sales",
-            "department_legacy_id": 31,
-            "status": "disabled",
-            "effective_from": null,
-            "effective_to": null,
-            "source": "legacy_migration",
-            "remark": "旧ERP岗位资料迁入",
-            "business_version": 1,
-            "created_by_legacy_id": 1,
-            "updated_by_legacy_id": 1,
-            "created_at": "2026-11-08 09:58:24",
-            "updated_at": "2026-11-08 09:58:24"
-        },
-        {
             "id": 15,
             "user_legacy_id": 98,
             "staff_type": "sales",
@@ -2764,70 +2945,6 @@
             "updated_at": "2026-11-08 09:58:55"
         },
         {
-            "id": 16,
-            "user_legacy_id": 107,
-            "staff_type": "sales",
-            "department_legacy_id": 31,
-            "status": "disabled",
-            "effective_from": null,
-            "effective_to": null,
-            "source": "legacy_migration",
-            "remark": "旧ERP岗位资料迁入",
-            "business_version": 1,
-            "created_by_legacy_id": 1,
-            "updated_by_legacy_id": 1,
-            "created_at": "2026-11-08 09:58:24",
-            "updated_at": "2026-11-08 09:58:24"
-        },
-        {
-            "id": 17,
-            "user_legacy_id": 112,
-            "staff_type": "sales",
-            "department_legacy_id": null,
-            "status": "disabled",
-            "effective_from": null,
-            "effective_to": null,
-            "source": "legacy_migration",
-            "remark": "旧ERP岗位资料迁入",
-            "business_version": 1,
-            "created_by_legacy_id": 1,
-            "updated_by_legacy_id": 1,
-            "created_at": "2026-11-08 09:58:24",
-            "updated_at": "2026-11-08 09:58:24"
-        },
-        {
-            "id": 18,
-            "user_legacy_id": 115,
-            "staff_type": "sales",
-            "department_legacy_id": null,
-            "status": "disabled",
-            "effective_from": null,
-            "effective_to": null,
-            "source": "legacy_migration",
-            "remark": "旧ERP岗位资料迁入",
-            "business_version": 1,
-            "created_by_legacy_id": 1,
-            "updated_by_legacy_id": 1,
-            "created_at": "2026-11-08 09:58:24",
-            "updated_at": "2026-11-08 09:58:24"
-        },
-        {
-            "id": 19,
-            "user_legacy_id": 130,
-            "staff_type": "sales",
-            "department_legacy_id": 31,
-            "status": "disabled",
-            "effective_from": null,
-            "effective_to": null,
-            "source": "legacy_migration",
-            "remark": "旧ERP岗位资料迁入",
-            "business_version": 1,
-            "created_by_legacy_id": 1,
-            "updated_by_legacy_id": 1,
-            "created_at": "2026-11-08 09:58:24",
-            "updated_at": "2026-11-08 09:58:24"
-        },
-        {
             "id": 20,
             "user_legacy_id": 135,
             "staff_type": "sales",
@@ -2842,38 +2959,6 @@
             "updated_by_legacy_id": 1,
             "created_at": "2026-11-08 09:58:55",
             "updated_at": "2026-11-08 09:58:55"
-        },
-        {
-            "id": 21,
-            "user_legacy_id": 136,
-            "staff_type": "sales",
-            "department_legacy_id": 31,
-            "status": "disabled",
-            "effective_from": null,
-            "effective_to": null,
-            "source": "legacy_migration",
-            "remark": "旧ERP岗位资料迁入",
-            "business_version": 1,
-            "created_by_legacy_id": 1,
-            "updated_by_legacy_id": 1,
-            "created_at": "2026-11-08 09:58:24",
-            "updated_at": "2026-11-08 09:58:24"
-        },
-        {
-            "id": 22,
-            "user_legacy_id": 137,
-            "staff_type": "sales",
-            "department_legacy_id": 31,
-            "status": "disabled",
-            "effective_from": null,
-            "effective_to": null,
-            "source": "legacy_migration",
-            "remark": "旧ERP岗位资料迁入",
-            "business_version": 1,
-            "created_by_legacy_id": 1,
-            "updated_by_legacy_id": 1,
-            "created_at": "2026-11-08 09:58:24",
-            "updated_at": "2026-11-08 09:58:24"
         },
         {
             "id": 23,
@@ -2908,134 +2993,6 @@
             "updated_at": "2026-11-08 09:58:55"
         },
         {
-            "id": 25,
-            "user_legacy_id": 142,
-            "staff_type": "sales",
-            "department_legacy_id": 35,
-            "status": "disabled",
-            "effective_from": null,
-            "effective_to": null,
-            "source": "legacy_migration",
-            "remark": "旧ERP岗位资料迁入",
-            "business_version": 1,
-            "created_by_legacy_id": 1,
-            "updated_by_legacy_id": 1,
-            "created_at": "2026-11-08 09:58:24",
-            "updated_at": "2026-11-08 09:58:24"
-        },
-        {
-            "id": 26,
-            "user_legacy_id": 145,
-            "staff_type": "sales",
-            "department_legacy_id": 36,
-            "status": "disabled",
-            "effective_from": null,
-            "effective_to": null,
-            "source": "legacy_migration",
-            "remark": "旧ERP岗位资料迁入",
-            "business_version": 1,
-            "created_by_legacy_id": 1,
-            "updated_by_legacy_id": 1,
-            "created_at": "2026-11-08 09:58:24",
-            "updated_at": "2026-11-08 09:58:24"
-        },
-        {
-            "id": 27,
-            "user_legacy_id": 146,
-            "staff_type": "sales",
-            "department_legacy_id": 36,
-            "status": "enabled",
-            "effective_from": null,
-            "effective_to": null,
-            "source": "manual",
-            "remark": "旧ERP岗位资料迁入",
-            "business_version": 1,
-            "created_by_legacy_id": 1,
-            "updated_by_legacy_id": 1,
-            "created_at": "2026-11-08 09:58:55",
-            "updated_at": "2026-11-08 09:58:55"
-        },
-        {
-            "id": 28,
-            "user_legacy_id": 149,
-            "staff_type": "sales",
-            "department_legacy_id": 31,
-            "status": "disabled",
-            "effective_from": null,
-            "effective_to": null,
-            "source": "legacy_migration",
-            "remark": "旧ERP岗位资料迁入",
-            "business_version": 1,
-            "created_by_legacy_id": 1,
-            "updated_by_legacy_id": 1,
-            "created_at": "2026-11-08 09:58:24",
-            "updated_at": "2026-11-08 09:58:24"
-        },
-        {
-            "id": 29,
-            "user_legacy_id": 154,
-            "staff_type": "sales",
-            "department_legacy_id": 36,
-            "status": "disabled",
-            "effective_from": null,
-            "effective_to": null,
-            "source": "legacy_migration",
-            "remark": "旧ERP岗位资料迁入",
-            "business_version": 1,
-            "created_by_legacy_id": 1,
-            "updated_by_legacy_id": 1,
-            "created_at": "2026-11-08 09:58:24",
-            "updated_at": "2026-11-08 09:58:24"
-        },
-        {
-            "id": 30,
-            "user_legacy_id": 157,
-            "staff_type": "sales",
-            "department_legacy_id": 39,
-            "status": "disabled",
-            "effective_from": null,
-            "effective_to": null,
-            "source": "legacy_migration",
-            "remark": "旧ERP岗位资料迁入",
-            "business_version": 1,
-            "created_by_legacy_id": 1,
-            "updated_by_legacy_id": 1,
-            "created_at": "2026-11-08 09:58:24",
-            "updated_at": "2026-11-08 09:58:24"
-        },
-        {
-            "id": 31,
-            "user_legacy_id": 158,
-            "staff_type": "sales",
-            "department_legacy_id": 39,
-            "status": "disabled",
-            "effective_from": null,
-            "effective_to": null,
-            "source": "legacy_migration",
-            "remark": "旧ERP岗位资料迁入",
-            "business_version": 1,
-            "created_by_legacy_id": 1,
-            "updated_by_legacy_id": 1,
-            "created_at": "2026-11-08 09:58:24",
-            "updated_at": "2026-11-08 09:58:24"
-        },
-        {
-            "id": 32,
-            "user_legacy_id": 159,
-            "staff_type": "sales",
-            "department_legacy_id": 39,
-            "status": "disabled",
-            "effective_from": null,
-            "effective_to": null,
-            "source": "legacy_migration",
-            "remark": "旧ERP岗位资料迁入",
-            "business_version": 1,
-            "created_by_legacy_id": 1,
-            "updated_by_legacy_id": 1,
-            "created_at": "2026-11-08 09:58:24",
-            "updated_at": "2026-11-08 09:58:24"
-        },
-        {
             "id": 33,
             "user_legacy_id": 166,
             "staff_type": "sales",
@@ -3050,38 +3007,6 @@
             "updated_by_legacy_id": 1,
             "created_at": "2026-11-08 09:58:55",
             "updated_at": "2026-11-08 09:58:55"
-        },
-        {
-            "id": 34,
-            "user_legacy_id": 167,
-            "staff_type": "sales",
-            "department_legacy_id": 35,
-            "status": "disabled",
-            "effective_from": null,
-            "effective_to": null,
-            "source": "legacy_migration",
-            "remark": "旧ERP岗位资料迁入",
-            "business_version": 1,
-            "created_by_legacy_id": 1,
-            "updated_by_legacy_id": 1,
-            "created_at": "2026-11-08 09:58:24",
-            "updated_at": "2026-11-08 09:58:24"
-        },
-        {
-            "id": 35,
-            "user_legacy_id": 168,
-            "staff_type": "sales",
-            "department_legacy_id": 35,
-            "status": "disabled",
-            "effective_from": null,
-            "effective_to": null,
-            "source": "legacy_migration",
-            "remark": "旧ERP岗位资料迁入",
-            "business_version": 1,
-            "created_by_legacy_id": 1,
-            "updated_by_legacy_id": 1,
-            "created_at": "2026-11-08 09:58:24",
-            "updated_at": "2026-11-08 09:58:24"
         },
         {
             "id": 36,
@@ -3164,22 +3089,6 @@
             "updated_at": "2026-11-08 09:58:55"
         },
         {
-            "id": 41,
-            "user_legacy_id": 179,
-            "staff_type": "sales",
-            "department_legacy_id": 35,
-            "status": "disabled",
-            "effective_from": null,
-            "effective_to": null,
-            "source": "legacy_migration",
-            "remark": "旧ERP岗位资料迁入",
-            "business_version": 1,
-            "created_by_legacy_id": 1,
-            "updated_by_legacy_id": 1,
-            "created_at": "2026-11-08 09:58:24",
-            "updated_at": "2026-11-08 09:58:24"
-        },
-        {
             "id": 42,
             "user_legacy_id": 180,
             "staff_type": "sales",
@@ -3199,38 +3108,6 @@
             "id": 43,
             "user_legacy_id": 150,
             "staff_type": "production_manager",
-            "department_legacy_id": 29,
-            "status": "enabled",
-            "effective_from": null,
-            "effective_to": null,
-            "source": "manual",
-            "remark": "旧ERP岗位资料迁入",
-            "business_version": 1,
-            "created_by_legacy_id": 1,
-            "updated_by_legacy_id": 1,
-            "created_at": "2026-11-08 09:58:55",
-            "updated_at": "2026-11-08 09:58:55"
-        },
-        {
-            "id": 44,
-            "user_legacy_id": 6,
-            "staff_type": "production_worker",
-            "department_legacy_id": 29,
-            "status": "enabled",
-            "effective_from": null,
-            "effective_to": null,
-            "source": "manual",
-            "remark": "旧ERP岗位资料迁入",
-            "business_version": 1,
-            "created_by_legacy_id": 1,
-            "updated_by_legacy_id": 1,
-            "created_at": "2026-11-08 09:58:55",
-            "updated_at": "2026-11-08 09:58:55"
-        },
-        {
-            "id": 47,
-            "user_legacy_id": 95,
-            "staff_type": "production_worker",
             "department_legacy_id": 29,
             "status": "enabled",
             "effective_from": null,
@@ -3310,22 +3187,6 @@
         {
             "id": 59,
             "user_legacy_id": 109,
-            "staff_type": "production_worker",
-            "department_legacy_id": 29,
-            "status": "enabled",
-            "effective_from": null,
-            "effective_to": null,
-            "source": "manual",
-            "remark": "旧ERP岗位资料迁入",
-            "business_version": 1,
-            "created_by_legacy_id": 1,
-            "updated_by_legacy_id": 1,
-            "created_at": "2026-11-08 09:58:55",
-            "updated_at": "2026-11-08 09:58:55"
-        },
-        {
-            "id": 63,
-            "user_legacy_id": 117,
             "staff_type": "production_worker",
             "department_legacy_id": 29,
             "status": "enabled",
@@ -3509,6 +3370,19 @@
             "user_legacy_id": 10,
             "roles": [
                 {
+                    "role_code": "department_principal",
+                    "sources": [
+                        "department",
+                        "manual"
+                    ]
+                },
+                {
+                    "role_code": "sales_manager",
+                    "sources": [
+                        "manual"
+                    ]
+                },
+                {
                     "role_code": "sales_user",
                     "sources": [
                         "manual"
@@ -3752,6 +3626,19 @@
             "user_legacy_id": 23,
             "roles": [
                 {
+                    "role_code": "department_principal",
+                    "sources": [
+                        "manual",
+                        "department"
+                    ]
+                },
+                {
+                    "role_code": "sales_manager",
+                    "sources": [
+                        "manual"
+                    ]
+                },
+                {
                     "role_code": "sales_user",
                     "sources": [
                         "manual"
@@ -3852,6 +3739,19 @@
             "user_legacy_id": 5,
             "roles": [
                 {
+                    "role_code": "department_principal",
+                    "sources": [
+                        "department",
+                        "manual"
+                    ]
+                },
+                {
+                    "role_code": "sales_manager",
+                    "sources": [
+                        "manual"
+                    ]
+                },
+                {
                     "role_code": "sales_user",
                     "sources": [
                         "manual"
@@ -3884,6 +3784,12 @@
         {
             "user_legacy_id": 16,
             "roles": [
+                {
+                    "role_code": "department_principal",
+                    "sources": [
+                        "department"
+                    ]
+                },
                 {
                     "role_code": "sales_user",
                     "sources": [
@@ -3967,13 +3873,7 @@
             "user_legacy_id": 103,
             "roles": [
                 {
-                    "role_code": "production_operator",
-                    "sources": [
-                        "manual"
-                    ]
-                },
-                {
-                    "role_code": "warehouse_manager",
+                    "role_code": "technology_user",
                     "sources": [
                         "manual"
                     ]
@@ -4147,7 +4047,14 @@
         },
         {
             "user_legacy_id": 147,
-            "roles": []
+            "roles": [
+                {
+                    "role_code": "admin",
+                    "sources": [
+                        "manual"
+                    ]
+                }
+            ]
         },
         {
             "user_legacy_id": 148,
@@ -4167,6 +4074,12 @@
         {
             "user_legacy_id": 150,
             "roles": [
+                {
+                    "role_code": "department_principal",
+                    "sources": [
+                        "department"
+                    ]
+                },
                 {
                     "role_code": "production_manager",
                     "sources": [
@@ -4765,5 +4678,757 @@
             "username": "JT_xiaoshouWCC"
         }
     ],
-    "refresh_reason": "同步王辉账号、仓管档案仅保留王辉，保留廉晓雨采购员角色及现有人员资料。"
+    "refresh_reason": "同步王辉账号、仓管档案仅保留王辉，保留廉晓雨采购员角色及现有人员资料。",
+    "role_sources": [
+        {
+            "id": 83,
+            "user_legacy_id": 5,
+            "assignment_source": "department",
+            "created_at": "2026-11-14 03:34:10",
+            "updated_at": "2026-11-14 03:34:10",
+            "role_code": "department_principal"
+        },
+        {
+            "id": 84,
+            "user_legacy_id": 5,
+            "assignment_source": "manual",
+            "created_at": "2026-11-14 03:34:50",
+            "updated_at": "2026-11-14 03:34:50",
+            "role_code": "department_principal"
+        },
+        {
+            "id": 85,
+            "user_legacy_id": 5,
+            "assignment_source": "manual",
+            "created_at": "2026-11-14 03:34:50",
+            "updated_at": "2026-11-14 03:34:50",
+            "role_code": "sales_manager"
+        },
+        {
+            "id": 36,
+            "user_legacy_id": 5,
+            "assignment_source": "manual",
+            "created_at": "2026-11-14 02:34:25",
+            "updated_at": "2026-11-14 02:34:25",
+            "role_code": "sales_user"
+        },
+        {
+            "id": 29,
+            "user_legacy_id": 6,
+            "assignment_source": "manual",
+            "created_at": "2026-11-14 02:34:25",
+            "updated_at": "2026-11-14 02:34:25",
+            "role_code": "production_operator"
+        },
+        {
+            "id": 30,
+            "user_legacy_id": 6,
+            "assignment_source": "manual",
+            "created_at": "2026-11-14 02:34:25",
+            "updated_at": "2026-11-14 02:34:25",
+            "role_code": "warehouse_manager"
+        },
+        {
+            "id": 82,
+            "user_legacy_id": 10,
+            "assignment_source": "department",
+            "created_at": "2026-11-14 03:33:56",
+            "updated_at": "2026-11-14 03:33:56",
+            "role_code": "department_principal"
+        },
+        {
+            "id": 88,
+            "user_legacy_id": 10,
+            "assignment_source": "manual",
+            "created_at": "2026-11-14 03:35:11",
+            "updated_at": "2026-11-14 03:35:11",
+            "role_code": "department_principal"
+        },
+        {
+            "id": 89,
+            "user_legacy_id": 10,
+            "assignment_source": "manual",
+            "created_at": "2026-11-14 03:35:11",
+            "updated_at": "2026-11-14 03:35:11",
+            "role_code": "sales_manager"
+        },
+        {
+            "id": 1,
+            "user_legacy_id": 10,
+            "assignment_source": "manual",
+            "created_at": "2026-11-14 02:34:25",
+            "updated_at": "2026-11-14 02:34:25",
+            "role_code": "sales_user"
+        },
+        {
+            "id": 12,
+            "user_legacy_id": 13,
+            "assignment_source": "manual",
+            "created_at": "2026-11-14 02:34:25",
+            "updated_at": "2026-11-14 02:34:25",
+            "role_code": "sales_user"
+        },
+        {
+            "id": 37,
+            "user_legacy_id": 14,
+            "assignment_source": "manual",
+            "created_at": "2026-11-14 02:34:25",
+            "updated_at": "2026-11-14 02:34:25",
+            "role_code": "sales_user"
+        },
+        {
+            "id": 38,
+            "user_legacy_id": 15,
+            "assignment_source": "manual",
+            "created_at": "2026-11-14 02:34:25",
+            "updated_at": "2026-11-14 02:34:25",
+            "role_code": "sales_user"
+        },
+        {
+            "id": 95,
+            "user_legacy_id": 16,
+            "assignment_source": "department",
+            "created_at": "2026-11-14 03:36:16",
+            "updated_at": "2026-11-14 03:36:16",
+            "role_code": "department_principal"
+        },
+        {
+            "id": 39,
+            "user_legacy_id": 16,
+            "assignment_source": "manual",
+            "created_at": "2026-11-14 02:34:25",
+            "updated_at": "2026-11-14 02:34:25",
+            "role_code": "sales_user"
+        },
+        {
+            "id": 40,
+            "user_legacy_id": 22,
+            "assignment_source": "manual",
+            "created_at": "2026-11-14 02:34:25",
+            "updated_at": "2026-11-14 02:34:25",
+            "role_code": "sales_user"
+        },
+        {
+            "id": 92,
+            "user_legacy_id": 23,
+            "assignment_source": "manual",
+            "created_at": "2026-11-14 03:35:26",
+            "updated_at": "2026-11-14 03:35:26",
+            "role_code": "department_principal"
+        },
+        {
+            "id": 100,
+            "user_legacy_id": 23,
+            "assignment_source": "department",
+            "created_at": "2026-11-14 03:37:12",
+            "updated_at": "2026-11-14 03:37:12",
+            "role_code": "department_principal"
+        },
+        {
+            "id": 93,
+            "user_legacy_id": 23,
+            "assignment_source": "manual",
+            "created_at": "2026-11-14 03:35:26",
+            "updated_at": "2026-11-14 03:35:26",
+            "role_code": "sales_manager"
+        },
+        {
+            "id": 26,
+            "user_legacy_id": 23,
+            "assignment_source": "manual",
+            "created_at": "2026-11-14 02:34:25",
+            "updated_at": "2026-11-14 02:34:25",
+            "role_code": "sales_user"
+        },
+        {
+            "id": 41,
+            "user_legacy_id": 26,
+            "assignment_source": "manual",
+            "created_at": "2026-11-14 02:34:25",
+            "updated_at": "2026-11-14 02:34:25",
+            "role_code": "sales_user"
+        },
+        {
+            "id": 27,
+            "user_legacy_id": 54,
+            "assignment_source": "manual",
+            "created_at": "2026-11-14 02:34:25",
+            "updated_at": "2026-11-14 02:34:25",
+            "role_code": "sales_user"
+        },
+        {
+            "id": 28,
+            "user_legacy_id": 57,
+            "assignment_source": "manual",
+            "created_at": "2026-11-14 02:34:25",
+            "updated_at": "2026-11-14 02:34:25",
+            "role_code": "sales_user"
+        },
+        {
+            "id": 31,
+            "user_legacy_id": 81,
+            "assignment_source": "manual",
+            "created_at": "2026-11-14 02:34:25",
+            "updated_at": "2026-11-14 02:34:25",
+            "role_code": "sales_user"
+        },
+        {
+            "id": 32,
+            "user_legacy_id": 91,
+            "assignment_source": "manual",
+            "created_at": "2026-11-14 02:34:25",
+            "updated_at": "2026-11-14 02:34:25",
+            "role_code": "sales_user"
+        },
+        {
+            "id": 42,
+            "user_legacy_id": 94,
+            "assignment_source": "manual",
+            "created_at": "2026-11-14 02:34:25",
+            "updated_at": "2026-11-14 02:34:25",
+            "role_code": "sales_user"
+        },
+        {
+            "id": 43,
+            "user_legacy_id": 95,
+            "assignment_source": "manual",
+            "created_at": "2026-11-14 02:34:25",
+            "updated_at": "2026-11-14 02:34:25",
+            "role_code": "production_operator"
+        },
+        {
+            "id": 44,
+            "user_legacy_id": 95,
+            "assignment_source": "manual",
+            "created_at": "2026-11-14 02:34:25",
+            "updated_at": "2026-11-14 02:34:25",
+            "role_code": "warehouse_manager"
+        },
+        {
+            "id": 33,
+            "user_legacy_id": 96,
+            "assignment_source": "manual",
+            "created_at": "2026-11-14 02:34:25",
+            "updated_at": "2026-11-14 02:34:25",
+            "role_code": "production_operator"
+        },
+        {
+            "id": 34,
+            "user_legacy_id": 96,
+            "assignment_source": "manual",
+            "created_at": "2026-11-14 02:34:25",
+            "updated_at": "2026-11-14 02:34:25",
+            "role_code": "warehouse_manager"
+        },
+        {
+            "id": 45,
+            "user_legacy_id": 97,
+            "assignment_source": "manual",
+            "created_at": "2026-11-14 02:34:25",
+            "updated_at": "2026-11-14 02:34:25",
+            "role_code": "production_operator"
+        },
+        {
+            "id": 46,
+            "user_legacy_id": 97,
+            "assignment_source": "manual",
+            "created_at": "2026-11-14 02:34:25",
+            "updated_at": "2026-11-14 02:34:25",
+            "role_code": "warehouse_manager"
+        },
+        {
+            "id": 35,
+            "user_legacy_id": 98,
+            "assignment_source": "manual",
+            "created_at": "2026-11-14 02:34:25",
+            "updated_at": "2026-11-14 02:34:25",
+            "role_code": "sales_user"
+        },
+        {
+            "id": 2,
+            "user_legacy_id": 101,
+            "assignment_source": "manual",
+            "created_at": "2026-11-14 02:34:25",
+            "updated_at": "2026-11-14 02:34:25",
+            "role_code": "production_operator"
+        },
+        {
+            "id": 3,
+            "user_legacy_id": 101,
+            "assignment_source": "manual",
+            "created_at": "2026-11-14 02:34:25",
+            "updated_at": "2026-11-14 02:34:25",
+            "role_code": "warehouse_manager"
+        },
+        {
+            "id": 107,
+            "user_legacy_id": 103,
+            "assignment_source": "manual",
+            "created_at": "2026-11-16 07:55:49",
+            "updated_at": "2026-11-16 07:55:49",
+            "role_code": "technology_user"
+        },
+        {
+            "id": 49,
+            "user_legacy_id": 107,
+            "assignment_source": "manual",
+            "created_at": "2026-11-14 02:34:25",
+            "updated_at": "2026-11-14 02:34:25",
+            "role_code": "sales_user"
+        },
+        {
+            "id": 4,
+            "user_legacy_id": 109,
+            "assignment_source": "manual",
+            "created_at": "2026-11-14 02:34:25",
+            "updated_at": "2026-11-14 02:34:25",
+            "role_code": "production_operator"
+        },
+        {
+            "id": 5,
+            "user_legacy_id": 109,
+            "assignment_source": "manual",
+            "created_at": "2026-11-14 02:34:25",
+            "updated_at": "2026-11-14 02:34:25",
+            "role_code": "warehouse_manager"
+        },
+        {
+            "id": 50,
+            "user_legacy_id": 112,
+            "assignment_source": "manual",
+            "created_at": "2026-11-14 02:34:25",
+            "updated_at": "2026-11-14 02:34:25",
+            "role_code": "sales_user"
+        },
+        {
+            "id": 51,
+            "user_legacy_id": 115,
+            "assignment_source": "manual",
+            "created_at": "2026-11-14 02:34:25",
+            "updated_at": "2026-11-14 02:34:25",
+            "role_code": "sales_user"
+        },
+        {
+            "id": 52,
+            "user_legacy_id": 117,
+            "assignment_source": "manual",
+            "created_at": "2026-11-14 02:34:25",
+            "updated_at": "2026-11-14 02:34:25",
+            "role_code": "production_operator"
+        },
+        {
+            "id": 53,
+            "user_legacy_id": 117,
+            "assignment_source": "manual",
+            "created_at": "2026-11-14 02:34:25",
+            "updated_at": "2026-11-14 02:34:25",
+            "role_code": "warehouse_manager"
+        },
+        {
+            "id": 54,
+            "user_legacy_id": 120,
+            "assignment_source": "manual",
+            "created_at": "2026-11-14 02:34:25",
+            "updated_at": "2026-11-14 02:34:25",
+            "role_code": "production_operator"
+        },
+        {
+            "id": 55,
+            "user_legacy_id": 120,
+            "assignment_source": "manual",
+            "created_at": "2026-11-14 02:34:25",
+            "updated_at": "2026-11-14 02:34:25",
+            "role_code": "warehouse_manager"
+        },
+        {
+            "id": 6,
+            "user_legacy_id": 121,
+            "assignment_source": "manual",
+            "created_at": "2026-11-14 02:34:25",
+            "updated_at": "2026-11-14 02:34:25",
+            "role_code": "production_operator"
+        },
+        {
+            "id": 7,
+            "user_legacy_id": 121,
+            "assignment_source": "manual",
+            "created_at": "2026-11-14 02:34:25",
+            "updated_at": "2026-11-14 02:34:25",
+            "role_code": "warehouse_manager"
+        },
+        {
+            "id": 8,
+            "user_legacy_id": 123,
+            "assignment_source": "manual",
+            "created_at": "2026-11-14 02:34:25",
+            "updated_at": "2026-11-14 02:34:25",
+            "role_code": "production_operator"
+        },
+        {
+            "id": 9,
+            "user_legacy_id": 123,
+            "assignment_source": "manual",
+            "created_at": "2026-11-14 02:34:25",
+            "updated_at": "2026-11-14 02:34:25",
+            "role_code": "warehouse_manager"
+        },
+        {
+            "id": 10,
+            "user_legacy_id": 124,
+            "assignment_source": "manual",
+            "created_at": "2026-11-14 02:34:25",
+            "updated_at": "2026-11-14 02:34:25",
+            "role_code": "production_operator"
+        },
+        {
+            "id": 11,
+            "user_legacy_id": 124,
+            "assignment_source": "manual",
+            "created_at": "2026-11-14 02:34:25",
+            "updated_at": "2026-11-14 02:34:25",
+            "role_code": "warehouse_manager"
+        },
+        {
+            "id": 56,
+            "user_legacy_id": 130,
+            "assignment_source": "manual",
+            "created_at": "2026-11-14 02:34:25",
+            "updated_at": "2026-11-14 02:34:25",
+            "role_code": "sales_user"
+        },
+        {
+            "id": 13,
+            "user_legacy_id": 133,
+            "assignment_source": "manual",
+            "created_at": "2026-11-14 02:34:25",
+            "updated_at": "2026-11-14 02:34:25",
+            "role_code": "production_operator"
+        },
+        {
+            "id": 14,
+            "user_legacy_id": 133,
+            "assignment_source": "manual",
+            "created_at": "2026-11-14 02:34:25",
+            "updated_at": "2026-11-14 02:34:25",
+            "role_code": "warehouse_manager"
+        },
+        {
+            "id": 15,
+            "user_legacy_id": 135,
+            "assignment_source": "manual",
+            "created_at": "2026-11-14 02:34:25",
+            "updated_at": "2026-11-14 02:34:25",
+            "role_code": "sales_user"
+        },
+        {
+            "id": 57,
+            "user_legacy_id": 136,
+            "assignment_source": "manual",
+            "created_at": "2026-11-14 02:34:25",
+            "updated_at": "2026-11-14 02:34:25",
+            "role_code": "sales_user"
+        },
+        {
+            "id": 16,
+            "user_legacy_id": 137,
+            "assignment_source": "manual",
+            "created_at": "2026-11-14 02:34:25",
+            "updated_at": "2026-11-14 02:34:25",
+            "role_code": "sales_user"
+        },
+        {
+            "id": 17,
+            "user_legacy_id": 138,
+            "assignment_source": "manual",
+            "created_at": "2026-11-14 02:34:25",
+            "updated_at": "2026-11-14 02:34:25",
+            "role_code": "sales_user"
+        },
+        {
+            "id": 58,
+            "user_legacy_id": 141,
+            "assignment_source": "manual",
+            "created_at": "2026-11-14 02:34:25",
+            "updated_at": "2026-11-14 02:34:25",
+            "role_code": "sales_user"
+        },
+        {
+            "id": 59,
+            "user_legacy_id": 142,
+            "assignment_source": "manual",
+            "created_at": "2026-11-14 02:34:25",
+            "updated_at": "2026-11-14 02:34:25",
+            "role_code": "sales_user"
+        },
+        {
+            "id": 60,
+            "user_legacy_id": 145,
+            "assignment_source": "manual",
+            "created_at": "2026-11-14 02:34:25",
+            "updated_at": "2026-11-14 02:34:25",
+            "role_code": "sales_user"
+        },
+        {
+            "id": 61,
+            "user_legacy_id": 146,
+            "assignment_source": "manual",
+            "created_at": "2026-11-14 02:34:25",
+            "updated_at": "2026-11-14 02:34:25",
+            "role_code": "sales_user"
+        },
+        {
+            "id": 102,
+            "user_legacy_id": 147,
+            "assignment_source": "manual",
+            "created_at": "2026-11-14 03:37:44",
+            "updated_at": "2026-11-14 03:37:44",
+            "role_code": "admin"
+        },
+        {
+            "id": 62,
+            "user_legacy_id": 149,
+            "assignment_source": "manual",
+            "created_at": "2026-11-14 02:34:25",
+            "updated_at": "2026-11-14 02:34:25",
+            "role_code": "sales_user"
+        },
+        {
+            "id": 99,
+            "user_legacy_id": 150,
+            "assignment_source": "department",
+            "created_at": "2026-11-14 03:37:03",
+            "updated_at": "2026-11-14 03:37:03",
+            "role_code": "department_principal"
+        },
+        {
+            "id": 63,
+            "user_legacy_id": 150,
+            "assignment_source": "manual",
+            "created_at": "2026-11-14 02:34:25",
+            "updated_at": "2026-11-14 02:34:25",
+            "role_code": "production_manager"
+        },
+        {
+            "id": 64,
+            "user_legacy_id": 150,
+            "assignment_source": "manual",
+            "created_at": "2026-11-14 02:34:25",
+            "updated_at": "2026-11-14 02:34:25",
+            "role_code": "production_operator"
+        },
+        {
+            "id": 65,
+            "user_legacy_id": 150,
+            "assignment_source": "manual",
+            "created_at": "2026-11-14 02:34:25",
+            "updated_at": "2026-11-14 02:34:25",
+            "role_code": "warehouse_manager"
+        },
+        {
+            "id": 66,
+            "user_legacy_id": 154,
+            "assignment_source": "manual",
+            "created_at": "2026-11-14 02:34:25",
+            "updated_at": "2026-11-14 02:34:25",
+            "role_code": "sales_user"
+        },
+        {
+            "id": 67,
+            "user_legacy_id": 157,
+            "assignment_source": "manual",
+            "created_at": "2026-11-14 02:34:25",
+            "updated_at": "2026-11-14 02:34:25",
+            "role_code": "sales_user"
+        },
+        {
+            "id": 68,
+            "user_legacy_id": 158,
+            "assignment_source": "manual",
+            "created_at": "2026-11-14 02:34:25",
+            "updated_at": "2026-11-14 02:34:25",
+            "role_code": "sales_user"
+        },
+        {
+            "id": 69,
+            "user_legacy_id": 159,
+            "assignment_source": "manual",
+            "created_at": "2026-11-14 02:34:25",
+            "updated_at": "2026-11-14 02:34:25",
+            "role_code": "sales_user"
+        },
+        {
+            "id": 70,
+            "user_legacy_id": 160,
+            "assignment_source": "manual",
+            "created_at": "2026-11-14 02:34:25",
+            "updated_at": "2026-11-14 02:34:25",
+            "role_code": "purchaser"
+        },
+        {
+            "id": 18,
+            "user_legacy_id": 161,
+            "assignment_source": "manual",
+            "created_at": "2026-11-14 02:34:25",
+            "updated_at": "2026-11-14 02:34:25",
+            "role_code": "production_operator"
+        },
+        {
+            "id": 19,
+            "user_legacy_id": 161,
+            "assignment_source": "manual",
+            "created_at": "2026-11-14 02:34:25",
+            "updated_at": "2026-11-14 02:34:25",
+            "role_code": "warehouse_manager"
+        },
+        {
+            "id": 20,
+            "user_legacy_id": 166,
+            "assignment_source": "manual",
+            "created_at": "2026-11-14 02:34:25",
+            "updated_at": "2026-11-14 02:34:25",
+            "role_code": "sales_user"
+        },
+        {
+            "id": 71,
+            "user_legacy_id": 167,
+            "assignment_source": "manual",
+            "created_at": "2026-11-14 02:34:25",
+            "updated_at": "2026-11-14 02:34:25",
+            "role_code": "sales_user"
+        },
+        {
+            "id": 72,
+            "user_legacy_id": 168,
+            "assignment_source": "manual",
+            "created_at": "2026-11-14 02:34:25",
+            "updated_at": "2026-11-14 02:34:25",
+            "role_code": "sales_user"
+        },
+        {
+            "id": 21,
+            "user_legacy_id": 169,
+            "assignment_source": "manual",
+            "created_at": "2026-11-14 02:34:25",
+            "updated_at": "2026-11-14 02:34:25",
+            "role_code": "sales_user"
+        },
+        {
+            "id": 22,
+            "user_legacy_id": 170,
+            "assignment_source": "manual",
+            "created_at": "2026-11-14 02:34:25",
+            "updated_at": "2026-11-14 02:34:25",
+            "role_code": "sales_user"
+        },
+        {
+            "id": 73,
+            "user_legacy_id": 172,
+            "assignment_source": "manual",
+            "created_at": "2026-11-14 02:34:25",
+            "updated_at": "2026-11-14 02:34:25",
+            "role_code": "production_operator"
+        },
+        {
+            "id": 74,
+            "user_legacy_id": 172,
+            "assignment_source": "manual",
+            "created_at": "2026-11-14 02:34:25",
+            "updated_at": "2026-11-14 02:34:25",
+            "role_code": "warehouse_manager"
+        },
+        {
+            "id": 23,
+            "user_legacy_id": 173,
+            "assignment_source": "manual",
+            "created_at": "2026-11-14 02:34:25",
+            "updated_at": "2026-11-14 02:34:25",
+            "role_code": "production_operator"
+        },
+        {
+            "id": 24,
+            "user_legacy_id": 173,
+            "assignment_source": "manual",
+            "created_at": "2026-11-14 02:34:25",
+            "updated_at": "2026-11-14 02:34:25",
+            "role_code": "warehouse_manager"
+        },
+        {
+            "id": 75,
+            "user_legacy_id": 174,
+            "assignment_source": "manual",
+            "created_at": "2026-11-14 02:34:25",
+            "updated_at": "2026-11-14 02:34:25",
+            "role_code": "sales_user"
+        },
+        {
+            "id": 76,
+            "user_legacy_id": 176,
+            "assignment_source": "manual",
+            "created_at": "2026-11-14 02:34:25",
+            "updated_at": "2026-11-14 02:34:25",
+            "role_code": "sales_user"
+        },
+        {
+            "id": 25,
+            "user_legacy_id": 178,
+            "assignment_source": "manual",
+            "created_at": "2026-11-14 02:34:25",
+            "updated_at": "2026-11-14 02:34:25",
+            "role_code": "sales_user"
+        },
+        {
+            "id": 77,
+            "user_legacy_id": 179,
+            "assignment_source": "manual",
+            "created_at": "2026-11-14 02:34:25",
+            "updated_at": "2026-11-14 02:34:25",
+            "role_code": "sales_user"
+        },
+        {
+            "id": 78,
+            "user_legacy_id": 180,
+            "assignment_source": "manual",
+            "created_at": "2026-11-14 02:34:25",
+            "updated_at": "2026-11-14 02:34:25",
+            "role_code": "sales_user"
+        }
+    ],
+    "business_staff_backfill_markers": [
+        {
+            "module": "system_management",
+            "action": "backfill:sales",
+            "target_type": "business_staff_backfill",
+            "target_id": null,
+            "new_snapshot": "{\"user_ids\": [5, 10, 13, 16, 22, 23, 57, 81, 98, 135, 138, 141, 146, 166, 169, 170, 174, 176, 178, 180], \"staff_type\": \"sales\"}",
+            "operator_name": "system",
+            "created_at": "2026-11-14 03:05:19"
+        },
+        {
+            "module": "system_management",
+            "action": "backfill:production_manager",
+            "target_type": "business_staff_backfill",
+            "target_id": null,
+            "new_snapshot": "{\"user_ids\": [150], \"staff_type\": \"production_manager\"}",
+            "operator_name": "system",
+            "created_at": "2026-11-14 03:05:20"
+        },
+        {
+            "module": "system_management",
+            "action": "backfill:production_worker",
+            "target_type": "business_staff_backfill",
+            "target_id": null,
+            "new_snapshot": "{\"user_ids\": [6, 95, 96, 97, 101, 103, 109, 117, 120, 121, 123, 124, 133, 150, 161, 172, 173], \"staff_type\": \"production_worker\"}",
+            "operator_name": "system",
+            "created_at": "2026-11-14 03:05:20"
+        },
+        {
+            "module": "system_management",
+            "action": "backfill:warehouse",
+            "target_type": "business_staff_backfill",
+            "target_id": null,
+            "new_snapshot": "{\"user_ids\": [], \"staff_type\": \"warehouse\"}",
+            "operator_name": "system",
+            "created_at": "2026-11-14 03:05:20"
+        }
+    ]
 }

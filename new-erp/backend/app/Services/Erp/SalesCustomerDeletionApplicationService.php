@@ -3,15 +3,17 @@
 namespace App\Services\Erp;
 
 use App\Models\Erp\SalesCustomer;
+use App\Services\Erp\Crm\CrmCustomerAccessService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
 class SalesCustomerDeletionApplicationService
 {
-    public function delete(int $id): void
+    public function delete(int $id, object $actor): void
     {
-        DB::transaction(function () use ($id): void {
+        DB::transaction(function () use ($id, $actor): void {
             $customer = SalesCustomer::query()->lockForUpdate()->findOrFail($id);
+            app(CrmCustomerAccessService::class)->assert($customer, $actor, 'delete', '无权删除该客户。');
             if (! in_array($customer->status, ['potential', 'disabled'], true)) {
                 throw ValidationException::withMessages(['status' => '只有潜在客户或已停用客户才可能删除；正常和黑名单客户必须保留。']);
             }

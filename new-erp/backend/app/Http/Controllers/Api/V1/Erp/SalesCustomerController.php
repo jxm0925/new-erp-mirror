@@ -21,7 +21,7 @@ use Illuminate\Validation\ValidationException;
 
 /**
  * 客户中心：列表、汇总、负责人选项、详情和增改删全部按 CrmCustomerAccessService 的同一可见范围。
- * picker=1 时搜索全公司：可见客户正常返回，不可见客户只返回脱敏信息且不可选（用于选择客户/查重）。
+ * 选择器沿用同一可见范围；跨范围查重只由专用查重接口返回最少信息。
  */
 class SalesCustomerController extends Controller
 {
@@ -57,7 +57,7 @@ class SalesCustomerController extends Controller
         ] + CrmListViewQueryService::rules('customers'));
         $picker = !empty($filters['picker']);
         $base = SalesCustomer::query();
-        if (!$picker) $this->access->applyVisible($base, $user);
+        $this->access->applyVisible($base, $user);
         $tab = $filters['tab'] ?? 'all';
         if ($tab === 'mine') $base->where('owner_legacy_id', (int) $user->legacy_id);
         if ($tab === 'collab') $this->access->applyCollaborating($base, $user);
@@ -128,6 +128,7 @@ class SalesCustomerController extends Controller
         return response()->json($customer->toArray() + [
             'owner_department_name' => $this->access->departmentName($customer->owner_department_legacy_id),
             'abilities' => $abilities,
+            'selectable' => $abilities['select'] && in_array($customer->status, ['enabled', 'potential'], true),
             'overview' => app(\App\Services\Erp\Crm\CrmCustomerLifecycleQueryService::class)->overview($customer, $user),
         ] + $money[$customer->id]);
     }
@@ -143,6 +144,7 @@ class SalesCustomerController extends Controller
     public function update(Request $request, int $id, CrmCustomerApplicationService $service)
     {
         $user = $this->user($request, 'sales.customer.edit');
+        $this->access->assert(SalesCustomer::query()->findOrFail($id), $user, 'edit', '无权编辑该客户。');
         $customer = $service->update($id, $this->validated($request, $id), $user);
         return response()->json(['message' => '客户已更新；历史订单快照未被修改', 'data' => $customer]);
     }
@@ -150,8 +152,7 @@ class SalesCustomerController extends Controller
     public function destroy(Request $request, int $id, SalesCustomerDeletionApplicationService $service)
     {
         $user = $this->user($request, 'sales.customer.delete');
-        $this->access->assert(SalesCustomer::query()->findOrFail($id), $user, 'delete', '无权删除该客户。');
-        $service->delete($id);
+        $service->delete($id, $user);
         return response()->json(['message' => '未被业务引用的客户档案已删除。']);
     }
 
@@ -159,10 +160,11 @@ class SalesCustomerController extends Controller
     {
         $relation = $this->access->relation($customer, $user);
         if ($relation === null) return $this->access->masked($customer) + ['selectable' => false];
+        $abilities = $this->access->abilities($customer, $user);
         return $customer->toArray() + [
             'visible' => true, 'relation' => $relation,
-            'abilities' => $this->access->abilities($customer, $user),
-            'selectable' => in_array($customer->status, ['enabled', 'potential'], true),
+            'abilities' => $abilities,
+            'selectable' => $abilities['select'] && in_array($customer->status, ['enabled', 'potential'], true),
             'owner_department_name' => $this->access->departmentName($customer->owner_department_legacy_id),
         ];
     }

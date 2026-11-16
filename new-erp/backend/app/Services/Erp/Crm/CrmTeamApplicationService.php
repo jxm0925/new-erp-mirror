@@ -55,6 +55,7 @@ final class CrmTeamApplicationService
     {
         $this->permission($actor, 'crm.team.view');
         $query = $this->staffQuery($filters)->whereIn('bs.department_legacy_id', $this->access->managedDepartments($actor));
+        if (!empty($filters['effective_only'])) $this->applyEffectiveSales($query);
         if (!empty($filters['department_id'])) $query->whereIn('bs.department_legacy_id', $this->access->expandDepartments([(int) $filters['department_id']]));
         if (isset($filters['department_ids'])) $query->whereIn('bs.department_legacy_id', $this->access->expandDepartments($filters['department_ids']));
         if (isset($filters['accepting'])) {
@@ -62,6 +63,15 @@ final class CrmTeamApplicationService
             else $query->where('p.accepting', false);
         }
         return $this->staffPage($query, $filters, $actor);
+    }
+
+    public function delegationCandidates(object $actor, array $filters)
+    {
+        $query = $this->staffQuery($filters)->where('u.legacy_id', '!=', $actor->legacy_id);
+        $this->applyEffectiveSales($query);
+        if (!empty($filters['department_id'])) $query->whereIn('bs.department_legacy_id', $this->access->expandDepartments([(int) $filters['department_id']]));
+        return $query->select('u.legacy_id as id', 'd.name as department_name')->selectRaw("COALESCE(NULLIF(u.nickname, ''), u.username) AS name")
+            ->orderBy('u.legacy_id')->paginate($this->perPage($filters));
     }
 
     public function showStaff(object $actor, int $userId): array

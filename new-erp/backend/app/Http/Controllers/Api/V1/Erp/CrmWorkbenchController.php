@@ -62,7 +62,7 @@ final class CrmWorkbenchController extends Controller
         abort_unless($actor, 401, '未登录');
         abort_unless($this->access->can($actor, 'crm.workbench.view'), 403, '没有查看工作台的权限。');
         abort_unless($this->access->can($actor, 'crm.lead.view') || $this->access->can($actor, 'crm.opportunity.view')
-            || $this->access->can($actor, 'sales.customer'), 403, '没有查看工作台的权限。');
+            || $this->access->can($actor, 'sales.customer') || $this->access->can($actor, 'sales_order.view'), 403, '没有查看工作台的权限。');
         return $actor;
     }
 }

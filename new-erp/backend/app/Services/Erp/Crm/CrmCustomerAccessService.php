@@ -10,13 +10,13 @@ use Illuminate\Support\Facades\DB;
 
 /**
  * 客户可见范围的唯一规则：列表、详情、汇总、负责人选项、选择器和所有写入口都走这里。
- * 可见来源（满足任一）：全部范围（超管 / 数据范围 all / sales.customer.view_all）、本人负责、
- * 部门范围内同事负责、本人为有效协作人员、客户尚无负责销售（用户确认：无负责人客户全员可见可选）。
+ * 数据范围只取授予对应 CRM 权限的角色，查看全部不等于管理全部。
+ * 普通无负责人客户仍公开可选；已有正式线索的未分配客户按线索接收与管理范围保护。
  * 不要在各控制器里另写“按负责人过滤”，否则查重、选择器和建单会出现不同口径。
  */
 final class CrmCustomerAccessService
 {
-    public const RELATIONS = ['all', 'owner', 'department', 'collaborator', 'public'];
+    public const RELATIONS = ['all', 'owner', 'department', 'collaborator', 'public', 'lead'];
 
     private array $contexts = [];
 
@@ -27,15 +27,36 @@ final class CrmCustomerAccessService
         $id = (int) $user->legacy_id;
         if (isset($this->contexts[$id])) return $this->contexts[$id];
         $codes = $this->auth->permissionCodes($user);
-        $scope = $this->auth->dataScope($user);
-        $all = $this->auth->isSuperAdmin($user) || $scope === 'all' || in_array('sales.customer.view_all', $codes, true);
+        $super = $this->auth->isSuperAdmin($user);
+        $scopes = [];
+        foreach (DB::table('erp_rbac_user_roles as ur')->join('erp_rbac_roles as r', 'r.id', '=', 'ur.role_id')
+            ->join('erp_rbac_role_permissions as rp', 'rp.role_id', '=', 'r.id')
+            ->join('erp_rbac_permissions as p', 'p.id', '=', 'rp.permission_id')
+            ->where('ur.user_legacy_id', $id)->where('r.enabled', true)->where('p.enabled', true)
+            ->get(['p.code', 'r.data_scope']) as $row) {
+            if (($scopes[$row->code] ?? 'self') === 'all' || $row->data_scope === 'self') continue;
+            $scopes[$row->code] = $row->data_scope;
+        }
+        $scope = in_array('all', [$scopes['sales.customer'] ?? 'self', $scopes['sales.customer.view'] ?? 'self'], true) ? 'all'
+            : (in_array('department', [$scopes['sales.customer'] ?? 'self', $scopes['sales.customer.view'] ?? 'self'], true) ? 'department' : 'self');
+        $all = $super || $scope === 'all' || in_array('sales.customer.view_all', $codes, true);
 
         return $this->contexts[$id] = [
             'actor' => $id,
             'all' => $all,
-            'department_users' => !$all && $scope === 'department' ? $this->auth->departmentUserIds($user) : null,
+            'super' => $super,
+            'scopes' => $scopes,
+            'scope' => $scope,
+            'department_users' => $this->auth->departmentUserIds($user),
+            'department_ids' => DB::table('erp_department_users')->where('user_legacy_id', $id)->pluck('department_legacy_id')->map(fn ($id) => (int) $id)->all(),
             'codes' => $codes,
         ];
+    }
+
+    public function dataScope(object $user, string $permission = 'sales.customer'): string
+    {
+        $ctx = $this->context($user);
+        return $ctx['super'] ? 'all' : ($permission === 'sales.customer' ? $ctx['scope'] : ($ctx['scopes'][$permission] ?? 'self'));
     }
 
     public function can(object $user, string $permission): bool
@@ -49,10 +70,19 @@ final class CrmCustomerAccessService
     {
         $ctx = $this->context($user);
         if ($ctx['all']) return;
-        $query->where(function ($visible) use ($ctx, $table): void {
+        $query->where(function ($visible) use ($ctx, $table, $user): void {
             $visible->where("$table.owner_legacy_id", $ctx['actor'])
-                ->orWhereNull("$table.owner_legacy_id");
-            if ($ctx['department_users']) $visible->orWhereIn("$table.owner_legacy_id", $ctx['department_users']);
+                ->orWhere(function ($unowned) use ($ctx, $table, $user) {
+                    $unowned->whereNull("$table.owner_legacy_id")->where(function ($public) use ($ctx, $table, $user) {
+                        $public->whereNotExists(fn ($lead) => $this->formalLeads($lead)->whereColumn('l.customer_id', "$table.id"))
+                            ->orWhereExists(function ($lead) use ($ctx, $table, $user) {
+                                $this->formalLeads($lead)->whereColumn('l.customer_id', "$table.id");
+                                $this->applyRelatedLead($lead, $user, $ctx);
+                            });
+                    });
+                });
+            if ($ctx['scope'] === 'department') $visible->orWhereIn("$table.owner_legacy_id", $ctx['department_users']);
+            $visible->orWhereIn("$table.owner_legacy_id", app(CrmSalesDelegationService::class)->activeOwners($user));
             $visible->orWhereExists(fn ($collab) => $this->activeCollaboration($collab, $ctx['actor'])->whereColumn('c.customer_id', "$table.id"));
         });
     }
@@ -71,41 +101,74 @@ final class CrmCustomerAccessService
         $owner = $customer->owner_legacy_id ? (int) $customer->owner_legacy_id : null;
         if ($owner === $ctx['actor']) return 'owner';
         if ($ctx['all']) return 'all';
-        if ($owner && $ctx['department_users'] && in_array($owner, $ctx['department_users'], true)) return 'department';
+        if ($owner && $ctx['scope'] === 'department' && in_array($owner, $ctx['department_users'], true)) return 'department';
         if ($this->collaboration($customer->id, $ctx['actor'])) return 'collaborator';
-        if (!$owner) return 'public';
+        if ($owner && app(CrmSalesDelegationService::class)->delegatesFor($user, $owner)) return 'delegate';
+        if (!$owner) {
+            if (!$this->hasFormalLeads($customer->id)) return 'public';
+            $leads = $this->formalLeads(DB::query())->where('l.customer_id', $customer->id);
+            $this->applyRelatedLead($leads, $user, $ctx);
+            if ($leads->exists()) return 'lead';
+        }
         return null;
     }
 
-    public function collaboration(int $customerId, int $userId): ?object
+    public function collaboration(int $customerId, int $userId, bool $lock = false): ?object
     {
         return $this->activeCollaboration(DB::query(), $userId)->where('c.customer_id', $customerId)
-            ->select('c.*')->first();
+            ->when($lock, fn ($query) => $query->lockForUpdate())->select('c.*')->first();
     }
 
     /** 权限按钮与对象关系同时成立才可操作；前端按钮只读这里的结果。 */
     public function abilities(SalesCustomer $customer, object $user): array
     {
         $relation = $this->relation($customer, $user);
-        $manages = in_array($relation, ['owner', 'all', 'department', 'public'], true);
-        $collab = $relation === 'collaborator' ? $this->collaboration($customer->id, (int) $user->legacy_id) : null;
-        $collabActions = $collab ? (json_decode($collab->actions, true) ?: []) : [];
-        $edit = $this->can($user, 'sales.customer.edit') && ($manages || !empty($collabActions['edit_master']));
         $ctx = $this->context($user);
-        $transferScope = $ctx['all'] || $relation === 'public'
-            || ($customer->owner_legacy_id && in_array((int) $customer->owner_legacy_id, $ctx['department_users'] ?? [], true));
+        $protected = !$customer->owner_legacy_id && $this->hasFormalLeads($customer->id);
+        $department = $customer->owner_legacy_id
+            ? in_array((int) $customer->owner_legacy_id, $ctx['department_users'], true)
+            : ($protected && $this->formalLeads(DB::query())->where('l.customer_id', $customer->id)->whereIn('l.department_legacy_id', $ctx['department_ids'])->exists());
+        $manages = function (string $permission) use ($customer, $user, $ctx, $relation, $protected, $department): bool {
+            $scope = $this->dataScope($user, $permission);
+            return $relation !== null && ($ctx['super'] || $scope === 'all' || (int) $customer->owner_legacy_id === $ctx['actor']
+                || ($scope === 'department' && $department) || (!$customer->owner_legacy_id && !$protected));
+        };
+        $collab = $this->collaboration($customer->id, (int) $user->legacy_id);
+        $collabActions = $collab ? (json_decode($collab->actions, true) ?: []) : [];
+        $edit = $relation !== null && $this->can($user, 'sales.customer.edit') && ($manages('sales.customer.edit') || !empty($collabActions['edit_master']));
 
         return [
             'relation' => $relation,
             'view' => $relation !== null,
+            'select' => $relation !== null && !$protected,
             'edit' => $edit,
-            'follow' => $manages || !empty($collabActions['follow']),
-            'bind_identity' => $edit && $this->can($user, 'sales.customer.identity'),
-            'collaborate' => in_array($relation, ['owner', 'all', 'department'], true) && $this->can($user, 'sales.customer.collaborate'),
+            'follow' => $manages('crm.lead.follow') || !empty($collabActions['follow']),
+            'bind_identity' => $edit && $this->can($user, 'sales.customer.identity') && ($manages('sales.customer.identity') || !empty($collabActions['edit_master'])),
+            'collaborate' => ($customer->owner_legacy_id || $protected) && $manages('sales.customer.collaborate') && $this->can($user, 'sales.customer.collaborate'),
             // 转交是部组长/全部范围的动作，负责销售本人不能把客户直接转给别人。
-            'transfer' => $transferScope && $this->can($user, 'sales.customer.transfer'),
-            'delete' => $manages && $this->can($user, 'sales.customer.delete'),
+            'transfer' => $this->dataScope($user, 'sales.customer.transfer') !== 'self' && $manages('sales.customer.transfer') && $this->can($user, 'sales.customer.transfer'),
+            'delete' => $manages('sales.customer.delete') && $this->can($user, 'sales.customer.delete'),
         ];
+    }
+
+    public function hasFormalLeads(int $customerId): bool
+    {
+        return $this->formalLeads(DB::query())->where('l.customer_id', $customerId)->exists();
+    }
+
+    private function formalLeads(QueryBuilder $query): QueryBuilder
+    {
+        return $query->from('erp_crm_leads as l')->whereNotIn('l.status', ['draft', 'pending_review']);
+    }
+
+    private function applyRelatedLead(QueryBuilder $query, object $user, array $ctx): void
+    {
+        $query->where(function ($related) use ($user, $ctx) {
+            $related->where('l.owner_legacy_id', $ctx['actor'])->orWhere('l.pending_user_legacy_id', $ctx['actor'])
+                ->orWhere(fn ($creator) => $creator->where('l.created_by_legacy_id', $ctx['actor'])->where('l.status', 'pending_assignment'));
+            if ($ctx['scope'] === 'department') $related->orWhereIn('l.department_legacy_id', $ctx['department_ids']);
+            $related->orWhere(fn ($assigned) => app(CrmAssignmentAccessService::class)->applyVisible($assigned, $user, 'l'));
+        });
     }
 
     public function assert(SalesCustomer $customer, object $user, string $ability, string $message): void
@@ -141,6 +204,12 @@ final class CrmCustomerAccessService
         return $query->from('erp_crm_customer_collaborators as c')
             ->where('c.user_legacy_id', $userId)->where('c.status', 'active')
             ->where('c.effective_from', '<=', $today)
-            ->where(fn ($q) => $q->whereNull('c.effective_to')->orWhere('c.effective_to', '>=', $today));
+            ->where(fn ($q) => $q->whereNull('c.effective_to')->orWhere('c.effective_to', '>=', $today))
+            ->where(fn ($valid) => $valid->whereNull('c.scope->type')->orWhere('c.scope->type', '!=', 'owner_opportunity_delegation')
+                ->orWhereExists(fn ($owner) => $owner->from('erp_sales_customers as delegated_customer')->whereColumn('delegated_customer.id', 'c.customer_id')
+                    ->whereColumn('delegated_customer.owner_legacy_id', 'c.created_by_legacy_id')
+                    ->whereExists(fn ($opportunity) => $opportunity->from('erp_crm_opportunities as delegated_opportunity')
+                        ->whereColumn('delegated_opportunity.customer_id', 'c.customer_id')->whereColumn('delegated_opportunity.owner_legacy_id', 'c.created_by_legacy_id')
+                        ->whereRaw("JSON_CONTAINS(c.scope, CAST(delegated_opportunity.id AS JSON), '$.opportunity_ids')"))));
     }
 }

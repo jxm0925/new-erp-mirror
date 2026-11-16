@@ -57,7 +57,13 @@
           </el-table-column>
           <el-table-column v-else-if="column.key === 'business'" :key="column.key" :label="column.label" min-width="140"><template slot-scope="{row}"><b v-if="hasField('purchasing_power')">{{ row.purchasing_power || '未填写' }}</b><small v-if="hasField('business_lines')" class="cell-sub">{{ (row.business_lines || []).join('、') || '未填写' }}</small></template></el-table-column>
           <el-table-column v-else-if="column.key === 'contact'" :key="column.key" :label="column.label" min-width="140"><template slot-scope="{row}"><b>{{ defaultContact(row).contact_name || row.contact_name || '—' }}<span v-if="defaultContact(row).position" class="muted">（{{ defaultContact(row).position }}）</span></b><small class="cell-sub">{{ maskPhone(defaultContact(row).mobile || defaultContact(row).phone || row.contact_phone) }}</small></template></el-table-column>
-          <el-table-column v-else-if="column.key === 'owner'" :key="column.key" :label="column.label" min-width="120"><template slot-scope="{row}"><b>{{ row.owner_name || '暂无' }}</b><small class="cell-sub">{{ row.owner_department_name || (row.owner_name ? '' : '首次使用自动归属') }}</small></template></el-table-column>
+          <el-table-column v-else-if="column.key === 'owner'" :key="column.key" :label="column.label" min-width="120">
+            <template slot-scope="{row}">
+              <b>{{ row.owner_name || '暂无' }}</b>
+              <small v-if="row.owner_department_name" class="cell-sub">{{ row.owner_department_name }}</small>
+              <small v-else-if="!row.owner_name" class="cell-sub">{{ row.abilities && row.abilities.select === false ? '由接收线索的销售负责' : '首次使用自动归属' }}</small>
+            </template>
+          </el-table-column>
           <el-table-column v-else-if="column.key === 'deal'" :key="column.key" :label="column.label" min-width="145" align="right"><template slot-scope="{row}"><el-button v-if="row.money_abilities && row.money_abilities.view_amounts && row.money_abilities.view_orders" type="text" size="mini" class="amount-link" @click="openOrders(row)"><span v-for="item in (row.money_summary && row.money_summary.currencies) || []" :key="item.currency" class="amount-line" :title="item.verification_count ? '含待核实订单' : ''">{{ orderMoney(item.deal_amount,item.currency) }}</span><span v-if="!row.money_summary">—</span><span v-else-if="!row.money_summary.currencies.length">无生效订单</span></el-button><template v-else-if="row.money_abilities && row.money_abilities.view_amounts"><span v-for="item in (row.money_summary && row.money_summary.currencies) || []" :key="item.currency" class="amount-line">{{ orderMoney(item.deal_amount,item.currency) }}</span><span v-if="!row.money_summary">—</span><span v-else-if="!row.money_summary.currencies.length">无生效订单</span></template><span v-else class="muted">—</span></template></el-table-column>
           <el-table-column v-else-if="column.key === 'open_opportunity_count'" :key="column.key" :label="column.label" min-width="110" align="right"><template slot-scope="{row}"><el-button v-if="row.opportunity_summary" type="text" size="mini" @click="openOpportunities(row)">{{ row.opportunity_summary.open_count }}</el-button><span v-else>—</span></template></el-table-column>
           <el-table-column v-else-if="column.key === 'expected_amounts'" :key="column.key" :label="column.label" min-width="145" align="right"><template slot-scope="{row}"><el-button v-if="row.opportunity_summary" type="text" class="amount-link" @click="openOpportunities(row)"><span v-for="item in row.opportunity_summary.currencies || []" :key="item.currency" class="amount-line">{{ orderMoney(item.expected_amount,item.currency) }}</span><span v-if="!(row.opportunity_summary.currencies || []).length">无进行中商机</span></el-button><span v-else>—</span></template></el-table-column>
@@ -70,7 +76,7 @@
           <template slot-scope="{row}">
             <el-button type="text" size="mini" icon="el-icon-view" @click="openDetail(row)">查看</el-button>
             <el-button v-if="row.abilities && row.abilities.follow && (!$can || $can('crm.lead.follow'))" type="text" size="mini" icon="el-icon-chat-line-round" @click="openFollowup(row)">跟进</el-button>
-            <el-button v-if="row.relation && (!$can || $can('sales.customer.edit'))" type="text" size="mini" icon="el-icon-edit" @click="openEdit(row)">编辑</el-button>
+            <el-button v-if="row.abilities && row.abilities.edit" type="text" size="mini" icon="el-icon-edit" @click="openEdit(row)">编辑</el-button>
           </template>
         </el-table-column>
         <template slot="empty">
@@ -232,6 +238,7 @@ export default {
       this.$refs.customerDrawer.openCreate('individual')
     },
     openEdit(row) {
+      if (!(row.abilities && row.abilities.edit)) return
       this.$refs.customerDrawer.openEdit(row.id)
     },
     openDetail(row) {

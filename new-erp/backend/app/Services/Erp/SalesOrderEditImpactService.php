@@ -83,6 +83,7 @@ class SalesOrderEditImpactService
         'price_tax_mode' => '含税方式', 'order_qty' => '订单行数量',
         'sku_id' => '订单行 SKU', 'product_id' => '订单行 Product', 'line_removed' => '删除订单行',
         'line_added' => '新增订单行', 'fulfillment_method' => '备货方式',
+        'confirmed_drawing_revision_ids' => '客户确认图纸',
         'electric' => '电压', 'need_pump' => '原水泵控制', 'is_customized' => '普通定制',
         'is_special_customized' => '特殊定制', 'configuration_snapshot' => '生产关键配置',
         'customer_kind' => '客户类型', 'platform_buyer_id' => '平台买家ID', 'payment_method_id' => '付款方式',
@@ -98,6 +99,7 @@ class SalesOrderEditImpactService
         'product_id', 'sku_id', 'order_qty', 'unit_price', 'discount_rate', 'tax_rate',
         'price_tax_mode', 'fulfillment_method', 'electric', 'need_pump',
         'is_customized', 'is_special_customized', 'configuration_snapshot', 'remark',
+        'confirmed_drawing_revision_ids',
     ];
 
     private const APPROVAL_NEUTRAL_DESCRIPTIONS = [
@@ -346,8 +348,11 @@ class SalesOrderEditImpactService
                 continue;
             }
             foreach (self::LINE_FIELDS as $field) {
-                $beforeValue = $visibility->redact($old->getAttribute($field));
-                $afterValue = $visibility->redact(array_key_exists($field, $line) ? $line[$field] : $old->getAttribute($field));
+                $beforeValue = $field === SalesOrderConfirmedDrawingService::FIELD
+                    ? app(SalesOrderConfirmedDrawingService::class)->ids($old->attributesToArray()) : $visibility->redact($old->getAttribute($field));
+                $afterValue = $field === SalesOrderConfirmedDrawingService::FIELD
+                    ? (array_key_exists($field, $line) ? app(SalesOrderConfirmedDrawingService::class)->ids($line) : $beforeValue)
+                    : $visibility->redact(array_key_exists($field, $line) ? $line[$field] : $old->getAttribute($field));
                 if ($field === 'configuration_snapshot') {
                     $beforeValue = $this->lines->configurationSnapshot(array_replace($old->attributesToArray(), ['configuration_snapshot' => $beforeValue]));
                     $afterValue = $this->lines->configurationSnapshot($line, $beforeValue);
@@ -363,9 +368,9 @@ class SalesOrderEditImpactService
                 $before = $this->lineValue($field, $beforeValue, $old);
                 $after = $this->lineValue($field, $afterValue, $line);
                 // 同名商品或SKU仍可能是不同身份，不能仅凭页面名称把替换判断成未修改。
-                if (in_array($field, ['product_id', 'sku_id'], true)
+                if ($field === SalesOrderConfirmedDrawingService::FIELD ? $beforeValue === $afterValue : (in_array($field, ['product_id', 'sku_id'], true)
                     ? (int) $beforeValue === (int) $afterValue
-                    : $before === $after) continue;
+                    : $before === $after)) continue;
                 $diffs[] = $this->diff('line', $old->id, $field, $before, $after, $this->lineImpacts($field, $old, $before, $after, $facts), $this->lineLabel($old, $index + 1));
             }
         }
@@ -500,8 +505,10 @@ class SalesOrderEditImpactService
                 ->where('legacy_id', $order->default_carrier_id ?: $order->carrier_id)->value('name')]);
         }
         if ($hasLineOperationalImpact) $this->lines->sync($order, $candidate['lines'], $candidate['deleted_line_ids'], $candidate['draft_token'] ?? null, $operator,
-            $order->lines->pluck('id')->map(fn ($id) => (int) $id)->diff($resetLineIds)->values()->all(), $candidate['protected_line_splits'] ?? []);
+            $order->lines->pluck('id')->map(fn ($id) => (int) $id)->diff($resetLineIds)->values()->all(), $candidate['protected_line_splits'] ?? [],
+            $actor, $candidate['confirmed_drawing_selections'] ?? null);
         else $this->saveCommercialLinesLocked($order, $candidate['lines']);
+        app(SalesOrderConfirmedDrawingService::class)->sync($order, $candidate['lines'], $actor, $candidate['confirmed_drawing_selections'] ?? null);
         $this->saveLineInfoFields($order, $candidate['lines'], (array) ($impact['diffs'] ?? []));
         $this->amounts->refresh($order);
         if (in_array('funding_policy_id', $changedHeaders, true)) {
@@ -619,7 +626,7 @@ class SalesOrderEditImpactService
         if (isset($payload['expected_version']) && (int) $payload['expected_version'] !== (int) $order->business_version) {
             throw ValidationException::withMessages(['expected_version' => '订单已被修改，请刷新后按最新内容重新编辑。']);
         }
-        app(\App\Services\Erp\Crm\CrmOpportunityOrderService::class)->guardOrderUpdate($order, $payload);
+        app(\App\Services\Erp\Crm\CrmOpportunityOrderService::class)->guardOrderUpdate($order, $payload, $actor);
         $payload = app(SalesCostVisibilityService::class)->redact($payload);
         $lines = array_values($payload['lines'] ?? []);
         $sentIds = collect($lines)->pluck('id')->map(fn ($id) => (int) $id)->filter()->all();
@@ -651,6 +658,16 @@ class SalesOrderEditImpactService
             'production_unit_selections' => array_values($payload['production_unit_selections'] ?? []),
         ];
         $candidate = $this->splitProtectedLines($order, $candidate);
+        app(SalesOrderConfirmedDrawingService::class)->assertCustomer($order, $candidate['lines'], (int) ($candidate['header']['customer_id'] ?? $order->customer_id), $candidate['deleted_line_ids']);
+        $candidate['confirmed_drawing_selections'] = app(SalesOrderConfirmedDrawingService::class)->prepare(
+            $order, $candidate['lines'], $actor, (int) ($candidate['header']['customer_id'] ?? $order->customer_id));
+        foreach ($candidate['lines'] as $index => &$line) {
+            if (!array_key_exists(SalesOrderConfirmedDrawingService::FIELD, $line)) continue;
+            $snapshot = is_array($line['drawing_snapshot'] ?? null) ? $line['drawing_snapshot'] : [];
+            $snapshot['confirmed_versions'] = $candidate['confirmed_drawing_selections'][$index];
+            $line['drawing_snapshot'] = $snapshot;
+        }
+        unset($line);
         $this->assertSpecialCustomRequirements($order, $candidate);
         return $candidate;
     }
@@ -695,7 +712,7 @@ class SalesOrderEditImpactService
 
     private function protectedTermsChanged($old, array $row): bool
     {
-        foreach (array_diff(self::LINE_FIELDS, ['order_qty', 'remark']) as $field) {
+        foreach (array_diff(self::LINE_FIELDS, ['order_qty', 'remark', SalesOrderConfirmedDrawingService::FIELD]) as $field) {
             $before = $old->getAttribute($field); $after = $row[$field] ?? $before;
             if ($field === 'configuration_snapshot') {
                 $before = $this->lines->configurationSnapshot($old->toArray());
@@ -748,6 +765,7 @@ class SalesOrderEditImpactService
      */
     private function normalizeHeader(array $header, SalesOrder $order, ?object $actor = null): array
     {
+        $actor ??= request() ? app(AuthContextService::class)->currentUser(request()) : null;
         unset($header['customer_snapshot'], $header['pay_type'], $header['channel_type_snapshot']);
         $channelId = (int) ($header['sales_channel_id'] ?? $order->sales_channel_id);
         $externalOrderNo = array_key_exists('external_order_no', $header) ? $header['external_order_no'] : $order->external_order_no;
@@ -774,12 +792,14 @@ class SalesOrderEditImpactService
             if (!$customer || in_array($customer->status, ['disabled', 'blacklisted'], true)) {
                 throw ValidationException::withMessages(['customer_id' => '所选客户已停用或在黑名单，不能用于订单。']);
             }
-            // 改单换客户与新建订单共用客户可见范围：其他部门负责的客户需先申请协作。
-            $actor ??= request() ? app(AuthContextService::class)->currentUser(request()) : null;
-            if ($actor && app(\App\Services\Erp\Crm\CrmCustomerAccessService::class)->relation($customer, $actor) === null) {
-                throw ValidationException::withMessages(['customer_id' => '该客户由其他部门负责，不在你的可见范围内，请先申请协作。']);
-            }
+            if ($actor) app(\App\Services\Erp\Crm\CrmCustomerAccessService::class)->assert($customer, $actor, 'select', '该客户当前不可选用，请先完成客户分配或申请协作。');
             $header['customer_name'] = $customer->customer_name;
+        }
+        foreach (['customer_contact_id', 'customer_address_id'] as $field) {
+            if ($actor && filled($header[$field] ?? null) && (int) $header[$field] !== (int) $order->{$field}) {
+                $customer = SalesCustomer::query()->findOrFail($customerId);
+                app(\App\Services\Erp\Crm\CrmCustomerAccessService::class)->assert($customer, $actor, 'view', '无权读取该客户的其他联系人或地址，请先申请客户协作。');
+            }
         }
         if (filled($header['customer_contact_id'] ?? null) && (int) $header['customer_contact_id'] !== (int) $order->customer_contact_id
             && !SalesCustomerContact::query()->where('customer_id', $customerId)->whereKey($header['customer_contact_id'])->exists()) {
@@ -891,7 +911,9 @@ class SalesOrderEditImpactService
         if ($bind && $resolved['key']) {
             $customer = SalesCustomer::query()->lockForUpdate()->findOrFail($customerId);
             abort_if(in_array($customer->status, ['disabled', 'blacklisted'], true), 422, '该客户已停用或在黑名单，不能登记订单平台身份。');
-            $identities->bind($customer, $platform, $buyerId, 'order', $actor, '订单变更生效时登记');
+            if ($actor && app(\App\Services\Erp\Crm\CrmCustomerAccessService::class)->abilities($customer, $actor)['bind_identity']) {
+                $identities->bind($customer, $platform, $buyerId, 'order', $actor, '订单变更生效时登记');
+            }
         }
     }
 
@@ -1201,6 +1223,11 @@ class SalesOrderEditImpactService
 
     private function lineValue(string $field, mixed $value, mixed $source): string
     {
+        if ($field === SalesOrderConfirmedDrawingService::FIELD) {
+            $versions = (array) data_get(is_array($source) ? $source : $source->attributesToArray(), 'drawing_snapshot.confirmed_versions', []);
+            return implode('；', array_map(fn ($version) => trim(($version['request_no'] ?? '').' '.($version['drawing_no'] ?? $version['drawing_name'] ?? '图纸').' V'.($version['version_no'] ?? '')),
+                array_values(array_filter($versions, fn ($version) => in_array((int) ($version['request_revision_id'] ?? 0), (array) $value, true)))));
+        }
         if ($field === 'sku_id') {
             if (is_array($source)) return (string) ($source['sku_name'] ?? $value ?? '');
             return (string) ($source->sku_name ?: $value ?: '');

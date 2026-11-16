@@ -104,6 +104,7 @@ final class CrmCustomerDedupeService
                 ]
                 : $this->access->masked($customer);
             return $base + [
+                'selectable' => $base['visible'] && $this->access->abilities($customer, $user)['select'] && in_array($customer->status, ['enabled', 'potential'], true),
                 'strong' => $match['strong'],
                 'reasons' => $match['reasons'],
                 'reason_labels' => array_map(fn ($r) => self::LABELS[$r] ?? $r, $match['reasons']),

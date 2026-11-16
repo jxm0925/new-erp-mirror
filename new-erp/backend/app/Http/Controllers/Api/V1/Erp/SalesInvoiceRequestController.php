@@ -21,7 +21,7 @@ class SalesInvoiceRequestController extends Controller
     public function orderIndex(Request $request, int $id)
     {
         $user = $this->authorizeAll($request, ['sales_order.view']);
-        $data = $this->service->forOrder($this->visibleOrder($user, $id, true));
+        $data = $this->service->forOrder($this->visibleOrder($user, $id, true), $user);
         $writable = SalesOrder::query()->whereKey($id);
         app(SalesOrderVisibilityService::class)->apply($writable, $user);
         $data['can_create'] = $this->has($user, 'sales_order.invoice_request') && $writable->exists();

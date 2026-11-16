@@ -391,6 +391,17 @@ Route::prefix('v1/erp/bom')->group(function () {
 
 Route::get('v1/erp/sales-orders/{id}/change-production-units', [SalesOrderController::class, 'changeProductionUnits'])->whereNumber('id');
 Route::prefix('v1/erp/crm')->group(function () {
+    Route::get('drawing-requests/metadata', [\App\Http\Controllers\Api\V1\Erp\CrmDrawingRequestController::class, 'metadata']);
+    Route::get('drawing-requests/technicians', [\App\Http\Controllers\Api\V1\Erp\CrmDrawingRequestController::class, 'technicians']);
+    Route::get('drawing-requests/reference-candidates', [\App\Http\Controllers\Api\V1\Erp\CrmDrawingRequestController::class, 'references']);
+    Route::get('drawing-requests/confirmed-revisions', [\App\Http\Controllers\Api\V1\Erp\CrmDrawingRequestController::class, 'confirmedRevisions']);
+    Route::get('drawing-requests', [\App\Http\Controllers\Api\V1\Erp\CrmDrawingRequestController::class, 'index']);
+    Route::post('drawing-requests', [\App\Http\Controllers\Api\V1\Erp\CrmDrawingRequestController::class, 'store']);
+    Route::get('drawing-requests/{id}', [\App\Http\Controllers\Api\V1\Erp\CrmDrawingRequestController::class, 'show'])->whereNumber('id');
+    Route::put('drawing-requests/{id}', [\App\Http\Controllers\Api\V1\Erp\CrmDrawingRequestController::class, 'update'])->whereNumber('id');
+    Route::post('drawing-requests/{id}/deliver', [\App\Http\Controllers\Api\V1\Erp\CrmDrawingRequestController::class, 'deliver'])->whereNumber('id');
+    Route::post('drawing-requests/{id}/revisions/{revisionId}/confirm', [\App\Http\Controllers\Api\V1\Erp\CrmDrawingRequestController::class, 'confirm'])->whereNumber(['id', 'revisionId']);
+    Route::get('drawing-requests/{id}/references/{attachmentId}/download', [\App\Http\Controllers\Api\V1\Erp\CrmDrawingRequestController::class, 'downloadReference'])->whereNumber(['id', 'attachmentId']);
     Route::get('saved-views/metadata', [\App\Http\Controllers\Api\V1\Erp\CrmSavedViewController::class, 'metadata']);
     Route::get('saved-views', [\App\Http\Controllers\Api\V1\Erp\CrmSavedViewController::class, 'index']);
     Route::post('saved-views', [\App\Http\Controllers\Api\V1\Erp\CrmSavedViewController::class, 'store']);
@@ -430,6 +441,10 @@ Route::prefix('v1/erp/crm')->group(function () {
     Route::get('opportunities/{id}/order-context', [\App\Http\Controllers\Api\V1\Erp\CrmOpportunityController::class, 'orderContext'])->whereNumber('id');
     Route::get('opportunities/{id}/orders', [\App\Http\Controllers\Api\V1\Erp\CrmOpportunityController::class, 'orders'])->whereNumber('id');
     Route::get('leads/metadata', [\App\Http\Controllers\Api\V1\Erp\CrmLeadController::class, 'metadata']);
+    Route::get('sales-delegations/mine', [\App\Http\Controllers\Api\V1\Erp\CrmTeamController::class, 'salesDelegations'])->name('crm.sales-delegations.self.index');
+    Route::post('sales-delegations/mine', [\App\Http\Controllers\Api\V1\Erp\CrmTeamController::class, 'createSalesDelegation'])->name('crm.sales-delegations.self.create');
+    Route::post('sales-delegations/mine/{id}/end', [\App\Http\Controllers\Api\V1\Erp\CrmTeamController::class, 'endSalesDelegation'])->whereNumber('id')->name('crm.sales-delegations.self.end');
+    Route::get('sales-delegations/candidates', [\App\Http\Controllers\Api\V1\Erp\CrmTeamController::class, 'delegationCandidates']);
     Route::get('leads', [\App\Http\Controllers\Api\V1\Erp\CrmLeadController::class, 'index']);
     Route::post('leads', [\App\Http\Controllers\Api\V1\Erp\CrmLeadController::class, 'store']);
     Route::get('leads/{id}', [\App\Http\Controllers\Api\V1\Erp\CrmLeadController::class, 'show'])->whereNumber('id');
@@ -456,6 +471,9 @@ Route::prefix('v1/erp/crm')->group(function () {
     Route::put('team/staff/{userId}/capability', [\App\Http\Controllers\Api\V1\Erp\CrmTeamController::class, 'saveCapability'])->whereNumber('userId');
     Route::get('team/users', [\App\Http\Controllers\Api\V1\Erp\CrmTeamController::class, 'users']);
     Route::get('team/grants', [\App\Http\Controllers\Api\V1\Erp\CrmTeamController::class, 'grants']);
+    Route::get('team/sales-delegations', [\App\Http\Controllers\Api\V1\Erp\CrmTeamController::class, 'salesDelegations']);
+    Route::post('team/sales-delegations', [\App\Http\Controllers\Api\V1\Erp\CrmTeamController::class, 'createSalesDelegation']);
+    Route::post('team/sales-delegations/{id}/end', [\App\Http\Controllers\Api\V1\Erp\CrmTeamController::class, 'endSalesDelegation'])->whereNumber('id');
     Route::post('team/grants', [\App\Http\Controllers\Api\V1\Erp\CrmTeamController::class, 'saveGrant']);
     Route::put('team/grants/{id}', [\App\Http\Controllers\Api\V1\Erp\CrmTeamController::class, 'saveGrant'])->whereNumber('id');
     Route::get('duplicate-reviews', [\App\Http\Controllers\Api\V1\Erp\CrmDuplicateReviewController::class, 'index']);
@@ -504,6 +522,8 @@ Route::prefix('v1/erp/sales')->group(function () {
     Route::get('orders/attachments/{id}/download', [SalesOrderController::class, 'downloadAttachment'])->whereNumber('id');
     Route::delete('orders/attachments/{id}', [SalesOrderController::class, 'deleteDraftAttachment'])->whereNumber('id');
     Route::get('orders/{id}', [SalesOrderController::class, 'show'])->whereNumber('id');
+    Route::get('orders/{id}/lines/{lineId}/confirmed-drawings/{requestRevisionId}/preview', [SalesOrderController::class, 'previewConfirmedDrawing'])->whereNumber(['id', 'lineId', 'requestRevisionId']);
+    Route::get('orders/{id}/lines/{lineId}/confirmed-drawings/{requestRevisionId}/download', [SalesOrderController::class, 'downloadConfirmedDrawing'])->whereNumber(['id', 'lineId', 'requestRevisionId']);
     Route::get('orders/{id}/aftersales', [\App\Http\Controllers\Api\V1\Erp\AftersalesController::class, 'orderCases'])->whereNumber('id');
     Route::get('orders/{id}/progress/tree', [SalesOrderController::class, 'progressTree'])->whereNumber('id');
     Route::get('orders/{id}/progress/lines/{lineId}/units', [SalesOrderController::class, 'progressUnits'])->whereNumber(['id', 'lineId']);

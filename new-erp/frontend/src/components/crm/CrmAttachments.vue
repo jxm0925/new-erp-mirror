@@ -4,9 +4,9 @@
       <el-button size="small" :loading="uploading" icon="el-icon-upload2">{{ images ? '上传图片' : '上传附件' }}</el-button>
     </el-upload>
     <span v-for="file in value" :key="file.id" class="crm-attachment">
-      <el-button type="text" size="small" @click="download(file)">{{ file.name || file.original_name || '附件' }}</el-button>
-      <span v-if="file.size" class="crm-muted">{{ Math.ceil(file.size / 1024) }} KB</span>
-      <el-button v-if="!readonly" type="text" size="mini" icon="el-icon-close" aria-label="移除附件" @click="$emit('input', value.filter(item => item.id !== file.id))" />
+      <el-button type="text" size="small" class="crm-attachment-name" :title="file.name || file.original_name || '附件'" @click="download(file)">{{ file.name || file.original_name || '附件' }}</el-button>
+      <span v-if="file.size" class="crm-muted crm-attachment-size">{{ Math.ceil(file.size / 1024) }} KB</span>
+      <el-button v-if="!readonly" type="text" size="mini" icon="el-icon-close" class="crm-attachment-remove" aria-label="移除附件" @click="$emit('input', value.filter(item => item.id !== file.id))" />
     </span>
   </div>
 </template>
@@ -14,7 +14,7 @@
 import { uploadCrmAttachment, downloadCrmAttachment, crmError } from '@/api/erp/crm'
 export default {
   name: 'CrmAttachments',
-  props: { value: { type: Array, default: () => [] }, readonly: Boolean, images: Boolean },
+  props: { value: { type: Array, default: () => [] }, readonly: Boolean, images: Boolean, downloadRequest: { type: Function, default: downloadCrmAttachment } },
   data: () => ({ uploading: false, session: 0 }),
   computed: { accept() { return this.images ? 'image/*' : '' } },
   beforeDestroy() { this.session += 1 },
@@ -39,7 +39,7 @@ export default {
     },
     async download(file) {
       try {
-        const response = await downloadCrmAttachment(file.id)
+        const response = await this.downloadRequest(file.id)
         const url = URL.createObjectURL(response.data)
         const link = document.createElement('a')
         link.href = url
@@ -52,6 +52,53 @@ export default {
 }
 </script>
 <style scoped>
-.crm-attachments { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.crm-attachment { display: inline-flex; align-items: center; gap: 5px; padding: 0 8px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 5px; max-width: 100%; word-break: break-word; }
+.crm-attachments {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  line-height: 1.4;
+}
+.crm-attachment {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  min-height: 28px;
+  line-height: 1.4;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 5px;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+.crm-attachment-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 4px 0;
+}
+.crm-attachment-name ::v-deep > span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.crm-attachment-size,
+.crm-attachment-remove {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.crm-attachment-remove {
+  margin-left: 0;
+  padding: 4px 2px;
+}
 </style>

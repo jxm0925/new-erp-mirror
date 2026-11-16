@@ -153,7 +153,7 @@ export default {
       }
     },
     isSelectable(customer) {
-      return !!customer && customer.visible !== false && customer.selectable !== false && ['enabled', 'potential'].includes(customer.status)
+      return !!customer && customer.visible !== false && customer.selectable !== false && !(customer.abilities && customer.abilities.select === false) && ['enabled', 'potential'].includes(customer.status)
     },
     requestCollaboration(row) {
       this.$refs.identityReview.openRequest({ purpose: 'collaboration', subject_type: 'customer', subject_id: null,
@@ -161,7 +161,7 @@ export default {
     },
     confirm() {
       if (!this.current) return
-      if (!this.isSelectable(this.current)) return this.$message.warning(this.current.visible === false ? '该客户由其他部门负责，请联系负责销售添加协作后再选用' : '仅可选择启用或潜在客户')
+      if (!this.isSelectable(this.current)) return this.$message.warning(this.current.visible === false ? '该客户不在可选范围，请申请协作后再选用' : (['enabled', 'potential'].includes(this.current.status) ? '该客户正在分配，请先通过所属线索接收或领取' : '仅可选择启用或潜在客户'))
       this.$emit('select', this.current)
       this.visible = false
     },

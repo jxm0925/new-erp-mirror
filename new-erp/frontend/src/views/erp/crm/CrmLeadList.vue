@@ -481,6 +481,7 @@ export default {
     visibleTabs() {
       return [
         { value: 'mine', label: '我负责的', icon: 'el-icon-user-solid', desc: '本人跟进中的线索', tone: 'is-green' },
+        { value: 'delegated', label: '我代办的', icon: 'el-icon-time', desc: '请假期间代办的线索', tone: '' },
         { value: 'collaborating', label: '我协作的', icon: 'el-icon-connection', desc: '跨部门协作客户线索', tone: '' },
         { value: 'all', label: '授权范围', icon: 'el-icon-Menu', desc: '授权范围内全部可见线索', tone: '' },
         ...(this.abilities.assign || this.abilities.review
@@ -488,7 +489,7 @@ export default {
             { value: 'pending_assignment', label: '待分配', icon: 'el-icon-s-promotion', desc: '等待指派负责销售', tone: 'is-amber' }
           ]
           : []),
-        { value: 'pending_acceptance', label: '待接收', icon: 'el-icon-bell', desc: '分配给我待确认接收', tone: 'is-amber' },
+        { value: 'pending_acceptance', label: '待接收', icon: 'el-icon-bell', desc: '本人及代班待接收线索', tone: 'is-amber' },
         { value: 'pending_review', label: '待核实', icon: 'el-icon-warning-outline', desc: '身份冲突或疑似客户核实', tone: 'is-red' },
         { value: 'public_pool', label: '公海', icon: 'el-icon-receiving', desc: '回收沉淀可重新领取分配', tone: '' },
         { value: 'draft', label: '草稿', icon: 'el-icon-edit-outline', desc: '本人暂存待提交草稿', tone: '' }
@@ -499,7 +500,7 @@ export default {
       return found ? found.label : '线索列表'
     },
     showStatusFilter() {
-      return ['mine', 'collaborating', 'all'].includes(this.query.tab)
+      return ['mine', 'collaborating', 'delegated', 'all'].includes(this.query.tab)
     },
     showPoolFilter() {
       return !['public_pool', 'draft', 'pending_review'].includes(this.query.tab)
@@ -523,6 +524,7 @@ export default {
       const map = {
         mine: '暂无你负责的线索',
         collaborating: '暂无你参与协作的客户线索',
+        delegated: '当前没有需要你代办的线索',
         all: '授权范围内暂无线索记录',
         pending_assignment: '当前没有待分配的线索',
         pending_acceptance: '当前没有待你接收的线索',
@@ -642,6 +644,7 @@ export default {
           customer_id: row.customer_id,
           customer_name: row.customer_name,
           lead_no: row.lead_no,
+          delegated: row.delegated,
           contact_name: row.contact_name
         })
       } else {
@@ -655,7 +658,7 @@ export default {
     },
     opportunitySaved(row) {
       this.load()
-      if (row && row.id) this.$refs.opportunityDetail.open(row.id)
+      if (row && row.id && (!row.abilities || row.abilities.view !== false)) this.$refs.opportunityDetail.open(row.id)
     },
     copyText(text, label = '内容') {
       if (!text) return

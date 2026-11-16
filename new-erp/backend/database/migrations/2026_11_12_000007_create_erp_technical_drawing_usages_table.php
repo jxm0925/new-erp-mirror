@@ -40,6 +40,6 @@ CREATE TABLE `erp_technical_drawing_usages` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
 SQL;
     public const DECLARED_CHECKS = [
-        'technical_usage_source_check' => "(`source_type` IN ('opportunity', 'bom', 'work_order'))",
+        'technical_usage_source_check' => "(`source_type` IN ('opportunity', 'bom', 'work_order', 'drawing_request'))",
     ];
 };

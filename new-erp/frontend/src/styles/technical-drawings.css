@@ -32,6 +32,7 @@
 .drawing-dialog .el-button--text, .drawing-statistics-page .el-button--text, .drawing-source-panel .el-button--text { color: #008b4b; }
 .drawing-source-summary { display: flex; flex-wrap: wrap; gap: 16px 28px; background: #f0f4f8; border: 1px solid #e2e8f0; border-radius: 7px; padding: 14px 18px; margin-bottom: 25px; }
 .drawing-source-summary > div { flex: 1; min-width: 200px; display: flex; align-items: center; gap: 18px; overflow-wrap: anywhere; }
+.drawing-source-summary > div > b { min-width: 0; overflow-wrap: anywhere; word-break: break-word; }
 .drawing-source-summary span { color: #64748b; flex-shrink: 0; }
 .drawing-modes { display: flex; flex-wrap: wrap; gap: 24px; margin: 0 0 30px 4px; }
 .drawing-modes .el-radio { margin: 0; }
@@ -52,7 +53,7 @@
 .drawing-source-heading h3 { margin: 0; font-size: 15px; }
 .drawing-inline-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 .drawing-inline-actions .el-button + .el-button { margin-left: 0; }
-.drawing-file-input { width: 100%; }
+.drawing-file-input { width: 100%; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
 .drawing-identification { color: #008b4b; font-size: 12px; line-height: 1.7; }
 @media (max-width: 700px) {
   .drawing-statistics-page { padding: 14px; }

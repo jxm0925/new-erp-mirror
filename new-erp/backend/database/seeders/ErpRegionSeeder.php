@@ -13,7 +13,11 @@ class ErpRegionSeeder extends Seeder
 
     private function seed(): void
     {
-        $rows = json_decode(file_get_contents(__DIR__.'/data/erp_regions.json'), true, 512, JSON_THROW_ON_ERROR);
+        // 退役地区保留原 ID 供历史地址回显，地址选择仍由 CustomerRegionService 排除退役项。
+        $rows = array_merge(
+            json_decode(file_get_contents(__DIR__.'/data/erp_regions.json'), true, 512, JSON_THROW_ON_ERROR),
+            json_decode(file_get_contents(__DIR__.'/data/erp_regions_retired.json'), true, 512, JSON_THROW_ON_ERROR)
+        );
         if (!is_array($rows) || !array_is_list($rows) || !$rows) {
             throw new RuntimeException('地区基础数据必须是非空节点列表。');
         }

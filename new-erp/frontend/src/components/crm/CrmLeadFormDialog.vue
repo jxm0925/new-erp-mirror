@@ -74,8 +74,8 @@
               </el-select>
             </el-form-item>
             <el-form-item label="负责人">
-              <el-input :value="isSales ? `${currentUser.name || ''}（本人）` : form.owner_name || '待分配'" disabled />
-              <small v-if="isSales" class="crm-sub">销售自录默认由本人直接负责跟进</small>
+              <el-input :value="form.owner_name || form.pending_user_name || (isSales && !identityLocked ? `${currentUser.name || ''}（本人）` : '待分配')" disabled />
+              <small v-if="isSales && !identityLocked" class="crm-sub">销售自录默认由本人直接负责跟进</small>
             </el-form-item>
             <el-form-item label="来源渠道" required>
               <el-select popper-class="crm-select-popper" v-model="form.source_channel" :disabled="identityLocked" filterable placeholder="请选择来源渠道" @change="sourceChanged">
@@ -83,7 +83,7 @@
               </el-select>
             </el-form-item>
             <el-form-item label="录入方式">
-              <el-input :value="isSales ? '销售自录' : '运营代录'" disabled />
+              <el-input :value="(form.entry_method ? form.entry_method === 'self' : isSales) ? '销售自录' : '运营代录'" disabled />
             </el-form-item>
             <el-form-item label="线索类型">
               <el-select popper-class="crm-select-popper" v-model="form.lead_type" filterable allow-create default-first-option clearable placeholder="如：普通咨询">
@@ -463,7 +463,7 @@ export default {
     continueLead(row) {
       if (this.leadChoice.loading || this.leadChoice.error || this.uploading || row.status !== 'active' || !(row.abilities && row.abilities.follow) || this.leadChoice.customerId !== this.form.customer_id) return
       this.followupSession = this.session
-      this.$refs.follow.open({ subject_type: 'lead', subject_id: row.id, customer_id: row.customer_id, customer_name: row.customer_name, lead_no: row.lead_no, contact_name: row.contact_name }, {
+      this.$refs.follow.open({ subject_type: 'lead', subject_id: row.id, delegated: row.delegated, customer_id: row.customer_id, customer_name: row.customer_name, lead_no: row.lead_no, contact_name: row.contact_name }, {
         contact_name: this.form.contact_name || row.contact_name || '',
         content: this.form.content,
         next_contact_at: this.form.next_contact_at,

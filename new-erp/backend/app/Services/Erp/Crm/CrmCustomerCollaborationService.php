@@ -28,6 +28,7 @@ final class CrmCustomerCollaborationService
     {
         return DB::transaction(function () use ($customerId, $data, $actor) {
             $customer = SalesCustomer::query()->lockForUpdate()->findOrFail($customerId);
+            abort_if(!empty($data['actions']['stage']) || !empty($data['actions']['order']), 422, '请在工作台「我的销售代班」统一设置线索、商机和订单代班。');
             $this->access->assert($customer, $actor, 'collaborate', '无权为该客户添加协作。');
             $userId = (int) $data['user_legacy_id'];
             if (!$this->staff->isActiveSales($userId)) {
@@ -45,6 +46,7 @@ final class CrmCustomerCollaborationService
                 'order_amount' => !empty($data['scope']['order_amount']),
                 'finance' => !empty($data['scope']['finance']),
             ];
+            $actions = ['view' => true, 'follow' => !empty($data['actions']['follow']), 'edit_master' => !empty($data['actions']['edit_master'])];
             if ($scope['opportunity_ids']) {
                 abort_unless($this->access->can($actor, 'crm.opportunity.view'), 403, '没有商机查看权限，不能授予商机协作。');
                 $opportunities = CrmOpportunity::query()->where('customer_id', $customer->id)->whereIn('id', $scope['opportunity_ids'])->orderBy('id')->lockForUpdate()->get();
@@ -59,7 +61,6 @@ final class CrmCustomerCollaborationService
                     throw ValidationException::withMessages(['scope' => '该人员没有金额查看权限，不能共享订单金额或财务收款。']);
                 }
             }
-            $actions = ['view' => true, 'follow' => !empty($data['actions']['follow']), 'edit_master' => !empty($data['actions']['edit_master'])];
             try {
                 $collab = CrmCustomerCollaborator::create([
                     'customer_id' => $customer->id, 'user_legacy_id' => $userId, 'user_name' => $this->staff->name($userId) ?? (string) $userId,
@@ -81,11 +82,18 @@ final class CrmCustomerCollaborationService
     {
         DB::transaction(function () use ($customerId, $collabId, $reason, $actor) {
             $customer = SalesCustomer::query()->lockForUpdate()->findOrFail($customerId);
-            $this->access->assert($customer, $actor, 'collaborate', '无权结束该客户的协作。');
             $collab = CrmCustomerCollaborator::query()->where('customer_id', $customerId)->lockForUpdate()->findOrFail($collabId);
+            abort_unless($this->canEnd($customer, $collab, $actor), 403, '无权结束该客户的协作。');
             if ($collab->status !== 'active') throw ValidationException::withMessages(['status' => '该协作已结束。']);
             $collab->update(['status' => 'ended', 'active_key' => null, 'ended_by_legacy_id' => $actor->legacy_id, 'ended_at' => now(), 'end_reason' => $reason, 'version' => $collab->version + 1]);
             $this->logs->write($customerId, 'collab_end', "结束协作：{$collab->user_name}", null, null, $reason, $actor);
         }, 3);
+    }
+
+    public function canEnd(SalesCustomer $customer, CrmCustomerCollaborator $collab, object $actor): bool
+    {
+        return $this->access->abilities($customer, $actor)['collaborate']
+            || ((int) $customer->owner_legacy_id === (int) $actor->legacy_id && (int) $collab->created_by_legacy_id === (int) $actor->legacy_id
+                && ($collab->scope['type'] ?? null) === 'owner_opportunity_delegation');
     }
 }

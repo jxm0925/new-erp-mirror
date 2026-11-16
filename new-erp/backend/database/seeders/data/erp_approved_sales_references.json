@@ -1,5 +1,95 @@
 {
     "approved_on": "2026-10-27",
+    "approved_state_overrides": {
+        "erp_sales_order_trade_platforms": {
+            "7": {
+                "legacy_payload": {
+                    "payment_mode": "online",
+                    "archive_version": 1,
+                    "buyer_identity_scope": "platform",
+                    "buyer_platform_group": "淘宝"
+                }
+            },
+            "8": {
+                "legacy_payload": {
+                    "payment_mode": "online",
+                    "archive_version": 1,
+                    "buyer_identity_scope": "platform",
+                    "buyer_platform_group": "淘宝"
+                }
+            },
+            "9": {
+                "legacy_payload": {
+                    "payment_mode": "online",
+                    "archive_version": 1,
+                    "buyer_identity_scope": "platform",
+                    "buyer_platform_group": "京东"
+                }
+            },
+            "14": {
+                "legacy_payload": {
+                    "payment_mode": "online",
+                    "archive_version": 1,
+                    "buyer_identity_scope": "platform",
+                    "buyer_platform_group": "1688"
+                }
+            },
+            "23": {
+                "legacy_payload": {
+                    "payment_mode": "online",
+                    "archive_version": 1,
+                    "buyer_identity_scope": "platform",
+                    "buyer_platform_group": "京东"
+                }
+            },
+            "26": {
+                "legacy_payload": {
+                    "payment_mode": "online",
+                    "archive_version": 1,
+                    "buyer_identity_scope": "platform",
+                    "buyer_platform_group": "抖音"
+                }
+            },
+            "30": {
+                "legacy_payload": {
+                    "payment_mode": "online",
+                    "archive_version": 1,
+                    "buyer_identity_scope": "platform",
+                    "buyer_platform_group": "淘宝"
+                }
+            },
+            "31": {
+                "legacy_payload": {
+                    "payment_mode": "online",
+                    "archive_version": 1,
+                    "buyer_identity_scope": "platform",
+                    "buyer_platform_group": "拼多多"
+                }
+            },
+            "32": {
+                "legacy_payload": {
+                    "payment_mode": "online",
+                    "archive_version": 1,
+                    "buyer_identity_scope": "platform",
+                    "buyer_platform_group": "京东"
+                }
+            },
+            "54": {
+                "enabled": false,
+                "legacy_payload": {
+                    "archive_version": 1
+                }
+            },
+            "60": {
+                "legacy_payload": {
+                    "payment_mode": "online",
+                    "archive_version": 1,
+                    "buyer_identity_scope": "platform",
+                    "buyer_platform_group": "拼多多"
+                }
+            }
+        }
+    },
     "sources": {
         "jt_base_trade_platform": {
             "file": "jt_base_trade_platform.sql",

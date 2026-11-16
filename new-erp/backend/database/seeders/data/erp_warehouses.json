@@ -1,0 +1,53 @@
+{
+  "source": "user_confirmed_development_database",
+  "captured_at": "2026-11-16 16:45:01",
+  "rows": [
+    {
+      "id": 1,
+      "warehouse_code": "WH00001",
+      "warehouse_name": "原材料仓库",
+      "warehouse_type": "general",
+      "manager": "王辉",
+      "manager_user_id": 97,
+      "status": "enabled",
+      "remark": null,
+      "created_at": "2026-11-14 11:07:53",
+      "updated_at": "2026-11-14 11:07:53",
+      "management_scope": "factory"
+    },
+    {
+      "id": 2,
+      "warehouse_code": "WH00002",
+      "warehouse_name": "成品仓库",
+      "warehouse_type": "general",
+      "manager": null,
+      "manager_user_id": null,
+      "status": "enabled",
+      "remark": null,
+      "created_at": "2026-11-14 11:08:01",
+      "updated_at": "2026-11-14 11:08:01",
+      "management_scope": "factory"
+    },
+    {
+      "id": 3,
+      "warehouse_code": "WH00003",
+      "warehouse_name": "焊接材料仓库",
+      "warehouse_type": "general",
+      "manager": "王辉",
+      "manager_user_id": 97,
+      "status": "enabled",
+      "remark": null,
+      "created_at": "2026-11-14 11:08:17",
+      "updated_at": "2026-11-14 11:08:17",
+      "management_scope": "factory"
+    }
+  ],
+  "numbering": {
+    "document_type": "warehouse",
+    "prefix": "WH",
+    "date_format": "",
+    "reset_cycle": "none",
+    "number_date": "1970-01-01",
+    "minimum_sequence": 3
+  }
+}

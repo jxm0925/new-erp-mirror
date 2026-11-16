@@ -7,12 +7,12 @@
         <div class="head-title-wrap">
           <div class="title-row">
             <h1 class="page-title">定制工艺管理</h1>
-            <el-tag size="small" type="success" effect="plain" class="head-tag">
+            <el-tag v-if="mode === 'workorders'" size="small" type="success" effect="plain" class="head-tag">
               共 {{ total }} 项
             </el-tag>
           </div>
           <div class="sub-row">
-            针对定制非标工单进行工艺编制、图纸管理与定制BOM复核确认，下发后车间方可排产投产。
+            {{ mode === 'drawings' ? '查看销售指派的图纸需求，按需求提交方案图。' : '针对定制非标工单进行工艺编制、图纸管理与定制BOM复核确认，下发后车间方可排产投产。' }}
           </div>
         </div>
       </div>
@@ -27,17 +27,21 @@
     <div class="main-card">
       <!-- 状态切换选项卡 -->
       <div class="status-tabs">
+        <button v-if="canDraw" type="button" :class="['tab-item', { active: mode === 'drawings' }]" @click="mode = 'drawings'">待我绘制</button>
         <button
           v-for="tab in tabs"
           :key="tab.value"
           type="button"
-          :class="['tab-item', { active: filters.status === tab.value }]"
+          :class="['tab-item', { active: mode === 'workorders' && filters.status === tab.value }]"
           @click="pickTab(tab.value)"
         >
           {{ tab.label }}
           <span class="tab-badge">{{ tabCount(tab.value) }}</span>
         </button>
       </div>
+
+      <div v-if="mode === 'drawings'" class="drawing-requests-box"><crm-drawing-requests ref="drawingRequests" mine /></div>
+      <template v-else>
 
       <!-- 筛选工具栏 -->
       <div class="filter-bar">
@@ -178,6 +182,7 @@
           @current-change="v => { page = v; load() }"
         />
       </div>
+      </template>
     </div>
   </div>
 </template>
@@ -185,10 +190,13 @@
 <script>
 import { listProductionTech } from '../../../api/erp/production'
 import { qty, shortDate, errorText } from './mfg-helpers'
+import CrmDrawingRequests from '@/components/crm/CrmDrawingRequests.vue'
 
 export default {
   name: 'ProductionTechList',
+  components: { CrmDrawingRequests },
   data: () => ({
+    mode: 'workorders',
     loading: false,
     rows: [],
     total: 0,
@@ -201,14 +209,17 @@ export default {
       { value: '', label: '全部工单' }
     ]
   }),
+  computed: { canDraw() { return !this.$can || this.$can('production.tech.manage') } },
   created() {
     if (this.$route.query.status !== undefined) this.filters.status = String(this.$route.query.status)
-    this.load()
+    else if (this.canDraw) this.mode = 'drawings'
+    if (this.mode === 'workorders') this.load()
   },
   methods: {
     qty,
     shortDate,
     async load() {
+      if (this.mode === 'drawings') return this.$refs.drawingRequests && this.$refs.drawingRequests.query()
       this.loading = true
       try {
         const params = {
@@ -236,6 +247,7 @@ export default {
       this.search()
     },
     pickTab(status) {
+      this.mode = 'workorders'
       this.filters.status = status
       this.search()
     },
@@ -339,6 +351,11 @@ export default {
   border-radius: 8px;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
   overflow: hidden;
+  box-sizing: border-box;
+}
+.drawing-requests-box {
+  padding: 16px 18px;
+  min-width: 0;
   box-sizing: border-box;
 }
 

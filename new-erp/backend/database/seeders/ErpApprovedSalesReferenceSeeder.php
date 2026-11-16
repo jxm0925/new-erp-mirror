@@ -35,7 +35,8 @@ class ErpApprovedSalesReferenceSeeder extends Seeder
             ['jt_base_pay_type', 'erp_sales_order_pay_types', $payments],
         ] as [$source, $table, $rows]) {
             foreach ($rows as $row) {
-                $this->insertReference($source, $table, $row, $sources[$source]['sha256']);
+                $this->insertReference($source, $table, $row, $sources[$source]['sha256'],
+                    $data['approved_state_overrides'][$table][$row['id']] ?? []);
             }
         }
         foreach ($payments as $row) {
@@ -71,7 +72,7 @@ class ErpApprovedSalesReferenceSeeder extends Seeder
         return $rows;
     }
 
-    private function insertReference(string $source, string $table, array $row, string $sha256): void
+    private function insertReference(string $source, string $table, array $row, string $sha256, array $approvedState): void
     {
         $matches = DB::table($table)->where('id', $row['id'])->orWhere('legacy_id', $row['id'])->lockForUpdate()->get();
         foreach ($matches as $existing) {
@@ -87,8 +88,10 @@ class ErpApprovedSalesReferenceSeeder extends Seeder
 
         $values = [
             'legacy_id' => $row['id'], 'name' => $row['name'], 'trade_type' => $row['trade'],
-            'sort' => $row['sort'], 'enabled' => true,
-            'legacy_payload' => json_encode($row + ['source_table' => $source, 'source_sha256' => $sha256], JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR),
+            // 仅新建缺项采用已确认启停及平台归档配置；原始来源键不覆盖，重跑不改人工维护。
+            'sort' => $row['sort'], 'enabled' => $approvedState['enabled'] ?? true,
+            'legacy_payload' => json_encode($row + ['source_table' => $source, 'source_sha256' => $sha256]
+                + ($approvedState['legacy_payload'] ?? []), JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR),
         ];
         if ($source === 'jt_base_trade_platform') {
             $values += ['parent_legacy_id' => $row['pid'], 'short_name' => $row['shortname']];

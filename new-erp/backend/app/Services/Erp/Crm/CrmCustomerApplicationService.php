@@ -33,9 +33,10 @@ final class CrmCustomerApplicationService
         private readonly DocumentNumberService $numbers,
     ) {}
 
-    public function create(array $data, object $actor, ?string $reservationToken = null, ?string $creationSessionId = null): SalesCustomer
+    public function create(array $data, object $actor, ?string $reservationToken = null, ?string $creationSessionId = null, bool $assignToCreator = true, ?int $ownerLegacyId = null): SalesCustomer
     {
-        return DB::transaction(function () use ($data, $actor, $reservationToken, $creationSessionId) {
+        return DB::transaction(function () use ($data, $actor, $reservationToken, $creationSessionId, $assignToCreator, $ownerLegacyId) {
+            abort_unless($this->access->can($actor, 'sales.customer.create') || $this->access->can($actor, 'crm.lead.create'), 403, '无新建客户权限。');
             if (!empty($data['region_id'])) app(CustomerRegionService::class)->selectablePath((int) $data['region_id']);
             $contacts = $data['contacts'] ?? null;
             $addresses = $data['addresses'] ?? null;
@@ -46,10 +47,11 @@ final class CrmCustomerApplicationService
             $values['credit_code'] = $this->dedupe->normalizeCode($values['credit_code'] ?? null);
             $values['dedupe_name_key'] = CrmCustomerDedupeService::dedupeKey($values['customer_name'] ?? null);
             // 销售本人建档即为负责销售；运营等非销售人员建档暂无负责人，之后由首次使用或部组长分配归属。
-            if ($this->staff->isActiveSales((int) $actor->legacy_id)) {
-                $values['owner_legacy_id'] = (int) $actor->legacy_id;
-                $values['owner_name'] = $this->staff->name((int) $actor->legacy_id);
-                $values['owner_department_legacy_id'] = $this->staff->departmentOf((int) $actor->legacy_id);
+            $ownerId = $ownerLegacyId ?? (int) $actor->legacy_id;
+            if ($assignToCreator && $this->staff->isActiveSales($ownerId)) {
+                $values['owner_legacy_id'] = $ownerId;
+                $values['owner_name'] = $this->staff->name($ownerId);
+                $values['owner_department_legacy_id'] = $this->staff->departmentOf($ownerId);
             }
             $values['customer_code'] = $reservationToken
                 ? $this->numbers->reservedNumber($reservationToken, 'customer', $actor->legacy_id, $creationSessionId)
@@ -117,11 +119,17 @@ final class CrmCustomerApplicationService
      * 无负责销售的客户在首次被有效订单（或后续线索）使用时自动归属该销售。
      * 行锁后再判断，避免两张订单同时确认把客户归给不同的人；已有负责人时什么也不做。
      */
-    public function claimIfUnowned(int $customerId, ?int $userId, string $source, ?object $actor = null): void
+    public function claimIfUnowned(int $customerId, ?int $userId, string $source, ?object $actor = null, ?int $leadId = null): void
     {
         if (!$userId || !$this->staff->isActiveSales($userId)) return;
         $customer = SalesCustomer::query()->lockForUpdate()->find($customerId);
         if (!$customer || $customer->owner_legacy_id) return;
+        if ($this->access->hasFormalLeads($customerId)) {
+            // 待分配客户只能经该线索的接收/领取归属，不能借建单或另一条自录线索抢占。
+            $lead = $leadId ? DB::table('erp_crm_leads')->where('customer_id', $customerId)->lockForUpdate()->find($leadId) : null;
+            abort_unless($lead && (($lead->status === 'pending_acceptance' && (int) $lead->pending_user_legacy_id === $userId)
+                || $lead->status === 'public_pool' || ($lead->status === 'active' && (int) $lead->owner_legacy_id === $userId)), 403, '该客户正在分配，请先通过所属线索接收或领取。');
+        }
         $customer->update([
             'owner_legacy_id' => $userId, 'owner_name' => $this->staff->name($userId),
             'owner_department_legacy_id' => $this->staff->departmentOf($userId), 'crm_version' => $customer->crm_version + 1,

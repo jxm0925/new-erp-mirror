@@ -417,6 +417,8 @@ final class CrmDashboardPipelineService
             'customer_name' => $opportunity->customer_name, 'title' => $opportunity->name, 'owner_legacy_id' => (int) $opportunity->owner_legacy_id,
             'owner_name' => $opportunity->owner_name, 'stage_label' => CrmOpportunityApplicationService::STAGES[$opportunity->stage] ?? $opportunity->stage,
             'stage_days' => $opportunity->stage_entered_at && $opportunity->stage_entered_at->lte($stageEnd) ? (int) $opportunity->stage_entered_at->diffInDays($stageEnd) : null,
+            'delegated' => $this->opportunities->delegated($opportunity, $actor),
+            'delegated_owner' => $this->opportunities->delegated($opportunity, $actor) ? ['id' => (int) $opportunity->owner_legacy_id, 'name' => $opportunity->owner_name] : null,
             'allowed' => $allowed, 'action' => !empty($allowed['follow']) ? 'followup' : 'view']
             + $this->overdueFields($opportunity->next_contact_at, $opportunity->status === 'open');
     }
@@ -433,10 +435,15 @@ final class CrmDashboardPipelineService
             if ($kind === 'contact_unverified') $allowed['verify'] = (bool) (app(CrmDuplicateReviewApplicationService::class)->forLead($target, $actor)['can_resolve'] ?? false);
             if (isset($allowed['verify'])) $allowed['review'] = $allowed['verify'];
             $data += $target->only(['customer_id', 'customer_name', 'owner_legacy_id', 'owner_name', 'lead_no', 'status', 'next_plan']);
+            $data['delegated'] = $this->leads->delegated($target, $actor);
+            $data['delegated_owner'] = $data['delegated'] ? ['id' => (int) ($target->pending_user_legacy_id ?: $target->owner_legacy_id),
+                'name' => $target->pending_user_name ?: $target->owner_name] : null;
             $data['title'] = $data['title'] ?? $target->demand_summary ?? $target->lead_no;
         } elseif ($type === 'opportunity') {
             $target = $this->opportunities->visible($id, $actor);
             $allowed = $this->opportunities->abilities($target, $actor);
+            $data['delegated'] = $this->opportunities->delegated($target, $actor);
+            $data['delegated_owner'] = $data['delegated'] ? ['id' => (int) $target->owner_legacy_id, 'name' => $target->owner_name] : null;
         } else {
             $target = SalesCustomer::query()->findOrFail($id);
             abort_unless($this->customers->relation($target, $actor) !== null, 403, '无权查看该客户。');

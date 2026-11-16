@@ -476,6 +476,10 @@ export default {
       try {
         const { data } = await getSalesCustomer(id)
         if (session !== this.openSession || !this.innerVisible) return
+        if (!(data.abilities && data.abilities.edit)) {
+          this.innerVisible = false
+          return this.$message.warning('无权修改该客户资料')
+        }
         this.form = {
           ...blankForm(data.customer_kind || 'individual'),
           ...data,
@@ -620,6 +624,7 @@ export default {
       this.duplicate.picking = row.id
       try {
         const { data } = await getSalesCustomer(row.id)
+        if (data.selectable === false || (data.abilities && data.abilities.select === false)) return this.$message.warning('该客户正在分配，请先通过所属线索接收或领取')
         this.duplicate.visible = false
         this.innerVisible = false
         this.$emit('saved', data)
@@ -634,6 +639,7 @@ export default {
     },
     async save(extra = {}) {
       if (this.loading || this.saving || !this.innerVisible) return
+      if (this.form.id && !(this.form.abilities && this.form.abilities.edit)) return this.$message.warning('无权修改该客户资料')
       if (!this.form.id && !this.numberReservation) return this.$message.warning('请重新打开新增窗口生成客户编码')
       if (!this.form.customer_name) {
         return this.$message.warning(this.form.customer_kind === 'enterprise' ? '请填写企业客户全称' : '请填写客户姓名')

@@ -20,6 +20,7 @@ final class CrmLeadApplicationService
     public const CHANNELS = ['线上平台' => '线上平台', '线下咨询' => '线下咨询', '客户介绍' => '客户介绍', '展会活动' => '展会活动', '主动开发' => '主动开发', '其他' => '其他'];
     public const POOLS = ['明日成交池', '补位池', '48小时推进池', '老客户转介绍/复购', '老线索补位池', '新线索快转池', '发货池', '观察池', '本周跟进池', '本月跟进池', '农改水客户池'];
     public const STATUSES = ['draft' => '草稿', 'pending_review' => '待核实', 'pending_assignment' => '待分配', 'pending_acceptance' => '待接收', 'active' => '跟进中', 'converted' => '已转商机', 'public_pool' => '公海', 'invalid' => '无效'];
+    private const DELEGATED_OWNER_STATUSES = ['active', 'converted', 'invalid'];
     public const EDITABLE = [
         'customer_id', 'customer_kind', 'customer_name', 'contact_id', 'contact_name', 'contact_role', 'mobile', 'contact_value2', 'wechat', 'email', 'credit_code',
         'region_id', 'province', 'city', 'district', 'detail_address', 'full_address', 'trade_type', 'department_legacy_id', 'source_channel', 'lead_type',
@@ -47,14 +48,15 @@ final class CrmLeadApplicationService
     {
         $id = (int) $actor->legacy_id;
         $query->where(fn ($q) => $q->where('status', '!=', 'draft')->orWhere('created_by_legacy_id', $id));
-        if ($this->auth->isSuperAdmin($actor) || $this->auth->dataScope($actor) === 'all') return;
+        if ($this->customers->dataScope($actor, 'crm.lead.view') === 'all') return;
         $dept = $this->staff->departmentOf($id);
-        $departmentUsers = $this->auth->dataScope($actor) === 'department' ? $this->auth->departmentUserIds($actor) : [];
+        $departmentUsers = $this->customers->dataScope($actor, 'crm.lead.view') === 'department' ? $this->auth->departmentUserIds($actor) : [];
         $grant = $this->assignments->activeGrant($actor);
         $reviewDepartments = $grant && in_array('verify', $grant->actions, true) && $this->customers->can($actor, 'sales.customer.verify')
             ? $this->assignments->expandDepartments($grant->department_ids) : [];
         $query->where(function ($q) use ($actor, $id, $dept, $departmentUsers, $grant, $reviewDepartments) {
-            $q->where('owner_legacy_id', $id)->orWhere('pending_user_legacy_id', $id)->orWhere('created_by_legacy_id', $id);
+            $q->where('owner_legacy_id', $id)->orWhere('pending_user_legacy_id', $id)
+                ->orWhere(fn ($created) => $created->where('created_by_legacy_id', $id)->whereIn('status', ['draft', 'pending_review', 'pending_assignment']));
             if ($departmentUsers) $q->orWhereIn('owner_legacy_id', $departmentUsers)->orWhereIn('created_by_legacy_id', $departmentUsers);
             if ($dept) $q->orWhere(fn ($pool) => $pool->where('status', 'public_pool')->where('department_legacy_id', $dept));
             if ($grant && in_array('claim', $grant->actions, true) && $this->customers->can($actor, 'crm.lead.claim')) {
@@ -64,6 +66,7 @@ final class CrmLeadApplicationService
                 });
             }
             $q->orWhere(fn ($scope) => $this->assignments->applyVisible($scope, $actor));
+            $q->orWhere(fn ($delegated) => $this->applyDelegated($delegated, $actor));
             $q->orWhereExists(fn ($c) => $this->collaborationQuery($c, $id)->whereColumn('c.customer_id', 'erp_crm_leads.customer_id'));
             if ($reviewDepartments) $q->orWhere(function ($reviewing) use ($grant, $reviewDepartments) {
                 $reviewing->where('status', 'pending_review')->whereExists(function ($review) use ($grant, $reviewDepartments) {
@@ -79,7 +82,27 @@ final class CrmLeadApplicationService
     {
         $query = CrmLead::query();
         $this->applyVisible($query, $actor);
-        return $query->when($lock, fn ($q) => $q->lockForUpdate())->findOrFail($id);
+        $lead = $query->when($lock, fn ($q) => $q->lockForUpdate())->findOrFail($id);
+        if ($lock && $this->delegated($lead, $actor)) {
+            abort_unless($this->delegated($lead, $actor, true), 403, '线索代班已到期或结束，请刷新后重试。');
+        }
+        return $lead;
+    }
+
+    public function applyDelegated(Builder $query, object $actor): void
+    {
+        $owners = app(CrmSalesDelegationService::class)->activeOwners($actor);
+        $query->where(fn ($assigned) => $assigned->where(fn ($pending) => $pending->where('status', 'pending_acceptance')->whereIn('pending_user_legacy_id', $owners))
+            ->orWhere(fn ($owned) => $owned->whereIn('status', self::DELEGATED_OWNER_STATUSES)->whereIn('owner_legacy_id', $owners)));
+    }
+
+    /** 代班只沿该线索当前归属，不沿共同客户扩大到其他销售的线索。 */
+    public function delegated(CrmLead $lead, object $actor, bool $lock = false): bool
+    {
+        $owner = $lead->status === 'pending_acceptance' ? (int) $lead->pending_user_legacy_id
+            : (in_array($lead->status, self::DELEGATED_OWNER_STATUSES, true) ? (int) $lead->owner_legacy_id : 0);
+        if (!$owner || $owner === (int) $actor->legacy_id) return false;
+        return app(CrmSalesDelegationService::class)->delegatesFor($actor, $owner, $lock);
     }
 
     public function applyCollaborating(Builder $query, object $actor): void
@@ -93,19 +116,22 @@ final class CrmLeadApplicationService
         $draft = $lead->status === 'draft' && (int) $lead->created_by_legacy_id === (int) $actor->legacy_id;
         $can = fn ($action) => $this->customers->can($actor, 'crm.lead.'.$action);
         $scope = fn ($action, $target = null) => $this->assignments->allows($actor, $action, $lead->department_legacy_id, $lead->source_channel, $target);
-        $manages = $own || $scope('assign');
+        $delegated = $this->delegated($lead, $actor);
+        $handles = $own || $delegated;
+        $receives = (int) $lead->pending_user_legacy_id === (int) $actor->legacy_id || $delegated;
+        $manages = $handles || $scope('assign');
         return [
             'edit' => $can('edit') && ($draft || ($lead->status === 'active' && $manages)),
             'assign' => $can('assign') && in_array($lead->status, ['pending_assignment', 'public_pool'], true) && $scope('assign'),
-            'accept' => $can('accept') && $lead->status === 'pending_acceptance' && (int) $lead->pending_user_legacy_id === (int) $actor->legacy_id,
-            'return' => $can('return') && $lead->status === 'pending_acceptance' && (int) $lead->pending_user_legacy_id === (int) $actor->legacy_id,
+            'accept' => $can('accept') && $lead->status === 'pending_acceptance' && $receives,
+            'return' => $can('return') && $lead->status === 'pending_acceptance' && $receives,
             'transfer' => $can('transfer') && $lead->status === 'active' && $scope('transfer'),
             'recycle' => $can('recycle') && in_array($lead->status, ['active', 'pending_acceptance', 'pending_assignment'], true) && $scope('recycle'),
             'claim' => $can('claim') && $lead->status === 'public_pool' && $scope('claim', (int) $actor->legacy_id),
-            'pool' => $can('pool') && in_array($lead->status, ['active', 'converted'], true) && $own,
+            'pool' => $can('pool') && in_array($lead->status, ['active', 'converted'], true) && $handles,
             'invalidate' => $can('invalidate') && in_array($lead->status, ['active', 'pending_assignment'], true) && $manages,
-            'confirm' => $can('confirm') && $lead->status === 'active' && !$lead->confirmed_at && $own,
-            'follow' => $can('follow') && $lead->status === 'active' && ($own || ($lead->customer_id && $this->canFollowCustomer($lead->customer_id, $actor))),
+            'confirm' => $can('confirm') && $lead->status === 'active' && !$lead->confirmed_at && $handles,
+            'follow' => $can('follow') && $lead->status === 'active' && ($handles || ($lead->customer_id && $this->canFollowCustomer($lead->customer_id, $actor))),
             'convert' => $this->customers->can($actor, 'crm.opportunity.create') && app(CrmOpportunityApplicationService::class)->canConvert($lead, $actor),
         ];
     }
@@ -122,6 +148,9 @@ final class CrmLeadApplicationService
         $row['department_name'] = $this->customers->departmentName($lead->department_legacy_id);
         $row['status_label'] = self::STATUSES[$lead->status] ?? $lead->status;
         $row['abilities'] = $this->abilities($lead, $actor);
+        $row['delegated'] = $this->delegated($lead, $actor);
+        $row['delegated_owner'] = $row['delegated'] ? ['id' => (int) ($lead->pending_user_legacy_id ?: $lead->owner_legacy_id),
+            'name' => $lead->pending_user_name ?: $lead->owner_name] : null;
         $opportunity = CrmOpportunity::query()->where('source_lead_id', $lead->id)->first();
         $row['has_opportunity'] = $opportunity !== null;
         $row['source_opportunity'] = null;
@@ -156,6 +185,10 @@ final class CrmLeadApplicationService
             if ($id) {
                 $this->version($lead, $data);
                 abort_unless($this->abilities($lead, $actor)['edit'], 403, '当前线索不能编辑。');
+                if ($this->delegated($lead, $actor) && !$this->assignments->allows($actor, 'assign', $lead->department_legacy_id, $lead->source_channel)
+                    && array_key_exists('contact_id', $data)) {
+                    abort_unless((int) $data['contact_id'] === (int) $lead->contact_id, 422, '代班只能使用该线索已关联的联系人。');
+                }
             }
             $before = $id ? $this->snapshot($lead) : null;
             $values = array_intersect_key($data, array_flip(self::EDITABLE));
@@ -256,11 +289,12 @@ final class CrmLeadApplicationService
                     if (array_key_exists('assignment_attachment_ids', $data)) app(CrmAttachmentApplicationService::class)->bind($data['assignment_attachment_ids'] ?? [], 'lead', $lead->id, $actor, 'assignment');
                     break;
                 case 'accept':
-                    abort_unless($this->staff->isActiveSales((int) $actor->legacy_id), 422, '销售员档案已失效，不能接收线索。');
-                    $this->setOwner($lead, (int) $actor->legacy_id);
+                    $owner = (int) $lead->pending_user_legacy_id;
+                    abort_unless($this->staff->isActiveSales($owner), 422, '销售员档案已失效，不能接收线索。');
+                    $this->setOwner($lead, $owner);
                     $lead->accepted_at = now();
                     $lead->status = 'active';
-                    $this->customerApp->claimIfUnowned($lead->customer_id, (int) $actor->legacy_id, '接收线索', $actor);
+                    $this->customerApp->claimIfUnowned($lead->customer_id, $owner, '接收线索', $actor, $lead->id);
                     break;
                 case 'return':
                     $lead->pending_user_legacy_id = null;
@@ -286,7 +320,7 @@ final class CrmLeadApplicationService
                     $this->setOwner($lead, (int) $actor->legacy_id);
                     $lead->status = 'active';
                     $lead->accepted_at = now();
-                    $this->customerApp->claimIfUnowned($lead->customer_id, (int) $actor->legacy_id, '领取线索', $actor);
+                    $this->customerApp->claimIfUnowned($lead->customer_id, (int) $actor->legacy_id, '领取线索', $actor, $lead->id);
                     break;
                 case 'pool':
                     abort_unless(in_array($data['customer_pool'] ?? null, self::POOLS, true), 422, '请选择有效客户池。');
@@ -324,12 +358,6 @@ final class CrmLeadApplicationService
                 abort_unless($decision === 'linked' && $customerId, 422, '请选择核实结果。');
                 $lead->customer_id = $customerId;
                 $this->formalize($lead, [], $actor, true);
-                $lead->owner_legacy_id = null;
-                $lead->owner_name = null;
-                $lead->pending_user_legacy_id = null;
-                $lead->pending_user_name = null;
-                $lead->accepted_at = null;
-                $lead->status = 'pending_assignment';
             }
             $lead->version++;
             $lead->save();
@@ -369,6 +397,8 @@ final class CrmLeadApplicationService
 
     private function formalize(CrmLead $lead, array $data, object $actor, bool $reviewed = false): void
     {
+        $selfEntry = $lead->entry_method === 'self';
+        if ($selfEntry) abort_unless($this->staff->isActiveSales((int) $lead->created_by_legacy_id), 422, '录入销售已失效，请退回修改后由运营重新分配。');
         abort_if(trim((string) $lead->customer_name) === '' || !$lead->department_legacy_id || trim((string) $lead->source_channel) === '', 422, '请补齐客户姓名、所属部门和来源渠道。');
         abort_unless(DB::table('erp_departments')->where('legacy_id', $lead->department_legacy_id)->exists(), 422, '所属部门不存在。');
         $online = $lead->source_channel === '线上平台' || $lead->platform_legacy_id || trim((string) $lead->platform_buyer_id) !== '';
@@ -382,6 +412,7 @@ final class CrmLeadApplicationService
         $strongIds = array_column(array_filter($matches, fn ($m) => $m['strong']), 'customer_id');
         $conflict = count(array_unique($strongIds)) > 1 || ($strongIds && count($matches) > 1);
         $customer = $lead->customer_id ? SalesCustomer::query()->lockForUpdate()->findOrFail($lead->customer_id) : null;
+        $newCustomer = !$customer;
         $confirmedOtherCandidates = !empty($data['duplicate_confirmed']) && trim((string) ($data['duplicate_reason'] ?? '')) !== '';
         $otherMatches = $customer ? array_filter($matches, fn ($match) => (int) $match['customer_id'] !== (int) $customer->id) : [];
         $strongMismatch = $customer && array_diff($strongIds, [$customer->id]);
@@ -414,20 +445,30 @@ final class CrmLeadApplicationService
             $customer = $this->customerApp->create($lead->only(['customer_name', 'customer_kind', 'credit_code', 'region_id', 'business_lines']) + [
                 'status' => 'potential', 'contacts' => [$contact], 'addresses' => $address,
                 'duplicate_confirmed' => $data['duplicate_confirmed'] ?? false, 'duplicate_reason' => $data['duplicate_reason'] ?? null,
-            ], $actor);
+            ], $actor, null, null, $selfEntry, $selfEntry ? (int) $lead->created_by_legacy_id : null);
             $lead->customer_id = $customer->id;
             $lead->contact_id = $customer->contacts->first()?->id;
         }
         if ($lead->contact_id) abort_unless(DB::table('erp_sales_customer_contacts')->where('id', $lead->contact_id)->where('customer_id', $customer->id)->where('status', 'enabled')->exists(), 422, '联系人不属于当前客户或已停用。');
-        if ($online) $this->identities->bind($customer, $lead->platform_legacy_id, $lead->platform_buyer_id, 'lead', $actor, '线索录入时登记');
-        if (!$customer->first_source) $customer->update(['first_source' => $lead->source_channel]);
-        if ($lead->entry_method === 'self' && !$reviewed) {
-            abort_unless($this->staff->isActiveSales((int) $lead->created_by_legacy_id), 422, '录入销售已失效，请退回修改后由运营重新分配。');
+        if ($online) {
+            $identity = $this->identities->owner($resolved['key'], true);
+            if (!$identity) {
+                if (!$newCustomer) $this->customers->assert($customer, $actor, 'bind_identity', '无权为该客户登记新的平台身份，请由负责销售或管理人员办理。');
+                $this->identities->bind($customer, $lead->platform_legacy_id, $lead->platform_buyer_id, 'lead', $actor, '线索录入时登记');
+            }
+        }
+        if (!$customer->first_source && ($newCustomer || $this->customers->abilities($customer, $actor)['edit'])) $customer->update(['first_source' => $lead->source_channel]);
+        if ($selfEntry) {
             $this->setOwner($lead, (int) $lead->created_by_legacy_id);
             $lead->accepted_at = now();
             $lead->status = 'active';
-            $this->customerApp->claimIfUnowned($customer->id, $lead->owner_legacy_id, '录入线索', $actor);
+            $this->customerApp->claimIfUnowned($customer->id, $lead->owner_legacy_id, '录入线索', $actor, $lead->id);
         } else {
+            $lead->owner_legacy_id = null;
+            $lead->owner_name = null;
+            $lead->pending_user_legacy_id = null;
+            $lead->pending_user_name = null;
+            $lead->accepted_at = null;
             $lead->status = 'pending_assignment';
         }
     }
@@ -450,6 +491,7 @@ final class CrmLeadApplicationService
     private function collaborationQuery($query, int $actor)
     {
         return $query->from('erp_crm_customer_collaborators as c')->where('c.user_legacy_id', $actor)->where('c.status', 'active')
+            ->where(fn ($scope) => $scope->whereNull('c.scope->type')->orWhere('c.scope->type', '!=', 'owner_opportunity_delegation'))
             ->where('c.effective_from', '<=', now()->toDateString())->where(fn ($q) => $q->whereNull('c.effective_to')->orWhere('c.effective_to', '>=', now()->toDateString()));
     }
 

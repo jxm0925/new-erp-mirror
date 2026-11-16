@@ -207,7 +207,7 @@
         <section v-if="tab === 'collab'" class="stack">
           <div class="section-head">
             <b class="sec">协作人员</b>
-            <el-button v-if="can('collaborate')" size="mini" type="success" icon="el-icon-plus" class="push" @click="openCollab">添加协作</el-button>
+            <el-button v-if="can('collaborate')" size="mini" type="success" icon="el-icon-plus" class="push" @click="openCollab()">添加协作</el-button>
           </div>
           <el-table :data="collaborators" size="small">
             <el-table-column prop="user_name" label="协作人员" min-width="90" />
@@ -217,7 +217,7 @@
             <el-table-column prop="reason" label="协作原因" min-width="180" />
             <el-table-column label="状态" width="80"><template slot-scope="{row}"><el-tag size="mini" :type="row.status === 'active' ? 'success' : 'info'">{{ row.status === 'active' ? '生效中' : '已结束' }}</el-tag></template></el-table-column>
             <el-table-column label="操作" width="90">
-              <template slot-scope="{row}"><el-button v-if="can('collaborate') && row.status === 'active'" type="text" size="mini" class="danger-link" @click="endCollab(row)">结束协作</el-button></template>
+              <template slot-scope="{row}"><el-button v-if="row.can_end && row.status === 'active'" type="text" size="mini" class="danger-link" @click="endCollab(row)">结束协作</el-button></template>
             </el-table-column>
             <template slot="empty"><span class="muted">暂无协作人员</span></template>
           </el-table>
@@ -675,7 +675,7 @@ export default {
     },
     actionSummary(row) {
       const actions = row.actions || {}
-      return ['查看', actions.follow ? '记录跟进' : '', actions.edit_master ? '修改客户主资料' : ''].filter(Boolean).join('、')
+      return ['查看', actions.follow ? '记录跟进' : '', actions.edit_master ? '修改客户主资料' : '', actions.stage ? '代办商机阶段调整' : '', actions.order ? '代开商机订单' : ''].filter(Boolean).join('、')
     },
     errorText(error, fallback) {
       const body = (error.response && error.response.data) || {}
@@ -691,18 +691,22 @@ export default {
       await this.submit(() => transferCustomer(id, { to_user_legacy_id: this.transfer.to, reason: this.transfer.reason, crm_version: this.customer.crm_version }), () => { this.transfer.visible = false })
     },
     openCollab() {
+      if (!this.can('collaborate')) return
       this.collab = { visible: true, user: null, opportunity_ids: [], order_amount: false, finance: false, follow: true, edit_master: false, from: today(), to: '', reason: '' }
     },
     async submitCollab() {
       const c = this.collab
+      if (!this.can('collaborate')) return
       if (c.opportunity_ids.length > 100) return this.$message.warning('指定商机最多选择 100 项')
       const id = this.customerId
       await this.submit(() => addCustomerCollaborator(id, {
-        user_legacy_id: c.user, scope: { opportunity_ids: [...c.opportunity_ids], order_amount: c.order_amount, finance: c.finance }, actions: { follow: c.follow, edit_master: c.edit_master },
+        user_legacy_id: c.user, scope: { opportunity_ids: [...c.opportunity_ids], order_amount: c.order_amount, finance: c.finance },
+        actions: { follow: c.follow, edit_master: c.edit_master },
         effective_from: c.from, effective_to: c.to || null, reason: c.reason
       }), () => { this.collab.visible = false })
     },
     async endCollab(row) {
+      if (!row.can_end || row.status !== 'active') return
       const session = this.openSession
       const id = this.customerId
       try {

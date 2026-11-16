@@ -12,6 +12,7 @@ use App\Services\Erp\Crm\CrmContactPlanQueryService;
 use App\Services\Erp\Crm\CrmDuplicateReviewApplicationService;
 use App\Services\Erp\Crm\CrmFollowupApplicationService;
 use App\Services\Erp\Crm\CrmLeadApplicationService;
+use App\Services\Erp\Crm\CrmSalesDelegationService;
 use App\Services\Erp\Crm\CrmListViewQueryService;
 use App\Services\Erp\Crm\CrmSalesStaffService;
 use App\Services\Erp\Crm\CrmTeamApplicationService;
@@ -43,7 +44,9 @@ final class CrmLeadController extends Controller
             $abilities[$action] = $abilities[$action] && (app(AuthContextService::class)->isSuperAdmin($actor) || ($grant && in_array($action, $grant->actions, true)));
         }
         $abilities['review'] = $access->can($actor, 'sales.customer.verify') && (app(AuthContextService::class)->isSuperAdmin($actor) || ($grant && in_array('verify', $grant->actions, true)));
+        $isSales = $assignments->activeSales((int) $actor->legacy_id);
         return response()->json(['data' => [
+            'can_self_delegate' => $isSales,
             'customer_pools' => CrmLeadApplicationService::POOLS, 'statuses' => CrmLeadApplicationService::STATUSES,
             'source_channels' => $channels, 'trade_types' => array_values(array_unique(array_merge(['内贸销售', '内贸业务', '外贸'], $dictionaries['trade_type']))),
             'lead_types' => array_values(array_unique(array_merge(['普通咨询'], $dictionaries['lead_type']))),
@@ -53,7 +56,7 @@ final class CrmLeadController extends Controller
             'entry_methods' => ['self' => '销售自录', 'operations' => '运营代录'],
             'departments' => DB::table('erp_departments')->whereIn('legacy_id', $ids)->orderBy('sort')->orderBy('legacy_id')->get(['legacy_id as id', 'parent_legacy_id as parent_id', 'name']),
             'current_user' => ['id' => (int) $actor->legacy_id, 'name' => ($actor->nickname ?? null) ?: $actor->username,
-                'department_legacy_id' => $dept, 'department_name' => $access->departmentName($dept), 'is_sales' => $assignments->activeSales((int) $actor->legacy_id)],
+                'department_legacy_id' => $dept, 'department_name' => $access->departmentName($dept), 'is_sales' => $isSales],
             'abilities' => $abilities, 'automatic_recycle_enabled' => false,
         ]]);
     }
@@ -62,7 +65,7 @@ final class CrmLeadController extends Controller
     {
         $actor = $this->user($request, 'crm.lead.view');
         $data = $request->validate([
-            'keyword' => 'nullable|string|max:160', 'tab' => 'nullable|in:all,mine,collaborating,pending_assignment,pending_acceptance,pending_review,public_pool,draft',
+            'keyword' => 'nullable|string|max:160', 'tab' => 'nullable|in:all,mine,delegated,collaborating,pending_assignment,pending_acceptance,pending_review,public_pool,draft',
             'status' => ['nullable', Rule::in(array_keys(CrmLeadApplicationService::STATUSES))],
             'source_channel' => 'nullable|string|max:120', 'department_legacy_id' => 'nullable|integer|min:1', 'customer_id' => 'nullable|integer|min:1',
             'exclude_id' => 'nullable|integer|min:1',
@@ -74,6 +77,7 @@ final class CrmLeadController extends Controller
         ] + CrmListViewQueryService::rules('leads'));
         $query = CrmLead::query()->with(['customer', 'attachments']);
         $this->leads->applyVisible($query, $actor);
+        $handlingOwners = array_merge([(int) $actor->legacy_id], app(CrmSalesDelegationService::class)->activeOwnerIds($actor));
         if (!empty($data['exclude_id'])) $query->where('id', '!=', $data['exclude_id']);
         if (!empty($data['base_confirmed'])) $query->whereNotNull('confirmed_at');
         if (!empty($data['unconverted'])) $query->whereNotExists(fn ($o) => $o->from('erp_crm_opportunities')->whereColumn('source_lead_id', 'erp_crm_leads.id'));
@@ -88,20 +92,24 @@ final class CrmLeadController extends Controller
                 ->orWhere('mobile', 'like', $keyword)->orWhere('demand_summary', 'like', $keyword)->orWhere('content', 'like', $keyword));
         }
         if (!empty($data['due'])) {
-            $query->where('status', 'active')->where('owner_legacy_id', $actor->legacy_id);
+            $query->where('status', 'active')->whereIn('owner_legacy_id', $handlingOwners);
             CrmContactPlanQueryService::applyDue($query, 'next_contact_at', $data['due']);
         }
         // 数量与列表共用已授权、已筛选的范围，只排除当前页签与分页，不能统计不可见线索。
         $statusCounts = (clone $query)->selectRaw('status, COUNT(*) AS total')->groupBy('status')->pluck('total', 'status');
         $collaborating = clone $query;
         $this->leads->applyCollaborating($collaborating, $actor);
+        $delegated = clone $query;
+        $this->leads->applyDelegated($delegated, $actor);
         $tabs = ['all' => (int) $statusCounts->sum(), 'mine' => (clone $query)->where('owner_legacy_id', $actor->legacy_id)->count(),
-            'collaborating' => $collaborating->count(), 'pending_acceptance' => (clone $query)->where('status', 'pending_acceptance')->where('pending_user_legacy_id', $actor->legacy_id)->count()];
+            'delegated' => $delegated->count(), 'collaborating' => $collaborating->count(),
+            'pending_acceptance' => (clone $query)->where('status', 'pending_acceptance')->whereIn('pending_user_legacy_id', $handlingOwners)->count()];
         foreach (['pending_assignment', 'pending_review', 'public_pool', 'draft'] as $status) $tabs[$status] = (int) ($statusCounts[$status] ?? 0);
         $tab = $data['tab'] ?? 'all';
         if ($tab === 'mine') $query->where('owner_legacy_id', $actor->legacy_id);
+        elseif ($tab === 'delegated') $this->leads->applyDelegated($query, $actor);
         elseif ($tab === 'collaborating') $this->leads->applyCollaborating($query, $actor);
-        elseif ($tab === 'pending_acceptance') $query->where('status', $tab)->where('pending_user_legacy_id', $actor->legacy_id);
+        elseif ($tab === 'pending_acceptance') $query->where('status', $tab)->whereIn('pending_user_legacy_id', $handlingOwners);
         elseif (in_array($tab, ['pending_assignment', 'pending_review', 'public_pool', 'draft'], true)) $query->where('status', $tab);
         $query->orderByDesc('id');
         CrmListViewQueryService::apply($query, $data);
@@ -187,7 +195,7 @@ final class CrmLeadController extends Controller
         $actor = $this->user($request);
         abort_unless($access->can($actor, 'crm.lead.create') || $access->can($actor, 'crm.lead.follow') || $access->can($actor, 'crm.lead.edit') || $access->can($actor, 'crm.lead.assign')
             || $access->can($actor, 'crm.opportunity.file') || $access->can($actor, 'crm.opportunity.follow'), 403, '没有上传附件的权限。');
-        $data = $request->validate(['file' => 'required|file|max:20480|mimes:jpg,jpeg,png,gif,webp,bmp,pdf,doc,docx,xls,xlsx,ppt,pptx,txt,csv,zip']);
+        $data = $request->validate(['file' => 'required|file|max:20480|mimes:jpg,jpeg,png,gif,webp,bmp,pdf,dwg,dxf,step,stp,doc,docx,xls,xlsx,ppt,pptx,txt,csv,zip']);
         return response()->json(['message' => '附件已上传', 'data' => $files->present($files->upload($data['file'], $actor))], 201);
     }
 

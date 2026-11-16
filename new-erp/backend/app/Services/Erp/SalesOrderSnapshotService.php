@@ -9,6 +9,7 @@ use App\Models\Erp\SalesCustomerContact;
 use App\Models\Erp\SalesChannel;
 use App\Models\Erp\SalesFundingPolicy;
 use App\Models\Erp\SalesOrder;
+use App\Services\Erp\Crm\CrmCustomerAccessService;
 use Illuminate\Support\Facades\DB;
 
 class SalesOrderSnapshotService
@@ -18,11 +19,10 @@ class SalesOrderSnapshotService
         private readonly SalesCustomerOrderDetailsService $customerDetails,
     ) {}
 
-    public function lock(array $payload, ?SalesOrder $current = null): array
+    public function lockCustomer(array $payload, ?SalesOrder $current = null, ?object $actor = null): array
     {
-        // 约定定金不是订单表字段，只随付款资金策略快照保存，先从表头载荷中取出。
-        $agreedDeposit = SalesOrderFundingGateService::normalizeAgreedDeposit($payload['agreed_deposit_amount'] ?? null);
-        unset($payload['agreed_deposit_amount']);
+        $actor ??= request() ? app(AuthContextService::class)->currentUser(request()) : null;
+        if ($current && !array_key_exists('customer_id', $payload)) $payload['customer_id'] = $current->customer_id;
         $addressSupplied = array_key_exists('full_address', $payload) || array_key_exists('address', $payload);
         $enteredAddress = trim((string) (array_key_exists('full_address', $payload) ? $payload['full_address'] : ($payload['address'] ?? '')));
         if ($addressSupplied) {
@@ -30,17 +30,53 @@ class SalesOrderSnapshotService
             $payload['full_address'] = $enteredAddress ?: null;
             $payload['address'] = $enteredAddress ?: null;
         }
-        $customer = $this->resolveAndUpsertCustomer($payload, $current);
+        $customer = $this->resolveAndUpsertCustomer($payload, $current, $actor);
         abort_if($customer->status === 'blacklisted', 422, '该客户已在黑名单，不能创建销售订单');
 
-        $contact = $this->contact($customer, $payload['customer_contact_id'] ?? null);
-        $address = $addressSupplied && $enteredAddress === '' ? null : $this->address($customer, $payload['customer_address_id'] ?? null);
+        if ($current && (int) $current->customer_id === (int) $customer->id && $actor
+            && app(CrmCustomerAccessService::class)->relation($customer, $actor) === null) {
+            // 旧单协作权不授予实时客档读取权；仍可修改本单联系人与地址文字。
+            foreach (['customer_contact_id', 'customer_address_id'] as $field) {
+                abort_if(!empty($payload[$field]) && (int) $payload[$field] !== (int) $current->{$field}, 403, '无权读取该客户的其他联系人或地址，请先申请客户协作。');
+                if (!array_key_exists($field, $payload)) $payload[$field] = $current->{$field};
+            }
+            $contactName = trim((string) ($payload['contact_name'] ?? $current->contact_name_snapshot ?? $current->contact_name));
+            $contactPhone = trim((string) ($payload['contact_phone'] ?? $payload['customer_phone'] ?? $current->contact_phone_snapshot ?? $current->contact_phone));
+            $fullAddress = $addressSupplied ? $enteredAddress : $current->full_address;
+            $shipping = array_replace((array) $current->shipping_address_snapshot, [
+                'address_id' => $payload['customer_address_id'],
+                'receiver_name' => $contactName ?: null, 'receiver_phone' => $contactPhone ?: null,
+                'detail_address' => $fullAddress ?: null, 'full_address' => $fullAddress ?: null,
+            ]);
+            if ($addressSupplied && $enteredAddress !== trim((string) $current->full_address)) {
+                $shipping = array_replace($shipping, ['province' => null, 'city' => null, 'district' => null]);
+            }
+            $name = $current->customer_name_snapshot ?: $current->customer_name;
+            return array_replace($payload, [
+                'customer_name' => $name, 'customer_name_snapshot' => $name,
+                'contact_name' => $contactName ?: null, 'contact_name_snapshot' => $contactName ?: null,
+                'contact_phone' => $contactPhone ?: null, 'contact_phone_snapshot' => $contactPhone ?: null,
+                'customer_phone' => $contactPhone ?: null, 'full_address' => $fullAddress ?: null,
+                'shipping_address_snapshot' => $shipping,
+                'customer_snapshot' => array_replace((array) $current->customer_snapshot, [
+                    'id' => $current->customer_id, 'name' => $name,
+                    'platform_buyer_id' => $payload['platform_buyer_id'] ?? $current->platform_buyer_id,
+                    'contact' => ['id' => $payload['customer_contact_id'], 'name' => $contactName ?: null, 'phone' => $contactPhone ?: null],
+                    'address' => $shipping,
+                ]),
+            ]);
+        }
+
+        $contextOnly = !$current && $actor && !empty($payload['opportunity_id'])
+            && app(CrmCustomerAccessService::class)->relation($customer, $actor) === null;
+        $contact = $contextOnly && empty($payload['customer_contact_id']) ? null : $this->contact($customer, $payload['customer_contact_id'] ?? null);
+        $address = $contextOnly || ($addressSupplied && $enteredAddress === '') ? null : $this->address($customer, $payload['customer_address_id'] ?? null);
 
         $contactName = trim((string) ($payload['contact_name'] ?? ''))
-            ?: ($contact?->contact_name ?: $customer->contact_name);
+            ?: ($contact?->contact_name ?: ($contextOnly ? null : $customer->contact_name));
         $contactPhone = trim((string) ($payload['contact_phone'] ?? $payload['customer_phone'] ?? ''))
-            ?: ($contact?->mobile ?: $contact?->phone ?: $customer->contact_phone);
-        $fullAddress = $addressSupplied ? $enteredAddress : ($address?->full_address ?: $customer->full_address);
+            ?: ($contact?->mobile ?: $contact?->phone ?: ($contextOnly ? null : $customer->contact_phone));
+        $fullAddress = $addressSupplied ? $enteredAddress : ($address?->full_address ?: ($contextOnly ? null : $customer->full_address));
 
         $payload['customer_contact_id'] = $contact?->id;
         $payload['customer_address_id'] = $address?->id;
@@ -67,9 +103,9 @@ class SalesOrderSnapshotService
             'customer_code' => $customer->customer_code,
             'name' => $customer->customer_name,
             'customer_kind' => $customer->customer_kind,
-            'source_platform' => $customer->source_platform,
+            'source_platform' => $contextOnly ? null : $customer->source_platform,
             // 本单买家ID记在订单快照里；客户主档不再被订单覆盖。
-            'platform_buyer_id' => trim((string) ($payload['platform_buyer_id'] ?? '')) ?: $customer->platform_buyer_id,
+            'platform_buyer_id' => trim((string) ($payload['platform_buyer_id'] ?? '')) ?: ($contextOnly ? null : $customer->platform_buyer_id),
             'contact' => [
                 'id' => $contact?->id,
                 'name' => $contactName ?: null,
@@ -77,6 +113,16 @@ class SalesOrderSnapshotService
             ],
             'address' => $payload['shipping_address_snapshot'],
         ];
+
+        return $payload;
+    }
+
+    public function lock(array $payload, ?SalesOrder $current = null, ?object $actor = null): array
+    {
+        // 约定定金不是订单表字段，只随付款资金策略快照保存，先从表头载荷中取出。
+        $agreedDeposit = SalesOrderFundingGateService::normalizeAgreedDeposit($payload['agreed_deposit_amount'] ?? null);
+        unset($payload['agreed_deposit_amount']);
+        $payload = $this->lockCustomer($payload, $current, $actor);
 
         $channel = !empty($payload['sales_channel_id'])
             ? SalesChannel::query()->where('status', 'enabled')->findOrFail($payload['sales_channel_id'])
@@ -194,9 +240,9 @@ class SalesOrderSnapshotService
      * 客户识别统一交给 CRM 共用解析器：不覆盖客户主资料、买家ID冲突拒绝、不可见客户需协作。
      * 编辑已有订单时原客户保持可用，避免可见范围调整后旧单无法保存。
      */
-    private function resolveAndUpsertCustomer(array &$payload, ?SalesOrder $current = null): SalesCustomer
+    private function resolveAndUpsertCustomer(array &$payload, ?SalesOrder $current = null, ?object $actor = null): SalesCustomer
     {
-        return app(\App\Services\Erp\Crm\CrmOrderCustomerResolver::class)->resolve($payload, $current?->customer_id);
+        return app(\App\Services\Erp\Crm\CrmOrderCustomerResolver::class)->resolve($payload, $current?->customer_id, $actor);
     }
 
     private function contact(SalesCustomer $customer, ?int $id): ?SalesCustomerContact

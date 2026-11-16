@@ -16,8 +16,6 @@ use App\Models\Erp\SalesOrderVersion;
 use App\Models\Erp\SalesOrderAttachment;
 use App\Models\Erp\ShipmentDispatch;
 use App\Models\Erp\SalesCustomer;
-use App\Models\Erp\SalesCustomerAddress;
-use App\Models\Erp\SalesCustomerContact;
 use App\Models\Erp\SalesChannel;
 use App\Models\Erp\SalesFundingPolicy;
 use App\Models\Erp\PaymentMethod;
@@ -30,7 +28,7 @@ use App\Services\Erp\DocumentNumberService;
 use App\Services\Erp\InventoryReservationService;
 use App\Services\Erp\InventoryAvailabilityService;
 use App\Services\Erp\LengthCutRequirementService;
-use App\Services\Erp\SalesCustomerOrderDetailsService;
+use App\Services\Erp\SalesOrderSnapshotService;
 use App\Services\Erp\SalesOrderDraftService;
 use App\Services\Erp\SalesOrderAttachmentService;
 use App\Services\Erp\SalesOrderFundingGateService;
@@ -62,7 +60,10 @@ class SalesOrderController extends Controller
     /** One HTTP output boundary also covers write acknowledgements and future auxiliary actions. */
     public function callAction($method, $parameters)
     {
-        $response = $this->{$method}(...array_values($parameters));
+        $invoke = fn () => $this->{$method}(...array_values($parameters));
+        // 附件写入也须在同一事务内持有代开授权锁，撤销不能穿过上传或删除检查。
+        $response = in_array($method, ['uploadDraftAttachment', 'deleteDraftAttachment', 'uploadAttachment', 'deleteAttachment'], true)
+            ? DB::transaction($invoke) : $invoke();
         if ($response instanceof JsonResponse) {
             $response->setData(app(\App\Services\Erp\InventoryAmountVisibilityService::class)->forResponse($response->getData()));
         }
@@ -413,7 +414,7 @@ class SalesOrderController extends Controller
             $payload['sales_order_id'] = $lineOrderId;
         }
         if (!empty($payload['sales_order_id'])) {
-            $order = SalesOrder::with('lines')->findOrFail($payload['sales_order_id']);
+            $order = SalesOrder::with('lines')->lockForUpdate()->findOrFail($payload['sales_order_id']);
             $this->abortUnlessOrderVisible($request, $order);
             // 已确认订单允许补传附件（只新增、不替换不删除）；关闭或取消的订单不再接收附件。
             abort_if(!in_array($order->order_status, ['draft', 'confirmed'], true), 422, '订单已关闭或取消，不能再上传附件');
@@ -453,7 +454,7 @@ class SalesOrderController extends Controller
         $attachment = SalesOrderAttachment::where('status', 'active')->findOrFail($id);
         $orderId = $attachment->sales_order_id ?: optional($attachment->line)->sales_order_id;
         if ($orderId) {
-            $order = SalesOrder::findOrFail($orderId);
+            $order = SalesOrder::query()->lockForUpdate()->findOrFail($orderId);
             $this->abortUnlessOrderVisible($request, $order);
             abort_if($order->order_status !== 'draft', 422, '只有草稿订单允许删除附件');
         } else {
@@ -490,6 +491,34 @@ class SalesOrderController extends Controller
         return Storage::disk($attachment->storage_disk)->download($attachment->storage_path, $attachment->original_name);
     }
 
+    public function previewConfirmedDrawing(Request $request, int $id, int $lineId, int $requestRevisionId)
+    {
+        return $this->confirmedDrawingFile($request, $id, $lineId, $requestRevisionId, true);
+    }
+
+    public function downloadConfirmedDrawing(Request $request, int $id, int $lineId, int $requestRevisionId)
+    {
+        return $this->confirmedDrawingFile($request, $id, $lineId, $requestRevisionId, false);
+    }
+
+    private function confirmedDrawingFile(Request $request, int $id, int $lineId, int $requestRevisionId, bool $preview)
+    {
+        $this->abortUnlessPermission($request, 'sales_order.view');
+        $this->abortUnlessPermission($request, 'sales_order.view_attachment');
+        $order = SalesOrder::query()->findOrFail($id);
+        $this->abortUnlessOrderVisible($request, $order, true);
+        $line = SalesOrderLine::query()->where('sales_order_id', $id)->findOrFail($lineId);
+        $frozen = collect((array) data_get($line->drawing_snapshot, 'confirmed_versions', []))
+            ->first(fn ($version) => (int) ($version['request_revision_id'] ?? 0) === $requestRevisionId);
+        abort_unless($frozen && !empty($frozen['confirmed_at']), 404, '该订单明细未关联此客户确认版本。');
+        // 下载只认本行冻结的不可变版本，不追来源商机现在可见的文件或最新图纸。
+        $revision = \App\Models\Erp\TechnicalDrawingRevision::query()->findOrFail((int) $frozen['revision_id']);
+        if ($preview) abort_unless(in_array($revision->mime_type, ['application/pdf', 'image/jpeg', 'image/png', 'image/webp'], true), 422, '此图纸格式请下载后查看。');
+        abort_unless(Storage::disk($revision->storage_disk)->exists($revision->storage_path), 404, '图纸文件不存在。');
+        return Storage::disk($revision->storage_disk)->response($revision->storage_path, $revision->original_name,
+            ['Content-Type' => $revision->mime_type ?: 'application/octet-stream'], $preview ? 'inline' : 'attachment');
+    }
+
     private function visibleAttachment(Request $request, int $id): SalesOrderAttachment
     {
         $attachment = SalesOrderAttachment::where('status', 'active')->findOrFail($id);
@@ -516,6 +545,7 @@ class SalesOrderController extends Controller
         $this->abortUnlessPermission($request, 'sales_order.view');
         $keyword = trim((string) $request->input('keyword'));
         $query = SalesCustomer::query()->where('status', '<>', 'disabled');
+        app(\App\Services\Erp\Crm\CrmCustomerAccessService::class)->applyVisible($query, app(AuthContextService::class)->currentUser($request));
         if ($keyword !== '') {
             $query->where(function (Builder $q) use ($keyword) {
                 $q->where('customer_name', 'like', "%{$keyword}%")
@@ -601,6 +631,9 @@ class SalesOrderController extends Controller
     {
         $this->abortUnlessPermission($request, 'sales_order.view');
         return response()->json([
+            'delegated_sales_users' => DB::table('erp_legacy_admin_users')
+                ->whereIn('legacy_id', app(\App\Services\Erp\Crm\CrmSalesDelegationService::class)->activeOwners(app(AuthContextService::class)->currentUser($request)))
+                ->get(['legacy_id as id', 'nickname', 'username'])->map(fn ($user) => ['id' => (int) $user->id, 'nickname' => $user->nickname ?: $user->username]),
             'pay_types' => PaymentMethod::query()
                 ->where('status', 'enabled')
                 ->where('available_for_sales', true)
@@ -637,8 +670,9 @@ class SalesOrderController extends Controller
             $draftToken = $payload['draft_token'] ?? null;
             unset($payload['lines']);
             unset($payload['draft_token'], $payload['deleted_line_ids']);
-            unset($payload['opportunity_id']);
+            app(SalesOrderVisibilityService::class)->prepareCreation($payload, app(AuthContextService::class)->currentUser($request));
             $payload = $this->normalizeOrderPayload($payload, $request);
+            unset($payload['opportunity_id']);
             $payload['sales_order_no'] = $payload['sales_order_no'] ?? $this->nextNo('SO');
             $payload['order_status'] = 'draft';
             $payload['confirm_status'] = 'unconfirmed';
@@ -648,6 +682,7 @@ class SalesOrderController extends Controller
 
             $order = SalesOrder::create($payload);
             app(CrmOpportunityOrderService::class)->attachNew($order, $opportunityId, app(AuthContextService::class)->currentUser($request));
+            app(SalesOrderVisibilityService::class)->recordCreation($order, app(AuthContextService::class)->currentUser($request));
             $this->saveLines($order, $lines, $draftToken);
             $this->bindDraftOrderAttachments($order, $draftToken);
             $this->refreshOrderTotals($order->id);
@@ -831,8 +866,9 @@ class SalesOrderController extends Controller
             $draftToken = $payload['draft_token'] ?? null;
             unset($payload['lines']);
             unset($payload['draft_token'], $payload['deleted_line_ids']);
+            app(CrmOpportunityOrderService::class)->guardOrderUpdate($order, $payload, app(AuthContextService::class)->currentUser($request));
             $payload = $this->normalizeOrderPayload($payload, $request, $order);
-            app(CrmOpportunityOrderService::class)->guardOrderUpdate($order, $payload);
+            app(\App\Services\Erp\SalesOrderConfirmedDrawingService::class)->assertCustomer($order, $lines, (int) ($payload['customer_id'] ?? $order->customer_id), $deletedLineIds);
             $payload = app(SalesCostVisibilityService::class)->preserveStoredCosts($payload, $order->attributesToArray());
             $order->update($payload);
             $this->syncDraftLines($order, $lines, $deletedLineIds, $draftToken);
@@ -1165,8 +1201,13 @@ class SalesOrderController extends Controller
         ]);
         abort_if($payload['attachment_scope'] === 'line' && empty($payload['sales_order_line_id']) && (empty($payload['draft_token']) || empty($payload['line_uuid'])), 422, '订单行附件必须绑定 sales_order_line_id 或 draft_token + line_uuid');
 
+        if (!empty($payload['sales_order_line_id'])) {
+            $lineOrderId = (int) SalesOrderLine::findOrFail($payload['sales_order_line_id'])->sales_order_id;
+            abort_if(!empty($payload['sales_order_id']) && (int) $payload['sales_order_id'] !== $lineOrderId, 422, '订单行不属于当前订单');
+            $payload['sales_order_id'] = $lineOrderId;
+        }
         if (!empty($payload['sales_order_id'])) {
-            $order = SalesOrder::with('lines')->findOrFail($payload['sales_order_id']);
+            $order = SalesOrder::with('lines')->lockForUpdate()->findOrFail($payload['sales_order_id']);
             $this->abortUnlessOrderVisible($request, $order);
             abort_if($order->order_status !== 'draft', 422, '订单确认后不能直接上传附件，请走订单变更流程');
             if (!empty($payload['sales_order_line_id'])) {
@@ -1210,8 +1251,9 @@ class SalesOrderController extends Controller
         $this->abortUnlessAnyPermission($request, ['sales.order.create', 'sales.order.edit']);
         $attachment = SalesOrderAttachment::where('status', 'active')->findOrFail($id);
 
-        if ($attachment->sales_order_id) {
-            $order = SalesOrder::findOrFail($attachment->sales_order_id);
+        $orderId = $attachment->sales_order_id ?: optional($attachment->line)->sales_order_id;
+        if ($orderId) {
+            $order = SalesOrder::query()->lockForUpdate()->findOrFail($orderId);
             $this->abortUnlessOrderVisible($request, $order);
             abort_if($order->order_status !== 'draft', 422, '订单确认后不能直接删除附件，请走订单变更流程');
         }
@@ -1303,6 +1345,7 @@ class SalesOrderController extends Controller
             'platform_buyer_id' => 'nullable|string|max:160',
             'pay_type' => 'nullable|string|max:80',
             'sales_user_legacy_id' => 'nullable|integer|min:1',
+            'delegated_owner_legacy_id' => 'nullable|integer|min:1',
             'customer_id' => 'nullable|integer|exists:erp_sales_customers,id',
             'opportunity_id' => 'nullable|integer|min:1',
             'customer_contact_id' => 'nullable|integer|min:1',
@@ -1410,6 +1453,8 @@ class SalesOrderController extends Controller
             'lines.*.bom_snapshot' => 'nullable|array',
             'lines.*.routing_snapshot' => 'nullable|array',
             'lines.*.drawing_snapshot' => 'nullable|array',
+            'lines.*.confirmed_drawing_revision_ids' => 'sometimes|array|max:1000',
+            'lines.*.confirmed_drawing_revision_ids.*' => 'required|integer|min:1',
             'lines.*.technical_attachment_snapshot' => 'nullable|array',
             'lines.*.inspection_snapshot' => 'nullable|array',
             'lines.*.image' => 'nullable|string',
@@ -1444,50 +1489,7 @@ class SalesOrderController extends Controller
             unset($logistics[$field]);
         }
         $payload['logistics_snapshot'] = $logistics;
-        $this->resolveCustomerFromOrder($payload);
-        $this->lockCustomerSnapshots($payload);
-        return $payload;
-    }
-
-    /** 旧接口与草稿链共用 CRM 客户解析规则，避免两套查重与覆盖逻辑。 */
-    private function resolveCustomerFromOrder(array &$payload): void
-    {
-        if (trim((string) ($payload['customer_name'] ?? '')) === '' && empty($payload['customer_id'])) return;
-        app(\App\Services\Erp\Crm\CrmOrderCustomerResolver::class)->resolve($payload);
-    }
-
-    private function lockCustomerSnapshots(array &$payload): void
-    {
-        if (empty($payload['customer_id'])) return;
-        $customer = SalesCustomer::findOrFail($payload['customer_id']);
-        $contact = !empty($payload['customer_contact_id'])
-            ? SalesCustomerContact::where('customer_id', $customer->id)->where('status', 'enabled')->lockForUpdate()->findOrFail($payload['customer_contact_id'])
-            : $customer->contacts()->where('status', 'enabled')->orderByDesc('is_default')->first();
-        $address = !empty($payload['customer_address_id'])
-            ? SalesCustomerAddress::where('customer_id', $customer->id)->where('status', 'enabled')->lockForUpdate()->findOrFail($payload['customer_address_id'])
-            : $customer->addresses()->where('status', 'enabled')->orderByDesc('is_default')->first();
-        $payload['customer_contact_id'] = $contact?->id;
-        $payload['customer_address_id'] = $address?->id;
-        $payload['customer_name'] = $customer->customer_name;
-        $payload['customer_name_snapshot'] = $customer->customer_name;
-        $payload['contact_name'] = $contact?->contact_name;
-        $payload['contact_phone'] = $contact?->mobile ?: $contact?->phone;
-        $payload['customer_phone'] = $payload['contact_phone'];
-        $payload['contact_name_snapshot'] = $payload['contact_name'];
-        $payload['contact_phone_snapshot'] = $payload['contact_phone'];
-        $payload['full_address'] = $address?->full_address;
-        $payload['shipping_address_snapshot'] = $address ? [
-            'id' => $address->id, 'receiver_name' => $address->receiver_name, 'receiver_phone' => $address->receiver_phone,
-            'province' => $address->province, 'city' => $address->city, 'district' => $address->district,
-            'detail_address' => $address->detail_address, 'full_address' => $address->full_address,
-        ] : null;
-        $payload['customer_snapshot'] = [
-            'id' => $customer->id, 'customer_code' => $customer->customer_code, 'name' => $customer->customer_name,
-            'customer_kind' => $customer->customer_kind, 'source_platform' => $customer->source_platform,
-            'platform_buyer_id' => $customer->platform_buyer_id,
-            'contact' => $contact ? ['id' => $contact->id, 'name' => $payload['contact_name'], 'phone' => $payload['contact_phone']] : null,
-            'address' => $payload['shipping_address_snapshot'],
-        ];
+        return app(SalesOrderSnapshotService::class)->lockCustomer($payload, $order, app(AuthContextService::class)->currentUser($request));
     }
 
     private function applySalesOrderVisibility(Builder $query, Request $request, bool $includeShared = false): void
@@ -1565,7 +1567,10 @@ class SalesOrderController extends Controller
         }
         $writable = SalesOrder::query()->whereKey($order->id);
         $this->applySalesOrderVisibility($writable, $request);
-        $order->setAttribute('read_only', !$writable->exists());
+        $draftAccess = app(CrmOpportunityOrderService::class)->draftAccess($order, $user);
+        $order->setAttribute('delegated_sales_user', $draftAccess['delegated_sales_user']);
+        $order->setAttribute('read_only', !$writable->exists() || !$draftAccess['writable']);
+        if (!$draftAccess['writable']) $actions['platform_payment_confirm'] = false;
         if ($order->read_only) {
             foreach ($actions as $key => $value) {
                 if (!in_array($key, ['view_attachment', 'production_released', 'platform_payment_recorder', 'platform_payment_confirm'], true)) $actions[$key] = false;
@@ -1730,7 +1735,10 @@ class SalesOrderController extends Controller
         $query = SalesOrder::query()->whereKey($order->id);
         $this->applySalesOrderVisibility($query, $request, $includeShared);
         abort_unless($query->exists(), 403, '无权访问该销售订单');
-        if (!$request->isMethodSafe()) $order->assertCurrentBusiness();
+        if (!$request->isMethodSafe()) {
+            $order->assertCurrentBusiness();
+            app(CrmOpportunityOrderService::class)->assertDraftWrite($order, app(AuthContextService::class)->currentUser($request));
+        }
     }
 
     private function decorateOrderPeople(iterable $orders): void
@@ -1823,7 +1831,7 @@ class SalesOrderController extends Controller
             $existing = null;
             $line = app(SalesCostVisibilityService::class)->redact($line);
             if (!empty($line['id'])) {
-                $existing = SalesOrderLine::where('sales_order_id', $order->id)->lockForUpdate()->find($line['id']);
+                $existing = SalesOrderLine::where('sales_order_id', $order->id)->lockForUpdate()->findOrFail($line['id']);
             }
             if ($existing) {
                 $data = $this->buildLinePayload($order, $line, $index, $existing);
@@ -1922,7 +1930,8 @@ class SalesOrderController extends Controller
             'item_snapshot' => null,
             'bom_snapshot' => null,
             'routing_snapshot' => null,
-            'drawing_snapshot' => $line['drawing_snapshot'] ?? $existing?->drawing_snapshot,
+            'drawing_snapshot' => app(\App\Services\Erp\SalesOrderConfirmedDrawingService::class)->snapshot($order, $line, $existing,
+                app(AuthContextService::class)->currentUser(request()), null, $index),
             'technical_attachment_snapshot' => $line['technical_attachment_snapshot'] ?? $existing?->technical_attachment_snapshot,
             'inspection_snapshot' => ['delivery_inspection_required' => (bool) $sku->delivery_inspection_required],
             'image' => null,

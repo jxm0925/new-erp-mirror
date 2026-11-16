@@ -51,7 +51,7 @@ export default {
       this.uploading = false
       this.$nextTick(() => { if (this.$refs.attachments) this.$refs.attachments.reset() })
       const customerId = subject.customer_id || (subject.subject_type === 'customer' ? subject.subject_id : null)
-      if (!customerId || this.contacts.length || (this.$can && !this.$can('sales.customer'))) return
+      if (!customerId || subject.delegated || this.contacts.length || (this.$can && !this.$can('sales.customer'))) return
       this.loading = true
       try {
         const { data } = await getSalesCustomer(customerId)

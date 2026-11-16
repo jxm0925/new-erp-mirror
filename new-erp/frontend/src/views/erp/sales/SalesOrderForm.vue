@@ -117,7 +117,8 @@ Do not change layout without approval.
                 </div>
                 <div v-if="!platformPaymentOnly" class="field">
                   <label class="required">销售人员</label>
-                  <el-input :value="selectedSalesUser && (selectedSalesUser.nickname || selectedSalesUser.username)" size="small" readonly placeholder="请选择销售" suffix-icon="el-icon-search" @focus="salesUserPickerVisible = true" @click.native="salesUserPickerVisible = true" />
+                  <el-input :value="selectedSalesUser && (selectedSalesUser.nickname || selectedSalesUser.username)" size="small" readonly :disabled="salesUserLocked" placeholder="请选择销售" suffix-icon="el-icon-search" @focus="openSalesUserPicker" @click.native="openSalesUserPicker" />
+                  <span v-if="effectiveDelegatedSalesUser" class="platform-inline-meta">代班办理，销售归属{{ effectiveDelegatedSalesUser.nickname }}</span>
                 </div>
                 <div v-if="!platformPaymentOnly" class="field">
                   <label class="required">订单来源</label>
@@ -413,6 +414,7 @@ Do not change layout without approval.
                 </div>
 
                 <div class="detail-block drawing-subcard">
+                  <sales-order-confirmed-drawings :line="row" :order-id="form.id" :customer-id="form.customer_id" :opportunity-id="form.opportunity_id" :editable="canEditOrder" :frozen-sources="frozenDrawingSources" @change="setConfirmedDrawings(row, $event)" />
                   <div class="drawing-subcard-head">
                     <div class="drawing-head-left">
                       <i class="el-icon-folder-opened drawing-head-icon" />
@@ -704,6 +706,7 @@ import { erpDateTime } from '../../../utils/dateTime'
 import cachedPageRoute from '@/utils/cachedPageRoute'
 import ProductSkuPicker from '@/components/sales/ProductSkuPicker.vue'
 import SalesOrderAttachmentPreviewDialog from '@/components/sales/SalesOrderAttachmentPreviewDialog.vue'
+import SalesOrderConfirmedDrawings from '@/components/sales/SalesOrderConfirmedDrawings.vue'
 import OrderEditImpactDialog from '@/components/sales/OrderEditImpactDialog.vue'
 import { legacyMediaUrl } from '@/utils/legacyMedia'
 import CustomerPicker from '@/components/sales/CustomerPicker.vue'
@@ -756,6 +759,7 @@ const emptyLine = () => ({
   configuration_snapshot: {},
   bom_snapshot: null,
   drawing_snapshot: { files: [] },
+  confirmed_drawing_revision_ids: [],
   technical_attachment_snapshot: { files: [] },
   inspection_snapshot: null,
   remark: ''
@@ -763,11 +767,13 @@ const emptyLine = () => ({
 
 export default {
   mixins: [cachedPageRoute],
-  components: { ProductSkuPicker, CustomerPicker, CrmIdentityReviewDialog, WarehouseManagerPicker, SalesCarrierPicker, SystemRecordPicker, SalesOrderAttachmentPreviewDialog, OrderEditImpactDialog, CrmOpportunityDetailDialog: () => import('@/components/crm/CrmOpportunityDetailDialog.vue') },
+  components: { ProductSkuPicker, CustomerPicker, CrmIdentityReviewDialog, WarehouseManagerPicker, SalesCarrierPicker, SystemRecordPicker, SalesOrderAttachmentPreviewDialog, SalesOrderConfirmedDrawings, OrderEditImpactDialog, CrmOpportunityDetailDialog: () => import('@/components/crm/CrmOpportunityDetailDialog.vue') },
   data: () => ({
     selectedLine: null,
     salesUserPickerVisible: false,
     selectedSalesUser: null,
+    delegatedSalesUser: null,
+    delegatedSalesUsers: [],
     carrierPickerVisible: false,
     selectedCarrier: null,
     expandedLineKeys: [],
@@ -779,6 +785,7 @@ export default {
     contractDialogVisible: false,
     previewVisible: false,
     previewFile: null,
+    frozenDrawingSources: {},
     impactDialogVisible: false,
     impactReason: '',
     impactRechecking: false,
@@ -862,6 +869,10 @@ export default {
     isConfirmedEdit() {
       return this.isEdit && this.editOrderMeta && this.editOrderMeta.order_status === 'confirmed'
     },
+    effectiveDelegatedSalesUser() {
+      return this.delegatedSalesUser || (!this.isEdit && !this.form.opportunity_id && this.delegatedSalesUsers.find(user => String(user.id) === String(this.form.sales_user_legacy_id))) || null
+    },
+    salesUserLocked() { return Boolean(this.effectiveDelegatedSalesUser || this.opportunityContextLoading) },
     platformPaymentOnly() {
       return this.isEdit && this.pageRoute.query.platform_payment === '1' && Boolean(this.editOrderMeta?.allowed_actions?.platform_payment_confirm)
     },
@@ -1063,9 +1074,10 @@ export default {
     await this.loadOptions()
     if (this.isEdit) await this.load()
     else {
+      const form = this.form
       this.form.funding_policy_id = this.defaultFundingPolicy ? this.defaultFundingPolicy.id : null
-      await Promise.all([this.reserveSalesOrderNumber(), this.defaultSalesUser()])
-      await this.loadOpportunityContext()
+      await Promise.all([this.reserveSalesOrderNumber(), this.loadOpportunityContext()])
+      if (this.form === form) await this.defaultSalesUser()
     }
     if (!this.selectedLine) this.selectedLine = this.form.lines[0]
     if (!this.isEdit && this.form.lines[0]) this.expandedLineKeys = [this.form.lines[0].line_uuid]
@@ -1094,18 +1106,12 @@ export default {
         if (this.isEdit) {
           await this.load()
         } else {
-          this.form = this.emptyForm()
-          this.savedPlatformPaymentBasis = null
-          this.platformPaymentChecked = false
-          this.selectedSalesUser = null
-          this.resetDeposit()
-          this.loadedAgreedDeposit = null
-          this.selectedLine = this.form.lines[0]
-          this.expandedLineKeys = this.form.lines[0] ? [this.form.lines[0].line_uuid] : []
-          await Promise.all([this.reserveSalesOrderNumber(), this.defaultSalesUser()])
-          await this.loadOpportunityContext()
+          await this.initializeCreateForm()
         }
       }
+    },
+    'pageRoute.query.opportunity_id'() {
+      if (!this.isEdit) this.initializeCreateForm()
     },
     'pageRoute.query.focus'() {
       this.$nextTick(() => window.setTimeout(() => this.focusRequestedField(), 100))
@@ -1113,10 +1119,27 @@ export default {
   },
   methods: {
     legacyMediaUrl,
+    async initializeCreateForm() {
+      const form = this.emptyForm()
+      this.form = form
+      this.numberReservation = null
+      this.savedPlatformPaymentBasis = null
+      this.platformPaymentChecked = false
+      this.selectedSalesUser = null
+      this.delegatedSalesUser = null
+      this.salesUserPickerVisible = false
+      this.resetDeposit()
+      this.loadedAgreedDeposit = null
+      this.selectedLine = form.lines[0]
+      this.expandedLineKeys = form.lines[0] ? [form.lines[0].line_uuid] : []
+      await Promise.all([this.reserveSalesOrderNumber(), this.loadOpportunityContext()])
+      if (this.form === form) await this.defaultSalesUser()
+    },
     async loadOpportunityContext() {
       const id = this.pageRoute.query.opportunity_id
       this.opportunityContextError = ''
       this.sourceOpportunity = {}
+      this.delegatedSalesUser = null
       if (this.isEdit || !id) { this.opportunityContextLoading = false; return }
       const form = this.form
       this.opportunityContextLoading = true
@@ -1131,6 +1154,12 @@ export default {
         this.form.currency = context.currency || 'CNY'
         this.form.order_source = 'crm_clue'
         if (['domestic','foreign'].includes(context.trade_type)) this.form.trade_type = context.trade_type
+        this.delegatedSalesUser = context.delegated_sales_user || null
+        if (this.delegatedSalesUser) {
+          this.salesUserPickerVisible = false
+          this.selectedSalesUser = this.delegatedSalesUser
+          this.form.sales_user_legacy_id = String(this.delegatedSalesUser.id)
+        }
       } catch (error) {
         if (this.form === form && !this.isEdit && String(this.pageRoute.query.opportunity_id) === String(id)) {
           this.opportunityContextError = crmError(error,'商机来源加载失败，请重新从商机新建订单')
@@ -1152,15 +1181,18 @@ export default {
       } catch (error) { /* 商机超出查看范围时仅保留订单已有的关联编号。 */ }
     },
     async reserveSalesOrderNumber() {
+      const form = this.form
       try {
         const opportunityId = this.pageRoute.query.opportunity_id
-        this.numberReservation = await reserveForCreatePage('sales_order', '/sales/orders/create', opportunityId ? `/sales/orders/create?opportunity_id=${opportunityId}` : '/sales/orders/create')
+        const reservation = await reserveForCreatePage('sales_order', '/sales/orders/create', opportunityId ? `/sales/orders/create?opportunity_id=${opportunityId}` : '/sales/orders/create')
+        if (this._isDestroyed || this.isEdit || this.form !== form) return
+        this.numberReservation = reservation
         this.form.sales_order_no = this.numberReservation.document_no
         this.form.reservation_token = this.numberReservation.reservation_token
         this.form.creation_session_id = this.numberReservation.creation_session_id
         this.form.draft_token = this.numberReservation.creation_session_id
       } catch (error) {
-        this.$message.error(error.userMessage || '销售订单号预生成失败，请重新打开新增页面')
+        if (!this._isDestroyed && this.form === form) this.$message.error(error.userMessage || '销售订单号预生成失败，请重新打开新增页面')
       }
     },
     emptyForm() {
@@ -1211,6 +1243,7 @@ export default {
         this.payTypeOptions = data.pay_types || []
         this.fundingPolicyOptions = data.funding_policies || []
         this.platformRawOptions = data.platforms || []
+        this.delegatedSalesUsers = data.delegated_sales_users || []
       } catch (error) {
         this.$message.warning('销售订单基础选项加载失败，请检查新系统基础数据配置')
       }
@@ -1218,19 +1251,19 @@ export default {
     async defaultSalesUser() {
       const form = this.form
       const token = localStorage.getItem('erp_token')
-      if (this.isEdit || form.sales_user_legacy_id || !token) return
+      if (this.isEdit || this.salesUserLocked || form.sales_user_legacy_id || !token) return
       try {
         const actor = JSON.parse(localStorage.getItem('erp_user') || '{}')
         const actorId = Number(actor.legacy_id || actor.id || 0)
         if (!actorId) return
         const { data } = await listUsers({ scope: 'sales', ids: [actorId], page: 1, per_page: 10 })
-        if (this._isDestroyed || this.isEdit || this.form !== form || form.sales_user_legacy_id || localStorage.getItem('erp_token') !== token) return
+        if (this._isDestroyed || this.isEdit || this.salesUserLocked || this.form !== form || form.sales_user_legacy_id || localStorage.getItem('erp_token') !== token) return
         const currentActor = JSON.parse(localStorage.getItem('erp_user') || '{}')
         if (Number(currentActor.legacy_id || currentActor.id || 0) !== actorId) return
         const user = (data.data || []).find(row => Number(row.id) === actorId)
         if (user) this.applySalesUser(user)
       } catch (error) {
-        if (!this._isDestroyed && !this.isEdit && this.form === form && !form.sales_user_legacy_id && localStorage.getItem('erp_token') === token) {
+        if (!this._isDestroyed && !this.isEdit && !this.salesUserLocked && this.form === form && !form.sales_user_legacy_id && localStorage.getItem('erp_token') === token) {
           this.$message.warning(error.userMessage || '销售人员信息加载失败，请手动选择')
         }
       }
@@ -1248,6 +1281,7 @@ export default {
       this.shareUserOptions = (data.share_users || []).map(user => ({ id: String(user.user_id), nickname: user.display_name }))
       const formData = { ...data }
       delete formData.external_order_no
+      delete formData.delegated_sales_user
       this.form = {
         ...withoutInternalFreight(this.form),
         ...formData,
@@ -1280,9 +1314,14 @@ export default {
           spec_text_snapshot: line.sku_snapshot && line.sku_snapshot.spec_text,
           configuration_snapshot: line.configuration_snapshot || {},
           drawing_snapshot: line.drawing_snapshot || { files: [] },
+          confirmed_drawing_revision_ids: ((line.drawing_snapshot && line.drawing_snapshot.confirmed_versions) || []).map(version => Number(version.request_revision_id)),
           technical_attachment_snapshot: { files: this.mergeAttachmentFiles((line.technical_attachment_snapshot && line.technical_attachment_snapshot.files) || [], (line.attachments || []).map(this.mapAttachment)) }
         }))
       }
+      this.frozenDrawingSources = (data.lines || []).reduce((sources, line) => {
+        ;((line.drawing_snapshot && line.drawing_snapshot.confirmed_versions) || []).forEach(version => { sources[version.request_revision_id] = line.id })
+        return sources
+      }, {})
       this.savedPlatformPaymentBasis = this.platformPaymentBasis
       this.platformPaymentChecked = this.savedPlatformPayment
       const funding = data.funding_status || {}
@@ -1294,6 +1333,12 @@ export default {
       this.loadedAgreedDeposit = this.depositEdited ? Number(agreed) : null
       const salesUser = data.sales_user
       this.selectedSalesUser = salesUser ? { id: salesUser.user_id, nickname: salesUser.display_name, department_names: salesUser.department_name } : (data.sales_user_legacy_id ? { id: Number(data.sales_user_legacy_id), nickname: `账号 ${data.sales_user_legacy_id}` } : null)
+      this.delegatedSalesUser = data.delegated_sales_user || null
+      if (this.delegatedSalesUser && data.order_status === 'draft') {
+        this.selectedSalesUser = this.delegatedSalesUser
+        this.form.sales_user_legacy_id = String(this.delegatedSalesUser.id)
+      }
+      this.salesUserPickerVisible = false
       this.selectedCarrier = this.form.carrier_id ? { carrier_option_id: Number(this.form.carrier_id), name: data.default_carrier_name_snapshot || (data.shipping_snapshot || {}).default_carrier_name || (data.shipping_snapshot || {}).carrier_name || '' } : null
       this.selectedLine = this.form.lines[0] || null
       this.loadOpportunitySource()
@@ -1369,6 +1414,18 @@ export default {
     },
     applyCustomer(row) {
       if (this.form.opportunity_id && Number(row.id) !== Number(this.form.customer_id)) return this.$message.warning('关联商机的订单须保留原客户')
+      if (!this.isEdit && !this.form.opportunity_id) {
+        if (row.relation === 'delegate' || (row.abilities || {}).relation === 'delegate') {
+          this.delegatedSalesUser = { id: row.owner_legacy_id, nickname: row.owner_name }
+          this.selectedSalesUser = this.delegatedSalesUser
+          this.form.sales_user_legacy_id = String(row.owner_legacy_id)
+        } else if (this.delegatedSalesUser) {
+          this.delegatedSalesUser = null
+          this.selectedSalesUser = null
+          this.form.sales_user_legacy_id = ''
+          this.defaultSalesUser()
+        }
+      }
       const contact = (row.contacts || []).find(item => item.is_default) || (row.contacts || [])[0] || null
       const address = (row.addresses || []).find(item => item.is_default) || (row.addresses || [])[0] || null
       this.form.customer_id = row.id
@@ -1405,7 +1462,11 @@ export default {
     resetPlatformPaymentCheck() {
       this.platformPaymentChecked = !this.platformPaymentBasisChanged && this.savedPlatformPayment
     },
+    openSalesUserPicker() {
+      if (!this.salesUserLocked) this.salesUserPickerVisible = true
+    },
     applySalesUser(user) {
+      if (this.salesUserLocked) return
       this.selectedSalesUser = user
       this.form.sales_user_legacy_id = String(user.id)
     },
@@ -1559,6 +1620,10 @@ export default {
     },
     files(line) {
       return (line.technical_attachment_snapshot && line.technical_attachment_snapshot.files) || []
+    },
+    setConfirmedDrawings(line, versions) {
+      this.$set(line, 'confirmed_drawing_revision_ids', versions.map(version => Number(version.request_revision_id)))
+      this.$set(line, 'drawing_snapshot', { ...(line.drawing_snapshot || {}), confirmed_versions: versions })
     },
     mapAttachment(item) {
       return {
@@ -1755,7 +1820,7 @@ export default {
         locked: false
       })
       row.technical_attachment_snapshot = { files }
-      row.drawing_snapshot = { files: files.filter(item => item.file_type === '设计图纸').length, main_file: files.find(item => item.is_main) || null }
+      row.drawing_snapshot = { ...(row.drawing_snapshot || {}), files: files.filter(item => item.file_type === '设计图纸').length, main_file: files.find(item => item.is_main) || null }
       return false
     },
     async addContractFile(file, category) {
@@ -1868,13 +1933,13 @@ export default {
       files.splice(index, 1)
       if (files.length && !files.some(item => item.is_main)) files[0].is_main = true
       this.selectedLine.technical_attachment_snapshot = { files }
-      this.selectedLine.drawing_snapshot = { files: files.filter(item => item.file_type === '设计图纸').length, main_file: files.find(item => item.is_main) || null }
+      this.selectedLine.drawing_snapshot = { ...(this.selectedLine.drawing_snapshot || {}), files: files.filter(item => item.file_type === '设计图纸').length, main_file: files.find(item => item.is_main) || null }
     },
     setMainFile(index) {
       const files = this.files(this.selectedLine)
       files.forEach((item, i) => { item.is_main = i === index })
       this.selectedLine.technical_attachment_snapshot = { files }
-      this.selectedLine.drawing_snapshot = { files: files.filter(item => item.file_type === '设计图纸').length, main_file: files[index] || null }
+      this.selectedLine.drawing_snapshot = { ...(this.selectedLine.drawing_snapshot || {}), files: files.filter(item => item.file_type === '设计图纸').length, main_file: files[index] || null }
     },
     recalc() {
       this.syncHeaderFlags()
@@ -2103,6 +2168,8 @@ export default {
       delete payload.creator
       delete payload.sales_channel_id
       delete payload.transaction_mode
+      if (!this.isEdit && this.effectiveDelegatedSalesUser) payload.delegated_owner_legacy_id = this.effectiveDelegatedSalesUser.id
+      else delete payload.delegated_owner_legacy_id
       if (keepLegacyOriginalOrderNo) delete payload.origin_order_no
       const paymentChoiceChanged = this.platformPaymentBasisChanged
         ? this.platformPaymentChecked

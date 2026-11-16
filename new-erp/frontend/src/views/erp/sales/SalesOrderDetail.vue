@@ -430,6 +430,7 @@ Progress design: 用户确认的订单产品树、单台整链路与工单聚合
 
               <!-- 本行图纸与技术附件表格 -->
               <div class="line-expand-drawing-section">
+                <sales-order-confirmed-drawings :line="row" :order-id="order.id" :customer-id="order.customer_id" :opportunity-id="order.opportunity_id" />
                 <div class="drawing-section-title">
                   <i class="el-icon-paperclip" /> 本行设计图纸与技术附件
                   <span class="title-sub-count">共 {{ lineFiles(row).length }} 份</span>
@@ -851,6 +852,7 @@ import SalesOrderCancellationDialog from '@/components/sales/SalesOrderCancellat
 import CancellationDispositions from '@/components/production/CancellationDispositions.vue'
 import SalesOrderChangeLabor from '@/components/sales/SalesOrderChangeLabor.vue'
 import SalesOrderAttachmentPreviewDialog from '@/components/sales/SalesOrderAttachmentPreviewDialog.vue'
+import SalesOrderConfirmedDrawings from '@/components/sales/SalesOrderConfirmedDrawings.vue'
 import SalesOrderFinancePanel from '@/components/sales/SalesOrderFinancePanel.vue'
 import SalesOrderInvoicePanel from '@/components/sales/SalesOrderInvoicePanel.vue'
 import OrderProgress from './components/OrderProgress.vue'
@@ -864,7 +866,7 @@ import { listSalesOrderWorkOrders } from '@/api/erp/production'
 
 export default {
   props: { embeddedOrderId: { type: [Number, String], default: null }, initialTab: { type: String, default: '' } },
-  components: { SalesOrderCancellationDialog, CancellationDispositions, SalesOrderChangeLabor, SalesOrderAttachmentPreviewDialog, SalesOrderFinancePanel, SalesOrderInvoicePanel, OrderProgress, LegacyOrderHistory, AftersalesCaseForm },
+  components: { SalesOrderCancellationDialog, CancellationDispositions, SalesOrderChangeLabor, SalesOrderAttachmentPreviewDialog, SalesOrderConfirmedDrawings, SalesOrderFinancePanel, SalesOrderInvoicePanel, OrderProgress, LegacyOrderHistory, AftersalesCaseForm },
   data() { return {
     pageRoute: this.embeddedOrderId ? { ...this.$route, params: { id: this.embeddedOrderId }, query: { tab: this.initialTab } } : this.$route,
     cancelDialogVisible: false,

@@ -26,19 +26,10 @@ class LegacySsoService
             // Use the same organization lock as local maintenance so a signed
             // ticket cannot recreate a just-deleted account or reuse a local ID.
             DB::table('erp_rbac_roles')->where('code', 'admin')->lockForUpdate()->first();
-            $this->recordConsumption($payload, $legacyId, $requestIp);
 
             $username = trim((string) ($identity['username'] ?? ''));
             if ($username === '') {
                 throw new ErpSsoException('旧 ERP 登录票据缺少账号标识。');
-            }
-
-            $conflictingId = DB::table('erp_legacy_admin_users')
-                ->where('username', $username)
-                ->where('legacy_id', '<>', $legacyId)
-                ->value('legacy_id');
-            if ($conflictingId) {
-                throw new ErpSsoException('该账号名已关联其他旧 ERP 身份，请联系管理员处理。', 409);
             }
 
             $hasDepartments = array_key_exists('departments', $identity) && is_array($identity['departments']);
@@ -46,26 +37,51 @@ class LegacySsoService
             $departments = $hasDepartments ? $identity['departments'] : [];
             $groups = $hasGroups ? $identity['auth_groups'] : [];
             $now = now();
-            $existingUser = DB::table('erp_legacy_admin_users')->where('legacy_id', $legacyId)->lockForUpdate()->first();
+            $sourceId = $legacyId;
+            $users = DB::table('erp_legacy_admin_users');
+            $mapped = (clone $users)->where('legacy_payload->legacy_sso_identity->issuer', 'fastadmin')
+                ->where('legacy_payload->legacy_sso_identity->admin_id', $sourceId)->where('legacy_id', '<>', $sourceId)
+                ->lockForUpdate()->first();
+            $existingUser = $mapped ?? (clone $users)->where('legacy_id', $sourceId)->lockForUpdate()->first();
             $existingPayload = json_decode(($existingUser->legacy_payload ?? null) ?: '{}', true) ?: [];
             if ($existingUser && ($existingUser->deleted_at !== null || ! in_array($existingUser->status, self::ACTIVE_STATUSES, true))) {
                 throw new ErpSsoException('该账号已在新 ERP 停用或删除，不能登录。', 403);
             }
-            if (($existingPayload['auth_source'] ?? '') === 'local_management') {
-                if (! $this->matchesMigratedIdentity($existingPayload, $legacyId, $username)) {
-                    throw new ErpSsoException('该账号是新 ERP 本地账号，请使用账号密码登录。', 403);
+            $localAccount = ($existingPayload['auth_source'] ?? '') === 'local_management';
+            if (($localAccount || isset($existingPayload['legacy_sso_identity'])) && !$this->matchesMigratedIdentity($existingPayload, $sourceId)) {
+                // 同号但属于另一个身份，单独建档；以后的票据仍通过来源编号找到它。
+                $legacyId = (int) (clone $users)->max('legacy_id') + 1;
+                $existingUser = null;
+                $existingPayload = [];
+            } elseif ($existingUser) {
+                $legacyId = (int) $existingUser->legacy_id;
+            }
+            $this->recordConsumption($payload, $legacyId, $requestIp);
+            $binding = ['issuer' => 'fastadmin', 'admin_id' => $sourceId, 'username' => $username];
+            $loginName = $username;
+            if ((clone $users)->where('username', $username)->where('legacy_id', '<>', $legacyId)->exists()) {
+                $loginName = $existingUser->username ?? ('sso_'.\Illuminate\Support\Str::ulid());
+            }
+            $identity['username'] = $loginName;
+            if ($existingUser && ($localAccount || $existingUser->local_managed)) {
+                $boundUsername = $existingPayload['legacy_sso_identity']['username'] ?? $existingPayload['users_migration']['identity']['username'] ?? $existingUser->username;
+                if ($boundUsername !== $username) {
+                    $existingPayload['legacy_sso_identity'] = $binding;
+                    DB::table('erp_legacy_admin_users')->where('legacy_id', $legacyId)->update([
+                        'username' => $loginName,
+                        'business_version' => $existingUser->business_version + 1,
+                        'legacy_payload' => json_encode($existingPayload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+                        'updated_at' => $now,
+                    ]);
                 }
                 // 已迁入账号用旧身份完成认证，人员档案和授权仍由新 ERP 管理。
                 return $legacyId;
             }
-            // A source identity may still authenticate after local maintenance,
-            // but a later login must not overwrite its locally maintained roles
-            // or department/profile choices.
-            if ($existingUser->local_managed ?? false) return $legacyId;
             $wasPrincipal = DB::table('erp_department_users')->where('user_legacy_id', $legacyId)->where('is_principal', true)->exists();
             $previousRoleCandidate = $this->previousProjectedRole($existingUser, $wasPrincipal);
             $projectedPayload = array_merge($existingPayload, [
                 'source_system' => 'fastadmin',
+                'legacy_sso_identity' => $binding,
                 'last_sso_issued_at' => (int) $payload['issued_at'],
             ]);
             if (array_key_exists('is_super_admin', $identity)) {
@@ -73,7 +89,7 @@ class LegacySsoService
             }
 
             $userValues = [
-                    'username' => $username,
+                    'username' => $loginName,
                     'nickname' => $this->nullableString($identity['nickname'] ?? null),
                     'mobile' => $this->nullableString($identity['mobile'] ?? null),
                     'email' => $this->nullableString($identity['email'] ?? null),
@@ -86,10 +102,6 @@ class LegacySsoService
                     'business_version' => (int) ($existingUser->business_version ?? 0) + 1,
                     'updated_at' => $now,
                 ];
-            if ($hasDepartments) {
-                $userValues['department_ids'] = json_encode(array_values(array_filter(array_map(fn ($row) => (int) ($row['id'] ?? 0), $departments))));
-                $userValues['department_names'] = json_encode(array_values(array_filter(array_map(fn ($row) => trim((string) ($row['name'] ?? '')), $departments))), JSON_UNESCAPED_UNICODE);
-            }
             if ($hasGroups) {
                 $userValues['auth_group_ids'] = json_encode(array_values(array_filter(array_map(fn ($row) => (int) ($row['id'] ?? 0), $groups))));
                 $userValues['auth_group_names'] = json_encode(array_values(array_filter(array_map(fn ($row) => trim((string) ($row['name'] ?? '')), $groups))), JSON_UNESCAPED_UNICODE);
@@ -103,7 +115,8 @@ class LegacySsoService
                 $this->syncDepartments($legacyId, $departments, $now);
                 $currentDepartments = DB::table('erp_department_users as du')
                     ->join('erp_departments as d', 'd.legacy_id', '=', 'du.department_legacy_id')
-                    ->where('du.user_legacy_id', $legacyId)->orderBy('du.id')->get(['d.legacy_id', 'd.name']);
+                    ->where('du.user_legacy_id', $legacyId)->orderBy('du.id')->get(['d.legacy_id', 'd.name', 'du.is_principal']);
+                $identity['departments'] = $currentDepartments->map(fn ($row) => (array) $row)->all();
                 DB::table('erp_legacy_admin_users')->where('legacy_id', $legacyId)->update([
                     'department_ids' => json_encode($currentDepartments->pluck('legacy_id')->map(fn ($id) => (int) $id)->all()),
                     'department_names' => json_encode($currentDepartments->pluck('name')->all(), JSON_UNESCAPED_UNICODE),
@@ -120,13 +133,12 @@ class LegacySsoService
         });
     }
 
-    private function matchesMigratedIdentity(array $localPayload, int $legacyId, string $username): bool
+    private function matchesMigratedIdentity(array $localPayload, int $legacyId): bool
     {
         if (array_key_exists('legacy_sso_identity', $localPayload)) {
             $binding = $localPayload['legacy_sso_identity'];
             return ($binding['issuer'] ?? null) === 'fastadmin'
-                && ($binding['admin_id'] ?? null) === $legacyId
-                && ($binding['username'] ?? null) === $username;
+                && in_array($binding['admin_id'] ?? null, [$legacyId, (string) $legacyId], true);
         }
 
         // 兼容正式用户包记录旧身份之前已同步的员工。
@@ -134,8 +146,7 @@ class LegacySsoService
         $sourceIdentity = $migration['identity'] ?? [];
         $sourceId = $sourceIdentity['id'] ?? null;
         return ($migration['source'] ?? null) === 'jiantan_erp'
-            && ($sourceId === $legacyId || $sourceId === (string) $legacyId)
-            && ($sourceIdentity['username'] ?? null) === $username;
+            && ($sourceId === $legacyId || $sourceId === (string) $legacyId);
     }
 
     private function verify(string $ticket): array
@@ -209,16 +220,20 @@ class LegacySsoService
 
     private function syncDepartments(int $legacyId, array $departments, $now): void
     {
-        DB::table('erp_department_users')->where('user_legacy_id', $legacyId)->delete();
+        $memberships = DB::table('erp_department_users')->where('user_legacy_id', $legacyId);
+        $localDepartments = DB::table('erp_departments')->whereIn('legacy_id', array_column($departments, 'id'))
+            ->where('legacy_payload->auth_source', 'local_management')->whereNull('deleted_at')
+            ->lockForUpdate()->get(['legacy_id', 'name', 'status'])->keyBy('legacy_id');
+        // 优先使用当前成员关系。首次建档只有编号、名称都吻合才加入本地部门。
+        if ($localDepartments->isNotEmpty() && $memberships->exists()) return;
+        $memberships->delete();
         foreach ($departments as $department) {
             $departmentId = (int) ($department['id'] ?? 0);
             $name = trim((string) ($department['name'] ?? ''));
             if ($departmentId <= 0 || $name === '') continue;
+            $local = $localDepartments->get($departmentId);
+            if ($local && ($local->name !== $name || $local->status !== 'normal')) continue;
             $existingDepartment = DB::table('erp_departments')->where('legacy_id', $departmentId)->lockForUpdate()->first();
-            $departmentPayload = json_decode(($existingDepartment->legacy_payload ?? null) ?: '{}', true) ?: [];
-            if (($departmentPayload['auth_source'] ?? '') === 'local_management') {
-                throw new ErpSsoException('登录身份的部门编号与新 ERP 本地部门冲突，请联系管理员核对。', 409);
-            }
             if ($existingDepartment->deleted_at ?? null) {
                 throw new ErpSsoException('登录身份引用了已删除部门，请联系管理员核对部门归属。', 403);
             }
@@ -235,11 +250,11 @@ class LegacySsoService
             if (!DB::table('erp_departments')->where('legacy_id', $departmentId)->exists()) {
                 $departmentValues['created_at'] = $now;
             }
-            if (! ($existingDepartment->local_managed ?? false)) DB::table('erp_departments')->updateOrInsert(['legacy_id' => $departmentId], $departmentValues);
+            if (! $local && ! ($existingDepartment->local_managed ?? false)) DB::table('erp_departments')->updateOrInsert(['legacy_id' => $departmentId], $departmentValues);
             DB::table('erp_department_users')->insert([
                 'department_legacy_id' => $departmentId,
                 'user_legacy_id' => $legacyId,
-                'is_principal' => (bool) ($department['is_principal'] ?? false),
+                'is_principal' => !$local && (bool) ($department['is_principal'] ?? false),
                 'is_owner' => false,
                 'legacy_payload' => json_encode(['source_system' => 'fastadmin'], JSON_UNESCAPED_UNICODE),
                 'created_at' => $now,

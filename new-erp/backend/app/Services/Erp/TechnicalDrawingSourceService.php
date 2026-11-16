@@ -4,6 +4,7 @@ namespace App\Services\Erp;
 
 use App\Models\Erp\{Bom, CrmAttachment, CrmOpportunity, CrmOpportunityFile, MfgDrawing, MfgWorkOrder, MfgWorkOrderTech, TechnicalDrawingRevision, TechnicalDrawingUsage};
 use App\Services\Erp\Crm\CrmOpportunityApplicationService;
+use App\Services\Erp\Crm\CrmDrawingRequestService;
 use App\Services\Erp\Manufacturing\WorkOrderService;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
@@ -23,15 +24,20 @@ final class TechnicalDrawingSourceService
         $id = (int) ($source['id'] ?? 0);
         $fileId = (int) ($source['file_id'] ?? 0);
         $position = trim((string) ($source['position_uid'] ?? ''));
-        abort_unless(in_array($type, ['opportunity', 'bom', 'work_order'], true) && $id > 0, 422, '请选择有效的图纸使用位置。');
+        abort_unless(in_array($type, ['opportunity', 'bom', 'work_order', 'drawing_request'], true) && $id > 0, 422, '请选择有效的图纸使用位置。');
+        if ($type === 'drawing_request') {
+            abort_if($fileId || $position !== '', 422, '绘图需求直接使用技术交图，不关联其他业务附件或BOM位置。');
+            return app(CrmDrawingRequestService::class)->technicalSource($id, $actor, $write, $lock, $source);
+        }
         if ($write && $type !== 'bom') abort_unless(isset($source['version']) && ctype_digit((string) $source['version']) && (int) $source['version'] > 0, 422, '请刷新后提交当前业务版本。');
         $file = null;
         if ($type === 'opportunity') {
+            abort_if($write, 422, '方案图请由承接技术人员从绘图需求交付。');
             $service = app(CrmOpportunityApplicationService::class);
             $service->permission($actor, $write ? 'crm.opportunity.file' : 'crm.opportunity.view');
             $record = $service->visible($id, $actor, $lock);
             if ($write) {
-                abort_unless($service->abilities($record, $actor)['file'], 403, '无权维护该商机技术图纸。');
+                abort_unless($service->abilities($record, $actor, $lock)['file'], 403, '无权维护该商机技术图纸。');
                 $service->version($record, $source);
             }
             abort_if($position !== '', 422, '商机图纸不关联 BOM 明细位置。');
@@ -90,6 +96,9 @@ final class TechnicalDrawingSourceService
             }
             if ($this->can($actor, ['bom.manage.view'])) $visible->orWhere(fn ($q) => $q->where('source_type', 'bom')->whereIn('source_id', Bom::query()->select('id')));
             if ($this->can($actor, self::PRODUCTION_READ)) $visible->orWhere(fn ($q) => $q->where('source_type', 'work_order')->whereIn('source_id', MfgWorkOrder::query()->select('id')));
+            $requests = \App\Models\Erp\CrmDrawingRequest::query()->select('id');
+            app(CrmDrawingRequestService::class)->applyVisible($requests, $actor);
+            $visible->orWhere(fn ($q) => $q->where('source_type', 'drawing_request')->whereIn('source_id', $requests));
         });
     }
 
@@ -105,6 +114,10 @@ final class TechnicalDrawingSourceService
 
     public function bind(TechnicalDrawingUsage $usage, TechnicalDrawingRevision $revision, array $resolved, object $actor): void
     {
+        if ($resolved['type'] === 'drawing_request') {
+            app(CrmDrawingRequestService::class)->bindDelivery($usage, $revision, $actor);
+            return;
+        }
         if ($resolved['file']) {
             abort_unless($resolved['file']['storage_disk'] === $revision->storage_disk && $resolved['file']['storage_path'] === $revision->storage_path, 422, '所选来源附件与图纸版本不一致，请选择正确的版本。');
         }

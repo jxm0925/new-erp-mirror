@@ -28,9 +28,13 @@ class SalesOrderLineService
         ?string $draftToken = null,
         string $operator = 'system',
         array $preservedLineIds = [],
-        array $protectedLineSplits = []
+        array $protectedLineSplits = [],
+        ?object $actor = null,
+        ?array $confirmedDrawingSelections = null
     ): void {
         $this->deleteExplicitLines($order, $deletedLineIds, $operator);
+        $drawings = app(SalesOrderConfirmedDrawingService::class);
+        $confirmedDrawingSelections ??= $drawings->prepare($order, $lines, $actor);
 
         foreach (array_values($lines) as $index => $line) {
             $line = app(SalesCostVisibilityService::class)->redact($line);
@@ -47,6 +51,8 @@ class SalesOrderLineService
                 : ($splitSource && (int) $splitSource->sku_id === (int) $line['sku_id'] && (int) $splitSource->product_id === (int) $line['product_id']
                     ? $this->splitPayload($order, $line, $index, $splitSource)
                     : $this->payload($order, $line, $index, $existing));
+            $drawingSource = $existing ?: ($splitSource && (int) $splitSource->sku_id === (int) $line['sku_id'] ? $splitSource : null);
+            $data['drawing_snapshot'] = $drawings->snapshot($order, $line, $drawingSource, $actor, $confirmedDrawingSelections, $index);
 
             if ($existing) {
                 $data = app(SalesCostVisibilityService::class)->preserveStoredCosts($data, $existing->attributesToArray());

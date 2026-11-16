@@ -17,6 +17,7 @@ final class TechnicalDrawingController extends Controller
         $actor = $this->actor($request);
         $options = fn ($values) => collect($values)->map(fn ($label, $value) => compact('value', 'label'))->values();
         return response()->json(['data' => ['source_types' => $options(TechnicalDrawingApplicationService::SOURCES),
+            'current_user' => ['id' => (int) $actor->legacy_id, 'name' => ($actor->nickname ?? null) ?: ($actor->username ?? '')],
             'drawing_types' => $options(TechnicalDrawingApplicationService::TYPES), 'abilities' => ['statistics' => $this->drawings->canStatistics($actor)],
             'today' => now()->toDateString()]]);
     }
@@ -99,7 +100,7 @@ final class TechnicalDrawingController extends Controller
 
     private function sourceRules(bool $required = false): array
     {
-        return ['source' => ($required ? 'required' : 'nullable').'|array', 'source.type' => 'required_with:source|in:opportunity,bom,work_order',
+        return ['source' => ($required ? 'required' : 'nullable').'|array', 'source.type' => 'required_with:source|in:opportunity,bom,work_order,drawing_request',
             'source.id' => 'required_with:source|integer|min:1', 'source.file_id' => 'nullable|integer|min:1', 'source.position_uid' => 'nullable|string|max:80',
             'source.version' => ['nullable', function ($attribute, $value, $fail) { if (!is_scalar($value) || mb_strlen((string) $value) > 40) $fail('来源版本无效。'); }]];
     }

@@ -2,9 +2,8 @@
 
 namespace Database\Seeders;
 
-use App\Services\Erp\BusinessStaffService;
-use App\Services\Erp\RbacUserRoleOwnershipService;
 use Database\Seeders\Support\RunsSafeSeed;
+use Database\Seeders\Support\SeedSafety;
 use Illuminate\Database\QueryException;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\DB;
@@ -16,9 +15,9 @@ class ErpOfficialUsersSeeder extends Seeder
     use RunsSafeSeed;
 
     public const ACCOUNT_FIELDS = ['id', 'legacy_id', 'username', 'password_hash', 'nickname', 'mobile', 'email', 'status', 'sort',
-        'is_sales', 'department_ids', 'department_names', 'auth_group_ids', 'auth_group_names', 'local_managed', 'business_version', 'created_at', 'updated_at'];
-    public const DEPARTMENT_FIELDS = ['id', 'legacy_id', 'parent_legacy_id', 'name', 'status', 'sort', 'local_managed', 'business_version', 'created_at', 'updated_at'];
-    public const MEMBERSHIP_FIELDS = ['id', 'department_legacy_id', 'user_legacy_id', 'is_principal', 'is_owner', 'created_at', 'updated_at'];
+        'is_sales', 'department_ids', 'department_names', 'auth_group_ids', 'auth_group_names', 'local_managed', 'business_version', 'created_at', 'updated_at', 'deleted_at', 'deleted_by'];
+    public const DEPARTMENT_FIELDS = ['id', 'legacy_id', 'parent_legacy_id', 'name', 'status', 'sort', 'local_managed', 'business_version', 'legacy_payload', 'created_at', 'updated_at', 'deleted_at', 'deleted_by'];
+    public const MEMBERSHIP_FIELDS = ['id', 'department_legacy_id', 'user_legacy_id', 'is_principal', 'is_owner', 'legacy_payload', 'created_at', 'updated_at'];
     public const STAFF_FIELDS = ['id', 'user_legacy_id', 'staff_type', 'department_legacy_id', 'status', 'effective_from', 'effective_to',
         'source', 'remark', 'business_version', 'created_by_legacy_id', 'updated_by_legacy_id', 'created_at', 'updated_at'];
     private array $newUsers = [];
@@ -49,8 +48,6 @@ class ErpOfficialUsersSeeder extends Seeder
                 if (DB::table('erp_legacy_admin_users')->where('id', $row['id'])->orWhere('username', $row['username'])->lockForUpdate()->exists()) {
                     throw new RuntimeException('正式人员缺失身份的主键或登录名已被占用：'.$legacyId);
                 }
-                $row['department_ids'] = '[]';
-                $row['department_names'] = '[]';
                 $row['auth_group_ids'] = '[]';
                 $row['auth_group_names'] = '[]';
                 $row['local_managed'] = true;
@@ -62,14 +59,12 @@ class ErpOfficialUsersSeeder extends Seeder
             }
             $this->memberships($data['memberships']);
             $this->staff($data['business_staff']);
-            $this->roles($data['role_groups']);
-            foreach (array_keys($this->newUsers) as $userId) {
-                $members = DB::table('erp_department_users as du')->join('erp_departments as d', 'd.legacy_id', '=', 'du.department_legacy_id')
-                    ->where('du.user_legacy_id', $userId)->whereNull('d.deleted_at')->orderBy('du.id')->get(['d.legacy_id', 'd.name']);
-                DB::table('erp_legacy_admin_users')->where('legacy_id', $userId)->update([
-                    'department_ids' => $this->json($members->pluck('legacy_id')->map(fn ($id) => (int) $id)->all()),
-                    'department_names' => $this->json($members->pluck('name')->all())]);
-                app(BusinessStaffService::class)->refreshProjection($userId);
+            $this->roles($data['role_groups'], $data['role_sources']);
+            // 账号部门与销售投影也来自已确定快照；不在初始化时重算、改写人工配置。
+            // 复用已完成的四类升级标记；不能按旧角色重新补回用户删去的业务员档案。
+            foreach ($data['business_staff_backfill_markers'] as $marker) {
+                $identity = array_intersect_key($marker, array_flip(['module', 'action', 'target_type']));
+                if (!DB::table('erp_operation_logs')->where($identity)->lockForUpdate()->exists()) DB::table('erp_operation_logs')->insert($marker);
             }
         } catch (QueryException $error) {
             // SQL异常会携带插入绑定值；密码哈希只能落账号字段，不能进入命令行异常或日志快照。
@@ -104,7 +99,6 @@ class ErpOfficialUsersSeeder extends Seeder
                 }
                 if ($parentId && !DB::table('erp_departments')->where('legacy_id', $parentId)->exists()) throw new RuntimeException('正式部门缺少明确上级：'.$id);
                 if (DB::table('erp_departments')->where('id', $row['id'])->lockForUpdate()->exists()) throw new RuntimeException('正式部门主键被其他身份占用：'.$id);
-                $row['legacy_payload'] = $this->json(['auth_source' => 'local_management', 'official_users_version' => 1]);
                 DB::table('erp_departments')->insert($row);
                 if ($row['status'] !== 'normal') $blocked[$id] = true;
                 unset($pending[$id]);
@@ -122,7 +116,6 @@ class ErpOfficialUsersSeeder extends Seeder
             foreach ($groups[$userId] ?? [] as $row) {
                 if (!$this->activeDepartment($row['department_legacy_id'])) continue;
                 if (DB::table('erp_department_users')->where('id', $row['id'])->lockForUpdate()->exists()) throw new RuntimeException('正式部门成员主键被其他身份占用。');
-                $row['legacy_payload'] = $this->json(['official_users_version' => 1]);
                 DB::table('erp_department_users')->insert($row);
             }
         }
@@ -142,9 +135,9 @@ class ErpOfficialUsersSeeder extends Seeder
         }
     }
 
-    private function roles(array $groups): void
+    private function roles(array $groups, array $sources): void
     {
-        $ownership = app(RbacUserRoleOwnershipService::class);
+        $byUser = $this->group($sources, 'user_legacy_id');
         foreach ($groups as $group) {
             $userId = (int) $group['user_legacy_id'];
             if (!isset($this->newUsers[$userId])) continue;
@@ -153,14 +146,20 @@ class ErpOfficialUsersSeeder extends Seeder
             foreach ($group['roles'] as $assignment) {
                 $role = DB::table('erp_rbac_roles')->where('code', $assignment['role_code'])->lockForUpdate()->first();
                 if (!$role) throw new RuntimeException('正式人员角色编码未初始化：'.$assignment['role_code']);
-                $ownership->addManualRole($userId, (int) $role->id);
+                SeedSafety::restoreRows('erp_rbac_user_roles', [['user_legacy_id' => $userId, 'role_id' => (int) $role->id]], ['user_legacy_id', 'role_id'], null);
+                foreach ($byUser[$userId] ?? [] as $source) {
+                    if ($source['role_code'] !== $assignment['role_code']) continue;
+                    unset($source['role_code']);
+                    $source['role_id'] = (int) $role->id;
+                    SeedSafety::restoreRows('erp_rbac_user_role_sources', [$source], ['user_legacy_id', 'role_id', 'assignment_source']);
+                }
             }
         }
     }
 
     private function validatePackage(#[\SensitiveParameter] array $data): void
     {
-        if (($data['contract_version'] ?? null) !== 1 || ($data['timestamps_timezone'] ?? null) !== 'UTC'
+        if (($data['contract_version'] ?? null) !== 2 || ($data['timestamps_timezone'] ?? null) !== 'UTC'
             || !isset($data['table_counts'], $data['tombstones']['user_legacy_ids']) || !is_array($data['tombstones']['user_legacy_ids'])) {
             throw new RuntimeException('正式人员数据包契约无效。');
         }
@@ -218,13 +217,28 @@ class ErpOfficialUsersSeeder extends Seeder
             $seen[$id] = true;
             $codes = [];
             foreach ($group['roles'] as $role) {
-                if (empty($role['role_code']) || isset($codes[$role['role_code']]) || ($role['sources'] ?? null) !== ['manual']) throw new RuntimeException('正式人员角色编码或人工归属无效。');
+                if (empty($role['role_code']) || isset($codes[$role['role_code']]) || !is_array($role['sources'] ?? null) || !$role['sources']
+                    || count(array_unique($role['sources'])) !== count($role['sources']) || array_diff($role['sources'], ['manual', 'department', 'sso'])) throw new RuntimeException('正式人员角色编码或授权归属无效。');
                 $codes[$role['role_code']] = true;
                 $assignmentCount++;
             }
         }
-        if (count($seen) !== count($accounts) || $assignmentCount !== ($data['table_counts']['role_assignments'] ?? null)
-            || $assignmentCount !== ($data['table_counts']['role_sources'] ?? null)) throw new RuntimeException('正式人员角色记录或人工来源不完整。');
+        if (count($seen) !== count($accounts) || $assignmentCount !== ($data['table_counts']['role_assignments'] ?? null)) throw new RuntimeException('正式人员角色记录不完整。');
+        $expected = [];
+        foreach ($data['role_groups'] as $group) foreach ($group['roles'] as $role) foreach ($role['sources'] as $source) $expected[$group['user_legacy_id'].'|'.$role['role_code'].'|'.$source] = true;
+        if (!is_array($data['role_sources'] ?? null) || count($data['role_sources']) !== ($data['table_counts']['role_sources'] ?? null)) throw new RuntimeException('正式授权来源数量不完整。');
+        $sourceIds = $sourceKeys = [];
+        foreach ($data['role_sources'] as $source) {
+            $key = ($source['user_legacy_id'] ?? '').'|'.($source['role_code'] ?? '').'|'.($source['assignment_source'] ?? '');
+            if (array_diff(array_keys($source), ['id', 'user_legacy_id', 'role_code', 'assignment_source', 'created_at', 'updated_at'])
+                || !isset($source['id']) || !is_int($source['id']) || $source['id'] < 1 || isset($sourceIds[$source['id']]) || isset($sourceKeys[$key]) || !isset($expected[$key])) throw new RuntimeException('正式授权来源身份无效。');
+            $sourceIds[$source['id']] = $sourceKeys[$key] = true;
+        }
+        if (count($expected) !== count($sourceKeys)) throw new RuntimeException('正式角色关联与来源不一致。');
+        $markers = $data['business_staff_backfill_markers'] ?? null;
+        if (!is_array($markers) || count($markers) !== 4 || array_diff(['backfill:sales', 'backfill:production_manager', 'backfill:production_worker', 'backfill:warehouse'], array_column($markers, 'action'))) throw new RuntimeException('正式业务员基线缺少既有升级完成标记。');
+        foreach ($markers as $marker) if (array_diff(array_keys($marker), ['module', 'action', 'target_type', 'target_id', 'new_snapshot', 'operator_name', 'created_at'])
+            || ($marker['module'] ?? null) !== 'system_management' || ($marker['target_type'] ?? null) !== 'business_staff_backfill') throw new RuntimeException('正式业务员升级标记字段无效。');
     }
 
     private function activeDepartment(int $id): bool { return DB::table('erp_departments')->where('legacy_id', $id)->whereNull('deleted_at')->where('status', 'normal')->exists(); }

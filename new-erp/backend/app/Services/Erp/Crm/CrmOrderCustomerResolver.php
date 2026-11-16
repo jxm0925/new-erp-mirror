@@ -29,15 +29,13 @@ final class CrmOrderCustomerResolver
         private readonly SalesCustomerOrderDetailsService $details,
     ) {}
 
-    public function resolve(array &$payload, ?int $currentCustomerId = null): SalesCustomer
+    public function resolve(array &$payload, ?int $currentCustomerId = null, ?object $actor = null): SalesCustomer
     {
-        $actor = request() ? app(AuthContextService::class)->currentUser(request()) : null;
+        $actor ??= request() ? app(AuthContextService::class)->currentUser(request()) : null;
+        $created = false;
         $requested = !empty($payload['customer_id'])
             ? SalesCustomer::query()->findOrFail($payload['customer_id'])
             : null;
-        if ($requested && $actor && (int) $requested->id !== (int) $currentCustomerId && $this->access->relation($requested, $actor) === null) {
-            abort(403, '该客户由其他部门负责，不在你的可见范围内，请先申请协作或联系负责销售。');
-        }
 
         $buyerId = trim((string) ($payload['platform_buyer_id'] ?? ''));
         $platform = ctype_digit(trim((string) ($payload['platform'] ?? ''))) ? (int) $payload['platform'] : null;
@@ -51,16 +49,28 @@ final class CrmOrderCustomerResolver
             $customer = $requested;
         } elseif ($owner) {
             $customer = SalesCustomer::query()->findOrFail($owner->customer_id);
-            if ($actor && $this->access->relation($customer, $actor) === null) {
-                abort(403, '该平台买家ID属于其他部门的客户，请先申请协作后再建单。');
-            }
         } else {
             $customer = $this->createFromOrder($payload, $actor);
+            $created = true;
+        }
+        if (!$created) $customer = SalesCustomer::query()->lockForUpdate()->findOrFail($customer->id);
+        $contextCustomer = $actor && !empty($payload['opportunity_id'])
+            ? app(CrmOpportunityApplicationService::class)->orderCustomerContext((int) $payload['opportunity_id'], (int) $customer->id, $actor, true) : null;
+        if ($contextCustomer && $this->access->relation($customer, $actor) === null) {
+            $contactId = (int) DB::table('erp_crm_opportunities')->where('id', $payload['opportunity_id'])->value('contact_id');
+            abort_if(!empty($payload['customer_contact_id']) && (int) $payload['customer_contact_id'] !== $contactId, 403, '只能选用来源商机的联系人。');
+            abort_if(!empty($payload['customer_address_id']), 403, '无权读取该客户的其他地址，请直接填写本单收货地址。');
+            $payload['customer_contact_id'] = $contactId ?: null;
+            $payload['customer_address_id'] = null;
+        }
+        if ($actor && !$created && (int) $customer->id !== (int) $currentCustomerId) {
+            if (!$contextCustomer) $this->access->assert($customer, $actor, 'select', '该客户当前不可选用，请先完成客户分配或申请协作。');
         }
         abort_if($customer->status === 'blacklisted', 422, '该客户已在黑名单，不能创建销售订单。');
         abort_if($customer->status === 'disabled', 422, '该客户已停用，不能创建销售订单。');
 
-        if ($resolved['key'] && !$owner) {
+        $abilities = $actor ? $this->access->abilities($customer, $actor) : [];
+        if ($resolved['key'] && !$owner && ($created || !empty($abilities['bind_identity']))) {
             $this->identities->bind($customer, $platform, $buyerId, 'order', $actor, '建单时登记');
         }
 
@@ -69,10 +79,12 @@ final class CrmOrderCustomerResolver
         if ($contactName === '' && $kind === 'individual') $contactName = $customer->customer_name;
         $contactPhone = trim((string) ($payload['contact_phone'] ?? $payload['customer_phone'] ?? '')) ?: null;
         $fullAddress = trim((string) ($payload['full_address'] ?? $payload['address'] ?? ''));
-        if (empty($payload['customer_contact_id'])) {
+        // 订单协作只允许维护本单快照，不能借自动整理覆盖客户主档或默认联系人、地址。
+        $writeDetails = $created || !empty($abilities['edit']);
+        if ($writeDetails && empty($payload['customer_contact_id'])) {
             $payload['customer_contact_id'] = $this->details->contact($customer, $contactName, $contactPhone)?->id;
         }
-        if (empty($payload['customer_address_id'])) {
+        if ($writeDetails && empty($payload['customer_address_id'])) {
             $payload['customer_address_id'] = $this->details->address($customer, $fullAddress, $contactName, $contactPhone, CrmCustomerDedupeService::dedupeKey($fullAddress))?->id;
         }
         $payload['customer_id'] = $customer->id;
@@ -98,8 +110,10 @@ final class CrmOrderCustomerResolver
             'dedupe_name_key' => CrmCustomerDedupeService::dedupeKey($name),
         ];
         if ($actor && $this->staff->isActiveSales((int) $actor->legacy_id)) {
-            $values += ['owner_legacy_id' => (int) $actor->legacy_id, 'owner_name' => $this->staff->name((int) $actor->legacy_id),
-                'owner_department_legacy_id' => $this->staff->departmentOf((int) $actor->legacy_id)];
+            $salesId = (int) ($payload['sales_user_legacy_id'] ?? 0);
+            $ownerId = app(CrmSalesDelegationService::class)->delegatesFor($actor, $salesId, true) ? $salesId : (int) $actor->legacy_id;
+            $values += ['owner_legacy_id' => $ownerId, 'owner_name' => $this->staff->name($ownerId),
+                'owner_department_legacy_id' => $this->staff->departmentOf($ownerId)];
         }
         $customer = SalesCustomer::create($values);
         $this->logs->write($customer->id, 'create', '建单时新建客户', null, $customer->only(['customer_name', 'customer_kind', 'owner_name']), null, $actor);

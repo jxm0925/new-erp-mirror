@@ -83,6 +83,7 @@
 
       <div class="crm-actions">
         <el-button size="small" icon="el-icon-refresh" :loading="loading" @click="refresh">刷新</el-button>
+        <el-button v-if="workbench.can_self_delegate" size="small" icon="el-icon-date" @click="salesDelegationsVisible = true">我的销售代班</el-button>
         <el-button v-if="canCreateOpportunity" size="small" icon="el-icon-aim" @click="$refs.opportunityForm.open()">新建商机</el-button>
         <el-button v-if="canCreateLead" size="small" type="success" icon="el-icon-plus" @click="$refs.form.open()">新增线索</el-button>
       </div>
@@ -476,6 +477,9 @@
       </div>
     </el-dialog>
 
+    <el-dialog v-if="workbench.can_self_delegate" class="crm-dialog" title="我的销售代班" :visible.sync="salesDelegationsVisible" width="1180px" top="5vh" append-to-body :close-on-click-modal="false">
+      <crm-sales-delegations v-if="salesDelegationsVisible" self-service :current-user="actor" :departments="workbench.delegation_departments || []" />
+    </el-dialog>
     <crm-lead-form-dialog ref="form" @saved="refresh" />
     <crm-lead-detail-dialog ref="lead" @changed="refresh" />
     <crm-lead-action-dialog ref="action" @changed="refresh" />
@@ -507,6 +511,7 @@ import CrmFollowupDialog from '@/components/crm/CrmFollowupDialog.vue'
 import CrmIdentityReviewDialog from '@/components/crm/CrmIdentityReviewDialog.vue'
 import CrmOpportunityFormDialog from '@/components/crm/CrmOpportunityFormDialog.vue'
 import CrmOpportunityDetailDialog from '@/components/crm/CrmOpportunityDetailDialog.vue'
+import CrmSalesDelegations from '@/components/crm/CrmSalesDelegations.vue'
 import CustomerOrderDelivery from '@/components/sales/CustomerOrderDelivery.vue'
 import '@/styles/crm.css'
 
@@ -544,12 +549,14 @@ export default {
     CrmIdentityReviewDialog,
     CrmOpportunityFormDialog,
     CrmOpportunityDetailDialog,
+    CrmSalesDelegations,
     CustomerOrderDelivery,
     CustomerDetailDialog: () => import('@/components/sales/CustomerDetailDialog.vue')
   },
   data: () => ({
     workbench: {},
     metadata: {},
+    salesDelegationsVisible: false,
     query: { type: 'all', page: 1, per_page: 10 },
     tasks: { rows: [], total: 0, loading: false, error: '', sequence: 0 },
     priorities: { type: 'closing', page: 1, per_page: 10, rows: [], total: 0, loading: false, error: '', sequence: 0 },
@@ -642,6 +649,9 @@ export default {
   },
   created() {
     this.refresh()
+  },
+  watch: {
+    '$route.path'(path) { if (path !== '/sales/workbench') this.salesDelegationsVisible = false }
   },
   beforeDestroy() {
     this.sequence += 1
@@ -863,6 +873,7 @@ export default {
           customer_name: row.customer_name,
           opportunity_name: row.target_type === 'opportunity' ? row.title : '',
           lead_no: row.lead_no,
+          delegated: row.delegated,
           contact_name: row.contact_name
         })
       } else if (action === 'verify') {
@@ -890,6 +901,7 @@ export default {
         customer_id: item.customer_id,
         customer_name: item.customer_name,
         opportunity_name: item.name,
+        delegated: item.delegated,
         contact_name: item.contact_name
       })
     },

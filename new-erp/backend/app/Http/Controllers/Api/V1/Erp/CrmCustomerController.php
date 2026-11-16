@@ -55,10 +55,14 @@ final class CrmCustomerController extends Controller
         return response()->json(['message' => '负责销售已转交；历史订单归属不变', 'data' => $customer]);
     }
 
-    public function collaborators(Request $request, int $id)
+    public function collaborators(Request $request, int $id, CrmCustomerCollaborationService $service)
     {
         [$user, $customer] = $this->visible($request, $id);
-        $rows = $customer->collaborators()->orderByRaw("status = 'active' DESC")->orderByDesc('id')->limit(100)->get();
+        $query = $customer->collaborators();
+        if (!$this->access->abilities($customer, $user)['collaborate']) {
+            $query->where('created_by_legacy_id', $user->legacy_id)->where('scope->type', 'owner_opportunity_delegation');
+        }
+        $rows = $query->orderByRaw("status = 'active' DESC")->orderByDesc('id')->limit(100)->get();
         $names = collect();
         if ($this->access->can($user, 'crm.opportunity.view')) {
             $ids = $rows->flatMap(fn ($row) => $row->scope['opportunity_ids'] ?? [])->unique()->all();
@@ -66,20 +70,22 @@ final class CrmCustomerController extends Controller
             app(CrmOpportunityApplicationService::class)->applyVisible($query, $user);
             $names = $query->pluck('name', 'id');
         }
-        return response()->json(['data' => $rows->map(function ($row) use ($names) {
+        return response()->json(['data' => $rows->map(function ($row) use ($names, $customer, $user, $service) {
             $row->setAttribute('opportunity_names', $names->only($row->scope['opportunity_ids'] ?? [])->values()->all());
+            $row->setAttribute('can_end', $row->status === 'active' && $service->canEnd($customer, $row, $user));
             return $row;
         })]);
     }
 
     public function addCollaborator(Request $request, int $id, CrmCustomerCollaborationService $service)
     {
-        $user = $this->user($request, 'sales.customer.collaborate');
+        $user = $this->user($request);
         $data = $request->validate([
             'user_legacy_id' => 'required|integer|min:1',
             'scope' => 'nullable|array', 'scope.order_amount' => 'nullable|boolean', 'scope.finance' => 'nullable|boolean',
             'scope.opportunity_ids' => 'nullable|array|max:100', 'scope.opportunity_ids.*' => 'required|integer|min:1|distinct',
             'actions' => 'nullable|array', 'actions.follow' => 'nullable|boolean', 'actions.edit_master' => 'nullable|boolean',
+            'actions.stage' => 'nullable|boolean', 'actions.order' => 'nullable|boolean',
             'effective_from' => 'required|date', 'effective_to' => 'nullable|date|after_or_equal:effective_from',
             'reason' => 'required|string|max:500',
         ], [], ['user_legacy_id' => '协作人员', 'effective_from' => '生效日期', 'effective_to' => '截止日期', 'reason' => '协作原因']);
@@ -88,7 +94,7 @@ final class CrmCustomerController extends Controller
 
     public function endCollaborator(Request $request, int $id, int $collabId, CrmCustomerCollaborationService $service)
     {
-        $user = $this->user($request, 'sales.customer.collaborate');
+        $user = $this->user($request);
         $data = $request->validate(['reason' => 'required|string|max:500'], [], ['reason' => '结束原因']);
         $service->end($id, $collabId, $data['reason'], $user);
         return response()->json(['message' => '协作已结束']);
@@ -156,7 +162,8 @@ final class CrmCustomerController extends Controller
         $excludeIds = [];
         if (!empty($data['collaboration_customer_id'])) {
             $customer = SalesCustomer::query()->findOrFail((int) $data['collaboration_customer_id']);
-            $this->access->assert($customer, $user, 'collaborate', '无权为该客户添加协作。');
+            $abilities = $this->access->abilities($customer, $user);
+            abort_unless($abilities['collaborate'], 403, '无权为该客户安排协作。');
             $excludeIds = [(int) $user->legacy_id, (int) $customer->owner_legacy_id];
         }
         return response()->json($staff->options(trim((string) ($data['keyword'] ?? '')), (int) ($data['per_page'] ?? 10), $data['ids'] ?? null, $excludeIds));
@@ -170,12 +177,12 @@ final class CrmCustomerController extends Controller
         return [$user, $customer];
     }
 
-    private function user(Request $request, string $permission): object
+    private function user(Request $request, ?string $permission = null): object
     {
         $auth = app(AuthContextService::class);
         $user = $auth->currentUser($request);
         abort_unless($user, 401, '未登录');
-        abort_unless($this->access->can($user, $permission), 403, '没有该操作权限。');
+        if ($permission) abort_unless($this->access->can($user, $permission), 403, '没有该操作权限。');
         return $user;
     }
 }

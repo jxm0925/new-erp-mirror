@@ -34,7 +34,7 @@ export default {
       const key = { followup: 'follow', receive: 'accept', verify: 'verify' }[row.action]
       if (!key || !(row.allowed || {})[key] || this.acting) return
       const sequence = ++this.sequence
-      if (row.action === 'followup') this.$refs.follow.open({ subject_type: row.target_type, subject_id: row.target_id, customer_id: row.customer_id, customer_name: row.customer_name, opportunity_name: row.target_type === 'opportunity' ? row.title : '', lead_no: row.lead_no, contact_name: row.contact_name })
+      if (row.action === 'followup') this.$refs.follow.open({ subject_type: row.target_type, subject_id: row.target_id, customer_id: row.customer_id, customer_name: row.customer_name, opportunity_name: row.target_type === 'opportunity' ? row.title : '', lead_no: row.lead_no, contact_name: row.contact_name, delegated: row.delegated })
       else if (row.action === 'receive') this.$refs.action.open('accept', row.target_id)
       else {
         this.acting = true

@@ -12,6 +12,7 @@ use App\Models\Erp\FinanceOperationLog;
 use App\Models\Erp\SalesCustomer;
 use App\Models\Erp\SalesInvoiceRequest;
 use App\Models\Erp\SalesOrder;
+use App\Services\Erp\Crm\CrmCustomerAccessService;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -54,9 +55,11 @@ class SalesInvoiceRequestService
         ];
     }
 
-    public function forOrder(SalesOrder $order): array
+    public function forOrder(SalesOrder $order, object $user): array
     {
-        $customer = $order->customer_id ? SalesCustomer::find($order->customer_id) : null;
+        $customers = SalesCustomer::query();
+        app(CrmCustomerAccessService::class)->applyVisible($customers, $user);
+        $customer = $order->customer_id ? $customers->find($order->customer_id) : null;
         $requests = SalesInvoiceRequest::query()->where('sales_order_id', $order->id)->latest('id')->get();
         return [
             'summary' => $this->summary($order),
@@ -72,7 +75,13 @@ class SalesInvoiceRequestService
     {
         return DB::transaction(function () use ($order, $data, $user): SalesInvoiceRequest {
             $order = SalesOrder::query()->lockForUpdate()->findOrFail($order->id);
+            app(SalesOrderVisibilityService::class)->assertWritable($order, $user);
             if ($blocker = $this->requestBlocker($order)) throw ValidationException::withMessages(['sales_order_id' => $blocker]);
+            $customer = null;
+            if (!empty($data['save_to_customer'])) {
+                $customer = SalesCustomer::query()->lockForUpdate()->findOrFail($order->customer_id);
+                app(CrmCustomerAccessService::class)->assert($customer, $user, 'edit', '无权把开票资料保存到该客户档案，请取消保存到客户后再提交。');
+            }
             $account = FinanceAccount::query()->whereKey($data['finance_account_id'] ?? null)->where('status', 'enabled')->lockForUpdate()->first();
             if (!$account) throw ValidationException::withMessages(['finance_account_id' => '请选择启用的资金账户。']);
             $amount = Money::normalize((string) $data['amount']);
@@ -102,9 +111,7 @@ class SalesInvoiceRequestService
                 'remark' => $data['remark'] ?? null, 'status' => self::PENDING,
                 'requested_by' => $user->legacy_id ?? null, 'requested_by_name' => $this->userName($user),
             ]);
-            if (!empty($data['save_to_customer'])) {
-                SalesCustomer::query()->whereKey($order->customer_id)->update($billing + ['updated_at' => now()]);
-            }
+            if ($customer) $customer->update($billing);
             return $request;
         }, 5);
     }

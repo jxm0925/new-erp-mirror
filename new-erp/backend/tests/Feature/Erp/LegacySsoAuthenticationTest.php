@@ -51,7 +51,7 @@ class LegacySsoAuthenticationTest extends TestCase
         $this->assertRejected(array_merge($valid, ['nonce' => 'bad-nonce']));
     }
 
-    public function test_rejects_missing_username_and_username_conflict_without_partial_projection(): void
+    public function test_rejects_missing_username_and_separates_accounts_with_the_same_username(): void
     {
         $missing = $this->payload(991003);
         unset($missing['username']);
@@ -64,12 +64,10 @@ class LegacySsoAuthenticationTest extends TestCase
             'created_at' => now(), 'updated_at' => now(),
         ]);
         $conflict = $this->payload(991005, ['username' => 'duplicate-sso-user']);
-        $this->postJson('/api/v1/erp/auth/sso', ['ticket' => $this->ticket($conflict)])->assertStatus(409);
-        $this->assertDatabaseMissing('erp_sso_ticket_consumptions', ['nonce' => $conflict['nonce']]);
-        $this->assertDatabaseMissing('erp_legacy_admin_users', ['legacy_id' => 991005]);
-        $this->assertDatabaseMissing('erp_department_users', ['user_legacy_id' => 991005]);
-        $this->assertDatabaseMissing('erp_rbac_user_roles', ['user_legacy_id' => 991005]);
-        $this->assertSame(0, DB::table('erp_auth_tokens')->where('user_legacy_id', 991005)->count());
+        $response = $this->postJson('/api/v1/erp/auth/sso', ['ticket' => $this->ticket($conflict)])->assertOk();
+        $response->assertJsonPath('user.legacy_id', 991005);
+        $this->assertNotSame('duplicate-sso-user', $response->json('user.username'));
+        $this->assertDatabaseHas('erp_legacy_admin_users', ['legacy_id' => 991004, 'username' => 'duplicate-sso-user']);
     }
 
     public function test_only_explicit_normal_and_active_statuses_are_allowed(): void
@@ -181,22 +179,22 @@ class LegacySsoAuthenticationTest extends TestCase
         }
     }
 
-    public function test_local_account_and_department_identity_collisions_are_rejected_atomically(): void
+    public function test_local_account_and_department_identity_collisions_preserve_local_records(): void
     {
         DB::table('erp_legacy_admin_users')->insert([
             'legacy_id' => 991420, 'username' => 'sso-user-991420', 'status' => 'normal', 'local_managed' => true,
             'legacy_payload' => json_encode(['auth_source' => 'local_management']), 'created_at' => now(), 'updated_at' => now(),
         ]);
-        $this->postJson('/api/v1/erp/auth/sso', ['ticket' => $this->ticket($this->payload(991420))])->assertForbidden();
+        $localId = $this->postJson('/api/v1/erp/auth/sso', ['ticket' => $this->ticket($this->payload(991420))])->assertOk()->json('user.legacy_id');
+        $this->assertNotEquals(991420, $localId);
         $this->assertDatabaseMissing('erp_rbac_user_roles', ['user_legacy_id' => 991420]);
         DB::table('erp_departments')->insert([
             'legacy_id' => 791420, 'name' => '本地独立部门', 'local_managed' => true,
             'legacy_payload' => json_encode(['auth_source' => 'local_management']), 'created_at' => now(), 'updated_at' => now(),
         ]);
-        $payload = $this->payload(991421, ['departments' => [['id' => 791420, 'name' => '旧 ERP 同号部门']]]);
-        $this->postJson('/api/v1/erp/auth/sso', ['ticket' => $this->ticket($payload)])->assertConflict();
-        $this->assertDatabaseMissing('erp_legacy_admin_users', ['legacy_id' => 991421]);
-        $this->assertDatabaseMissing('erp_department_users', ['user_legacy_id' => 991421]);
+        $payload = $this->payload(991422, ['departments' => [['id' => 791420, 'name' => '旧 ERP 同号部门']]]);
+        $userId = $this->postJson('/api/v1/erp/auth/sso', ['ticket' => $this->ticket($payload)])->assertOk()->json('user.legacy_id');
+        $this->assertDatabaseMissing('erp_department_users', ['user_legacy_id' => $userId]);
         $this->assertDatabaseHas('erp_departments', ['legacy_id' => 791420, 'name' => '本地独立部门']);
     }
 

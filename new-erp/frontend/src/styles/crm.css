@@ -82,6 +82,7 @@
 }
 .crm-page .el-table .cell, .crm-dialog .el-table .cell {
   word-break: break-word;
+  overflow-wrap: anywhere;
 }
 .crm-pager {
   justify-content: flex-end;
@@ -149,6 +150,10 @@
 .crm-dialog .el-form-item__label {
   color: #475569;
   font-size: 13px;
+}
+.crm-dialog .el-form-item__content {
+  min-width: 0;
+  max-width: 100%;
 }
 .crm-dialog .el-select, .crm-dialog .el-date-editor, .crm-dialog .el-input-number {
   width: 100%;

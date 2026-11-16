@@ -15,9 +15,10 @@ class RbacBootstrapService
         $created = $this->seedPermissions($force);
         $this->ensureDefaultMenuGroups();
         $grantableCreated = array_values(array_diff($created, ['inventory.amount.view', 'inventory.inbound.confirm']));
-        // 全新安装（种子只建目录、整库还没有任何授权）时内置角色按默认矩阵初始化一次；已有授权的库绝不重置。
-        $freshInstall = Schema::hasTable('erp_rbac_role_permissions') && ! DB::table('erp_rbac_role_permissions')->exists();
-        $this->seedRoles($force, $grantableCreated !== []);
+        // 已完成旧业务员升级的实例即使人工清空全部授权，也不能被当成全新安装恢复默认矩阵。
+        $freshInstall = Schema::hasTable('erp_rbac_role_permissions') && ! DB::table('erp_rbac_role_permissions')->exists()
+            && !DB::table('erp_operation_logs')->where('module', 'system_management')->where('target_type', 'business_staff_backfill')->exists();
+        $this->seedRoles($force, $grantableCreated);
         if ($grantableCreated) $this->grantNewPermissionDefaults($grantableCreated);
         if ($freshInstall) $this->initializeBuiltinRoleDefaults();
         // 升级到业务员档案后，按原销售标记一次性登记销售员，保证订单业务员候选不丢。
@@ -200,7 +201,8 @@ class RbacBootstrapService
     private function grantNewPermissionDefaults(array $createdCodes): void
     {
         $warehouseRoleId = DB::table('erp_rbac_roles')->where('code', 'warehouse_manager')->value('id');
-        if ($warehouseRoleId && ! DB::table('erp_rbac_role_permissions')->where('role_id', $warehouseRoleId)->exists()) $this->ensureWarehouseRolePermissions();
+        if ($warehouseRoleId && ! DB::table('erp_rbac_role_permissions')->where('role_id', $warehouseRoleId)->exists()
+            && !DB::table('erp_operation_logs')->where('module', 'system_management')->where('target_type', 'business_staff_backfill')->exists()) $this->ensureWarehouseRolePermissions();
         foreach (array_intersect_key(self::NEW_PERMISSION_DEFAULTS, array_flip($createdCodes)) as $code => $roleCodes) {
             $permissionId = DB::table('erp_rbac_permissions')->where('code', $code)->value('id');
             if (! $permissionId) continue;
@@ -897,7 +899,7 @@ class RbacBootstrapService
         return array_values(array_diff($codes, array_keys($existingCodes)));
     }
 
-    private function seedRoles(bool $force = false, bool $permissionsChanged = false): void
+    private function seedRoles(bool $force = false, array $newPermissionCodes = []): void
     {
         $roles = [
             ['admin', '系统管理员', 'all'],
@@ -926,9 +928,10 @@ class RbacBootstrapService
         }
 
         $adminRoleId = DB::table('erp_rbac_roles')->where('code', 'admin')->value('id');
-        if ($adminRoleId && ($rebuildAdminPermissions || $permissionsChanged)) {
-            // Inventory amounts are explicitly assigned in role management, including existing admin roles.
-            $permissionIds = DB::table('erp_rbac_permissions')->whereNotIn('code', ['inventory.amount.view', 'inventory.inbound.confirm'])->pluck('id')->all();
+        if ($adminRoleId && ($rebuildAdminPermissions || $newPermissionCodes)) {
+            // 已有管理员仅补新增权限码，不能因版本升级恢复其已被撤销的旧授权。
+            $permissionIds = DB::table('erp_rbac_permissions')->whereNotIn('code', ['inventory.amount.view', 'inventory.inbound.confirm'])
+                ->when(!$rebuildAdminPermissions, fn ($query) => $query->whereIn('code', $newPermissionCodes))->pluck('id')->all();
             $records = array_map(fn ($id) => [
                 'role_id' => $adminRoleId,
                 'permission_id' => $id,

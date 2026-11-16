@@ -3,6 +3,9 @@
 namespace App\Services\Erp;
 
 use App\Models\Erp\SalesOrder;
+use App\Models\Erp\SalesOrderLog;
+use App\Services\Erp\Crm\CrmSalesDelegationService;
+use App\Services\Erp\Crm\CrmSalesStaffService;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Query\Builder as QueryBuilder;
 use Illuminate\Support\Facades\DB;
@@ -12,6 +15,8 @@ use Illuminate\Validation\ValidationException;
 /** Shared by shipment/return detail guards and the warehouse discovery queries. */
 final class SalesOrderVisibilityService
 {
+    private const DELEGATED_CREATE_ACTION = 'sales_delegation_create';
+
     public function __construct(private readonly AuthContextService $auth) {}
 
     public function applySalesUserScope(QueryBuilder $users, object $user): void
@@ -44,18 +49,90 @@ final class SalesOrderVisibilityService
         if ($this->auth->isSuperAdmin($user) || $this->auth->dataScope($user) === 'all') return;
         $actor = (int) ($user->legacy_id ?? $user->id ?? 0);
         $departmentIds = $this->auth->dataScope($user) === 'department' ? $this->auth->departmentUserIds($user) : null;
-        $orders->where(function (Builder $visible) use ($actor, $departmentIds, $includeShared): void {
+        $delegatedOwners = app(CrmSalesDelegationService::class)->activeOwners($user);
+        $orders->where(function (Builder $visible) use ($actor, $departmentIds, $includeShared, $delegatedOwners): void {
             $visible->where(function (Builder $owned) use ($actor, $departmentIds): void {
                 if ($departmentIds !== null) $owned->whereIn('sales_user_legacy_id', $departmentIds);
                 else $owned->where('sales_user_legacy_id', $actor);
             });
+            $visible->orWhereIn('sales_user_legacy_id', $delegatedOwners);
             if ($actor > 0) {
                 $visible->orWhere(fn (Builder $created) => $created->where('created_by_legacy_id', $actor)
+                    ->whereNotExists(fn ($fact) => $fact->selectRaw('1')->from('erp_sales_order_logs as delegation_fact')
+                        ->whereColumn('delegation_fact.sales_order_id', $created->qualifyColumn('id'))
+                        ->where('delegation_fact.action', self::DELEGATED_CREATE_ACTION)
+                        ->where('delegation_fact.payload->actor_legacy_id', $actor))
                     ->when(!$includeShared, fn (Builder $draft) => $draft->where('order_status', 'draft')));
                 if ($includeShared) $visible->orWhere(fn (Builder $shared) => $shared->where('is_share', true)
                     ->whereRaw('FIND_IN_SET(?, '.$shared->qualifyColumn('share_user').') > 0', [(string) $actor]));
             }
         });
+    }
+
+    public function recordCreation(SalesOrder $order, ?object $actor): void
+    {
+        if (!$actor || !app(CrmSalesDelegationService::class)->delegatesFor($actor, (int) $order->sales_user_legacy_id, true)) return;
+        $name = $actor->nickname ?: $actor->username;
+        $order->update(['created_by_legacy_id' => $actor->legacy_id, 'created_by' => $name]);
+        // 创建事实不能放进客户端可改的订单快照，否则到期后仍能借创建人身份续权。
+        SalesOrderLog::create([
+            'sales_order_id' => $order->id, 'order_no_snapshot' => $order->sales_order_no,
+            'action' => self::DELEGATED_CREATE_ACTION, 'after_status' => $order->order_status,
+            'operator' => $name, 'content' => '销售代班期间代开订单，保留原销售归属',
+            'payload' => ['actor_legacy_id' => (int) $actor->legacy_id, 'sales_user_legacy_id' => (int) $order->sales_user_legacy_id],
+        ]);
+    }
+
+    public function prepareCreation(array &$payload, ?object $actor): void
+    {
+        $owner = (int) ($payload['delegated_owner_legacy_id'] ?? 0);
+        unset($payload['delegated_owner_legacy_id']);
+        if (!$owner) return;
+        $delegates = $actor && app(CrmSalesDelegationService::class)->delegatesFor($actor, $owner, true);
+        if (!$delegates && $actor && !empty($payload['opportunity_id'])) {
+            $opportunities = app(\App\Services\Erp\Crm\CrmOpportunityApplicationService::class);
+            $opportunity = $opportunities->visible((int) $payload['opportunity_id'], $actor, true);
+            $delegates = (int) $opportunity->owner_legacy_id === $owner && $opportunities->hasOrderDelegation($opportunity, $actor, true);
+        }
+        abort_unless($delegates, 403, '代班已结束、到期或人员状态已变化，请刷新后重新办理。');
+        $payload['sales_user_legacy_id'] = $owner;
+        $payload['created_by_legacy_id'] = $actor->legacy_id;
+        $payload['created_by'] = $actor->nickname ?: $actor->username;
+    }
+
+    public function delegationAccess(SalesOrder $order, ?object $actor, bool $lock = false): array
+    {
+        if (!$actor) return ['delegated_sales_user' => null, 'writable' => true];
+        $owner = (int) $order->sales_user_legacy_id;
+        $delegates = app(CrmSalesDelegationService::class)->delegatesFor($actor, $owner, $lock);
+        $created = (int) $order->created_by_legacy_id === (int) $actor->legacy_id;
+        $delegatedCreation = $created && SalesOrderLog::query()->where('sales_order_id', $order->id)
+            ->where('action', self::DELEGATED_CREATE_ACTION)->where('payload->actor_legacy_id', (int) $actor->legacy_id)
+            ->when($lock, fn ($q) => $q->lockForUpdate())->first(['id']);
+        $normal = $this->hasNormalScope($order, $actor);
+        return [
+            'delegated_sales_user' => $delegates || $delegatedCreation
+                ? ['id' => $owner, 'nickname' => app(CrmSalesStaffService::class)->name($owner)] : null,
+            // 普通代建者的特殊办理仍由原入口裁定；这里仅阻止代班创建事实永久续权。
+            'writable' => $delegates || $normal || ($created && !$delegatedCreation),
+        ];
+    }
+
+    public function hasNormalScope(SalesOrder $order, object $actor): bool
+    {
+        $owner = (int) $order->sales_user_legacy_id;
+        return $this->auth->isSuperAdmin($actor) || $this->auth->dataScope($actor) === 'all'
+            || $owner === (int) $actor->legacy_id
+            || ($this->auth->dataScope($actor) === 'department' && in_array($owner, $this->auth->departmentUserIds($actor), true));
+    }
+
+    public function assertWritable(SalesOrder $order, object $actor, ?int $salesUserId = null): void
+    {
+        $access = $this->delegationAccess($order, $actor, true);
+        abort_unless($access['writable'], 403, '订单不在当前负责或代班范围内，代班可能已结束、到期或归属已变化。');
+        if ($access['delegated_sales_user'] && $salesUserId !== null && $salesUserId !== (int) $order->sales_user_legacy_id) {
+            throw ValidationException::withMessages(['sales_user_legacy_id' => '代班办理订单时须保留当前负责销售。']);
+        }
     }
 
     public function normalizeShareUsers(mixed $users, int $salesUserId, int $actorId, ?SalesOrder $order = null): ?string

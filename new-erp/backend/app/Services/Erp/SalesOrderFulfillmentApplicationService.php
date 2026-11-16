@@ -80,7 +80,7 @@ class SalesOrderFulfillmentApplicationService
                 throw ValidationException::withMessages(['lines' => '销售订单至少需要一行明细。']);
             }
             SalesOrderFulfillmentPolicy::assertConfirmationRequirements($order);
-            app(CrmOpportunityOrderService::class)->beforeConfirm($order);
+            app(CrmOpportunityOrderService::class)->beforeConfirm($order, $actor);
 
             // Drafts may remain open while finance masters change. Formal
             // confirmation revalidates and freezes the selected records while

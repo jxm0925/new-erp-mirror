@@ -266,7 +266,7 @@ final class CrmDashboardQueryService
             }
         } elseif ($kind === 'followup_records') {
             $query = $this->scope->followups($actor, $filters);
-            if ($query) $query = $this->scope->period($query, $filters, 'contacted_at');
+            if ($query) $query = $this->scope->period($query, $filters, 'contacted_at')->orderByDesc($query->qualifyColumn('created_at'));
         } else {
             abort_unless(in_array($kind, ['customers', 'new_customers', 'first_contacts', 'won_customers', 'contacted_customers', 'opportunities', 'open_opportunities'], true), 422, '统计名单类型无效。');
             $query = $this->metricQuery($actor, $filters, $kind);
