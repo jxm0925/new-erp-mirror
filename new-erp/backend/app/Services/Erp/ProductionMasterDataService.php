@@ -419,7 +419,7 @@ class ProductionMasterDataService
         $keyword = trim((string) ($filters['keyword'] ?? ''));
         $perPage = min(50, max(1, (int) ($filters['per_page'] ?? 10)));
         $query = match ($type) {
-            'items' => app(ItemManagementScopeService::class)->applyScope(Item::query(), 'factory')->where('status', 'enabled')
+            'items' => app(ItemManagementScopeService::class)->applyScope(Item::query()->with(['unit:id,unit_name', 'category:id,category_name']), 'factory')->where('status', 'enabled')
                 ->where(function ($items) use ($filters): void {
                     $items->where('is_production_item', true);
                     if (($filters['purpose'] ?? null) === 'routing') {
@@ -429,7 +429,9 @@ class ProductionMasterDataService
                                     ->where('is_purchase_item', true)->where('is_production_item', false))));
                     }
                 })
-                ->when($keyword, fn ($q) => $q->where(fn ($x) => $x->where('item_code', 'like', "%{$keyword}%")->orWhere('item_name', 'like', "%{$keyword}%")))->orderBy('item_name'),
+                ->when($filters['category_id'] ?? null, fn ($q, $categoryId) => $q->whereIn('category_id', [$categoryId, ...app(ItemCategoryApplicationService::class)->descendantIds((int) $categoryId)]))
+                ->when($filters['item_type'] ?? null, fn ($q, $itemType) => $q->where('item_type', $itemType))
+                ->when($keyword, fn ($q) => $q->where(fn ($x) => $x->where('item_code', 'like', "%{$keyword}%")->orWhere('item_name', 'like', "%{$keyword}%")->orWhere('spec', 'like', "%{$keyword}%")->orWhere('model', 'like', "%{$keyword}%")))->orderBy('item_name'),
             'operations' => ProductionOperation::query()->where('status', 'enabled')
                 ->when(isset($filters['is_public']) && $filters['is_public'] !== '', fn ($q) => $q->where('is_public', (bool) $filters['is_public']))
                 ->when($keyword, fn ($q) => $q->where(fn ($x) => $x->where('operation_no', 'like', "%{$keyword}%")->orWhere('operation_name', 'like', "%{$keyword}%")))->orderBy('sort')->orderBy('id'),

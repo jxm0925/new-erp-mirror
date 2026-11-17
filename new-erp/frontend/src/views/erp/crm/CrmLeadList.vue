@@ -209,8 +209,6 @@
               </span>
               <span v-if="hasField('trade_type') && row.trade_type" class="meta-chip">{{ row.trade_type }}</span>
               <span v-if="hasField('trade_type') && row.lead_type && row.lead_type !== '普通咨询'" class="meta-chip">{{ row.lead_type }}</span>
-              <span v-for="line in hasField('business_lines') ? (row.business_lines || []).slice(0, 2) : []" :key="line" class="meta-chip is-green">{{ line }}</span>
-              <span v-if="hasField('business_lines') && (row.business_lines || []).length > 2" class="meta-chip">+{{ row.business_lines.length - 2 }}</span>
             </div>
           </template>
         </el-table-column>

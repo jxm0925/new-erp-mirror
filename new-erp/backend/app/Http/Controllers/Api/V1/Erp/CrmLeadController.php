@@ -36,7 +36,7 @@ final class CrmLeadController extends Controller
         $channels = array_values(array_unique(array_merge(array_keys(CrmLeadApplicationService::CHANNELS), $grant?->channels ?? [], (clone $query)->whereNotNull('source_channel')->distinct()->pluck('source_channel')->all())));
         $dictionaries = [];
         foreach (['lead_type', 'trade_type'] as $field) $dictionaries[$field] = (clone $query)->whereNotNull($field)->distinct()->limit(100)->pluck($field)->all();
-        foreach (['customer_tags', 'business_lines'] as $field) $dictionaries[$field] = (clone $query)->whereNotNull($field)->select($field)->limit(500)->get()->pluck($field)->flatten()->unique()->values()->all();
+        $dictionaries['customer_tags'] = (clone $query)->whereNotNull('customer_tags')->select('customer_tags')->limit(500)->get()->pluck('customer_tags')->flatten()->unique()->values()->all();
         $dictionaries['custom_tags'] = (clone $query)->where('created_by_legacy_id', $actor->legacy_id)->whereNotNull('custom_tags')->select('custom_tags')->limit(500)->get()->pluck('custom_tags')->flatten()->unique()->values()->all();
         $abilities = [];
         foreach (['create', 'edit', 'assign', 'transfer', 'recycle', 'claim', 'follow', 'pool', 'invalidate', 'confirm'] as $action) $abilities[$action] = $access->can($actor, 'crm.lead.'.$action);
@@ -50,7 +50,7 @@ final class CrmLeadController extends Controller
             'customer_pools' => CrmLeadApplicationService::POOLS, 'statuses' => CrmLeadApplicationService::STATUSES,
             'source_channels' => $channels, 'trade_types' => array_values(array_unique(array_merge(['内贸销售', '内贸业务', '外贸'], $dictionaries['trade_type']))),
             'lead_types' => array_values(array_unique(array_merge(['普通咨询'], $dictionaries['lead_type']))),
-            'customer_tags' => $dictionaries['customer_tags'], 'custom_tags' => $dictionaries['custom_tags'], 'business_lines' => $dictionaries['business_lines'],
+            'customer_tags' => $dictionaries['customer_tags'], 'custom_tags' => $dictionaries['custom_tags'],
             'platforms' => DB::table('erp_sales_order_trade_platforms')->where('parent_legacy_id', 0)->where('enabled', true)->orderBy('sort')->orderBy('legacy_id')
                 ->get(['legacy_id', 'name', 'legacy_payload'])->map(fn ($row) => ['id' => (int) $row->legacy_id, 'name' => $row->name] + TradePlatformApplicationService::buyerIdentity($row->legacy_payload))->values(),
             'entry_methods' => ['self' => '销售自录', 'operations' => '运营代录'],
@@ -218,6 +218,8 @@ final class CrmLeadController extends Controller
     {
         $rules = ['mode' => 'required|in:draft,submit,review', 'version' => ($editing ? 'required' : 'nullable').'|integer|min:1',
             'customer_id' => 'nullable|integer|min:1', 'customer_kind' => 'nullable|in:enterprise,individual', 'customer_name' => 'nullable|string|max:160',
+            'customer_grade' => 'nullable|string|max:40', 'industry' => 'nullable|string|max:80', 'purchasing_power' => 'nullable|string|max:40',
+            'customer_business_lines' => 'nullable|array|max:20', 'customer_business_lines.*' => 'required|string|max:60|distinct',
             'contact_id' => 'nullable|integer|min:1', 'contact_name' => 'nullable|string|max:80', 'contact_role' => 'nullable|string|max:80',
             'mobile' => 'nullable|string|max:80', 'contact_value2' => 'nullable|string|max:80', 'wechat' => 'nullable|string|max:80',
             'email' => 'nullable|email|max:160', 'credit_code' => 'nullable|string|max:40', 'region_id' => 'nullable|integer|min:1',
@@ -232,7 +234,7 @@ final class CrmLeadController extends Controller
             'duplicate_confirmed' => 'nullable|boolean', 'duplicate_reason' => 'nullable|string|max:500', 'review_note' => 'nullable|string|max:500',
             'new_demand_confirmed' => 'nullable|boolean',
             'attachment_ids' => 'nullable|array|max:30', 'attachment_ids.*' => 'required|integer|min:1|distinct'];
-        foreach (['customer_tags', 'custom_tags', 'business_lines'] as $field) { $rules[$field] = 'nullable|array|max:30'; $rules[$field.'.*'] = 'required|string|max:80|distinct'; }
+        foreach (['customer_tags', 'custom_tags'] as $field) { $rules[$field] = 'nullable|array|max:30'; $rules[$field.'.*'] = 'required|string|max:80|distinct'; }
         return $request->validate($rules);
     }
 

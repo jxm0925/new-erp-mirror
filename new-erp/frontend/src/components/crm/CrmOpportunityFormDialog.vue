@@ -132,7 +132,6 @@ export default {
       this.form.name = row.demand_summary || this.form.name
       this.form.demand_summary = row.demand_summary || ''
       this.form.contact_id = row.contact_id || null
-      this.form.business_line = (row.business_lines || [])[0] || ''
       this.form.expected_amount = row.expected_amount
       this.form.currency = row.currency || 'CNY'
       this.form.next_contact_at = erpDateTime(row.next_contact_at) || null

@@ -140,6 +140,8 @@ final class WorkOrderQueryService
         $row['operations'] = $this->operationProgress($wo, $row['operations']);
         $row['tech'] = $this->techSummary($wo);
         $row['technical_drawings'] = app(\App\Services\Erp\TechnicalDrawingSourceService::class)->forSource('work_order', $wo->id);
+        $row['technical_drawings'] = collect([...$row['technical_drawings'], ...array_column($row['tech']['drawings'] ?? [], 'technical_drawing')])
+            ->filter()->unique('revision_id')->values()->all();
         // 订单信息（销售员、客户、电话、地址、各种备注），取订单现在的内容，销售改过的标出来
         $row['order_info'] = app(OrderBrief::class)->forWorkOrder($wo);
         $row['workshop_reference'] = app(WorkshopReferenceService::class)->forWorkOrder($wo);
@@ -249,11 +251,19 @@ final class WorkOrderQueryService
         $tech = MfgWorkOrderTech::query()->where('work_order_id', $wo->id)->first();
         if (! $tech) return null;
         $drawings = MfgDrawing::query()->where('work_order_id', $wo->id)->where('status', 'active')->orderBy('id')->get();
+        $drawingSources = app(\App\Services\Erp\TechnicalDrawingSourceService::class);
+        $rows = $drawings->map(fn ($d) => ['id' => $d->id, 'drawing_name' => $d->drawing_name, 'version_no' => $d->version_no, 'url' => $d->url,
+            'original_name' => $d->original_name, 'technical_drawing' => $drawingSources->forFile('work_order', $d->id),
+            'mime_type' => $d->mime_type, 'uploaded_by' => $d->uploaded_by, 'uploaded_at' => $d->uploaded_at?->toDateTimeString()])->values()->all();
+        $confirmed = $drawingSources->confirmedVersionsForWorkOrder($wo);
+        $represented = array_column(array_column($rows, 'technical_drawing'), 'revision_id');
+        foreach (\App\Models\Erp\TechnicalDrawingRevision::query()->with('drawing')->whereIn('id', array_diff(array_keys($confirmed), $represented))->get() as $revision) {
+            $version = $drawingSources->confirmedWorkOrderRow($wo, $revision, $confirmed[$revision->id]);
+            $rows[] = array_replace($version, ['id' => 'confirmed-'.$revision->id, 'technical_drawing' => $version, 'url' => $version['files'][0]['download_url']]);
+        }
         return ['status' => $tech->status, 'status_label' => TechService::STATUS_LABELS[$tech->status] ?? $tech->status, 'tech_owner_name' => $tech->tech_owner_name,
             'released_at' => $tech->released_at?->toDateTimeString(), 'drawings_updated_at' => $tech->drawings_updated_at?->toDateTimeString(),
-            'drawings' => $drawings->map(fn ($d) => ['id' => $d->id, 'drawing_name' => $d->drawing_name, 'version_no' => $d->version_no, 'url' => $d->url,
-                'original_name' => $d->original_name, 'technical_drawing' => app(\App\Services\Erp\TechnicalDrawingSourceService::class)->forFile('work_order', $d->id),
-                'mime_type' => $d->mime_type, 'uploaded_by' => $d->uploaded_by, 'uploaded_at' => $d->uploaded_at?->toDateTimeString()])->values()->all()];
+            'drawings' => $rows];
     }
 
     /** 备货工单新建页：选好产品、数量后预览 BOM、路线、各工序料够不够、预计用时和成本。 */

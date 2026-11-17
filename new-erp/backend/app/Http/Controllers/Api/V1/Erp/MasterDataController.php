@@ -547,6 +547,12 @@ class MasterDataController extends Controller
         abort_unless($valid, 422, '业务主数据只能选择已启用的标准单位。历史单位仅用于映射和审计。');
     }
 
+    public function uploadItemImage(Request $request)
+    {
+        app(MasterDataAccessService::class)->authorize($request, 'items', 'image');
+        return $this->uploadMasterImage($request, 'item-images');
+    }
+
     /** Upload a Product display image directly to OSS. */
     public function uploadProductImage(Request $request)
     {
@@ -572,7 +578,7 @@ class MasterDataController extends Controller
         }
 
         $file = $payload['image'];
-        $extension = strtolower($file->getClientOriginalExtension() ?: $file->extension() ?: 'jpg');
+        $extension = $file->extension();
         $directory = 'erp/master/'.$directoryName.'/'.date('Ymd');
         $filename = Str::uuid().'.'.$extension;
 
@@ -735,6 +741,7 @@ class MasterDataController extends Controller
             ],
             'items' => [
                 'item_code' => $unique('erp_items', 'item_code'), 'item_name' => 'required|string|max:160',
+                'image_url' => 'nullable|url:http,https|max:1024',
                 'item_type' => 'required|in:finished_product,semi_finished,raw_material,packaging,service,office_consumable',
                 'management_scope' => 'sometimes|required|in:factory,office',
                 'category_id' => [$id ? 'nullable' : 'required', 'integer', 'exists:erp_item_categories,id'], 'spec' => 'nullable|string|max:255',

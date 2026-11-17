@@ -23,7 +23,7 @@ final class CrmSavedViewApplicationService
             'open_opportunity_count' => '进行中商机', 'expected_amounts' => '待成交金额'],
         'leads' => ['customer_name' => '客户名称', 'lead_no' => '线索编号', 'customer_kind' => '客户类型', 'contact_name' => '联系人',
             'mobile' => '联系电话', 'region' => '地区', 'demand_summary' => '需求摘要', 'expected_amount' => '预计成交额',
-            'trade_type' => '贸易类型', 'business_lines' => '业务线', 'source_channel' => '本次咨询来源', 'entry_method' => '录入方式',
+            'trade_type' => '贸易类型', 'source_channel' => '本次咨询来源', 'entry_method' => '录入方式',
             'platform_name' => '平台与店铺', 'owner_name' => '负责销售', 'department_name' => '所属部门', 'status' => '状态',
             'customer_pool' => '客户池', 'last_contact_at' => '最近跟进', 'next_contact_at' => '下次跟进', 'next_plan' => '跟进计划',
             'recycle_reason' => '回收原因', 'recycled_at' => '回收时间', 'previous_owner_name' => '原负责人', 'recycled_by_name' => '回收人'],
@@ -46,7 +46,7 @@ final class CrmSavedViewApplicationService
         'customers' => ['customer_name', 'customer_code', 'company_background', 'customer_kind', 'customer_grade', 'industry', 'purchasing_power',
             'business_lines', 'default_contact', 'owner_name', 'deal_amount', 'customer_pools', 'last_contact_at', 'next_contact_at', 'status'],
         'leads' => ['customer_name', 'lead_no', 'customer_kind', 'contact_name', 'mobile', 'region', 'demand_summary', 'expected_amount', 'trade_type',
-            'business_lines', 'source_channel', 'entry_method', 'platform_name', 'owner_name', 'department_name', 'status', 'customer_pool',
+            'source_channel', 'entry_method', 'platform_name', 'owner_name', 'department_name', 'status', 'customer_pool',
             'last_contact_at', 'next_contact_at', 'next_plan', 'recycle_reason', 'recycled_at', 'previous_owner_name', 'recycled_by_name'],
         'opportunities' => ['customer_name', 'name', 'business_line', 'owner_name', 'stage', 'expected_amount', 'expected_close_date', 'last_contact_at', 'next_contact_at'],
     ];

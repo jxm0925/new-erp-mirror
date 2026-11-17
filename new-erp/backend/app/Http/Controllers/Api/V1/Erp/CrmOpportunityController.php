@@ -135,7 +135,7 @@ final class CrmOpportunityController extends Controller
         $this->opportunities->visible($id, $actor);
         $data = $request->validate(['keyword' => 'nullable|string|max:160', 'category' => ['nullable', Rule::in(array_keys(CrmOpportunityApplicationService::FILE_CATEGORIES))],
             'status' => ['nullable', Rule::in(array_keys(CrmOpportunityApplicationService::FILE_STATUSES))]] + $this->pageRules() + $this->idsRules());
-        $query = CrmOpportunityFile::query()->with('attachment')->where('opportunity_id', $id);
+        $query = CrmOpportunityFile::query()->available()->with('attachment')->where('opportunity_id', $id);
         if (!empty($data['keyword'])) $query->whereHas('attachment', fn ($q) => $q->where('name', 'like', '%'.trim($data['keyword']).'%'));
         if (!empty($data['ids'])) $query->whereIn('id', $data['ids']);
         foreach (['category', 'status'] as $field) if (!empty($data[$field])) $query->where($field, $data[$field]);
@@ -156,6 +156,13 @@ final class CrmOpportunityController extends Controller
         $data = $request->validate(['version' => 'required|integer|min:1', 'reason' => 'required|string|max:5000']);
         $file = $this->opportunities->confirmFile($id, $fileId, $data, $actor);
         return response()->json(['message' => '文件版本已确认', 'data' => $this->opportunities->presentFile($file), 'opportunity_version' => $this->opportunities->visible($id, $actor)->version]);
+    }
+
+    public function removeFile(Request $request, int $id, int $fileId)
+    {
+        $actor = $this->user($request, 'file');
+        $opportunity = $this->opportunities->removeFile($id, $fileId, $request->validate(['version' => 'required|integer|min:1']), $actor);
+        return response()->json(['message' => '业务附件已删除', 'opportunity_version' => $opportunity->version]);
     }
 
     public function logs(Request $request, int $id)

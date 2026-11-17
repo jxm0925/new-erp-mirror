@@ -18,7 +18,8 @@ final class TechnicalDrawingController extends Controller
         $options = fn ($values) => collect($values)->map(fn ($label, $value) => compact('value', 'label'))->values();
         return response()->json(['data' => ['source_types' => $options(TechnicalDrawingApplicationService::SOURCES),
             'current_user' => ['id' => (int) $actor->legacy_id, 'name' => ($actor->nickname ?? null) ?: ($actor->username ?? '')],
-            'drawing_types' => $options(TechnicalDrawingApplicationService::TYPES), 'abilities' => ['statistics' => $this->drawings->canStatistics($actor)],
+            'drawing_types' => $options(TechnicalDrawingApplicationService::TYPES), 'file_types' => $options(TechnicalDrawingApplicationService::FILE_TYPES),
+            'abilities' => ['statistics' => $this->drawings->canStatistics($actor)],
             'today' => now()->toDateString()]]);
     }
 
@@ -50,7 +51,8 @@ final class TechnicalDrawingController extends Controller
 
     public function index(Request $request)
     {
-        return response()->json($this->drawings->paginate($this->statisticsFilters($request), $this->actor($request)));
+        $filters = $this->statisticsFilters($request) + $request->validate(['group_by' => 'nullable|in:drawing_no|prohibits:drawing_id', 'drawing_id' => 'nullable|integer|min:1']);
+        return response()->json($this->drawings->paginate($filters, $this->actor($request)));
     }
 
     public function show(Request $request, int $id)
@@ -61,14 +63,15 @@ final class TechnicalDrawingController extends Controller
 
     public function store(Request $request)
     {
-        $data = $request->except('file');
+        abort_if($request->file('file') !== null && $request->file('files') !== null, 422, '图纸文件请使用单文件或整套上传方式之一。');
+        $data = $request->except(['file', 'files']);
         // multipart的来源作为JSON对象传递；业务规则仍在共享登记服务完整校验。
         if (isset($data['source']) && is_string($data['source'])) {
             $source = json_decode($data['source'], true);
             abort_unless(is_array($source), 422, '来源业务格式无效。');
             $data['source'] = $source;
         }
-        $result = $this->drawings->register($data, $this->actor($request), $request->file('file'));
+        $result = $this->drawings->register($data, $this->actor($request), $request->file('files') ?? $request->file('file'));
         return response()->json(['message' => '图纸登记已保存', 'data' => $result], 201);
     }
 
@@ -80,8 +83,14 @@ final class TechnicalDrawingController extends Controller
 
     public function download(Request $request, int $revisionId)
     {
-        $data = $request->validate(['usage_id' => 'nullable|integer|min:1']);
-        return $this->drawings->download($revisionId, $this->actor($request), isset($data['usage_id']) ? (int) $data['usage_id'] : null);
+        $data = $request->validate(['usage_id' => 'nullable|integer|min:1', 'file_id' => 'nullable|integer|min:0', 'work_order_id' => 'nullable|integer|min:1']);
+        return $this->drawings->download($revisionId, $this->actor($request), isset($data['usage_id']) ? (int) $data['usage_id'] : null, isset($data['file_id']) ? (int) $data['file_id'] : null, false, isset($data['work_order_id']) ? (int) $data['work_order_id'] : null);
+    }
+
+    public function preview(Request $request, int $revisionId)
+    {
+        $data = $request->validate(['usage_id' => 'nullable|integer|min:1', 'file_id' => 'nullable|integer|min:0', 'work_order_id' => 'nullable|integer|min:1']);
+        return $this->drawings->download($revisionId, $this->actor($request), isset($data['usage_id']) ? (int) $data['usage_id'] : null, isset($data['file_id']) ? (int) $data['file_id'] : null, true, isset($data['work_order_id']) ? (int) $data['work_order_id'] : null);
     }
 
     private function statisticsFilters(Request $request): array

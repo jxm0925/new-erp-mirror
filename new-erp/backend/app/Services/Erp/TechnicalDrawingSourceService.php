@@ -2,7 +2,7 @@
 
 namespace App\Services\Erp;
 
-use App\Models\Erp\{Bom, CrmAttachment, CrmOpportunity, CrmOpportunityFile, MfgDrawing, MfgWorkOrder, MfgWorkOrderTech, TechnicalDrawingRevision, TechnicalDrawingUsage};
+use App\Models\Erp\{Bom, CrmAttachment, CrmDrawingRequest, CrmLead, CrmOpportunity, CrmOpportunityFile, MfgDrawing, MfgWorkOrder, MfgWorkOrderTech, SalesCustomer, SalesOrderLine, TechnicalDrawingRevision, TechnicalDrawingUsage};
 use App\Services\Erp\Crm\CrmOpportunityApplicationService;
 use App\Services\Erp\Crm\CrmDrawingRequestService;
 use App\Services\Erp\Manufacturing\WorkOrderService;
@@ -112,10 +112,96 @@ final class TechnicalDrawingSourceService
         }
     }
 
-    public function bind(TechnicalDrawingUsage $usage, TechnicalDrawingRevision $revision, array $resolved, object $actor): void
+    public function contexts(iterable $sources, object $actor): array
+    {
+        $contexts = $ids = [];
+        foreach ($sources as $source) {
+            $type = data_get($source, 'source_type');
+            $id = (int) data_get($source, 'source_id');
+            $ids[$type][] = $id;
+            $contexts[$type.':'.$id] = ['source_type' => $type, 'source_id' => $id,
+                'source_no' => data_get($source, 'source_no'), 'source_name' => data_get($source, 'source_name'),
+                'request_id' => null, 'request_no' => null, 'request_name' => null, 'opportunity_id' => null, 'opportunity_no' => null, 'opportunity_name' => null,
+                'lead_no' => null, 'lead_name' => null, 'customer_name' => null, 'sales_user_legacy_id' => null, 'sales_user_name' => null];
+        }
+
+        $requestOpportunityIds = [];
+        if (!empty($ids['drawing_request'])) {
+            $query = CrmDrawingRequest::query()->whereIn('id', array_unique($ids['drawing_request']));
+            app(CrmDrawingRequestService::class)->applyVisible($query, $actor);
+            $requests = $query->get(['id', 'request_no', 'title', 'customer_id', 'lead_id', 'opportunity_id']);
+            if ($requests->isNotEmpty()) {
+                // 承接技术可读取已授权需求的基础关联信息；统计权限本身不授予商机或客户详情权限。
+                $opportunities = CrmOpportunity::query()->where(function ($related) use ($requests) {
+                    $related->whereIn('id', $requests->pluck('opportunity_id')->filter())
+                        ->orWhereIn('source_lead_id', $requests->whereNull('opportunity_id')->pluck('lead_id')->filter());
+                })->get(['id', 'opportunity_no', 'name', 'customer_id', 'customer_name', 'source_lead_id', 'owner_legacy_id', 'owner_name']);
+                $byId = $opportunities->keyBy('id');
+                $byLead = $opportunities->keyBy('source_lead_id');
+                $leads = CrmLead::query()->whereIn('id', $requests->pluck('lead_id')->filter())
+                    ->get(['id', 'lead_no', 'customer_id', 'customer_name', 'owner_legacy_id', 'owner_name'])->keyBy('id');
+                $customers = SalesCustomer::query()->whereIn('id', $requests->pluck('customer_id'))->pluck('customer_name', 'id');
+                foreach ($requests as $request) {
+                    $opportunity = $request->opportunity_id ? $byId->get($request->opportunity_id) : $byLead->get($request->lead_id);
+                    if ($opportunity && (int) $opportunity->customer_id !== (int) $request->customer_id) $opportunity = null;
+                    if ($opportunity) $requestOpportunityIds[$request->id] = $opportunity->id;
+                    $lead = $leads->get($request->lead_id);
+                    if ($lead && (int) $lead->customer_id !== (int) $request->customer_id) $lead = null;
+                    $contexts['drawing_request:'.$request->id] = array_replace($contexts['drawing_request:'.$request->id],
+                        $this->commercialContext($opportunity, $lead), ['request_id' => $request->id, 'request_no' => $request->request_no, 'request_name' => $request->title,
+                            'customer_name' => $customers->get($request->customer_id)]);
+                }
+            }
+        }
+
+        $workOrders = collect();
+        $links = collect();
+        if (!empty($ids['work_order']) && $this->can($actor, self::PRODUCTION_READ)) {
+            $workOrders = MfgWorkOrder::query()->whereIn('id', array_unique($ids['work_order']))->get(['id', 'sales_order_id']);
+            $links = DB::table('erp_crm_opportunity_orders')->whereIn('order_id', $workOrders->pluck('sales_order_id')->filter())->pluck('opportunity_id', 'order_id');
+        }
+        $opportunityIds = array_unique(array_merge($ids['opportunity'] ?? [], $links->values()->all(), array_values($requestOpportunityIds)));
+        if ($opportunityIds && $this->can($actor, ['crm.opportunity.view'])) {
+            $query = CrmOpportunity::query()->whereIn('id', $opportunityIds);
+            app(CrmOpportunityApplicationService::class)->applyVisible($query, $actor);
+            $opportunities = $query->with('customer:id,customer_name')->get(['id', 'opportunity_no', 'name', 'customer_id', 'customer_name', 'owner_legacy_id', 'owner_name'])->keyBy('id');
+            foreach ($opportunities as $opportunity) {
+                if (isset($contexts['opportunity:'.$opportunity->id])) $contexts['opportunity:'.$opportunity->id] = array_replace(
+                    $contexts['opportunity:'.$opportunity->id], $this->commercialContext($opportunity),
+                    ['opportunity_id' => $opportunity->id, 'customer_name' => $opportunity->customer?->customer_name ?: $opportunity->customer_name]);
+            }
+            foreach ($workOrders as $workOrder) {
+                if ($opportunity = $opportunities->get($links->get($workOrder->sales_order_id))) $contexts['work_order:'.$workOrder->id] = array_replace(
+                    $contexts['work_order:'.$workOrder->id], $this->commercialContext($opportunity),
+                    ['opportunity_id' => $opportunity->id, 'customer_name' => $opportunity->customer?->customer_name ?: $opportunity->customer_name]);
+            }
+            foreach ($requestOpportunityIds as $requestId => $opportunityId) {
+                if ($opportunities->has($opportunityId)) $contexts['drawing_request:'.$requestId]['opportunity_id'] = $opportunityId;
+            }
+        }
+        $missingNames = collect($contexts)->filter(fn ($context) => $context['sales_user_legacy_id'] && !$context['sales_user_name']);
+        if ($missingNames->isNotEmpty()) {
+            $users = DB::table('erp_legacy_admin_users')->whereIn('legacy_id', $missingNames->pluck('sales_user_legacy_id')->unique())->get(['legacy_id', 'nickname', 'username'])->keyBy('legacy_id');
+            foreach ($missingNames as $key => $context) {
+                $user = $users->get($context['sales_user_legacy_id']);
+                $contexts[$key]['sales_user_name'] = $user ? ($user->nickname ?: $user->username) : null;
+            }
+        }
+        return $contexts;
+    }
+
+    private function commercialContext(?CrmOpportunity $opportunity, ?CrmLead $lead = null): array
+    {
+        $source = $opportunity ?: $lead;
+        return ['opportunity_no' => $opportunity?->opportunity_no, 'opportunity_name' => $opportunity?->name,
+            'lead_no' => $opportunity ? null : $lead?->lead_no, 'sales_user_legacy_id' => $source?->owner_legacy_id,
+            'sales_user_name' => $source?->owner_name];
+    }
+
+    public function bind(TechnicalDrawingUsage $usage, TechnicalDrawingRevision $revision, array $resolved, object $actor, array $registration = []): void
     {
         if ($resolved['type'] === 'drawing_request') {
-            app(CrmDrawingRequestService::class)->bindDelivery($usage, $revision, $actor);
+            app(CrmDrawingRequestService::class)->bindDelivery($usage, $revision, $actor, $registration);
             return;
         }
         if ($resolved['file']) {
@@ -123,6 +209,7 @@ final class TechnicalDrawingSourceService
         }
         $actorId = (int) ($actor->legacy_id ?? $actor->id);
         $actorName = ($actor->nickname ?? null) ?: ($actor->username ?? '');
+        $primary = app(TechnicalDrawingApplicationService::class)->revisionFile($revision);
         // 商机待客户确认的方案沿用原状态；BOM、工单的明确选版则立即替换本位置旧引用。
         if ($resolved['type'] !== 'opportunity') $this->activate($usage);
         if ($resolved['type'] === 'work_order') {
@@ -130,7 +217,7 @@ final class TechnicalDrawingSourceService
             $drawing = $resolved['file_id'] ? MfgDrawing::query()->findOrFail($resolved['file_id']) : MfgDrawing::create([
                 'work_order_id' => $wo->id, 'drawing_name' => $revision->drawing->drawing_name, 'version_no' => $revision->version_no,
                 'original_name' => $revision->original_name, 'storage_disk' => $revision->storage_disk, 'storage_path' => $revision->storage_path,
-                'mime_type' => $revision->mime_type, 'file_size' => $revision->file_size, 'file_hash' => $revision->file_hash, 'status' => 'active',
+                'mime_type' => $revision->mime_type, 'file_size' => $revision->file_size, 'file_hash' => $primary['file_hash'], 'status' => 'active',
                 'uploaded_by_legacy_id' => $actorId, 'uploaded_by' => $actorName, 'uploaded_at' => now(),
             ]);
             $usage->update(['source_file_id' => $drawing->id]);
@@ -166,6 +253,47 @@ final class TechnicalDrawingSourceService
         return TechnicalDrawingUsage::query()->with('revision.drawing')->where('source_type', $type)->where('source_id', $id)->where('active', true)->orderBy('id')->get()->map(fn ($usage) => $this->present($usage))->all();
     }
 
+    /** 订单行已明确锁定的客户确认版；不追商机现有附件或图号最新版本，也不跨订单明细。 */
+    public function confirmedVersionsForWorkOrder(MfgWorkOrder $wo): array
+    {
+        if (!$wo->sales_order_id || !$wo->sales_order_line_id) return [];
+        $line = SalesOrderLine::query()->where('sales_order_id', $wo->sales_order_id)->find($wo->sales_order_line_id, ['id', 'drawing_snapshot']);
+        $versions = collect((array) data_get($line?->drawing_snapshot, 'confirmed_versions', []))
+            ->filter(fn ($version) => (int) ($version['revision_id'] ?? 0) > 0 && !empty($version['confirmed_at']))
+            ->keyBy('revision_id');
+        $existingIds = TechnicalDrawingRevision::query()->whereIn('id', $versions->keys())->pluck('id');
+        return $versions->only($existingIds->all())->all();
+    }
+
+    public function confirmedWorkOrderRow(MfgWorkOrder $wo, TechnicalDrawingRevision $revision, array $version): array
+    {
+        $files = app(TechnicalDrawingApplicationService::class)->presentFiles($revision);
+        foreach ($files as &$file) {
+            $base = '/api/v1/erp/production/technical-drawings/revisions/'.$revision->id;
+            $query = '?work_order_id='.$wo->id.'&file_id='.$file['id'];
+            $file['can_download'] = true;
+            $file['download_url'] = $base.'/download'.$query;
+            $file['preview_url'] = in_array($file['mime_type'], ['application/pdf', 'image/jpeg', 'image/png', 'image/webp', 'image/gif'], true) ? $base.'/preview'.$query : null;
+        }
+        unset($file);
+        return ['id' => (int) $revision->id, 'revision_id' => (int) $revision->id, 'drawing_id' => (int) $revision->drawing_id,
+            'drawing_no' => $version['drawing_no'] ?? $revision->drawing->drawing_no, 'drawing_name' => $version['drawing_name'] ?? $revision->drawing->drawing_name,
+            'version_no' => (int) $revision->version_no, 'designer_name' => $version['designer_name'] ?? $revision->designer_name,
+            'confirmed_at' => $version['confirmed_at'], 'status_label' => '客户确认 · 沿用版本', 'inherited_from_order' => true,
+            'work_order_id' => (int) $wo->id, 'source_type' => 'work_order', 'source_id' => (int) $wo->id, 'source_no' => $wo->work_order_no,
+            'can_download' => true, 'can_confirm' => false, 'files' => $files, 'file_count' => count($files),
+            'original_name' => $files[0]['original_name'], 'mime_type' => $files[0]['mime_type']];
+    }
+
+    public function workOrderDrawingCount(MfgWorkOrder $wo, ?int $excludedFileId = null): int
+    {
+        $files = MfgDrawing::query()->where('work_order_id', $wo->id)->where('status', 'active')
+            ->when($excludedFileId, fn ($query) => $query->where('id', '!=', $excludedFileId))->pluck('id');
+        $represented = TechnicalDrawingUsage::query()->where('source_type', 'work_order')->where('source_id', $wo->id)
+            ->where('active', true)->whereIn('source_file_id', $files)->pluck('revision_id')->all();
+        return $files->count() + count(array_diff(array_keys($this->confirmedVersionsForWorkOrder($wo)), $represented));
+    }
+
     public function forFile(string $type, int $fileId): ?array
     {
         $usage = TechnicalDrawingUsage::query()->with('revision.drawing')->where('source_type', $type)->where('source_file_id', $fileId)->orderByDesc('active')->orderByDesc('id')->first();
@@ -175,11 +303,13 @@ final class TechnicalDrawingSourceService
     private function present(TechnicalDrawingUsage $usage): array
     {
         $revision = $usage->revision;
+        $files = app(TechnicalDrawingApplicationService::class)->presentFiles($revision, (int) $usage->id);
         return ['usage_id' => $usage->id, 'drawing_id' => $usage->drawing_id, 'revision_id' => $usage->revision_id,
             'drawing_no' => $revision->drawing->drawing_no, 'drawing_name' => $revision->drawing->drawing_name, 'drawing_type' => $revision->drawing->drawing_type,
             'version_no' => $revision->version_no, 'designer_name' => $revision->designer_name, 'completed_date' => $revision->completed_date?->format('Y-m-d'),
             'confirmed_at' => $revision->confirmed_at?->toDateTimeString(), 'source_file_id' => $usage->source_file_id, 'position_uid' => $usage->position_uid,
             'original_name' => $revision->original_name, 'mime_type' => $revision->mime_type, 'can_download' => true,
+            'files' => $files, 'file_count' => count($files), 'preview_url' => $files[0]['preview_url'],
             'download_url' => $this->fileUrl($revision->id, $usage->id), 'url' => $this->fileUrl($revision->id, $usage->id)];
     }
 
@@ -256,9 +386,10 @@ final class TechnicalDrawingSourceService
             $drawing = MfgDrawing::query()->whereKey($copy->source_file_id)->first();
             if (! $drawing) {
                 $revision = $usage->revision;
+                $primary = app(TechnicalDrawingApplicationService::class)->revisionFile($revision);
                 $drawing = MfgDrawing::create(['work_order_id' => $wo->id, 'drawing_name' => $revision->drawing->drawing_name, 'version_no' => $revision->version_no,
                     'original_name' => $revision->original_name, 'storage_disk' => $revision->storage_disk, 'storage_path' => $revision->storage_path,
-                    'mime_type' => $revision->mime_type, 'file_size' => $revision->file_size, 'file_hash' => $revision->file_hash, 'status' => 'active',
+                    'mime_type' => $revision->mime_type, 'file_size' => $revision->file_size, 'file_hash' => $primary['file_hash'], 'status' => 'active',
                     'uploaded_by_legacy_id' => $wo->created_by_legacy_id, 'uploaded_by' => $wo->created_by_name, 'uploaded_at' => now()]);
                 $copy->update(['source_file_id' => $drawing->id, 'source_file_key' => 'work_order:'.$wo->id.':'.$drawing->id]);
                 $drawing->update(['url' => $this->fileUrl($copy->revision_id, $copy->id)]);

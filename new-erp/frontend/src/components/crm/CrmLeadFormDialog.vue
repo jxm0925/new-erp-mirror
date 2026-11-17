@@ -58,6 +58,26 @@
             <el-form-item label="详细地址">
               <el-input v-model.trim="form.detail_address" maxlength="500" placeholder="街道、门牌或项目现场地址（选填）" />
             </el-form-item>
+            <el-form-item label="客户等级">
+              <el-select popper-class="crm-select-popper" v-model="form.customer_grade" filterable allow-create clearable placeholder="未填写" @change="$set(profileEdited, 'customer_grade', true)">
+                <el-option v-for="item in profileOptions.customer_grade" :key="item" :label="item" :value="item" />
+              </el-select>
+            </el-form-item>
+            <el-form-item label="行业">
+              <el-select popper-class="crm-select-popper" v-model="form.industry" filterable allow-create clearable placeholder="未填写" @change="$set(profileEdited, 'industry', true)">
+                <el-option v-for="item in profileOptions.industry" :key="item" :label="item" :value="item" />
+              </el-select>
+            </el-form-item>
+            <el-form-item label="年采购力">
+              <el-select popper-class="crm-select-popper" v-model="form.purchasing_power" clearable placeholder="未填写" @change="$set(profileEdited, 'purchasing_power', true)">
+                <el-option v-for="item in profileOptions.purchasing_power" :key="item" :label="item" :value="item" />
+              </el-select>
+            </el-form-item>
+            <el-form-item label="业务线">
+              <el-select popper-class="crm-select-popper" v-model="form.customer_business_lines" multiple filterable allow-create default-first-option placeholder="未填写，可多选" @change="$set(profileEdited, 'customer_business_lines', true)">
+                <el-option v-for="item in profileOptions.business_lines" :key="item" :label="item" :value="item" />
+              </el-select>
+            </el-form-item>
           </section>
 
           <section class="crm-box form-col-box">
@@ -95,7 +115,7 @@
                 <el-option v-for="item in metadata.customer_tags || []" :key="item" :value="item" :label="item" />
               </el-select>
             </el-form-item>
-            <el-form-item label="自定义标签">
+            <el-form-item v-if="canEditPersonalTags" label="个人标签">
               <el-select popper-class="crm-select-popper" v-model="form.custom_tags" multiple filterable allow-create default-first-option placeholder="个人跟进标记，可输入回车创建">
                 <el-option v-for="item in metadata.custom_tags || []" :key="item" :value="item" :label="item" />
               </el-select>
@@ -105,11 +125,6 @@
                 <el-radio :label="true">是</el-radio>
                 <el-radio :label="false">否</el-radio>
               </el-radio-group>
-            </el-form-item>
-            <el-form-item label="业务线">
-              <el-select popper-class="crm-select-popper" v-model="form.business_lines" multiple filterable allow-create default-first-option placeholder="可多选业务线">
-                <el-option v-for="item in metadata.business_lines || []" :key="item" :value="item" :label="item" />
-              </el-select>
             </el-form-item>
             <el-form-item label="客户池">
               <el-select popper-class="crm-select-popper" v-model="form.customer_pool" clearable placeholder="选择线索所在客户池">
@@ -249,7 +264,7 @@
         </el-table-column>
         <el-table-column label="操作" min-width="140">
           <template slot-scope="{row}">
-            <el-button v-if="row.visible !== false && !duplicates.reviewRequired" size="mini" type="success" :loading="saving" @click="chooseDuplicate(row)">是这个客户</el-button>
+            <el-button v-if="row.visible !== false && !duplicates.reviewRequired" size="mini" type="success" :loading="saving" :disabled="row.selectable === false" @click="chooseDuplicate(row)">是这个客户</el-button>
             <el-button v-else type="text" @click="duplicates.reviewMode = true">申请核实</el-button>
           </template>
         </el-table-column>
@@ -274,11 +289,19 @@
 <script>
 import { getCrmLeadMetadata, getCrmLead, listCrmLeads, saveCrmLead, crmDate, crmError } from '@/api/erp/crm'
 import { erpDateTime } from '@/utils/dateTime'
+import { customerProfileOptions } from '@/utils/customerProfileOptions'
 import CustomerRegionSelect from '@/components/sales/CustomerRegionSelect.vue'
 import CustomerPicker from '@/components/sales/CustomerPicker.vue'
 import CrmAttachments from './CrmAttachments.vue'
 import CrmFollowupDialog from './CrmFollowupDialog.vue'
 import '@/styles/crm.css'
+
+const customerProfileSourceFields = {
+  customer_grade: 'customer_grade',
+  industry: 'industry',
+  purchasing_power: 'purchasing_power',
+  customer_business_lines: 'business_lines'
+}
 
 const blank = () => ({
   id: null,
@@ -287,6 +310,9 @@ const blank = () => ({
   customer_id: null,
   customer_kind: 'individual',
   customer_name: '',
+  customer_grade: '',
+  industry: '',
+  purchasing_power: '',
   contact_id: null,
   contact_name: '',
   contact_role: '',
@@ -308,7 +334,7 @@ const blank = () => ({
   customer_tags: [],
   custom_tags: [],
   is_new_inquiry: true,
-  business_lines: [],
+  customer_business_lines: [],
   customer_pool: '',
   expected_amount: null,
   currency: 'CNY',
@@ -333,6 +359,8 @@ export default {
     session: 0,
     form: blank(),
     metadata: {},
+    profileOptions: customerProfileOptions,
+    profileEdited: {},
     platforms: [],
     attachments: [],
     loadError: '',
@@ -349,13 +377,15 @@ export default {
     online() { return this.form.source_channel === '线上平台' || !!this.form.platform_legacy_id },
     platform() { return this.platforms.find(item => item.id === this.form.platform_legacy_id) || {} },
     scopeLabel() { return ({ platform: '按平台识别', shop: '按店铺识别' })[this.platform.buyer_identity_scope] || '未设置识别方式' },
-    identityLocked() { return !!this.form.id && this.form.status !== 'draft' }
+    identityLocked() { return !!this.form.id && this.form.status !== 'draft' },
+    canEditPersonalTags() { return !this.form.id || !!(this.form.abilities && this.form.abilities.edit_custom_tags) }
   },
   beforeDestroy() { this.session += 1 },
   methods: {
     async open(id) {
       const session = ++this.session
       this.form = blank()
+      this.profileEdited = {}
       this.attachments = []
       this.visible = true
       this.loading = true
@@ -372,6 +402,11 @@ export default {
         this.platforms = this.metadata.platforms || []
         if (lead) {
           this.form = { ...blank(), ...(lead.data.data || lead.data) }
+          if (!this.form.customer_id) {
+            Object.keys(customerProfileSourceFields).forEach(field => {
+              if (Array.isArray(this.form[field]) ? this.form[field].length : this.form[field]) this.$set(this.profileEdited, field, true)
+            })
+          }
           this.form.next_contact_at = erpDateTime(this.form.next_contact_at)
           this.attachments = [...(this.form.attachments || [])]
         } else {
@@ -409,12 +444,27 @@ export default {
       if (this.$refs.follow) this.$refs.follow.close()
     },
     unlinkCustomer() {
+      Object.keys(customerProfileSourceFields).forEach(field => {
+        if (!this.profileEdited[field]) this.form[field] = field === 'customer_business_lines' ? [] : ''
+      })
       this.form.customer_id = null
       this.resetLeadChoice()
     },
+    applyCustomerProfile(row) {
+      if (this.form.customer_id === row.id) return
+      Object.keys(customerProfileSourceFields).forEach(field => {
+        // 本次咨询手填的画像不随客户切换覆盖；仅替换自动带入的资料。
+        if (!this.profileEdited[field]) {
+          const value = row[customerProfileSourceFields[field]]
+          this.form[field] = field === 'customer_business_lines' ? [...(value || [])] : (value || '')
+        }
+      })
+    },
     selectCustomer(row) {
-      if (this.identityLocked || this.saving) return
+      if (this.identityLocked || this.saving || row.visible === false || row.selectable === false) return
+      if (this.form.customer_id === row.id) return this.loadExistingLeads(1)
       this.resetLeadChoice()
+      this.applyCustomerProfile(row)
       this.form.customer_id = row.id
       this.form.customer_kind = row.customer_kind
       this.form.customer_name = row.customer_name
@@ -478,6 +528,7 @@ export default {
       this.$emit('saved')
     },
     async chooseDuplicate(row) {
+      if (row.visible === false || row.selectable === false || this.saving) return
       const session = this.session
       let confirmation = {}
       if (this.duplicates.rows.some(item => item.id !== row.id) && this.duplicates.requiresConfirmation) {
@@ -496,6 +547,7 @@ export default {
       }
       if (session !== this.session) return
       this.resetLeadChoice()
+      this.applyCustomerProfile(row)
       this.form.customer_id = row.id
       this.duplicates.visible = false
       return this.save('submit', confirmation)
@@ -531,7 +583,9 @@ export default {
       this.saving = true
       this.submissionExtra = {}
       try {
-        const { data } = await saveCrmLead({ ...this.form, ...extra, mode, new_demand_confirmed: mode === 'submit' && !this.identityLocked && !!this.form.customer_id && this.confirmedCustomerId === this.form.customer_id, attachment_ids: this.attachments.map(file => file.id) })
+        const payload = { ...this.form, ...extra, mode, new_demand_confirmed: mode === 'submit' && !this.identityLocked && !!this.form.customer_id && this.confirmedCustomerId === this.form.customer_id, attachment_ids: this.attachments.map(file => file.id) }
+        if (!this.canEditPersonalTags) delete payload.custom_tags
+        const { data } = await saveCrmLead(payload)
         if (session !== this.session) return
         this.visible = false
         this.duplicates.visible = false

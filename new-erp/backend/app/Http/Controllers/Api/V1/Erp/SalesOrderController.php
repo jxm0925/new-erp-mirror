@@ -513,10 +513,13 @@ class SalesOrderController extends Controller
         abort_unless($frozen && !empty($frozen['confirmed_at']), 404, '该订单明细未关联此客户确认版本。');
         // 下载只认本行冻结的不可变版本，不追来源商机现在可见的文件或最新图纸。
         $revision = \App\Models\Erp\TechnicalDrawingRevision::query()->findOrFail((int) $frozen['revision_id']);
-        if ($preview) abort_unless(in_array($revision->mime_type, ['application/pdf', 'image/jpeg', 'image/png', 'image/webp'], true), 422, '此图纸格式请下载后查看。');
-        abort_unless(Storage::disk($revision->storage_disk)->exists($revision->storage_path), 404, '图纸文件不存在。');
-        return Storage::disk($revision->storage_disk)->response($revision->storage_path, $revision->original_name,
-            ['Content-Type' => $revision->mime_type ?: 'application/octet-stream'], $preview ? 'inline' : 'attachment');
+        $params = $request->validate(['file_id' => 'nullable|integer|min:0']);
+        $file = app(\App\Services\Erp\TechnicalDrawingApplicationService::class)->revisionFile($revision, isset($params['file_id']) ? (int) $params['file_id'] : null);
+        if ($preview) abort_unless(in_array($file['mime_type'], ['application/pdf', 'image/jpeg', 'image/png', 'image/webp'], true), 422, '此图纸格式请下载后查看。');
+        $disk = Storage::disk($file['storage_disk']);
+        abort_unless($disk->exists($file['storage_path']), 404, '图纸文件不存在。');
+        return $disk->response($file['storage_path'], $file['original_name'],
+            ['Content-Type' => $file['mime_type'] ?: 'application/octet-stream', 'X-Content-Type-Options' => 'nosniff'], $preview ? 'inline' : 'attachment');
     }
 
     private function visibleAttachment(Request $request, int $id): SalesOrderAttachment

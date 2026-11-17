@@ -18,7 +18,7 @@ final class SalesOrderConfirmedDrawingService
         'revision_id', 'usage_id', 'drawing_id', 'drawing_no', 'drawing_name', 'version_no',
         'designer_name', 'completed_date', 'confirmed_at', 'confirmed_by_legacy_id',
         'confirmed_by_name', 'confirmation_note', 'confirmation_remark',
-        'original_name', 'mime_type', 'file_size',
+        'original_name', 'mime_type', 'file_size', 'files', 'file_count',
     ];
 
     public function ids(array $line): array
@@ -67,6 +67,7 @@ final class SalesOrderConfirmedDrawingService
                     $opportunityId = $order->crmOpportunityOrder?->opportunity_id;
                     $version = app(CrmDrawingRequestService::class)->confirmedForOrder($id, $actor, $customerId, $opportunityId ? (int) $opportunityId : null, true);
                     abort_unless((int) ($version['revision_id'] ?? 0) > 0 && !empty($version['confirmed_at']), 422, '所选图纸还没有明确的客户确认版本。');
+                    $version['files'] = array_map(fn ($file) => Arr::only($file, ['id', 'sort', 'file_type', 'file_type_label', 'original_name', 'mime_type', 'file_size']), $version['files']);
                     $versions[] = Arr::only(array_replace($version, ['request_revision_id' => $id, 'customer_id' => $customerId]), self::PUBLIC_FIELDS);
                 }
             }

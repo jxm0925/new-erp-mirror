@@ -23,8 +23,9 @@ final class CrmLeadApplicationService
     private const DELEGATED_OWNER_STATUSES = ['active', 'converted', 'invalid'];
     public const EDITABLE = [
         'customer_id', 'customer_kind', 'customer_name', 'contact_id', 'contact_name', 'contact_role', 'mobile', 'contact_value2', 'wechat', 'email', 'credit_code',
+        'customer_grade', 'industry', 'purchasing_power', 'customer_business_lines',
         'region_id', 'province', 'city', 'district', 'detail_address', 'full_address', 'trade_type', 'department_legacy_id', 'source_channel', 'lead_type',
-        'customer_tags', 'custom_tags', 'is_new_inquiry', 'business_lines', 'customer_pool', 'expected_amount', 'currency', 'content', 'demand_summary',
+        'customer_tags', 'custom_tags', 'is_new_inquiry', 'customer_pool', 'expected_amount', 'currency', 'content', 'demand_summary',
         'platform_legacy_id', 'platform_buyer_id', 'next_contact_at', 'next_plan',
     ];
 
@@ -120,8 +121,10 @@ final class CrmLeadApplicationService
         $handles = $own || $delegated;
         $receives = (int) $lead->pending_user_legacy_id === (int) $actor->legacy_id || $delegated;
         $manages = $handles || $scope('assign');
+        $editable = $can('edit') && ($draft || ($lead->status === 'active' && $manages));
         return [
-            'edit' => $can('edit') && ($draft || ($lead->status === 'active' && $manages)),
+            'edit' => $editable,
+            'edit_custom_tags' => $editable && (int) $lead->created_by_legacy_id === (int) $actor->legacy_id,
             'assign' => $can('assign') && in_array($lead->status, ['pending_assignment', 'public_pool'], true) && $scope('assign'),
             'accept' => $can('accept') && $lead->status === 'pending_acceptance' && $receives,
             'return' => $can('return') && $lead->status === 'pending_acceptance' && $receives,
@@ -140,6 +143,7 @@ final class CrmLeadApplicationService
     {
         $row = $lead->toArray();
         unset($row['customer_input_snapshot'], $row['legacy_payload']);
+        if ((int) $lead->created_by_legacy_id !== (int) $actor->legacy_id) $row['custom_tags'] = [];
         if ($lead->status === 'pending_review' && (int) $lead->created_by_legacy_id !== (int) $actor->legacy_id) {
             foreach (['mobile', 'contact_value2'] as $field) if ($row[$field]) $row[$field] = mb_strlen($row[$field]) >= 7 ? mb_substr($row[$field], 0, 3).'****'.mb_substr($row[$field], -4) : '***';
             $row['wechat'] = $row['wechat'] ? '***' : null;
@@ -192,6 +196,8 @@ final class CrmLeadApplicationService
             }
             $before = $id ? $this->snapshot($lead) : null;
             $values = array_intersect_key($data, array_flip(self::EDITABLE));
+            // 共享线索不会共享创建人的个人标签，编辑时的空数组也不能清除他人的值。
+            if ($id && (int) $lead->created_by_legacy_id !== (int) $actor->legacy_id) unset($values['custom_tags']);
             if ($id && $lead->status !== 'draft') {
                 // 已正式关联的客户/渠道/所属部门不通过编辑重新归属，改动需走转交或核实动作。
                 foreach (['customer_id', 'department_legacy_id', 'source_channel', 'platform_legacy_id', 'platform_buyer_id'] as $field) {
@@ -442,7 +448,8 @@ final class CrmLeadApplicationService
             $address = $lead->full_address || $lead->detail_address ? [['full_address' => $lead->full_address ?: trim(implode('', [$lead->province, $lead->city, $lead->district, $lead->detail_address])),
                 'province' => $lead->province, 'city' => $lead->city, 'district' => $lead->district, 'detail_address' => $lead->detail_address ?: $lead->full_address,
                 'region_id' => $lead->region_id, 'receiver_name' => $contact['contact_name'], 'receiver_phone' => $lead->mobile, 'is_default' => true, 'status' => 'enabled']] : [];
-            $customer = $this->customerApp->create($lead->only(['customer_name', 'customer_kind', 'credit_code', 'region_id', 'business_lines']) + [
+            $customer = $this->customerApp->create($lead->only(['customer_name', 'customer_kind', 'credit_code', 'region_id', 'customer_grade', 'industry', 'purchasing_power']) + [
+                'business_lines' => $lead->customer_business_lines,
                 'status' => 'potential', 'contacts' => [$contact], 'addresses' => $address,
                 'duplicate_confirmed' => $data['duplicate_confirmed'] ?? false, 'duplicate_reason' => $data['duplicate_reason'] ?? null,
             ], $actor, null, null, $selfEntry, $selfEntry ? (int) $lead->created_by_legacy_id : null);

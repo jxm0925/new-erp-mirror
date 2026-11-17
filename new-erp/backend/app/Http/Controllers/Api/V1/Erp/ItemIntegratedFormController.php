@@ -61,6 +61,7 @@ class ItemIntegratedFormController extends Controller
             'item' => 'required|array',
             'item.item_code' => ['required', 'string', 'max:120', Rule::unique('erp_items', 'item_code')->ignore($id)],
             'item.item_name' => 'required|string|max:160',
+            'item.image_url' => 'nullable|url:http,https|max:1024',
             'item.item_type' => 'required|in:finished_product,semi_finished,raw_material,packaging,service,office_consumable',
             'item.management_scope' => 'sometimes|required|in:factory,office',
             'item.category_id' => 'required|integer|exists:erp_item_categories,id',

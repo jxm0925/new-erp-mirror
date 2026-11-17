@@ -161,12 +161,14 @@ class SalesCustomerController extends Controller
         $relation = $this->access->relation($customer, $user);
         if ($relation === null) return $this->access->masked($customer) + ['selectable' => false];
         $abilities = $this->access->abilities($customer, $user);
-        return $customer->toArray() + [
+        $row = $customer->toArray() + [
             'visible' => true, 'relation' => $relation,
             'abilities' => $abilities,
             'selectable' => $abilities['select'] && in_array($customer->status, ['enabled', 'potential'], true),
             'owner_department_name' => $this->access->departmentName($customer->owner_department_legacy_id),
         ];
+        if ($picker && !$row['selectable']) unset($row['customer_grade'], $row['industry'], $row['purchasing_power'], $row['business_lines']);
+        return $row;
     }
 
     private function tabCounts(object $user): array

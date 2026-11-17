@@ -4,6 +4,7 @@ const api = createErpApi()
 
 export const listEntity = (entity, params) => api.get(`/v1/erp/master/${entity}`, { params })
 export const getEntity = (entity, id, params) => api.get(`/v1/erp/master/${entity}/${id}`, { params })
+export const uploadItemImage = form => api.post('/v1/erp/master/items/image-upload', form)
 export const uploadProductImage = form => api.post('/v1/erp/master/products/image-upload', form, { headers: { 'Content-Type': 'multipart/form-data' } })
 export const uploadSkuImage = form => api.post('/v1/erp/master/skus/image-upload', form, { headers: { 'Content-Type': 'multipart/form-data' } })
 export const saveEntity = (entity, data) => data.id

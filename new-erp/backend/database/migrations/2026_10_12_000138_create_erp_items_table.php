@@ -61,6 +61,7 @@ CREATE TABLE `erp_items` (
   `material_management_mode` varchar(16) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'quantity',
   `cutting_mode` varchar(16) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `manufacturing_strategy` varchar(20) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'unspecified',
+  `image_url` varchar(1024) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   PRIMARY KEY (`id`),
   UNIQUE KEY `erp_items_item_code_unique` (`item_code`),
   KEY `erp_items_category_id_foreign` (`category_id`),

@@ -54,7 +54,7 @@ final class CrmDashboardScopeService
         $query = CrmLead::query();
         $this->leadAccess->applyVisible($query, $actor);
         $this->attribution($query, $filters, 'owner_legacy_id', 'department_legacy_id');
-        if (!empty($filters['business_line'])) $query->whereJsonContains('business_lines', $filters['business_line']);
+        if (!empty($filters['business_line'])) $query->whereJsonContains('customer_business_lines', $filters['business_line']);
         if (!empty($filters['currency'])) $query->where('currency', $filters['currency']);
         return $query;
     }
@@ -158,7 +158,7 @@ final class CrmDashboardScopeService
             $leads = $this->leads($actor);
             $opportunities = $this->opportunities($actor);
             $exists = ($customers && $customers->whereJsonContains('business_lines', $line)->exists())
-                || ($leads && $leads->whereJsonContains('business_lines', $line)->exists())
+                || ($leads && $leads->whereJsonContains('customer_business_lines', $line)->exists())
                 || ($opportunities && $opportunities->where('business_line', $line)->exists());
             if (!$exists) throw ValidationException::withMessages(['business_line' => '所选业务线不存在或已不在当前可见范围内。']);
         }

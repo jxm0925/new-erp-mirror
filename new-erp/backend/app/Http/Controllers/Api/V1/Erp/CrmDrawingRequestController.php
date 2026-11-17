@@ -18,7 +18,7 @@ final class CrmDrawingRequestController extends Controller
 
     public function index(Request $request)
     {
-        $data = $request->validate($this->selectorRules() + $this->subjectRules() + ['tab' => 'nullable|in:mine', 'status' => 'nullable|in:pending,delivered,confirmed']);
+        $data = $request->validate($this->selectorRules() + $this->subjectRules() + ['tab' => 'nullable|in:mine', 'grouped' => 'nullable|boolean', 'status' => 'nullable|in:todo,pending,changes_requested,delivered,confirmed']);
         return response()->json($this->service->paginate($data, $this->actor($request)));
     }
 
@@ -29,7 +29,7 @@ final class CrmDrawingRequestController extends Controller
 
     public function references(Request $request)
     {
-        return response()->json($this->service->references($request->validate($this->selectorRules() + $this->subjectRules(true)), $this->actor($request)));
+        return response()->json($this->service->references($request->validate($this->selectorRules() + $this->subjectRules(true) + ['request_id' => 'nullable|integer|min:1']), $this->actor($request)));
     }
 
     public function confirmedRevisions(Request $request)
@@ -47,6 +47,12 @@ final class CrmDrawingRequestController extends Controller
     public function store(Request $request) { return $this->save($request); }
     public function update(Request $request, int $id) { return $this->save($request, $id); }
 
+    public function destroy(Request $request, int $id)
+    {
+        $row = $this->service->remove($id, $request->validate(['version' => 'required|integer|min:1']), $this->actor($request));
+        return response()->json(['message' => '图纸需求已删除', 'data' => $row->only(['id', 'status', 'version'])]);
+    }
+
     private function save(Request $request, ?int $id = null)
     {
         $actor = $this->actor($request);
@@ -56,7 +62,8 @@ final class CrmDrawingRequestController extends Controller
 
     public function deliver(Request $request, int $id)
     {
-        return response()->json(['message' => '技术交图已保存', 'data' => $this->service->deliver($id, $request->except('file'), $this->actor($request), $request->file('file'))], 201);
+        abort_if($request->file('file') !== null && $request->file('files') !== null, 422, '图纸文件请使用单文件或整套上传方式之一。');
+        return response()->json(['message' => '技术交图已保存', 'data' => $this->service->deliver($id, $request->except(['file', 'files']), $this->actor($request), $request->file('files') ?? $request->file('file'))], 201);
     }
 
     public function confirm(Request $request, int $id, int $revisionId)
@@ -65,6 +72,14 @@ final class CrmDrawingRequestController extends Controller
         $actor = $this->actor($request);
         $this->service->confirm($id, $revisionId, $data, $actor);
         return response()->json(['message' => '已登记客户确认的图纸版本', 'data' => $this->service->present($this->service->visible($id, $actor), $actor)]);
+    }
+
+    public function returnRevision(Request $request, int $id, int $revisionId)
+    {
+        $data = $request->validate(['version' => 'required|integer|min:1', 'reason' => 'required|string|max:1000']);
+        $actor = $this->actor($request);
+        $this->service->returnRevision($id, $revisionId, $data, $actor);
+        return response()->json(['message' => '修改意见已退回承接技术', 'data' => $this->service->present($this->service->visible($id, $actor), $actor)]);
     }
 
     public function downloadReference(Request $request, int $id, int $attachmentId)

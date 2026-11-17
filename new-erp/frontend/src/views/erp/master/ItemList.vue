@@ -335,7 +335,8 @@
       <div v-if="selected.id" class="modal-detail-content">
         <!-- 弹窗顶栏摘要 -->
         <div class="modal-summary-banner">
-          <div class="banner-icon"><i class="el-icon-coin" /></div>
+          <el-image v-if="selected.image_url" class="banner-icon" :src="selected.image_url" :alt="selected.item_name" fit="contain" :preview-src-list="[selected.image_url]" />
+          <div v-else class="banner-icon"><i class="el-icon-coin" /></div>
           <div class="banner-main">
             <div class="banner-title-line">
               <h2>{{ selected.item_name }}</h2>

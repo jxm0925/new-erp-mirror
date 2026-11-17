@@ -372,23 +372,17 @@
           <tbody>
             <tr v-for="(r, i) in editRows" :key="r.uid">
               <td>
-                <el-select
-                  v-model="r.component_item_id"
+                <el-input
+                  :value="itemLabel(r)"
                   size="mini"
-                  filterable
-                  remote
-                  :remote-method="k => searchItems(k, r)"
-                  :loading="r.loading"
-                  placeholder="搜索物料编码 / 名称"
-                  @focus="!r.options.length && searchItems('', r)"
-                >
-                  <el-option
-                    v-for="o in r.options"
-                    :key="o.id"
-                    :label="o.item_name + (o.item_code ? ' (' + o.item_code + ')' : '')"
-                    :value="o.id"
-                  />
-                </el-select>
+                  readonly
+                  :disabled="!editable || saving"
+                  placeholder="选择组成物料"
+                  suffix-icon="el-icon-search"
+                  @click.native="openItemPicker(r)"
+                  @keydown.native.enter.prevent="openItemPicker(r)"
+                  @keydown.native.space.prevent="openItemPicker(r)"
+                />
                 <div v-if="r.base_line_id" class="sub-indicator text-muted">基准物料：{{ r.base_name }}</div>
                 <div v-else class="sub-indicator text-success">定制新增物料</div>
               </td>
@@ -415,12 +409,15 @@
         <el-button size="small" type="success" class="btn-theme-create" :loading="saving" @click="saveBom(true)">保存并确认BOM</el-button>
       </span>
     </el-dialog>
+    <bom-item-picker :picker="itemPicker" :categories="itemCategories" :can-edit="editable && !saving" :current-single-picked-item-id="itemPickerRow && itemPickerRow.component_item_id" @load="loadItemPicker" @select="selectBomItem" />
     <technical-drawing-register-dialog ref="drawingRegister" @saved="load" /><technical-drawing-detail-dialog ref="drawingDetail" @changed="load" /><technical-drawing-file-dialog ref="drawingFile" />
   </div>
 </template>
 
 <script>
 import unitOptionsMixin from './unit-options-mixin'
+import BomItemPicker from '@/components/bom/BomItemPicker.vue'
+import { getItemCategoryTree } from '@/api/erp/master'
 import TechnicalDrawingSourcePanel from '@/components/technical-drawings/TechnicalDrawingSourcePanel.vue'
 import TechnicalDrawingRegisterDialog from '@/components/technical-drawings/TechnicalDrawingRegisterDialog.vue'
 import TechnicalDrawingDetailDialog from '@/components/technical-drawings/TechnicalDrawingDetailDialog.vue'
@@ -434,7 +431,7 @@ let uid = 0
 
 export default {
   name: 'ProductionTechDetail',
-  components: { TechnicalDrawingSourcePanel, TechnicalDrawingRegisterDialog, TechnicalDrawingDetailDialog, TechnicalDrawingFileDialog, TechnicalDrawingThumbnail },
+  components: { BomItemPicker, TechnicalDrawingSourcePanel, TechnicalDrawingRegisterDialog, TechnicalDrawingDetailDialog, TechnicalDrawingFileDialog, TechnicalDrawingThumbnail },
   mixins: [unitOptionsMixin],
   data: () => ({
     CHANGE,
@@ -448,6 +445,10 @@ export default {
     showHistory: false,
     replaceTarget: null,
     bomDialog: false,
+    itemPicker: { visible: false, mode: 'component', multiple: false, selected: [], keyword: '', category_id: '', item_type: '', rows: [], page: 1, perPage: 10, total: 0, loading: false },
+    itemPickerRow: null,
+    itemCategories: [],
+    itemPickerSequence: 0,
     editRows: [],
     stdRows: []
   }),
@@ -476,7 +477,11 @@ export default {
       return rows.slice().sort((a, b) => order[a.change] - order[b.change])
     }
   },
-  watch: { '$route.params.id'() { this.load() } },
+  watch: {
+    '$route.params.id'() { this.bomDialog = false; this.load() },
+    bomDialog(visible) { if (!visible) { this.itemPicker.visible = false; this.itemPickerRow = null; this.itemPickerSequence += 1 } }
+  },
+  beforeDestroy() { this.itemPickerSequence += 1 },
   created() { this.load() },
   methods: {
     qty,
@@ -672,8 +677,8 @@ export default {
         fixed_qty: r.fixed_qty,
         target_routing_operation_id: r.target_routing_operation_id || null,
         remark: r.remark || '',
-        options: [{ id: r.component_item_id, item_name: r.component_item_name, item_code: r.component_item_code }],
-        loading: false
+        item_name: r.component_item_name,
+        item_code: r.component_item_code
       }))
       this.bomDialog = true
     },
@@ -688,22 +693,44 @@ export default {
         fixed_qty: 0,
         target_routing_operation_id: null,
         remark: '',
-        options: [],
-        loading: false
+        item_name: '',
+        item_code: ''
       })
     },
-    async searchItems(keyword, row) {
-      row.loading = true
-      try {
-        const { data } = await searchProductionOptions('items', { keyword: keyword || undefined, purpose: 'routing', per_page: 20 })
-        const list = (data.data || []).map(o => ({ id: o.id, item_name: o.item_name, item_code: o.item_code }))
-        const current = row.options.find(o => o.id === row.component_item_id)
-        row.options = current && !list.some(o => o.id === current.id) ? [current, ...list] : list
-      } catch (e) {
-        this.$message.error(errorText(e, '物料列表加载失败'))
-      } finally {
-        row.loading = false
+    itemLabel(item) { return [item.item_code, item.item_name].filter(Boolean).join(' / ') },
+    async openItemPicker(row) {
+      if (!this.editable || this.saving) return
+      this.itemPickerRow = row
+      Object.assign(this.itemPicker, { visible: true, rows: [], total: 0, page: 1, perPage: 10 })
+      this.loadItemPicker()
+      if (!this.itemCategories.length && this.$can('item_category.view')) {
+        try {
+          const { data } = await getItemCategoryTree({ management_scope: 'factory' })
+          this.itemCategories = data.data || []
+        } catch (e) { this.$message.error(errorText(e, '物料分类加载失败')) }
       }
+    },
+    async loadItemPicker() {
+      const sequence = ++this.itemPickerSequence
+      this.itemPicker.loading = true
+      try {
+        const { keyword, category_id, item_type, page, perPage } = this.itemPicker
+        const { data } = await searchProductionOptions('items', { keyword: keyword || undefined, category_id: category_id || undefined, item_type: item_type || undefined, page, per_page: perPage, purpose: 'routing' })
+        if (sequence !== this.itemPickerSequence || !this.itemPicker.visible) return
+        this.itemPicker.rows = data.data || []
+        this.itemPicker.total = data.total || 0
+      } catch (e) {
+        if (sequence !== this.itemPickerSequence || !this.itemPicker.visible) return
+        this.itemPicker.rows = []
+        this.itemPicker.total = 0
+        this.$message.error(errorText(e, '物料列表加载失败'))
+      } finally { if (sequence === this.itemPickerSequence) this.itemPicker.loading = false }
+    },
+    selectBomItem(item) {
+      const row = this.itemPickerRow
+      if (!this.editable || this.saving || !row || !this.editRows.includes(row)) return
+      Object.assign(row, { component_item_id: item.id, item_name: item.item_name, item_code: item.item_code })
+      this.itemPicker.visible = false
     },
     async saveBom(confirmed) {
       const bad = this.editRows.findIndex(r => !r.component_item_id || !(Number(r.qty) > 0))

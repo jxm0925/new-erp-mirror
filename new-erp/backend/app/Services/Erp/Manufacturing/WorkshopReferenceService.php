@@ -2,7 +2,8 @@
 
 namespace App\Services\Erp\Manufacturing;
 
-use App\Models\Erp\{MfgDrawing, MfgWorkOrder, MfgWorkOrderLink, MfgWorkOrderTech, SalesOrderAttachment, SalesOrderLine, ShipmentPackingOperation};
+use App\Models\Erp\{MfgDrawing, MfgWorkOrder, MfgWorkOrderLink, MfgWorkOrderTech, SalesOrderAttachment, SalesOrderLine, ShipmentPackingOperation, TechnicalDrawingRevision};
+use App\Services\Erp\TechnicalDrawingSourceService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 
@@ -31,12 +32,35 @@ class WorkshopReferenceService
             }
             $tech = MfgWorkOrderTech::query()->where('work_order_id', $current->id)->first();
             $this->note($result, '技术说明', $tech?->remark, $source);
-            foreach (MfgDrawing::query()->where('work_order_id', $current->id)->where('status', 'active')->orderBy('id')->get() as $drawing) {
+            $drawings = MfgDrawing::query()->where('work_order_id', $current->id)->where('status', 'active')->orderBy('id')->get();
+            $versions = $drawings->isEmpty() ? [] : array_column(app(TechnicalDrawingSourceService::class)->forSource('work_order', $current->id), null, 'source_file_id');
+            foreach ($drawings as $drawing) {
+                $version = $versions[$drawing->id] ?? null;
+                if (!empty($version['files'])) {
+                    foreach ($version['files'] as $file) {
+                        $this->file($result, ['id' => 'drawing-'.$drawing->id.'-'.$file['id'], 'name' => $file['original_name'],
+                            'original_name' => $file['original_name'], 'url' => $file['download_url'], 'mime_type' => $file['mime_type'],
+                            'version' => $version['version_no'], 'updated_at' => $drawing->uploaded_at?->toDateTimeString(),
+                            'source' => $source.' · '.$version['drawing_no'].' · '.$file['file_type_label']]);
+                    }
+                    continue;
+                }
                 $this->file($result, ['id' => 'drawing-'.$drawing->id, 'name' => $drawing->drawing_name ?: $drawing->original_name,
                     'original_name' => $drawing->original_name,
                     'url' => $this->publicUrl($drawing->url, $drawing->storage_disk === 'public' ? $drawing->storage_path : null), 'mime_type' => $drawing->mime_type,
                     'version' => $drawing->version_no, 'updated_at' => $drawing->uploaded_at?->toDateTimeString(),
                     'source' => $source.' · 技术图纸']);
+            }
+            $drawingSources = app(TechnicalDrawingSourceService::class);
+            $confirmed = $drawingSources->confirmedVersionsForWorkOrder($current);
+            foreach (TechnicalDrawingRevision::query()->with('drawing')->whereIn('id', array_keys($confirmed))->get() as $revision) {
+                if (in_array($revision->id, array_column($versions, 'revision_id'))) continue;
+                $version = $drawingSources->confirmedWorkOrderRow($current, $revision, $confirmed[$revision->id]);
+                foreach ($version['files'] as $file) {
+                    $this->file($result, ['id' => 'confirmed-'.$current->id.'-'.$revision->id.'-'.$file['id'], 'name' => $file['original_name'],
+                        'original_name' => $file['original_name'], 'url' => $file['download_url'], 'mime_type' => $file['mime_type'],
+                        'version' => $version['version_no'], 'source' => $source.' · '.$version['drawing_no'].' · 客户确认 · '.$file['file_type_label']]);
+                }
             }
             $parentId = MfgWorkOrderLink::query()->where('child_work_order_id', $current->id)->value('parent_work_order_id')
                 ?: $current->rework_of_work_order_id;

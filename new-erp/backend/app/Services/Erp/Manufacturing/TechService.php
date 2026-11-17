@@ -13,6 +13,7 @@ use App\Models\Erp\SalesOrderAttachment;
 use App\Models\Erp\SalesOrderLine;
 use App\Services\Erp\BomOperationStandardService;
 use App\Services\Erp\InventoryAvailabilityService;
+use App\Services\Erp\TechnicalDrawingSourceService;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -36,20 +37,18 @@ final class TechService
             ->join('erp_mfg_work_orders as wo', 'wo.id', '=', 'erp_mfg_work_order_techs.work_order_id')
             ->where('wo.status', '!=', 'cancelled')
             ->select('erp_mfg_work_order_techs.*');
-        if ($status = $filters['status'] ?? null) $query->where('erp_mfg_work_order_techs.status', $status);
         if ($keyword = trim((string) ($filters['keyword'] ?? ''))) {
             $like = '%'.$keyword.'%';
             $query->where(fn ($q) => $q->where('wo.work_order_no', 'like', $like)->orWhere('wo.sales_order_no', 'like', $like)->orWhere('wo.customer_name', 'like', $like)
                 ->orWhere('wo.product_name', 'like', $like)->orWhere('wo.item_name', 'like', $like)->orWhere('wo.sku_code', 'like', $like));
         }
-        $counts = MfgWorkOrderTech::query()->join('erp_mfg_work_orders as wo', 'wo.id', '=', 'erp_mfg_work_order_techs.work_order_id')
-            ->where('wo.status', '!=', 'cancelled')->selectRaw('erp_mfg_work_order_techs.status AS s, COUNT(*) AS c')->groupBy('erp_mfg_work_order_techs.status')->pluck('c', 's');
+        $counts = (clone $query)->select('erp_mfg_work_order_techs.status AS s')->selectRaw('COUNT(*) AS c')
+            ->groupBy('erp_mfg_work_order_techs.status')->pluck('c', 's');
+        if ($status = $filters['status'] ?? null) $query->where('erp_mfg_work_order_techs.status', $status);
         $page = $query->orderByRaw("FIELD(erp_mfg_work_order_techs.status, 'pending', 'released')")->orderBy('wo.priority')
             ->orderBy('wo.id')->orderBy('erp_mfg_work_order_techs.id')
             ->paginate(min(100, max(1, (int) ($filters['per_page'] ?? 10))));
-        $drawings = MfgDrawing::query()->whereIn('work_order_id', $page->getCollection()->pluck('work_order_id'))->where('status', 'active')
-            ->selectRaw('work_order_id, COUNT(*) AS c')->groupBy('work_order_id')->pluck('c', 'work_order_id');
-        $page->getCollection()->transform(function (MfgWorkOrderTech $tech) use ($drawings) {
+        $page->getCollection()->transform(function (MfgWorkOrderTech $tech) {
             $wo = $tech->workOrder;
             return [
                 'work_order_id' => $wo->id, 'work_order_no' => $wo->work_order_no, 'status' => $tech->status, 'status_label' => self::STATUS_LABELS[$tech->status] ?? $tech->status,
@@ -57,7 +56,7 @@ final class TechService
                 'sales_order_no' => $wo->sales_order_no, 'customer_name' => $wo->customer_name, 'product_name' => $wo->product_name ?: $wo->item_name,
                 'sku_code' => $wo->sku_code, 'sku_name' => $wo->sku_name, 'planned_qty' => (float) $wo->planned_qty, 'unit_name' => $wo->unit_name,
                 'required_date' => $wo->required_date?->toDateString(), 'is_urgent' => (bool) $wo->is_urgent, 'priority' => (int) ($wo->priority ?: 3), 'priority_label' => \App\Services\Erp\SalesOrderPriorityService::label((int) ($wo->priority ?: 3)),
-                'custom_description' => $this->customDescription($wo), 'drawing_count' => (int) ($drawings[$wo->id] ?? 0),
+                'custom_description' => $this->customDescription($wo), 'drawing_count' => app(TechnicalDrawingSourceService::class)->workOrderDrawingCount($wo),
                 'bom_confirmed' => $this->bomConfirmed($tech, $wo), 'tech_owner_name' => $tech->tech_owner_name,
                 'released_at' => $tech->released_at?->toDateTimeString(), 'drawings_updated_at' => $tech->drawings_updated_at?->toDateTimeString(),
                 'created_at' => $tech->created_at?->toDateTimeString(),
@@ -106,6 +105,7 @@ final class TechService
                     ->whereIn('attachment_type', ['design_drawing', 'customer_drawing', 'technical_agreement', 'configuration_note'])))
             ->orderBy('id')->get(['id', 'original_name', 'url', 'attachment_type', 'mime_type', 'uploaded_by', 'uploaded_at']);
         $activeDrawings = $drawings->where('status', 'active')->values();
+        $drawingCount = app(TechnicalDrawingSourceService::class)->workOrderDrawingCount($wo);
         $shortages = collect($rows)->where('change', '!=', 'removed')->unique('component_item_id')
             ->filter(fn ($r) => $r['available_qty'] < $r['required_qty'] - 0.00001)
             ->map(fn ($r) => $r['component_item_name'].' 可用 '.$this->num($r['available_qty']).($r['unit_name'] ?: ''))->values()->all();
@@ -139,7 +139,7 @@ final class TechService
             'routing' => $wo->routing_id ? ['id' => $wo->routing_id, 'routing_no' => $wo->routing_no, 'routing_name' => $wo->routing_name, 'version' => $wo->routing_version,
                 'path' => $wo->operations->pluck('operation_name')->implode(' › ')] : null,
             'checks' => [
-                ['ok' => $activeDrawings->isNotEmpty(), 'text' => $activeDrawings->isNotEmpty() ? '已上传设计图（'.$activeDrawings->count().' 份）' : '还没上传设计图'],
+                ['ok' => $drawingCount > 0, 'text' => $drawingCount > 0 ? '设计图已准备（'.$drawingCount.' 份）' : '还没上传设计图'],
                 ['ok' => $this->bomConfirmed($tech, $wo), 'text' => $this->bomConfirmed($tech, $wo) ? '定制 BOM 已确认' : '定制 BOM 还没确认'],
                 ['ok' => $wo->bom_id && $wo->routing_id && ! $routingBlock, 'text' => ! $wo->bom_id ? '没有基础 BOM，请在工单里选 BOM' : ($wo->routing_id && ! $routingBlock ? '工艺路线已选' : '工艺路线没选好')],
                 ...array_map(fn ($s) => ['ok' => null, 'text' => $s.'，缺料只提醒'], array_slice($shortages, 0, 5)),
@@ -336,7 +336,7 @@ final class TechService
             $drawing = MfgDrawing::query()->where('status', 'active')->lockForUpdate()->find($drawingId);
             if (! $drawing) $this->fail('drawing_invalid', '图纸已删除或已被替换。');
             $released = $tech->status === 'released';
-            if ($released && MfgDrawing::query()->where('work_order_id', $wo->id)->where('status', 'active')->count() <= 1)
+            if ($released && app(TechnicalDrawingSourceService::class)->workOrderDrawingCount($wo, $drawing->id) < 1)
                 $this->fail('last_drawing', '已下发车间，至少要留一张图纸；要换图请用“替换”。');
             $drawing->update(['status' => 'deleted']);
             app(\App\Services\Erp\TechnicalDrawingSourceService::class)->deactivateFile('work_order', $wo->id, $drawing->id);
@@ -351,7 +351,7 @@ final class TechService
         DB::transaction(function () use ($workOrderId, $remark, $actor) {
             [$wo, $tech] = $this->lock($workOrderId);
             if ($tech->status !== 'pending') $this->fail('released', '已经下发车间了。');
-            if (! MfgDrawing::query()->where('work_order_id', $wo->id)->where('status', 'active')->exists()) $this->fail('drawing_required', '请先上传设计图。');
+            if (app(TechnicalDrawingSourceService::class)->workOrderDrawingCount($wo) < 1) $this->fail('drawing_required', '请先上传或沿用客户确认设计图。');
             if (! $this->bomConfirmed($tech, $wo)) $this->fail('bom_unconfirmed', '请先确认定制 BOM。');
             if (! $wo->bom_id || ! is_array($wo->bom_snapshot)) $this->fail('bom_required', '工单没有基础 BOM，请先让生产主管在工单里选 BOM。');
             $snapshot = $wo->bom_snapshot;

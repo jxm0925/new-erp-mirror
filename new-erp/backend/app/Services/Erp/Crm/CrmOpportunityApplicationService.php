@@ -208,7 +208,7 @@ final class CrmOpportunityApplicationService
                 }
                 $before = $id ? $this->snapshot($opportunity) : null;
                 if (!$id) {
-                    $defaults = $lead ? ['contact_id' => $lead->contact_id, 'business_line' => $lead->business_lines[0] ?? null,
+                    $defaults = $lead ? ['contact_id' => $lead->contact_id,
                         'expected_amount' => $lead->expected_amount, 'currency' => $lead->currency, 'demand_summary' => $lead->demand_summary,
                         'next_contact_at' => $lead->next_contact_at, 'next_plan' => $lead->next_plan] : [];
                     $opportunity->fill($defaults + ['currency' => 'CNY']);
@@ -239,7 +239,7 @@ final class CrmOpportunityApplicationService
                 }
                 $this->log($opportunity, $id ? 'edit' : 'create', $id ? '修改商机资料' : ($lead ? '线索转商机' : '新建商机'), $before, $this->snapshot($opportunity), $data['reason'] ?? null, $actor);
                 if ($lead) {
-                    \App\Models\Erp\CrmDrawingRequest::query()->where('lead_id', $lead->id)->whereNull('opportunity_id')
+                    \App\Models\Erp\CrmDrawingRequest::query()->where('lead_id', $lead->id)->whereNull('opportunity_id')->where('status', '!=', 'deleted')
                         ->update(['opportunity_id' => $opportunity->id, 'version' => DB::raw('version + 1'), 'updated_at' => now()]);
                     // 后续待办由商机接续，原线索的计划和沟通历史仍完整保留。
                     $leadBefore = $this->leads->snapshot($lead);
@@ -276,7 +276,7 @@ final class CrmOpportunityApplicationService
             $target = ($position === false ? -10 : $position) + (($data['direction'] ?? '') === 'forward' ? 1 : -1);
             abort_unless(isset($stages[$target]), 422, '只能逐步推进或退回；已成交由关联正式订单生效产生。');
             $fileId = !empty($data['file_id']) ? (int) $data['file_id'] : null;
-            if ($fileId) abort_unless(CrmOpportunityFile::query()->where('opportunity_id', $id)->whereKey($fileId)->exists(), 422, '关联文件不属于当前商机。');
+            if ($fileId) abort_unless(CrmOpportunityFile::query()->available()->where('opportunity_id', $id)->whereKey($fileId)->exists(), 422, '关联文件不属于当前商机或已移除。');
             $before = $this->snapshot($opportunity);
             $opportunity->fill(array_intersect_key($data, array_flip(['expected_amount', 'expected_close_date'])));
             $opportunity->stage = $stages[$target];
@@ -348,7 +348,7 @@ final class CrmOpportunityApplicationService
             $this->version($opportunity, $data);
             abort_unless($this->abilities($opportunity, $actor, true)['file'], 403, '无权维护该商机文件。');
             abort_if(trim((string) ($data['reason'] ?? '')) === '', 422, '请填写客户确认说明。');
-            $file = CrmOpportunityFile::query()->where('opportunity_id', $id)->lockForUpdate()->findOrFail($fileId);
+            $file = CrmOpportunityFile::query()->available()->where('opportunity_id', $id)->lockForUpdate()->findOrFail($fileId);
             abort_unless($file->status === 'pending', 422, '只能确认待客户确认的版本。');
             $before = $file->attributesToArray();
             $this->retireCurrentFile($file);
@@ -368,6 +368,28 @@ final class CrmOpportunityApplicationService
             'status_label' => self::FILE_STATUSES[$file->status] ?? $file->status,
             'technical_drawing' => app(\App\Services\Erp\TechnicalDrawingSourceService::class)->forFile('opportunity', $file->id),
             'attachment' => $file->attachment ? app(CrmAttachmentApplicationService::class)->present($file->attachment) : null];
+    }
+
+    public function removeFile(int $id, int $fileId, array $data, object $actor): CrmOpportunity
+    {
+        $this->permission($actor, 'crm.opportunity.file');
+        return DB::transaction(function () use ($id, $fileId, $data, $actor) {
+            $opportunity = $this->visible($id, $actor, true);
+            abort_unless($this->abilities($opportunity, $actor, true)['file'], 403, '无权维护该商机文件。');
+            $file = CrmOpportunityFile::query()->where('opportunity_id', $id)->lockForUpdate()->findOrFail($fileId);
+            $attachment = CrmAttachment::query()->lockForUpdate()->findOrFail($file->attachment_id);
+            abort_unless($attachment->subject_type === 'opportunity_file' && (int) $attachment->subject_id === (int) $file->id, 422, '附件归属无效。');
+            // 商机锁串行化确认与移除；重复请求不再增加版本或日志，也不撤销交图和订单的独立引用。
+            if (!$attachment->is_active) return $opportunity;
+            $this->version($opportunity, $data);
+            $before = $file->attributesToArray() + $attachment->only(['is_active', 'removed_at', 'removed_by_legacy_id']);
+            $attachment->update(['is_active' => false, 'removed_at' => now(), 'removed_by_legacy_id' => $actor->legacy_id]);
+            $opportunity->version++;
+            $opportunity->save();
+            $this->log($opportunity, 'file_remove', '删除'.(self::FILE_CATEGORIES[$file->category] ?? $file->category).' V'.$file->version_no,
+                $before, $file->attributesToArray() + $attachment->only(['is_active', 'removed_at', 'removed_by_legacy_id']), null, $actor, $file->id);
+            return $opportunity;
+        }, 3);
     }
 
     public function present(CrmOpportunity $opportunity, object $actor): array
@@ -397,7 +419,7 @@ final class CrmOpportunityApplicationService
         $row['department_name'] = $this->customers->departmentName($opportunity->department_legacy_id);
         $row['stage_age_days'] = $opportunity->stage_entered_at ? (int) $opportunity->stage_entered_at->diffInDays($opportunity->lost_at ?? $opportunity->won_at ?? now()) : 0;
         $row['stage_days'] = $row['stage_age_days'];
-        $row['files_count'] = $opportunity->files()->count();
+        $row['files_count'] = $opportunity->files()->available()->count();
         $row['orders_count'] = 0;
         if ($this->customers->can($actor, 'sales_order.view')) {
             $orders = SalesOrder::query()->whereHas('crmOpportunityOrder', fn ($link) => $link->where('opportunity_id', $opportunity->id));

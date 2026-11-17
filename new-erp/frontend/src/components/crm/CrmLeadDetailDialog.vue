@@ -111,6 +111,27 @@
                 <span>详细地址</span>
                 <span>{{ lead.detail_address || lead.full_address || '—' }}</span>
               </div>
+              <div class="kv-row">
+                <span>客户等级</span>
+                <span>{{ lead.customer_grade || '未填写' }}</span>
+              </div>
+              <div class="kv-row">
+                <span>行业</span>
+                <span>{{ lead.industry || '未填写' }}</span>
+              </div>
+              <div class="kv-row">
+                <span>年采购力</span>
+                <span>{{ lead.purchasing_power || '未填写' }}</span>
+              </div>
+              <div class="kv-row full">
+                <span>业务线</span>
+                <span>
+                  <template v-if="(lead.customer_business_lines || []).length">
+                    <el-tag v-for="item in lead.customer_business_lines" :key="item" size="mini" type="success" class="crm-tag">{{ item }}</el-tag>
+                  </template>
+                  <template v-else>未填写</template>
+                </span>
+              </div>
               <template v-if="lead.platform_legacy_id || lead.platform_buyer_id">
                 <div class="kv-row">
                   <span>接待平台/店铺</span>
@@ -146,15 +167,6 @@
                 <span>{{ lead.lead_type || '—' }}</span>
               </div>
               <div class="kv-row full">
-                <span>业务线</span>
-                <span>
-                  <template v-if="(lead.business_lines || []).length">
-                    <el-tag v-for="item in lead.business_lines" :key="item" size="mini" type="success" class="crm-tag">{{ item }}</el-tag>
-                  </template>
-                  <template v-else>—</template>
-                </span>
-              </div>
-              <div class="kv-row full">
                 <span>客户标签</span>
                 <span>
                   <template v-if="(lead.customer_tags || []).length">
@@ -163,8 +175,8 @@
                   <template v-else>—</template>
                 </span>
               </div>
-              <div class="kv-row full">
-                <span>自定义标签</span>
+              <div v-if="(lead.abilities && lead.abilities.edit_custom_tags) || (lead.custom_tags || []).length" class="kv-row full">
+                <span>个人标签</span>
                 <span>
                   <template v-if="(lead.custom_tags || []).length">
                     <el-tag v-for="item in lead.custom_tags" :key="item" size="mini" type="info" class="crm-tag">{{ item }}</el-tag>

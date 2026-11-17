@@ -190,6 +190,17 @@
                 />
               </el-form-item>
 
+              <el-form-item label="物料图片" class="col-span-2">
+                <div class="item-image-editor">
+                  <el-image v-if="form.image_url" class="item-image-preview" :src="form.image_url" :alt="form.item_name || '物料图片'" fit="contain" :preview-src-list="[form.image_url]" />
+                  <el-upload action="#" :show-file-list="false" accept="image/jpeg,image/png,image/webp,image/gif"
+                    :disabled="loading || uploadingImage" :http-request="uploadImage">
+                    <el-button size="mini" plain icon="el-icon-upload2" :loading="uploadingImage">{{ form.image_url ? '替换图片' : '上传图片' }}</el-button>
+                  </el-upload>
+                  <el-button v-if="form.image_url" type="text" size="mini" :disabled="uploadingImage" @click="form.image_url = null">移除</el-button>
+                </div>
+              </el-form-item>
+
               <!-- 物料备注说明 (跨整行) -->
               <el-form-item label="物料备注说明" :class="form.cutting_mode === 'length' ? 'col-span-full' : 'col-span-2'">
                 <el-input
@@ -711,8 +722,8 @@
       </div>
       <div class="footer-actions">
         <el-button size="small" @click="$router.push(entryListPath)">取消并返回</el-button>
-        <el-button size="small" :loading="saving" :disabled="loading || categoriesLoading || !!pageError" @click="save(false)">保存为草稿</el-button>
-        <el-button type="primary" size="small" :loading="saving" :disabled="loading || categoriesLoading || !!pageError" class="btn-theme-submit" @click="save(true)">
+        <el-button size="small" :loading="saving" :disabled="loading || uploadingImage || categoriesLoading || !!pageError" @click="save(false)">保存为草稿</el-button>
+        <el-button type="primary" size="small" :loading="saving" :disabled="loading || uploadingImage || categoriesLoading || !!pageError" class="btn-theme-submit" @click="save(true)">
           {{ isEdit ? '保存并启用' : '保存并启用' }}
         </el-button>
       </div>
@@ -725,13 +736,14 @@ import PagedRecordSelect from '@/components/common/PagedRecordSelect.vue'
 import { erpDateTime } from '../../../utils/dateTime'
 import cachedPageRoute from '../../../utils/cachedPageRoute'
 import { materialScopes, routeMaterialScope, materialScopeLabel, materialListPath, materialTypesForScope } from '../../../utils/materialManagementScope.mjs'
-import { getItemCategoryTree, listEntity, getItemIntegratedForm, saveItemIntegratedForm } from '../../../api/erp/master'
+import { getItemCategoryTree, listEntity, getItemIntegratedForm, saveItemIntegratedForm, uploadItemImage } from '../../../api/erp/master'
 import { clearCreatePageReservation, reserveForCreatePage } from '../../../utils/documentNumberReservation'
 
 const blankItem = () => ({
   management_scope: 'factory',
   item_code: '',
   item_name: '',
+  image_url: null,
   item_type: '',
   category_id: null,
   unit_id: null,
@@ -788,6 +800,7 @@ export default {
       legacyCategory: null,
       managementScopes: materialScopes,
       saving: false,
+      uploadingImage: false,
       pageLoadVersion: 0,
       pageHasSaved: false,
       reservation: null,
@@ -1070,6 +1083,7 @@ export default {
   methods: {
     async loadPage() {
       const version = ++this.pageLoadVersion
+      this.uploadingImage = false
       this.pageHasSaved = false
       this.currentTab = 'basic'
       this.form = { ...blankItem(), management_scope: this.entryScope, item_type: this.entryScope === 'office' ? 'office_consumable' : '' }
@@ -1271,8 +1285,29 @@ export default {
       Object.assign(this.policy, defaults[route] || {})
       this.normalizeStock()
     },
+    async uploadImage({ file }) {
+      if (!['image/jpeg', 'image/png', 'image/webp', 'image/gif'].includes(file.type) || file.size > 5 * 1024 * 1024) {
+        this.$message.error('请选择 5 MB 以内的 JPG、PNG、WebP 或 GIF 图片')
+        return
+      }
+      const version = this.pageLoadVersion
+      const form = new FormData()
+      form.append('image', file)
+      this.uploadingImage = true
+      try {
+        const { data } = await uploadItemImage(form)
+        if (version === this.pageLoadVersion) {
+          this.form.image_url = data.data.url
+          this.$message.success('图片已上传，保存物料后生效')
+        }
+      } catch (e) {
+        if (version === this.pageLoadVersion) this.$message.error(e.userMessage || '图片上传失败')
+      } finally {
+        if (version === this.pageLoadVersion) this.uploadingImage = false
+      }
+    },
     save(activate) {
-      if (this.saving || this.loading || this.categoriesLoading || this.pageError) return
+      if (this.saving || this.loading || this.uploadingImage || this.categoriesLoading || this.pageError) return
       const error =
         !this.form.item_name
           ? '请输入物料名称'
@@ -1386,6 +1421,8 @@ export default {
 </script>
 
 <style scoped>
+.item-image-editor { display: flex; align-items: center; gap: 12px; }
+.item-image-preview { width: 56px; height: 56px; }
 .item-form-page {
   min-width: 0;
   max-width: 100%;

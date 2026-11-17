@@ -265,7 +265,8 @@
     "erp_crm_saved_views": "2026_11_12_000008_create_erp_crm_saved_views_table",
     "erp_crm_lead_delegations": "2026_11_16_000001_create_erp_crm_lead_delegations_table",
     "erp_crm_drawing_requests": "2026_11_16_000002_create_erp_crm_drawing_requests_table",
-    "erp_crm_drawing_request_revisions": "2026_11_16_000003_create_erp_crm_drawing_request_revisions_table"
+    "erp_crm_drawing_request_revisions": "2026_11_16_000003_create_erp_crm_drawing_request_revisions_table",
+    "erp_technical_drawing_revision_files": "2026_11_17_000001_create_erp_technical_drawing_revision_files_table"
   },
   "legacy_migrations": {
     "2026_07_09_000002_remove_legacy_scan_questions_table": "89a9fd386c9acd658007b681a9b8e13c5c1e346f97577c63ab78d34e1fe1cb04",

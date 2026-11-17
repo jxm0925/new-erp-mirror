@@ -40,7 +40,7 @@
         </button>
       </div>
 
-      <div v-if="mode === 'drawings'" class="drawing-requests-box"><crm-drawing-requests ref="drawingRequests" mine /></div>
+      <div v-if="mode === 'drawings'" class="drawing-requests-box"><crm-drawing-requests ref="drawingRequests" mine @changed="loadWorkOrders" /></div>
       <template v-else>
 
       <!-- 筛选工具栏 -->
@@ -198,10 +198,11 @@ export default {
   data: () => ({
     mode: 'workorders',
     loading: false,
+    sequence: 0,
     rows: [],
     total: 0,
     page: 1,
-    summary: {},
+    summary: null,
     filters: { status: 'pending', keyword: '' },
     tabs: [
       { value: 'pending', label: '待工艺确认' },
@@ -213,14 +214,20 @@ export default {
   created() {
     if (this.$route.query.status !== undefined) this.filters.status = String(this.$route.query.status)
     else if (this.canDraw) this.mode = 'drawings'
-    if (this.mode === 'workorders') this.load()
+    this.loadWorkOrders()
   },
+  beforeDestroy() { this.sequence += 1 },
   methods: {
     qty,
     shortDate,
-    async load() {
-      if (this.mode === 'drawings') return this.$refs.drawingRequests && this.$refs.drawingRequests.query()
+    load() {
+      if (this.mode === 'drawings' && this.$refs.drawingRequests) this.$refs.drawingRequests.query()
+      return this.loadWorkOrders()
+    },
+    async loadWorkOrders() {
+      const sequence = ++this.sequence
       this.loading = true
+      this.summary = null
       try {
         const params = {
           page: this.page,
@@ -229,13 +236,19 @@ export default {
           keyword: this.filters.keyword || undefined
         }
         const { data } = await listProductionTech(params)
+        if (sequence !== this.sequence) return
+        const lastPage = Math.max(1, Math.ceil((data.total || 0) / 10))
+        if (this.page > lastPage) { this.page = lastPage; await this.loadWorkOrders(); return }
         this.rows = data.data || []
         this.total = data.total || 0
-        this.summary = data.summary || {}
+        this.summary = data.summary || null
       } catch (e) {
+        if (sequence !== this.sequence) return
+        this.rows = []
+        this.total = 0
         this.$message.error(errorText(e, '定制工艺工单加载失败'))
       } finally {
-        this.loading = false
+        if (sequence === this.sequence) this.loading = false
       }
     },
     search() {
@@ -252,7 +265,8 @@ export default {
       this.search()
     },
     tabCount(status) {
-      const s = this.summary || {}
+      if (!this.summary) return '—'
+      const s = this.summary
       return status ? (s[status] || 0) : (s.pending || 0) + (s.released || 0)
     },
     open(row) {

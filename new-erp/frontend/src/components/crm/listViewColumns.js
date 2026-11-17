@@ -20,7 +20,7 @@ export const customerColumnGroups = [
 export const leadColumnGroups = [
   { key: 'identity', label: '客户 / 线索编号', fields: ['customer_name', 'lead_no', 'customer_kind'] },
   { key: 'contact', label: '联系人 / 地区', fields: ['contact_name', 'mobile', 'region'] },
-  { key: 'demand', label: '需求摘要 / 业务', fields: ['demand_summary', 'expected_amount', 'trade_type', 'business_lines'] },
+  { key: 'demand', label: '需求摘要 / 业务', fields: ['demand_summary', 'expected_amount', 'trade_type'] },
   { key: 'source', label: '来源渠道 / 录入', fields: ['source_channel', 'entry_method', 'platform_name'] },
   { key: 'owner', label: '负责人 / 部门', fields: ['owner_name', 'department_name'] },
   { key: 'state', label: '状态 / 客户池', fields: ['status', 'customer_pool'] },

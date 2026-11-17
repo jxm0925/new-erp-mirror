@@ -67,6 +67,8 @@ final class CrmAttachmentApplicationService
             $version = CrmOpportunityFile::query()->findOrFail($file->subject_id);
             abort_unless((int) $version->attachment_id === (int) $file->id, 403, '附件归属无效。');
             app(CrmOpportunityApplicationService::class)->visible((int) $version->opportunity_id, $actor);
+            // 移除后旧商机链接失效，已引用该文件的绘图需求仍可经本需求的授权入口下载。
+            abort_unless($file->is_active, 404, '该业务附件已删除。');
         } else {
             abort(403, '附件归属无效。');
         }

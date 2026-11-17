@@ -399,8 +399,10 @@ Route::prefix('v1/erp/crm')->group(function () {
     Route::post('drawing-requests', [\App\Http\Controllers\Api\V1\Erp\CrmDrawingRequestController::class, 'store']);
     Route::get('drawing-requests/{id}', [\App\Http\Controllers\Api\V1\Erp\CrmDrawingRequestController::class, 'show'])->whereNumber('id');
     Route::put('drawing-requests/{id}', [\App\Http\Controllers\Api\V1\Erp\CrmDrawingRequestController::class, 'update'])->whereNumber('id');
+    Route::delete('drawing-requests/{id}', [\App\Http\Controllers\Api\V1\Erp\CrmDrawingRequestController::class, 'destroy'])->whereNumber('id');
     Route::post('drawing-requests/{id}/deliver', [\App\Http\Controllers\Api\V1\Erp\CrmDrawingRequestController::class, 'deliver'])->whereNumber('id');
     Route::post('drawing-requests/{id}/revisions/{revisionId}/confirm', [\App\Http\Controllers\Api\V1\Erp\CrmDrawingRequestController::class, 'confirm'])->whereNumber(['id', 'revisionId']);
+    Route::post('drawing-requests/{id}/revisions/{revisionId}/return', [\App\Http\Controllers\Api\V1\Erp\CrmDrawingRequestController::class, 'returnRevision'])->whereNumber(['id', 'revisionId']);
     Route::get('drawing-requests/{id}/references/{attachmentId}/download', [\App\Http\Controllers\Api\V1\Erp\CrmDrawingRequestController::class, 'downloadReference'])->whereNumber(['id', 'attachmentId']);
     Route::get('saved-views/metadata', [\App\Http\Controllers\Api\V1\Erp\CrmSavedViewController::class, 'metadata']);
     Route::get('saved-views', [\App\Http\Controllers\Api\V1\Erp\CrmSavedViewController::class, 'index']);
@@ -436,6 +438,7 @@ Route::prefix('v1/erp/crm')->group(function () {
     Route::post('opportunities/{id}/lose', [\App\Http\Controllers\Api\V1\Erp\CrmOpportunityController::class, 'lose'])->whereNumber('id');
     Route::get('opportunities/{id}/files', [\App\Http\Controllers\Api\V1\Erp\CrmOpportunityController::class, 'files'])->whereNumber('id');
     Route::post('opportunities/{id}/files', [\App\Http\Controllers\Api\V1\Erp\CrmOpportunityController::class, 'storeFile'])->whereNumber('id');
+    Route::delete('opportunities/{id}/files/{fileId}', [\App\Http\Controllers\Api\V1\Erp\CrmOpportunityController::class, 'removeFile'])->whereNumber(['id', 'fileId']);
     Route::post('opportunities/{id}/files/{fileId}/confirm', [\App\Http\Controllers\Api\V1\Erp\CrmOpportunityController::class, 'confirmFile'])->whereNumber(['id', 'fileId']);
     Route::get('opportunities/{id}/logs', [\App\Http\Controllers\Api\V1\Erp\CrmOpportunityController::class, 'logs'])->whereNumber('id');
     Route::get('opportunities/{id}/order-context', [\App\Http\Controllers\Api\V1\Erp\CrmOpportunityController::class, 'orderContext'])->whereNumber('id');
@@ -725,6 +728,7 @@ Route::prefix('v1/erp/production')->group(function () {
     Route::get('technical-drawings', [TechnicalDrawingController::class, 'index']);
     Route::post('technical-drawings', [TechnicalDrawingController::class, 'store']);
     Route::get('technical-drawings/revisions/{revisionId}/download', [TechnicalDrawingController::class, 'download'])->whereNumber('revisionId');
+    Route::get('technical-drawings/revisions/{revisionId}/preview', [TechnicalDrawingController::class, 'preview'])->whereNumber('revisionId');
     Route::post('technical-drawings/revisions/{revisionId}/confirm', [TechnicalDrawingController::class, 'confirm'])->whereNumber('revisionId');
     Route::get('technical-drawings/{id}/revisions', [TechnicalDrawingController::class, 'revisions'])->whereNumber('id');
     Route::get('technical-drawings/{id}', [TechnicalDrawingController::class, 'show'])->whereNumber('id');
@@ -851,6 +855,7 @@ Route::prefix('v1/erp/master')->group(function () {
     Route::post('item-categories/{id}/disable', [ItemCategoryController::class, 'disable'])->whereNumber('id');
     Route::post('item-categories/{id}/enable', [ItemCategoryController::class, 'enable'])->whereNumber('id');
     Route::delete('item-categories/{id}', [ItemCategoryController::class, 'destroy'])->whereNumber('id');
+    Route::post('items/image-upload', [MasterDataController::class, 'uploadItemImage']);
     Route::post('products/image-upload', [MasterDataController::class, 'uploadProductImage']);
     Route::post('products/{id}/sku-matrix', [MasterDataController::class, 'storeSkuMatrix'])->whereNumber('id');
     Route::post('skus/image-upload', [MasterDataController::class, 'uploadSkuImage']);

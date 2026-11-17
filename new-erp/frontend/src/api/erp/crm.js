@@ -39,6 +39,7 @@ export const actCrmOpportunity = (id, action, data) => api.post(`/v1/erp/crm/opp
 export const listCrmOpportunityFiles = (id, params) => api.get(`/v1/erp/crm/opportunities/${id}/files`, { params })
 export const saveCrmOpportunityFile = (id, data) => api.post(`/v1/erp/crm/opportunities/${id}/files`, data)
 export const confirmCrmOpportunityFile = (id, fileId, data) => api.post(`/v1/erp/crm/opportunities/${id}/files/${fileId}/confirm`, data)
+export const deleteCrmOpportunityFile = (id, fileId, data) => api.delete(`/v1/erp/crm/opportunities/${id}/files/${fileId}`, { data })
 export const listCrmOpportunityLogs = (id, params) => api.get(`/v1/erp/crm/opportunities/${id}/logs`, { params })
 export const listCrmOpportunityOrders = (id, params) => api.get(`/v1/erp/crm/opportunities/${id}/orders`, { params })
 export const getCrmOpportunityOrderContext = id => api.get(`/v1/erp/crm/opportunities/${id}/order-context`)

@@ -103,8 +103,9 @@ final class CrmCustomerDedupeService
                     'full_address' => $customer->full_address, 'last_contact_at' => optional($customer->last_contact_at)->toDateString(), 'visible' => true,
                 ]
                 : $this->access->masked($customer);
-            return $base + [
-                'selectable' => $base['visible'] && $this->access->abilities($customer, $user)['select'] && in_array($customer->status, ['enabled', 'potential'], true),
+            $selectable = $base['visible'] && $this->access->abilities($customer, $user)['select'] && in_array($customer->status, ['enabled', 'potential'], true);
+            return $base + ($selectable ? $customer->only(['customer_grade', 'industry', 'purchasing_power', 'business_lines']) : []) + [
+                'selectable' => $selectable,
                 'strong' => $match['strong'],
                 'reasons' => $match['reasons'],
                 'reason_labels' => array_map(fn ($r) => self::LABELS[$r] ?? $r, $match['reasons']),
