@@ -28,7 +28,7 @@ use Illuminate\Support\Facades\Storage;
 final class AssemblyDisplayQueryService
 {
     private const STATES = [
-        'wait' => ['planned', 'released'],
+        'wait' => ['released'],
         'accept' => ['in_progress', 'paused'],
         'complete' => ['completed', 'closed'],
         'cancel' => ['cancelled'],
@@ -104,7 +104,7 @@ final class AssemblyDisplayQueryService
                 $q->whereDate('erp_mfg_work_orders.required_date', '<=', now()->toDateString())
                     ->orWhereHas('salesOrder', fn ($so) => $so->whereDate('required_delivery_date', '<=', now()->toDateString()));
             })
-            ->orderBy('erp_mfg_work_orders.created_at')
+            ->orderBy('erp_mfg_work_orders.released_at')
             ->limit(20)
             ->get(['erp_mfg_work_orders.id', 'erp_mfg_work_orders.work_order_no', 'erp_mfg_work_orders.sales_order_no', 'erp_mfg_work_orders.product_name', 'erp_mfg_work_orders.item_name', 'erp_mfg_work_orders.created_at', 'erp_mfg_work_orders.released_at']);
 
@@ -116,7 +116,7 @@ final class AssemblyDisplayQueryService
                 'work_order_no' => $wo->work_order_no,
                 'sales_order_no' => $wo->sales_order_no,
                 'product_name' => $wo->product_name ?: $wo->item_name,
-                'wait_seconds' => max(0, (int) ($wo->released_at ?? $wo->created_at)?->diffInSeconds(now(), false)),
+                'wait_seconds' => $wo->released_at ? max(0, (int) $wo->released_at->diffInSeconds(now(), false)) : null,
             ])->all(),
             'server_time' => now()->toIso8601String(),
         ];
@@ -125,7 +125,7 @@ final class AssemblyDisplayQueryService
     public function detail(int $id): array
     {
         $wo = $this->base('all')
-            ->with(['salesOrder.lines.attachments', 'operations', 'units', 'materials', 'item:id,item_type,spec,model,material_grade'])
+            ->with(['salesOrder.lines.attachments', 'operations', 'units', 'materials', 'tech:work_order_id,status', 'item:id,item_type,spec,model,material_grade'])
             ->findOrFail($id);
 
         [$salesOrderId, $rootWoId] = $this->resolveGroupIdentity($wo);
@@ -249,7 +249,7 @@ final class AssemblyDisplayQueryService
         }
 
         $workOrders = MfgWorkOrder::query()
-            ->with(['salesOrder.lines.attachments', 'operations', 'units', 'materials', 'item:id,item_type,spec,model,material_grade'])
+            ->with(['salesOrder.lines.attachments', 'operations', 'units', 'materials', 'tech:work_order_id,status', 'item:id,item_type,spec,model,material_grade'])
             ->whereIn('id', $allWoIds)
             ->orderBy('id')
             ->get()
@@ -620,7 +620,7 @@ final class AssemblyDisplayQueryService
             ->where('execution_context', 'production')
             ->sortBy('sequence')
             ->values()
-            ->map(function ($op) use ($plannedQty, $ownersByOp, $timingByOp, $unitsByOp) {
+            ->map(function ($op) use ($wo, $plannedQty, $ownersByOp, $timingByOp, $unitsByOp) {
                 $comp = (float) $op->completed_qty;
                 $hereQty = (int) ($unitsByOp[$op->id] ?? 0);
                 $timingSessions = $timingByOp->get($op->id, collect());
@@ -639,7 +639,11 @@ final class AssemblyDisplayQueryService
                     $workerText = $ownerName.' 已接单';
                 } else {
                     $state = 'wait';
-                    $workerText = '待接单';
+                    $workerText = match (true) {
+                        $wo->status === 'planned' => $this->displayStatus($wo),
+                        $hereQty === 0 && in_array($wo->status, ['released', 'in_progress'], true) => '待前序交接',
+                        default => '待接单',
+                    };
                 }
 
                 return [
@@ -734,7 +738,7 @@ final class AssemblyDisplayQueryService
             'todo_qty' => $this->qty($todoQty),
             'unit_name' => $unitName,
             'status' => $wo->status,
-            'status_label' => WorkOrderQueryService::STATUS_LABELS[$wo->status] ?? $wo->status,
+            'status_label' => $this->displayStatus($wo),
             'is_urgent' => (bool) $wo->is_urgent,
             'priority' => (int) ($wo->priority ?: 3),
             'required_date' => $wo->required_date?->toDateString() ?: $wo->planned_finish_date?->toDateString(),
@@ -754,6 +758,12 @@ final class AssemblyDisplayQueryService
             'materials' => $materialsList->all(),
             'drawings' => $mergedDrawings,
         ];
+    }
+
+    private function displayStatus(MfgWorkOrder $wo): string
+    {
+        if ($wo->status === 'planned') return $wo->tech?->status === 'pending' ? '待技术确认' : '待下达';
+        return WorkOrderQueryService::STATUS_LABELS[$wo->status] ?? $wo->status;
     }
 
     private function base(string $type): Builder
@@ -1141,7 +1151,7 @@ final class AssemblyDisplayQueryService
         $here = $wo->units->whereIn('status', ['waiting', 'in_progress', 'rework'])->pluck('current_operation_id')->filter()->unique();
         $stages = $wo->operations->whereIn('id', $here)->map(fn ($op) => $op->stage_name ?: $op->operation_name)->unique()->values()->all();
         if (! $stages) {
-            $stages = [WorkOrderQueryService::STATUS_LABELS[$wo->status] ?? $wo->status];
+            $stages = [$this->displayStatus($wo)];
         }
 
         $snapshot = $this->snapshot($data);
@@ -1174,7 +1184,7 @@ final class AssemblyDisplayQueryService
             'work_order_no' => $wo->work_order_no,
             'sales_order_id' => $order?->id ?: $wo->sales_order_id,
             'sales_order_no' => $order?->sales_order_no ?: $wo->sales_order_no,
-            'status_label' => WorkOrderQueryService::STATUS_LABELS[$wo->status] ?? $wo->status,
+            'status_label' => $this->displayStatus($wo),
             'tags' => $tags,
             'production_remarks' => [
                 'welding' => null,

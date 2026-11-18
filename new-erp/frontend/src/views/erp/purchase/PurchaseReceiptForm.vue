@@ -145,7 +145,8 @@
                     <label class="compact-field"><span>实际基本数量</span><el-input v-model.number="row.actual_base_qty" type="number" size="small" min="0" :disabled="!actualConversionAllowed(row)" /></label>
                     <label class="compact-field"><span>差异数量</span><el-input :value="differenceQty(row)" size="small" disabled /></label>
                     <label class="compact-field"><span>差异原因</span><el-select v-model="row.difference_reason" size="small" :disabled="!hasDifference(row)" placeholder="无差异"><el-option label="包装重量偏差" value="包装重量偏差" /><el-option label="计量差异" value="计量差异" /><el-option label="验收修正" value="验收修正" /><el-option label="其他" value="其他" /></el-select></label>
-                    <label v-if="!isReplacement || $can('inventory.amount.view')" class="compact-field required"><span>{{ isReplacement ? '库存成本单价' : taxMode === 'tax_included' ? '单价（含税）' : '单价（未税）' }}</span><el-input v-model.number="row.unit_price" type="number" size="small" min="0" :disabled="isReplacement || Boolean(row.order_item_id)"><template slot="append">CNY</template></el-input></label>
+                    <label v-if="!isReplacement || $can('inventory.amount.view')" class="compact-field required"><span>{{ isReplacement ? '库存成本单价' : taxMode === 'tax_included' ? '单价（含税）' : '单价（未税）' }}</span><erp-money-input unit-price type="number" v-model="row.unit_price" min="0" step="0.00000001" size="small" :disabled="isReplacement || Boolean(row.order_item_id)" @change="updateReceiptAmount(row)" /></label>
+                    <label v-if="!isReplacement && !row.order_item_id" class="compact-field"><span>{{ taxMode === 'tax_excluded' ? '成交总额（未税）' : '成交总额（含税）' }}</span><erp-money-input type="number" min="0" step="0.01" v-model="row.receipt_cost" size="small" @change="updateReceiptPrice(row)" /></label>
                   </section>
 
                   <section class="editor-group">
@@ -280,6 +281,7 @@
 </template>
 
 <script>
+import { formatMoney as displayMoney } from '../../../utils/money.js'
 import PagedRecordSelect from '@/components/common/PagedRecordSelect.vue'
 import { listEntity, listItemPurchaseConversionOptions } from '@/api/erp/master'
 import { generateReceiptSerials, getPurchase, savePurchaseReceipt } from '@/api/erp/purchase'
@@ -288,7 +290,8 @@ import PurchaseItemPicker from '@/components/purchase/PurchaseItemPicker.vue'
 import PurchaseAttachmentPanel from '@/components/purchase/PurchaseAttachmentPanel.vue'
 import { purchaseScopes, purchaseScopeLabel, purchaseScopeIssue, purchaseSourceLocked, purchaseScopeMatches, validPurchaseScope } from '@/utils/purchaseManagementScope.mjs'
 import ReceiptPhysicalEntries from '@/components/purchase/ReceiptPhysicalEntries.vue'
-import { roundInvoiceAmount } from '@/utils/financeInvoiceAmount'
+import { roundInvoiceAmount, sumInvoiceAmounts } from '@/utils/financeInvoiceAmount'
+import { purchaseLineAmount, purchaseUnitPrice, purchaseShare, purchaseTaxParts, purchaseDecimal, purchasePriceText } from '@/utils/purchaseLineAmount'
 
 export default {
   components: { PagedRecordSelect, PurchaseItemPicker, PurchaseAttachmentPanel, ReceiptPhysicalEntries },
@@ -347,9 +350,9 @@ export default {
       return groups.size ? [...groups.entries()].map(([unit, qty]) => `${this.number(qty)} ${unit}`).join('；') : '0'
     },
     taxMode() { return this.form.order?.tax_mode || this.form.tax_mode_snapshot || 'tax_included' },
-    untaxedAmount() { if (this.form.items.some(line => this.lineAmount(line) == null)) return null; return this.form.items.reduce((sum, line) => sum + this.receiptAmounts(line).excl, 0) },
-    taxAmount() { if (this.untaxedAmount === null) return null; return this.form.items.reduce((sum, line) => sum + this.receiptAmounts(line).tax, 0) },
-    totalAmount() { if (this.untaxedAmount === null) return null; return this.form.items.reduce((sum, line) => sum + this.receiptAmounts(line).incl, 0) },
+    untaxedAmount() { if (this.form.items.some(line => this.lineAmount(line) == null)) return null; return sumInvoiceAmounts(this.form.items.map(line => this.receiptAmounts(line).excl)) },
+    taxAmount() { if (this.untaxedAmount === null) return null; return sumInvoiceAmounts(this.form.items.map(line => this.receiptAmounts(line).tax)) },
+    totalAmount() { if (this.untaxedAmount === null) return null; return sumInvoiceAmounts(this.form.items.map(line => this.receiptAmounts(line).incl)) },
     activeLineValid() {
       const line = this.activeLine
       if (!line || !line.item_id || !line.purchase_unit_id || !Number(line.qty) || !this.lineAllocationValid(line) || !this.physicalEntriesValid(line)) return false
@@ -409,7 +412,7 @@ export default {
       } catch (error) { if (error !== 'cancel' && error !== 'close') this.$message.error(error.userMessage || '管理类型切换失败') }
       finally { this.scopeChanging = false }
     },
-    blankLine() { return { item_id: null, qty: 1, purchase_unit_id: null, qualified_qty: 1, unqualified_qty: 0, actual_base_qty: 0, unit_price: 0, tax_rate: 13, difference_reason: '', batch_no: '', stock_length_mm: '', expected_arrival_date: this.form.receipt_date, warehouse_id: this.defaultWarehouseId || null, location_id: this.defaultLocationId || null, remark: '', serial_text: '', serial_number_source: 'supplier', _conversionOptions: [], _serialEntries: [], _allocations: [], _physicalEntries: [], _scanInput: '', _serialError: '' } },
+    blankLine() { return { item_id: null, qty: 1, purchase_unit_id: null, qualified_qty: 1, unqualified_qty: 0, actual_base_qty: 0, unit_price: 0, receipt_cost: 0, tax_rate: 13, difference_reason: '', batch_no: '', stock_length_mm: '', expected_arrival_date: this.form.receipt_date, warehouse_id: this.defaultWarehouseId || null, location_id: this.defaultLocationId || null, remark: '', serial_text: '', serial_number_source: 'supplier', _conversionOptions: [], _serialEntries: [], _allocations: [], _physicalEntries: [], _scanInput: '', _serialError: '' } },
     async initializeDocument() {
       const revision = ++this.documentRevision
       this.warehouseRevision++
@@ -454,8 +457,8 @@ export default {
       const entries = Array.isArray(line.serial_entries) && line.serial_entries.length ? line.serial_entries : String(line.serial_text || '').split(/\r?\n|,|，/).map(value => value.trim()).filter(Boolean).map(serial_no => ({ serial_no, source: line.serial_number_source || 'supplier' }))
       const allocations = (line.allocations || []).map(row => ({ warehouse_id: row.warehouse_id, location_id: row.location_id, base_qty: Number(row.base_qty || 0), serial_nos: [...(row.serial_nos || [])], physical_entries: (row.physical_entries || []).map(entry => ({ dimensions: { ...entry.dimensions } })) }))
       const qty = Number(line.receipt_qty || line.qty || 0)
-      const price = qty > 0 && line.receipt_cost != null ? Number((Number(line.receipt_cost) / qty).toFixed(8)) : line.unit_price == null ? undefined : Number(line.unit_price)
-      return { ...line, qty, qualified_qty: Number(line.qualified_qty || 0), unqualified_qty: Number(line.unqualified_qty || 0), unit_price: price, _receiptSavedPrice: price, tax_rate: Number(line.tax_rate == null ? 13 : line.tax_rate), actual_base_qty: line.actual_base_qty == null ? null : Number(line.actual_base_qty), _conversionOptions: [], _serialEntries: entries, _allocations: allocations, _scanInput: '', _serialError: '' }
+      const price = purchaseUnitPrice(qty, line.receipt_cost, line.unit_price)
+      return { ...line, qty, qualified_qty: Number(line.qualified_qty || 0), unqualified_qty: Number(line.unqualified_qty || 0), receipt_cost: line.receipt_cost == null ? (price == null ? null : purchaseLineAmount(qty, price)) : roundInvoiceAmount(line.receipt_cost), unit_price: price, _receiptSavedPrice: price, _receiptSavedAmount: line.receipt_cost, tax_rate: Number(line.tax_rate == null ? 13 : line.tax_rate), actual_base_qty: line.actual_base_qty == null ? null : Number(line.actual_base_qty), _conversionOptions: [], _serialEntries: entries, _allocations: allocations, _scanInput: '', _serialError: '' }
     },
     addLine() { this.form.items.push(this.blankLine()); this.activeIndex = this.form.items.length - 1 },
     removeActiveLine() { if (this.activeLine) this.removeLine(this.activeIndex) },
@@ -641,7 +644,17 @@ export default {
       this.$set(line, 'allow_actual_conversion_preview', Boolean(conversion.allow_actual_conversion))
       if (!this.actualConversionAllowed(line)) this.$set(line, 'actual_base_qty', this.standardBaseQtyNumber(line))
     },
-    syncReceiptActualQty(line) { if (!this.actualConversionAllowed(line)) this.$set(line, 'actual_base_qty', this.standardBaseQtyNumber(line)) },
+    syncReceiptActualQty(line) {
+      if (!this.actualConversionAllowed(line)) this.$set(line, 'actual_base_qty', this.standardBaseQtyNumber(line))
+      this.updateReceiptAmount(line)
+    },
+    updateReceiptAmount(line) {
+      if (!line.order_item_id && !this.isReplacement) this.$set(line, 'receipt_cost', purchaseLineAmount(line.qty, line.unit_price))
+    },
+    updateReceiptPrice(line) {
+      this.$set(line, 'receipt_cost', roundInvoiceAmount(purchaseDecimal(line.receipt_cost) || 0))
+      this.$set(line, 'unit_price', purchaseUnitPrice(line.qty, line.receipt_cost, line.unit_price))
+    },
     purchaseOptionLabel(option) { const unit = option.purchase_unit || {}; return `${unit.unit_name || unit.symbol || '-'}（1 = ${this.number(option.factor || 1)} ${option.base_unit?.unit_name || '基本单位'}）` },
     purchaseUnitName(line) { const conversion = this.selectedConversion(line); return line.purchase_unit_name_snapshot || line.purchase_unit_name_preview || conversion?.purchase_unit?.unit_name || '-' },
     conversionFactor(line) { return this.number(line.conversion_factor_snapshot || line.conversion_factor_preview || 0) },
@@ -816,27 +829,24 @@ export default {
     receiptAmounts(line) {
       if (line.unit_price == null && line.receipt_cost == null) return { amount: null, excl: null, tax: null, incl: null }
       const qty = Number(line.qty || 0)
-      const samePrice = Number(line.unit_price) === line._receiptSavedPrice
+      const samePrice = purchasePriceText(line.unit_price) === purchasePriceText(line._receiptSavedPrice)
       const unchanged = samePrice && qty === Number(line.receipt_qty)
       if (this.isReplacement) {
-        const amount = line.receipt_cost == null ? null : Number(line.receipt_cost)
+        const amount = line.receipt_cost == null ? null : roundInvoiceAmount(line.receipt_cost)
         return { amount, excl: amount, tax: 0, incl: amount }
       }
-      if (unchanged && line.amount_incl_tax != null && line.amount_excl_tax != null && line.tax_amount_snapshot != null) {
-        return { amount: Number(line.receipt_cost), excl: Number(line.amount_excl_tax), tax: Number(line.tax_amount_snapshot), incl: Number(line.amount_incl_tax) }
+      if (unchanged && roundInvoiceAmount(line.receipt_cost) === roundInvoiceAmount(line._receiptSavedAmount) && line.amount_incl_tax != null && line.amount_excl_tax != null && line.tax_amount_snapshot != null) {
+        return { amount: roundInvoiceAmount(line.receipt_cost), excl: roundInvoiceAmount(line.amount_excl_tax), tax: roundInvoiceAmount(line.tax_amount_snapshot), incl: roundInvoiceAmount(line.amount_incl_tax) }
       }
-      const round = value => Number(roundInvoiceAmount(value))
-      const ratio = Number(line.receipt_qty) > 0 ? qty / Number(line.receipt_qty) : 0
-      const amount = round(samePrice && line.receipt_cost != null ? Number(line.receipt_cost) * ratio : qty * Number(line.unit_price || 0))
-      const freight = line.order_item_id ? round(Number(line.freight_allocated_amount || 0) * ratio) : 0
-      const rate = Number(line.tax_rate || 0)
-      const tax = line.order_item_id && line.tax_amount_snapshot != null ? round(Number(line.tax_amount_snapshot) * ratio)
-        : (this.taxMode === 'tax_excluded' ? round(amount * rate / 100) : round(amount - round(amount * 100 / (100 + rate))))
-      const incl = round(amount + freight + (this.taxMode === 'tax_excluded' ? tax : 0))
-      return { amount, excl: round(incl - tax), tax, incl }
+      const prorate = value => purchaseShare(value, qty, line.receipt_qty)
+      const amount = line.receipt_cost == null ? purchaseLineAmount(qty, line.unit_price)
+        : line.order_item_id ? prorate(line.receipt_cost) : roundInvoiceAmount(line.receipt_cost)
+      const freight = line.order_item_id ? prorate(line.freight_allocated_amount) : 0
+      const tax = line.order_item_id && line.tax_amount_snapshot != null ? prorate(line.tax_amount_snapshot) : null
+      return purchaseTaxParts(amount, line.tax_rate || 0, this.taxMode, freight, tax)
     },
     lineAmount(line) { return this.receiptAmounts(line).amount },
-    payload() { return { ...this.form, attachment_draft_token: this.attachmentDraftToken, reservation_token: this.reservation?.reservation_token, creation_session_id: this.reservation?.creation_session_id, items: this.form.items.map(line => { const stock = this.isStockManaged(line); return { ...line, unit_price: this.isReplacement && !this.$can('inventory.amount.view') ? undefined : line.unit_price, receipt_qty: line.qty, receipt_cost: this.isReplacement && !this.$can('inventory.amount.view') ? undefined : this.lineAmount(line), warehouse_id: stock ? line.warehouse_id : null, location_id: stock ? line.location_id : null, batch_no: stock ? line.batch_no : null, stock_length_mm: this.isPipeLine(line) && line.stock_length_mm !== '' && line.stock_length_mm !== null && line.stock_length_mm !== undefined ? line.stock_length_mm : null, serial_text: stock ? line.serial_text : null, serial_entries: stock ? this.serialNumberList(line).map(entry => ({ serial_no: entry.serial_no, source: entry.source })) : [], allocations: stock ? (this.allocations(line).length ? this.allocations(line) : (line.warehouse_id && line.location_id ? [{ warehouse_id: line.warehouse_id, location_id: line.location_id, base_qty: this.qualifiedBaseQty(line), serial_nos: this.serialNumberList(line).map(entry => entry.serial_no), physical_entries: line._physicalEntries || [] }] : [])) : [] } }) } },
+    payload() { return { ...this.form, attachment_draft_token: this.attachmentDraftToken, reservation_token: this.reservation?.reservation_token, creation_session_id: this.reservation?.creation_session_id, items: this.form.items.map(line => { const stock = this.isStockManaged(line); return { ...line, unit_price: this.isReplacement && !this.$can('inventory.amount.view') ? undefined : purchaseDecimal(line.unit_price), receipt_qty: purchaseDecimal(line.qty), receipt_cost: this.isReplacement && !this.$can('inventory.amount.view') ? undefined : this.lineAmount(line), warehouse_id: stock ? line.warehouse_id : null, location_id: stock ? line.location_id : null, batch_no: stock ? line.batch_no : null, stock_length_mm: this.isPipeLine(line) && line.stock_length_mm !== '' && line.stock_length_mm !== null && line.stock_length_mm !== undefined ? line.stock_length_mm : null, serial_text: stock ? line.serial_text : null, serial_entries: stock ? this.serialNumberList(line).map(entry => ({ serial_no: entry.serial_no, source: entry.source })) : [], allocations: stock ? (this.allocations(line).length ? this.allocations(line) : (line.warehouse_id && line.location_id ? [{ warehouse_id: line.warehouse_id, location_id: line.location_id, base_qty: this.qualifiedBaseQty(line), serial_nos: this.serialNumberList(line).map(entry => entry.serial_no), physical_entries: line._physicalEntries || [] }] : [])) : [] } }) } },
     newDraftToken() { return window.crypto && window.crypto.randomUUID ? window.crypto.randomUUID() : `purchase-${Date.now()}-${Math.random().toString(16).slice(2)}` },
     validate(strict) {
       if (!this.form.supplier_id) return '供应商不能为空'
@@ -865,7 +875,7 @@ export default {
     },
     goBack() { this.$router.push('/purchase/receipts') },
     number(value) { return Number(value || 0).toLocaleString('zh-CN', { maximumFractionDigits: 6 }) },
-    money(value) { return value == null || value === '' ? '—' : Number(value).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }
+    money(value) { return value == null || value === '' ? '—' : displayMoney(value) }
   }
 }
 </script>

@@ -21,7 +21,7 @@ class PurchaseConversionApplicationService
                 && (int) ($line['purchase_unit_id'] ?? $existing->purchase_unit_id) === (int) $existing->purchase_unit_id
                 && (float) $existing->conversion_factor_snapshot > 0) {
                 $quantity = (float) ($line['order_qty'] ?? $line['purchase_qty']);
-                $price = (float) ($line['unit_price'] ?? 0);
+                $price = $line['unit_price'] ?? '0';
                 $factor = (float) $existing->conversion_factor_snapshot;
                 $this->assertExpectedFactor($line, $factor);
                 $this->conversions->assertUnitPrecision($quantity, $existing->purchaseUnit, 'order_qty');
@@ -31,9 +31,9 @@ class PurchaseConversionApplicationService
                         'allow_actual_conversion_snapshot', 'base_unit_id', 'base_unit_name_snapshot']),
                     'purchase_qty' => $quantity, 'planned_base_qty' => round($quantity * $factor, 8),
                     'purchase_conversion_snapshot' => $existing->purchase_conversion_snapshot ? array_replace($existing->purchase_conversion_snapshot, [
-                        'purchase_unit_price' => $price, 'base_unit_price' => $this->conversions->calculateBaseUnitPrice($price, $factor), 'amount' => $line['amount'] ?? round($quantity * $price, 4),
+                        'purchase_unit_price' => $price, 'base_unit_price' => $this->conversions->calculateBaseUnitPrice($price, $existing->conversion_factor_snapshot), 'amount' => $line['amount'],
                     ]) : null,
-                    'purchase_unit_price' => $price, 'base_unit_price' => $this->conversions->calculateBaseUnitPrice($price, $factor),
+                    'purchase_unit_price' => $price, 'base_unit_price' => $this->conversions->calculateBaseUnitPrice($price, $existing->conversion_factor_snapshot),
                 ];
             }
             $purchaseUnitId = (int) ($line['purchase_unit_id'] ?? 0);
@@ -44,7 +44,7 @@ class PurchaseConversionApplicationService
             }
             if ($purchaseUnitId && $itemBaseUnit && $purchaseUnitId === (int) $itemBaseUnit->id) {
                 $quantity = (float) ($line['order_qty'] ?? $line['purchase_qty']);
-                $purchaseUnitPrice = (float) ($line['unit_price'] ?? $line['purchase_unit_price'] ?? 0);
+                $purchaseUnitPrice = $line['unit_price'] ?? $line['purchase_unit_price'] ?? '0';
                 $this->conversions->assertUnitPrecision($quantity, $itemBaseUnit, 'order_qty');
                 $this->assertExpectedFactor($line, 1);
                 return [
@@ -68,7 +68,7 @@ class PurchaseConversionApplicationService
                 $conversion->purchase_unit_id,
                 $line['order_qty'] ?? $line['purchase_qty']
             );
-            $purchaseUnitPrice = (float) ($line['unit_price'] ?? $line['purchase_unit_price'] ?? 0);
+            $purchaseUnitPrice = $line['unit_price'] ?? $line['purchase_unit_price'] ?? '0';
             $this->assertExpectedFactor($line, (float) $conversion->factor);
             $purchaseUnit = $this->conversions->canonicalUnit($conversion->purchaseUnit);
             $baseUnit = $this->conversions->canonicalUnit($conversion->baseUnit);

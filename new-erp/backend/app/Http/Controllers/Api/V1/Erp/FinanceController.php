@@ -820,7 +820,8 @@ class FinanceController extends Controller
                 'reversed_by_name' => $names[(int) ($row['reversed_by'] ?? 0)] ?? null,
             ], $payload['allocations']);
         }
-        return [...$payload, 'allocated_amount' => $active, 'unallocated_amount' => Money::sub((string) $document->amount, $active),
+        $active = Money::settle($active);
+        return [...$payload, 'allocated_amount' => $active, 'unallocated_amount' => Money::settle(Money::sub(Money::settle((string) $document->amount), $active)),
             'purchase_order_allocations' => app(FinanceCashPurchaseAllocationApplicationService::class)->present($document),
             'purchase_order_allocation_version' => (int) $document->purchase_order_allocation_version];
     }
@@ -863,6 +864,8 @@ class FinanceController extends Controller
                 : ['sometimes', 'required', 'regex:/^\d+(\.\d{1,4})?$/'],
             'tax_detail' => 'required|array|min:1|max:50',
             'tax_detail.*.tax_rate' => 'required|numeric|min:0|max:100',
+            'tax_detail.*.amount_basis' => 'sometimes|in:net,gross',
+            'tax_detail.*.amount_incl_tax' => ['sometimes', 'required', 'regex:/^\d+(\.\d{1,4})?$/'],
             'tax_detail.*.amount_excl_tax' => ['required', 'regex:/^\d+(\.\d{1,4})?$/'],
             'tax_detail.*.tax_amount' => ['required', 'regex:/^\d+(\.\d{1,4})?$/'],
             'remark' => 'nullable|string|max:200',

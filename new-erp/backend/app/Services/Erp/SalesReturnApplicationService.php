@@ -128,9 +128,10 @@ class SalesReturnApplicationService
             if ($return->return_status !== 'draft') {
                 throw ValidationException::withMessages(['return_status' => '只有草稿销售退货单可以确认。']);
             }
-            foreach ($return->items as $item) {
+            foreach ($return->items->groupBy('sales_order_line_id') as $items) {
+                $item = $items->first();
                 $available = $this->availableSalesQuantity($item->orderLine, $return->id);
-                if ((float) $item->requested_sales_qty > $available + 0.00000001) {
+                if ($items->sum('requested_sales_qty') > $available + 0.00000001) {
                     throw ValidationException::withMessages(['items' => '原订单可退数量已经变化，请返回编辑后重新确认。']);
                 }
             }
@@ -216,6 +217,16 @@ class SalesReturnApplicationService
                 $returnItem->increment('pending_base_qty', $pending);
                 $returnItem->increment('scrap_base_qty', $scrap);
                 $returnItem->increment('rejected_base_qty', $rejected);
+            }
+
+            // 历史已确认的申请可能重复占用了已关闭单据的数量；收货仍按实际累计数量把关。
+            $receivedItemIds = array_column($payload['items'], 'sales_return_item_id');
+            $receivedLines = $return->items->whereIn('id', $receivedItemIds)->pluck('orderLine')->keyBy('id');
+            foreach (SalesReturnItem::reservationsForLines($receivedLines->keys()->all())->groupBy('sales_order_line_id') as $lineId => $rows) {
+                $received = $rows->reduce(fn ($sum, $row) => bcadd($sum, $row->received_sales_qty, 8), '0');
+                if (bccomp($received, (string) $receivedLines[$lineId]->shipped_qty, 8) > 0) {
+                    throw ValidationException::withMessages(['items' => '本次收货加上历史实收数量将超过原销售订单的实际发货数量，请核对退货单。']);
+                }
             }
 
             if (!empty($payload['reservation_token'])) {
@@ -421,13 +432,7 @@ class SalesReturnApplicationService
 
     private function availableSalesQuantity(SalesOrderLine $line, ?int $exceptReturnId): float
     {
-        $reserved = SalesReturnItem::query()
-            ->join('erp_sales_returns', 'erp_sales_returns.id', '=', 'erp_sales_return_items.sales_return_id')
-            ->where('erp_sales_return_items.sales_order_line_id', $line->id)
-            ->whereNotIn('erp_sales_returns.return_status', ['cancelled', 'closed'])
-            ->when($exceptReturnId, fn ($query) => $query->where('erp_sales_returns.id', '<>', $exceptReturnId))
-            ->orderBy('erp_sales_return_items.id')->lockForUpdate()->get(['erp_sales_return_items.requested_sales_qty'])
-            ->sum('requested_sales_qty');
+        $reserved = SalesReturnItem::reservationsForLines([$line->id], $exceptReturnId)->sum('reserved_sales_qty');
 
         return max(0, (float) $line->shipped_qty - $reserved);
     }
@@ -472,20 +477,16 @@ class SalesReturnApplicationService
             ->lockForUpdate()
             ->get();
 
+        $allocations = SalesReturnCostAllocation::whereIn('outbound_transaction_item_id', $outbounds->pluck('id'))
+            ->orderBy('id')->lockForUpdate()->get();
+        $reserved = SalesReturnCostTraceService::reservedByOutbound($allocations);
         $remaining = (float) $returnItem->requested_base_qty;
         foreach ($outbounds as $outbound) {
             if ($remaining <= 0.00000001) {
                 break;
             }
 
-            $alreadyAllocated = (float) SalesReturnCostAllocation::query()
-                ->join('erp_sales_return_items', 'erp_sales_return_items.id', '=', 'erp_sales_return_cost_allocations.sales_return_item_id')
-                ->join('erp_sales_returns', 'erp_sales_returns.id', '=', 'erp_sales_return_items.sales_return_id')
-                ->where('erp_sales_return_cost_allocations.outbound_transaction_item_id', $outbound->id)
-                ->whereNotIn('erp_sales_returns.return_status', ['cancelled', 'closed'])
-                ->orderBy('erp_sales_return_cost_allocations.id')->lockForUpdate()->get(['erp_sales_return_cost_allocations.allocated_base_qty'])
-                ->sum('allocated_base_qty');
-            $available = max(0, abs((float) $outbound->change_qty) - $alreadyAllocated);
+            $available = max(0, abs((float) $outbound->change_qty) - (float) ($reserved[$outbound->id] ?? 0));
             // 售后已确定退回设备，预留其实际原发货成本，不能先按 FIFO 占用另一台设备的来源。
             if ($aftersalesSerials) {
                 $snapshotIds = json_decode((string) $outbound->shipment_serial_snapshot, true)['inventory_serial_ids'] ?? [];

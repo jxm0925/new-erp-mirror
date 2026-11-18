@@ -87,7 +87,10 @@ class SalesReturnController extends Controller
         }
 
         $paginator = $query->paginate($this->perPage($request));
-        $paginator->setCollection($paginator->getCollection()->map(function (SalesOrder $order): array {
+        $lineIds = $paginator->getCollection()->flatMap(fn ($order) => $order->lines->pluck('id'))->all();
+        $reservedByLine = SalesReturnItem::reservationsForLines($lineIds)->groupBy('sales_order_line_id')
+            ->map(fn ($rows) => $rows->sum('reserved_sales_qty'));
+        $paginator->setCollection($paginator->getCollection()->map(function (SalesOrder $order) use ($reservedByLine): array {
             return [
                 'id' => $order->id,
                 'sales_order_no' => $order->sales_order_no,
@@ -95,22 +98,13 @@ class SalesReturnController extends Controller
                 'order_date' => $order->order_date?->toDateString(),
                 'order_amount' => (float) $order->total_amount,
                 'shipped_amount' => (float) $order->lines->sum(fn ($line) => (float) $line->shipped_qty * (float) $line->unit_price),
-                'returned_amount' => (float) SalesReturnItem::query()
-                    ->join('erp_sales_returns', 'erp_sales_returns.id', '=', 'erp_sales_return_items.sales_return_id')
-                    ->join('erp_sales_order_lines', 'erp_sales_order_lines.id', '=', 'erp_sales_return_items.sales_order_line_id')
-                    ->where('erp_sales_returns.sales_order_id', $order->id)
-                    ->whereNotIn('erp_sales_returns.return_status', ['cancelled', 'closed'])
-                    ->sum(\Illuminate\Support\Facades\DB::raw('erp_sales_return_items.requested_sales_qty * erp_sales_order_lines.unit_price')),
+                'returned_amount' => (float) $order->lines->sum(fn ($line) => $reservedByLine->get($line->id, 0) * (float) $line->unit_price),
                 'customer_id' => $order->customer_id,
                 'customer_name' => $order->customer_name,
                 'customer_phone' => $order->customer_phone,
                 'shipment_status' => $order->shipment_status,
-                'lines' => $order->lines->map(function ($line): array {
-                    $reserved = (float) SalesReturnItem::query()
-                        ->join('erp_sales_returns', 'erp_sales_returns.id', '=', 'erp_sales_return_items.sales_return_id')
-                        ->where('erp_sales_return_items.sales_order_line_id', $line->id)
-                        ->whereNotIn('erp_sales_returns.return_status', ['cancelled', 'closed'])
-                        ->sum('erp_sales_return_items.requested_sales_qty');
+                'lines' => $order->lines->map(function ($line) use ($reservedByLine): array {
+                    $reserved = (float) $reservedByLine->get($line->id, 0);
 
                     return [
                         'sales_order_line_id' => $line->id,

@@ -21,7 +21,7 @@
         <el-table :data="items" border size="small" empty-text="尚未安排付款">
           <el-table-column label="期次" width="65" align="center"><template slot-scope="{ row, $index }">{{ row.sequence_no || $index + 1 }}</template></el-table-column>
           <el-table-column label="付款条件" min-width="138"><template slot-scope="{ row }"><el-select v-if="editable" v-model="row.trigger_type" :disabled="saving"><el-option v-for="option in triggers" :key="option.value" :value="option.value" :label="option.label" /></el-select><span v-else>{{ triggerLabel(row.trigger_type) }}</span></template></el-table-column>
-          <el-table-column label="安排金额" min-width="120" align="right"><template slot-scope="{ row }"><el-input v-if="editable" v-model.trim="row.amount" :disabled="saving" /><span v-else>{{ money(row.amount) }}</span></template></el-table-column>
+          <el-table-column label="安排金额" min-width="120" align="right"><template slot-scope="{ row }"><el-input v-if="editable" v-model.trim="row.amount" @blur="row.amount = settlementAmount(row.amount)" :disabled="saving" /><span v-else>{{ money(row.amount) }}</span></template></el-table-column>
           <el-table-column label="约定付款日期" min-width="162"><template slot-scope="{ row }"><el-date-picker v-if="editable" v-model="row.due_date" :disabled="saving" type="date" value-format="yyyy-MM-dd" placeholder="日期未知可留空" clearable /><span v-else>{{ row.due_date || '日期待定' }}</span></template></el-table-column>
           <el-table-column label="说明" min-width="165"><template slot-scope="{ row }"><el-input v-if="editable" v-model.trim="row.remark" :disabled="saving" type="textarea" :autosize="{ minRows: 1, maxRows: 3 }" maxlength="1000" placeholder="例如：厂家排产订金" /><span v-else>{{ row.remark || '—' }}</span></template></el-table-column>
           <el-table-column label="已付 / 退款" min-width="130" align="right"><template slot-scope="{ row }">{{ money(row.paid_amount) }} / {{ money(row.refund_amount) }}</template></el-table-column>
@@ -42,6 +42,7 @@
   </el-dialog>
 </template>
 <script>
+import { settlementAmount } from '../../utils/money.js'
 import { getPurchasePaymentPlan, savePurchasePaymentPlan } from '../../api/erp/purchasePayments'
 import { amountUnits, money } from '../../utils/financeCashAllocation'
 import { paymentTriggers, paymentTriggerLabel, serializePaymentPlan, validatePaymentPlan, purchaseOrderCanPay, paymentErrorMessage } from '../../utils/purchasePayment'
@@ -54,17 +55,18 @@ export default {
     editable() { return !!this.plan && this.plan.purchase_status !== 'cancelled' && this.$can('purchase.order.edit') },
     canStartPayment() { return purchaseOrderCanPay(this.plan) && this.$can('finance.payment.create') && this.$can('finance.view') },
     dirty() { return JSON.stringify(serializePaymentPlan(this.items)) !== this.baseline },
-    plannedTotal() { return this.items.reduce((sum, row) => sum + (amountUnits(row.amount) || 0), 0) / 10000 },
-    unplannedAmount() { return ((amountUnits(this.plan?.current_payment_amount) || 0) - Math.round(this.plannedTotal * 10000)) / 10000 },
+    plannedTotal() { return this.items.reduce((sum, row) => sum + (amountUnits(row.amount) || 0), 0) / 100 },
+    unplannedAmount() { return ((amountUnits(this.plan?.current_payment_amount) || 0) - Math.round(this.plannedTotal * 100)) / 100 },
     validationError() { return this.plan ? validatePaymentPlan(this.items, this.plan.current_payment_amount) : '' },
   },
   watch: { contextKey: { immediate: true, handler() { this.reset(); if (this.visible && this.orderId) this.load() } } },
   beforeDestroy() { this.requestRevision += 1 },
   methods: {
+    settlementAmount,
     money,
     triggerLabel: paymentTriggerLabel,
     reset() { this.requestRevision += 1; this.plan = null; this.items = []; this.baseline = ''; this.error = ''; this.conflict = false; this.loading = false },
-    applyPlan(plan) { this.plan = plan; this.items = (plan.items || []).map(row => ({ ...row, due_date: row.due_date || null })); this.baseline = JSON.stringify(serializePaymentPlan(this.items)); this.conflict = false },
+    applyPlan(plan) { this.plan = plan; this.items = (plan.items || []).map(row => ({ ...row, amount: settlementAmount(row.amount), due_date: row.due_date || null })); this.baseline = JSON.stringify(serializePaymentPlan(this.items)); this.conflict = false },
     async load() {
       const revision = ++this.requestRevision
       this.loading = true

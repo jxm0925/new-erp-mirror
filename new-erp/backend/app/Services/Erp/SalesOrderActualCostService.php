@@ -17,8 +17,13 @@ class SalesOrderActualCostService
         $outboundCost = SalesShipment::query()
             ->where('sales_order_id', $salesOrderId)
             ->whereIn('shipment_status', ['outbound_posted', 'partially_shipped', 'shipped', 'completed'])
-            ->orderBy('id')->lockForUpdate()->get(['actual_cost_amount'])
-            ->reduce(fn (string $sum, SalesShipment $row): string => Money::add($sum, (string) $row->actual_cost_amount), '0.0000');
+            ->with(['lines' => fn ($query) => $query->select('id', 'shipment_id', 'cost_amount_snapshot')->orderBy('id')->lockForUpdate()])
+            ->orderBy('id')->lockForUpdate()->get(['id', 'actual_cost_amount'])
+            ->reduce(function (string $sum, SalesShipment $row): string {
+                // 在订单层冲回原始成本后再取分，避免多批次先各自取分造成整单全退仍留一分。
+                $raw = $row->lines->reduce(fn ($cost, $line) => bcadd($cost, (string) $line->cost_amount_snapshot, 4), '0.0000');
+                return Money::add($sum, bccomp($raw, '0', 4) === 0 ? (string) $row->actual_cost_amount : $raw);
+            }, '0.0000');
 
         $reversedReturnCost = InventoryTransactionItem::query()
             ->join('erp_inventory_transactions', 'erp_inventory_transactions.id', '=', 'erp_inventory_transaction_items.transaction_id')
@@ -34,7 +39,7 @@ class SalesOrderActualCostService
             ->reduce(fn (string $sum, InventoryTransactionItem $row): string => Money::add($sum, (string) ($movementCosts[$row->id] ?? $row->cost_amount)), '0.0000');
 
         SalesOrder::query()->whereKey($salesOrderId)->update([
-            'actual_sales_cost_amount' => Money::maxZero(Money::sub($outboundCost, $reversedReturnCost)),
+            'actual_sales_cost_amount' => Money::settle(Money::maxZero(Money::sub($outboundCost, $reversedReturnCost))),
         ]);
     }
 }

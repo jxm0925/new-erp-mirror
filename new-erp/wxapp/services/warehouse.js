@@ -99,5 +99,6 @@ module.exports = {
   stocktakes: query => get('inventory/stocktakes', query),
   stocktakeOptions: () => get('inventory/stocktakes/options'),
   stocktake: (id, query) => get(`inventory/stocktakes/${Number(id)}`, query),
+  stocktakeItems: (id, query) => get(`inventory/stocktakes/${Number(id)}/items`, query),
   stocktakeEntries: (id, lineId, query) => get(`inventory/stocktakes/${Number(id)}/lines/${Number(lineId)}/entries`, query),
 };

@@ -184,7 +184,7 @@ final class CrmOrderAmountService
             if ($amount === null) return null;
             $total = Money::add($total, $amount);
         }
-        return $total;
+        return Money::settle($total);
     }
 
     private function financeAmounts(SalesOrder $order, Collection $allocations): array
@@ -204,7 +204,7 @@ final class CrmOrderAmountService
             if ($receipt) $received = Money::add($received, $amount);
             else $refunded = Money::add($refunded, $amount);
         }
-        return [$received, $refunded, $hasReceipt];
+        return [Money::settle($received), Money::settle($refunded), $hasReceipt];
     }
 
     private function platformAmount(SalesOrder $order, array $snapshot, string $refunded): ?string

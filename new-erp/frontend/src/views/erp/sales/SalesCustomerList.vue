@@ -101,6 +101,7 @@
 </template>
 
 <script>
+import { formatMoney as displayMoney } from '../../../utils/money.js'
 import { listSalesCustomers } from '@/api/erp/sales'
 import CustomerDrawer from '@/components/sales/CustomerDrawer.vue'
 import CustomerDetailDialog from '@/components/sales/CustomerDetailDialog.vue'
@@ -173,7 +174,7 @@ export default {
     },
     orderMoney(value, currency) {
       if (value === null || value === undefined || value === '') return `${currency || '—'} 待核实`
-      return `${currency === 'CNY' ? '¥' : (currency || '—') + ' '}${Number(value).toLocaleString('zh-CN', { maximumFractionDigits: 2 })}`
+      return `${currency === 'CNY' ? '¥' : (currency || '—') + ' '}${displayMoney(value)}`
     },
     async openFollowup(row) {
       await this.$refs.detail.open(row.id, 'followups')

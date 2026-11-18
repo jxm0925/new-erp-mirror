@@ -356,7 +356,7 @@ Do not change layout without approval.
                         <label class="required">{{ row.line_type === 'deduction' ? '扣减金额' : '销售单价' }}</label>
                         <div class="input-addon">
                           <span class="addon">¥</span>
-                          <el-input-number v-model="row.unit_price" size="small" :min="0" :precision="2" :controls="false" placeholder="请填写单价" @change="recalc" />
+                          <erp-money-input number-control v-model="row.unit_price" size="small" :min="0" :precision="2" :controls="false" placeholder="请填写单价" @change="recalc" />
                         </div>
                       </div>
                       <div class="field">
@@ -504,7 +504,7 @@ Do not change layout without approval.
             <template slot-scope="{row}">
               <div class="price-cell">
                 <span class="unit-text">¥</span>
-                <el-input v-model.number="row.unit_price" size="mini" class="inline-input text-right" placeholder="请填写单价" @input="recalc" />
+                <erp-money-input v-model.number="row.unit_price" size="mini" class="inline-input text-right" placeholder="请填写单价" @input="recalc" />
               </div>
             </template>
           </el-table-column>
@@ -702,6 +702,7 @@ Do not change layout without approval.
 </template>
 
 <script>
+import { formatMoney as displayMoney } from '../../../utils/money.js'
 import { erpDateTime } from '../../../utils/dateTime'
 import cachedPageRoute from '@/utils/cachedPageRoute'
 import ProductSkuPicker from '@/components/sales/ProductSkuPicker.vue'
@@ -2285,7 +2286,7 @@ export default {
       return price >= 0 ? '' : `${line.sku_name || '订单行'}：单价不能小于 0，要减钱请用扣减项（如红包、优惠）`
     },
     money(value) {
-      return Number(value || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+      return displayMoney(value || 0)
     },
     lineTypeText(line) {
       if (line.is_purchase_fulfilled) return '外购备货'

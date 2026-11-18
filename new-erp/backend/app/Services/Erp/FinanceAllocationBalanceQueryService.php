@@ -35,8 +35,9 @@ class FinanceAllocationBalanceQueryService
         // using a current read, then sum exact decimals. SUM + a snapshot EXISTS
         // subquery can otherwise miss money committed while waiting for the source.
         if (DB::transactionLevel() > 0) $query->lockForUpdate();
-        return $query->orderBy('erp_finance_allocations.id')
+        $total = $query->orderBy('erp_finance_allocations.id')
             ->get(['erp_finance_allocations.allocated_amount'])
             ->reduce(fn (string $sum, FinanceAllocation $row): string => Money::add($sum, (string) $row->allocated_amount), '0.0000');
+        return Money::settle($total);
     }
 }

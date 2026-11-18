@@ -2,6 +2,7 @@
 
 namespace App\Services\Erp;
 
+use App\Domain\Finance\Money;
 use App\Models\Erp\{ItemPurchaseConversion, SalesOrderLine, Sku, SkuItemRelation, Unit};
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
@@ -87,11 +88,13 @@ class UnitConversionDomainService
         ];
     }
 
-    public function calculateBaseUnitPrice(float|int|string $purchaseUnitPrice, float|int|string $factor): float
+    public function calculateBaseUnitPrice(float|int|string $purchaseUnitPrice, float|int|string $factor): string
     {
-        $price = $this->nonNegative($purchaseUnitPrice, '采购单位报价不能小于 0。');
-        $ratio = $this->positive($factor, '换算因子必须大于 0。');
-        return round($price / $ratio, 8);
+        $price = is_float($purchaseUnitPrice) ? sprintf('%.8F', $purchaseUnitPrice) : (string) $purchaseUnitPrice;
+        $ratio = is_float($factor) ? sprintf('%.8F', $factor) : (string) $factor;
+        $this->nonNegative($price, '采购单位报价不能小于 0。');
+        $this->positive($ratio, '换算因子必须大于 0。');
+        return Money::normalize(bcdiv($price, $ratio, 9), 8);
     }
 
     public function calculateReceiptBaseQuantity(

@@ -15,7 +15,7 @@ final class SalesCancellationService
         $received = $balances->forSource(F::SOURCE_SALES_ORDER, $order->id, F::DIRECTION_RECEIPT);
         $refunded = $balances->forSource(F::SOURCE_SALES_ORDER_REFUND, $order->id, F::DIRECTION_PAYMENT);
         $case = SalesCancellation::where('sales_order_id', $order->id)->when(DB::transactionLevel() > 0, fn ($q) => $q->lockForUpdate())->first();
-        $retained = (string) ($case?->retained_amount ?? '0');
+        $retained = Money::settle((string) ($case?->retained_amount ?? '0'));
         $remaining = Money::maxZero(Money::sub(Money::sub($received, $refunded), $retained));
         return ['received' => $received, 'refunded' => $refunded, 'retained' => $retained, 'remaining' => $remaining,
             'finance_status' => Money::compare($remaining, '0') > 0 ? 'pending' : 'settled',
@@ -44,7 +44,7 @@ final class SalesCancellationService
         $a = $this->amounts($order);
         $paid = Money::compare($a['remaining'], '0') > 0;
         abort_if($paid && !in_array($data['funds_method'] ?? null, ['refund', 'partial'], true), 422, '订单有未处理收款，请选择全额退款或部分退款、部分留存。');
-        $keep = ($data['funds_method'] ?? 'refund') === 'partial' ? Money::normalize((string) ($data['retained_amount'] ?? 0)) : '0.0000';
+        $keep = ($data['funds_method'] ?? 'refund') === 'partial' ? Money::settle((string) ($data['retained_amount'] ?? 0)) : '0.0000';
         abort_if(Money::compare($keep, '0') < 0 || Money::compare($keep, $a['remaining']) > 0, 422, '申请留存金额必须在待处理收款余额以内。');
         SalesCancellation::create(['sales_order_id' => $order->id, 'method' => $data['funds_method'] ?? 'refund',
             'requested_refund' => Money::sub($a['remaining'], $keep), 'requested_retained' => $keep, 'retained_amount' => 0,
@@ -66,7 +66,7 @@ final class SalesCancellationService
                 $case = SalesCancellation::where('sales_order_id', $orderId)->lockForUpdate()->firstOrFail();
             } else abort_unless((int) $case->business_version === (int) $data['expected_version'], 409, '处置记录已变化，请刷新。');
             $a = $this->amounts($order);
-            $keep = Money::normalize((string) $data['retained_amount']);
+            $keep = Money::settle((string) $data['retained_amount']);
             $unrefunded = Money::maxZero(Money::sub($a['received'], $a['refunded']));
             $reserved = $this->reservedRefunds($orderId);
             abort_if(Money::compare($keep, '0') < 0 || Money::compare(Money::add($keep, $reserved), $unrefunded) > 0, 422, '留存金额加正在办理的退款不能超过未退收款；请先处理现有退款单。');

@@ -507,7 +507,7 @@
               <paged-record-select v-model="line.item_id" placeholder="物料" entity="items" :params="{ management_scope: form.management_scope || undefined }" :selected-rows.sync="items" category-type="item" />
               <paged-record-select v-if="mode==='plans'" v-model="line.supplier_id" placeholder="供应商" entity="suppliers" :selected-rows.sync="suppliers" />
               <el-input-number v-model="line.qty" :min="1" controls-position="right" />
-              <el-input-number v-model="line.unit_price" :min="0" controls-position="right" />
+              <erp-money-input unit-price type="number" v-model="line.unit_price" min="0" step="0.00000001" />
               <el-input v-if="mode==='receipts'" v-model="line.batch_no" placeholder="批次号" />
               <el-button type="text" class="danger-link" @click="form.items.splice(index,1)">删除</el-button>
             </div>
@@ -557,6 +557,9 @@
 </template>
 
 <script>
+import { sumInvoiceAmounts } from '@/utils/financeInvoiceAmount'
+import { formatPurchasePrice, purchaseLineAmount } from '@/utils/purchaseLineAmount'
+import { formatMoney as displayMoney } from '../../../utils/money.js'
 import PagedRecordSelect from '@/components/common/PagedRecordSelect.vue'
 import { erpDateTime } from '../../../utils/dateTime'
 import {
@@ -956,7 +959,7 @@ export default {
     },
     toForm(row) {
       if (this.mode === 'requests') return { ...row }
-      const items = (row.items || []).map(l => ({ ...l, qty: l.plan_qty || l.order_qty || l.receipt_qty, unit_price: Number(l.unit_price || 0) }))
+      const items = (row.items || []).map(l => ({ ...l, qty: l.plan_qty || l.order_qty || l.receipt_qty, unit_price: l.unit_price || 0 }))
       return { ...row, items }
     },
     blankLine() {
@@ -1391,7 +1394,7 @@ export default {
     },
     supplierContact(supplier) { return supplier ? (supplier.contact_name || supplier.contact_person || supplier.contacts || '--') : '--' },
     supplierPhone(supplier) { return supplier ? (supplier.contact_phone || supplier.phone || supplier.mobile || '--') : '--' },
-    orderLineAmount(order) { return (order.items || []).reduce((sum, line) => sum + Number(line.amount ?? Number(line.purchase_qty || line.order_qty || 0) * Number(line.purchase_unit_price ?? line.unit_price ?? 0)), 0) },
+    orderLineAmount(order) { return sumInvoiceAmounts((order.items || []).map(line => line.amount ?? purchaseLineAmount(line.purchase_qty || line.order_qty, line.purchase_unit_price ?? line.unit_price))) },
     orderTaxAmount(order) { return Number(order.tax_amount || 0) },
     orderUntaxedAmount(order) { return Number(order.amount_excl_tax ?? this.orderGrandTotal(order) - this.orderTaxAmount(order)) },
     orderGrandTotal(order) { return Number(order.amount_incl_tax ?? order.total_amount ?? 0) },
@@ -1402,8 +1405,8 @@ export default {
       this.$router.push({ path: '/purchase/receipts', query: { receipt_id: receipt && receipt.id } })
     },
     rowClass({ row }) { return row === this.selected ? 'current-purchase-row' : '' },
-    money(v) { return Number(v || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) },
-    purchasePrice(value) { return Number(value || 0).toLocaleString('zh-CN', { maximumFractionDigits: 8 }) },
+    money(v) { return displayMoney(v || 0) },
+    purchasePrice: formatPurchasePrice,
     number(v) { return Number(v || 0).toFixed(6).replace(/0+$/, '').replace(/\.$/, '') }
   }
 }

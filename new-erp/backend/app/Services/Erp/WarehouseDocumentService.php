@@ -3,6 +3,7 @@
 namespace App\Services\Erp;
 
 use App\Exceptions\Erp\WorkOrderDomainException;
+use App\Models\Erp\InventoryStocktakeLine;
 use App\Models\Erp\{InventoryTransaction, PurchaseReceipt, PurchaseReturn, SalesOrder, SalesReturn, SalesReturnReceipt, SalesShipment};
 use App\Models\Erp\{InventoryStocktake, Item, MfgMaterialDelivery, MfgMaterialReturn, MfgReceipt, MfgWorkOrder, MfgWorkOrderUnit, MfgWorkOrderOperation};
 use App\Services\Erp\Manufacturing\{MaterialDeliveryService, MaterialReturnService, ReceiptService};
@@ -44,7 +45,7 @@ final class WarehouseDocumentService
         } elseif ($kind === 'sales_shipment' || $kind === 'sales_return') {
             $orders = SalesOrder::query()->select('id'); app(SalesOrderVisibilityService::class)->apply($orders, $user, true);
             if ($kind === 'sales_shipment') {
-                $document = SalesShipment::with(['order'])->whereIn('sales_order_id', $orders)->findOrFail($id);
+                $document = SalesShipment::query()->withProgress()->with('order')->whereIn('sales_order_id', $orders)->findOrFail($id);
                 $lines = $document->lines()->with(['orderLine.item.unit', 'reservation.balance.warehouse', 'reservation.balance.location']);
                 $extra['packages'] = $document->packages()->orderBy('id')->paginate($size, ['*'], 'packages_page', max(1, (int) ($filters['packages_page'] ?? 1)))->toArray();
                 if (in_array($document->shipment_status, ['pending_outbound', 'prepared', 'partially_shipped'], true)
@@ -127,22 +128,20 @@ final class WarehouseDocumentService
         if ($kind === 'stocktake') {
             $stocktake = InventoryStocktake::query()->with(['warehouse:id,warehouse_code,warehouse_name', 'location:id,location_code,location_name'])->findOrFail($id);
             $header = $stocktake->toArray() + ['document_type' => 'inventory_stocktake', 'status_label' => InventoryStocktakeService::STATUSES[$stocktake->stocktake_status] ?? $stocktake->stocktake_status];
-            $summary = (array) DB::table('erp_inventory_stocktake_lines')->where('stocktake_id', $id)->selectRaw('COUNT(*) AS total_lines, SUM(counted_qty IS NOT NULL) AS counted_lines,
-                SUM(counted_qty IS NULL) AS uncounted_lines, SUM(difference_qty IS NOT NULL AND difference_qty <> 0) AS diff_lines,
-                COALESCE(SUM(difference_amount),0) AS difference_amount')->first();
-            $header['summary'] = array_map(fn ($value) => $value === null ? 0 : (float) $value, $summary);
+            $header['summary'] = app(InventoryStocktakeService::class)->summary($stocktake);
             $keyword = trim((string) ($filters['keyword'] ?? ''));
-            $lines = $stocktake->lines()->with(['item:id,item_code,item_name,spec', 'location:id,location_code,location_name', 'unit:id,unit_name'])
+            $lines = $stocktake->lines()->with([InventoryStocktakeLine::ITEM_RELATION, 'location:id,location_code,location_name', 'unit:id,unit_name'])
+                ->when($filters['line_id'] ?? null, fn ($q, $lineId) => $q->whereKey($lineId))
                 ->when($keyword !== '', fn ($q) => $q->where(fn ($w) => $w->where('batch_no', 'like', '%'.$keyword.'%')
                     ->orWhereHas('item', fn ($item) => $item->where('item_code', 'like', '%'.$keyword.'%')->orWhere('item_name', 'like', '%'.$keyword.'%')->orWhere('spec', 'like', '%'.$keyword.'%'))))
                 ->when($filters['location_id'] ?? null, fn ($q, $locationId) => $q->where('location_id', $locationId))
                 ->when(($filters['line_status'] ?? null) === 'uncounted', fn ($q) => $q->whereNull('counted_qty'))
-                ->when(($filters['line_status'] ?? null) === 'diff', fn ($q) => $q->where('difference_qty', '<>', 0))
+                ->when(($filters['line_status'] ?? null) === 'diff', fn ($q) => $q->withDifferences())
                 ->orderBy('location_id')->orderBy('item_id')->orderBy('id')->paginate($size, ['*'], 'page', $page);
             $entries = app(InventoryStocktakeEntryService::class);
             $stats = $entries->stats($lines->getCollection()->where('count_mode', '!=', 'quantity')->pluck('id')->all());
-            $lines->getCollection()->each(fn ($line) => $line->setAttribute('entry_stats', $line->count_mode === 'quantity' ? null : ($stats[$line->id] ?? $entries->emptyStats())));
-            if ($stocktake->stocktake_status === 'counting') $actions = ['stocktake.counts', 'stocktake.complete'];
+            $lines->getCollection()->each(fn ($line) => $line->presentForCount($line->count_mode === 'quantity' ? null : ($stats[$line->id] ?? $entries->emptyStats())));
+            if ($stocktake->stocktake_status === 'counting') $actions = ['stocktake.counts', 'stocktake.add_line', 'stocktake.complete'];
         } else {
             if ($kind === 'material_preparation') {
                 $operation = MfgWorkOrderOperation::query()->with('workOrder:id,item_name,product_name,source_type,sales_order_id')->findOrFail($id);

@@ -55,7 +55,7 @@ import SupplierFinanceEntriesDialog from './SupplierFinanceEntriesDialog.vue'
 const blankFilters = () => ({ supplier_id: null, supplier_keyword: '', currency: '', payment_status: '', invoice_status: '', has_balance: '', only_prepayment: false })
 const MoneyColumn = {
   props: ['label', 'prop', 'strong'],
-  template: '<el-table-column :label="label" min-width="126" align="right"><template slot-scope="{row}"><span :class="{\'money-strong\':strong}">{{ Number(row[prop] || 0).toLocaleString(\'zh-CN\',{minimumFractionDigits:2,maximumFractionDigits:4}) }}</span></template></el-table-column>',
+  template: '<el-table-column :label="label" min-width="126" align="right"><template slot-scope="{row}"><span :class="{\'money-strong\':strong}">{{ $money(row[prop] || 0) }}</span></template></el-table-column>',
 }
 
 export default {

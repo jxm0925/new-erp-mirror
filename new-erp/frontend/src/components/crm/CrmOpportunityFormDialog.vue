@@ -12,7 +12,7 @@
         <el-form-item label="业务线"><el-select v-model="form.business_line" clearable filterable allow-create default-first-option popper-class="crm-select-popper"><el-option v-for="item in metadata.business_lines || []" :key="item" :value="item" :label="item" /></el-select></el-form-item>
         <el-form-item :label="form.id ? '当前阶段' : '初始阶段'"><el-input :value="form.stage_label || '客户需求确认'" disabled /><small v-if="!form.id" class="crm-sub">新建统一从客户需求确认开始</small></el-form-item>
         <el-form-item label="币种"><el-select v-model="form.currency" popper-class="crm-select-popper"><el-option v-for="item in metadata.currencies || []" :key="item" :value="item" :label="item" /></el-select></el-form-item>
-        <el-form-item label="预计金额"><el-input v-model="form.expected_amount" placeholder="未填写"><template slot="prepend">{{ form.currency }}</template></el-input></el-form-item>
+        <el-form-item label="预计金额"><erp-money-input v-model="form.expected_amount" placeholder="未填写"><template slot="prepend">{{ form.currency }}</template></erp-money-input></el-form-item>
         <el-form-item label="预计成交日期"><el-date-picker v-model="form.expected_close_date" type="date" value-format="yyyy-MM-dd" popper-class="crm-date-popper" /></el-form-item>
         <el-form-item label="下次跟进"><el-date-picker v-model="form.next_contact_at" type="datetime" value-format="yyyy-MM-dd HH:mm:ss" popper-class="crm-date-popper" /></el-form-item>
         <el-form-item label="采购需求" class="crm-span-all"><el-input v-model.trim="form.demand_summary" type="textarea" :rows="2" maxlength="5000" /></el-form-item>

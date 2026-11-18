@@ -3,6 +3,7 @@
 namespace App\Services\Erp\Inventory;
 
 use App\Models\Erp\InventoryAdjustmentSerial;
+use App\Models\Erp\InventoryAdjustmentItemPhysical;
 use App\Models\Erp\InventoryBalance;
 use App\Models\Erp\InventorySerial;
 use App\Models\Erp\InventoryStocktakeEntry;
@@ -128,10 +129,15 @@ class InventoryStocktakeEntryService
             $counted = round($counted, 4);
         }
         $difference = $counted === null ? null : round($counted - (float) $line->book_qty, 4);
+        $amount = $difference === null ? null : round($difference * (float) $line->unit_cost, 4);
+        if ($difference !== null && $line->count_mode === 'physical') {
+            $amount = $line->entries()->changed()->toBase()
+                ->selectRaw('COALESCE(SUM(CASE WHEN is_new THEN total_cost ELSE -total_cost END), 0) AS amount')->value('amount');
+        }
         $line->update([
             'unnumbered_counted_qty' => $line->count_mode === 'serial' ? $unnumbered : null,
             'counted_qty' => $counted, 'difference_qty' => $difference,
-            'difference_amount' => $difference === null ? null : round($difference * (float) $line->unit_cost, 4),
+            'difference_amount' => $amount,
             'counted_by' => $counted === null ? null : $operatorId, 'counted_at' => $counted === null ? null : now(),
         ]);
     }
@@ -158,7 +164,7 @@ class InventoryStocktakeEntryService
      */
     public function adjustmentLines(InventoryStocktakeLine $line, Item $item, float $remaining): array
     {
-        $entries = InventoryStocktakeEntry::query()->where('line_id', $line->id)->orderBy('id')->get();
+        $entries = $line->entries()->changed()->orderBy('id')->get();
         $missing = $entries->filter(fn ($e) => $e->book_present && ! $e->is_locked && $e->counted_present === false)->values();
         $new = $entries->filter(fn ($e) => $e->is_new)->values();
         $unnumberedDiff = $line->count_mode === 'serial'
@@ -166,8 +172,8 @@ class InventoryStocktakeEntryService
         if (abs($unnumberedDiff) >= 0.00005 && $item->serialTrackingMode() === 'required') {
             throw ValidationException::withMessages(['lines' => "{$item->item_code}（批次 {$line->batch_no}）必须逐件编号，请把盘到的件录入编号，无编号数量须与账面一致。"]);
         }
-        $decrease = -($line->count_mode === 'physical' ? (float) $this->physicalQuantity($item, $missing) : $missing->count()) + min(0, $unnumberedDiff);
-        $increase = ($line->count_mode === 'physical' ? (float) $this->physicalQuantity($item, $new) : $new->count()) + max(0, $unnumberedDiff);
+        $decrease = -$this->entryQuantity($item, $line->count_mode, $missing) + min(0, $unnumberedDiff);
+        $increase = $this->entryQuantity($item, $line->count_mode, $new) + max(0, $unnumberedDiff);
         if (abs(round($decrease + $increase - $remaining, 4)) >= 0.00005) {
             throw ValidationException::withMessages(['lines' => "{$item->item_code}（批次 {$line->batch_no}）逐件盘点结果与账面不一致（可能开盘后编号档案或实物发生变化），请取消后重新盘点。"]);
         }
@@ -189,11 +195,42 @@ class InventoryStocktakeEntryService
         return $rows;
     }
 
+    public function entryQuantity(Item $item, string $mode, $entries): float
+    {
+        return $mode === 'physical' ? (float) $this->physicalQuantity($item, $entries) : $entries->count();
+    }
+
     private function remark(InventoryStocktakeLine $line, string $label, int $pieces, float $unnumbered): string
     {
         $text = $label.($line->count_mode === 'serial' ? "编号 {$pieces} 件" : "实物 {$pieces} 张");
         if ($unnumbered >= 0.00005) $text .= '，无编号 '.rtrim(rtrim(number_format($unnumbered, 4, '.', ''), '0'), '.').' 件';
         return trim(($line->remark ? $line->remark.'；' : '').$text);
+    }
+
+    /** 手工处理过的行须逐方向、逐件核对，防止数量相抵时把其他编号或实物认作本次盘点。 */
+    public function assertPostedEntries(InventoryStocktakeLine $line, array $expectedRows, $facts): void
+    {
+        $actual = $line->count_mode === 'serial'
+            ? InventoryAdjustmentSerial::query()->whereIn('adjustment_item_id', $facts->pluck('source_item_id'))->get()
+            : InventoryAdjustmentItemPhysical::query()->whereIn('inventory_transaction_item_id', $facts->pluck('id'))->get();
+        foreach (['increase', 'decrease'] as $direction) {
+            $positive = $direction === 'increase';
+            $expected = collect($expectedRows)->first(fn ($row) => ($row['change_qty'] > 0) === $positive);
+            $quantity = $facts->filter(fn ($fact) => ($fact->change_qty > 0) === $positive)->sum('change_qty');
+            $key = static function (array $entry) use ($line, $positive): string {
+                if ($line->count_mode === 'serial') return (string) $entry['serial_no'];
+                if (! $positive) return (string) $entry['physical_material_id'];
+                $dimensions = $entry['dimensions'];
+                ksort($dimensions);
+                return json_encode($dimensions).':'.bcadd((string) $entry['total_cost'], '0', 4);
+            };
+            $entries = collect($expected['serial_entries'] ?? $expected['physical_entries'] ?? []);
+            $recorded = $actual->where('direction', $direction)->map(fn ($entry) => $entry->toArray());
+            if (round($quantity - ($expected['change_qty'] ?? 0), 4) != 0
+                || $entries->map($key)->sort()->values()->all() !== $recorded->map($key)->sort()->values()->all()) {
+                throw ValidationException::withMessages(['lines' => "批次 {$line->batch_no} 的手工差异调整与逐件盘点结果不一致，请核对盘盈、盘亏的编号或实物后再完成。"]);
+            }
+        }
     }
 
     private function addSerial(InventoryStocktakeLine $line, Item $item, array $new, ?int $operatorId): void

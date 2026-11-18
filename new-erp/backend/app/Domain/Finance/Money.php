@@ -9,6 +9,19 @@ final class Money
     public const SCALE = 4;
     public const CALC_SCALE = 8;
 
+    /** 结算与核销以分为单位；单价、汇率与成本分摊沿用各自的计算精度。 */
+    public static function settle(string|int $amount): string
+    {
+        return self::normalize($amount, 2);
+    }
+
+    public static function netFromGross(string $gross, string $taxRate): string
+    {
+        $numerator = bcmul(self::settle($gross), '100', 2);
+        $divisor = bcadd('100', self::normalize($taxRate, self::CALC_SCALE), self::CALC_SCALE);
+        return self::settle(bcdiv($numerator, $divisor, 3));
+    }
+
     public static function normalize(string|int $amount, int $scale = self::SCALE): string
     {
         $value = trim((string) $amount);

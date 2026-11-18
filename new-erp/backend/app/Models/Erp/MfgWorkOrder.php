@@ -28,6 +28,7 @@ class MfgWorkOrder extends MasterModel
     public function materials() { return $this->hasMany(MfgWorkOrderMaterial::class, 'work_order_id')->orderBy('id'); }
     public function logs() { return $this->hasMany(MfgWorkOrderLog::class, 'work_order_id')->orderByDesc('id'); }
     public function salesOrder() { return $this->belongsTo(SalesOrder::class, 'sales_order_id'); }
+    public function tech() { return $this->hasOne(MfgWorkOrderTech::class, 'work_order_id'); }
     public function item() { return $this->belongsTo(Item::class, 'item_id'); }
     public function warehouse() { return $this->belongsTo(Warehouse::class, 'warehouse_id'); }
 }

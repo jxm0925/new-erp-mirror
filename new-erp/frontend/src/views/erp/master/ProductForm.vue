@@ -288,7 +288,7 @@
               </el-table-column>
               <el-table-column prop="sale_price" label="销售单价" width="130" align="right">
                 <template slot-scope="{ row }">
-                  <span class="price-val">¥{{ Number(row.sale_price || 0).toFixed(2) }}</span>
+                  <span class="price-val">¥{{ $money(row.sale_price || 0) }}</span>
                 </template>
               </el-table-column>
               <el-table-column label="生成状态" width="110" align="center">

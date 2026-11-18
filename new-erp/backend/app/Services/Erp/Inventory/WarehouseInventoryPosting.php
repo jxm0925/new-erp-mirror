@@ -8,6 +8,7 @@ use App\Models\Erp\InventoryPostingLog;
 use App\Models\Erp\InventoryQualityEvent;
 use App\Models\Erp\InventorySerial;
 use App\Models\Erp\InventorySerialEvent;
+use App\Models\Erp\InventoryStocktakeLine;
 use App\Models\Erp\InventoryTransaction;
 use App\Models\Erp\InventoryTransactionItem;
 use App\Models\Erp\Item;
@@ -46,7 +47,7 @@ class WarehouseInventoryPosting
                 if ((float) $line->change_qty === 0.0) {
                     throw ValidationException::withMessages(['adjustment' => '调整数量必须大于 0，不能生成 0 数量库存事务。']);
                 }
-                if (!$line->item_id || !$line->warehouse_id || !$line->location_id || !$line->batch_no) {
+                if (!$line->item_id || !$line->warehouse_id || !$line->location_id || (string) $line->batch_no === '') {
                     throw ValidationException::withMessages(['adjustment' => '调整明细必须包含物料、仓库、库位和批次。']);
                 }
                 $balance = InventoryBalance::where('item_id', $line->item_id)
@@ -95,6 +96,11 @@ class WarehouseInventoryPosting
                     foreach ($line->physicalEntries as $entry) {
                         if ($entry->direction === 'increase') {
                             $physicalQuantity = $this->physicalMaterials->inventoryQuantity($line->item, $entry);
+                            // 首次发现的实物须先取得材料批次，首笔入账流水也要能追溯到这批实物。
+                            if (! $balance->material_lot_id) {
+                                $holding = $this->physicalMaterials->warehouseHolding($balance);
+                                $balance->material_lot_id = $holding->material_lot_id;
+                            }
                             $transactionItem = $this->kernel->apply($transaction, [
                                 'item_id' => $line->item_id,
                                 'warehouse_id' => $line->warehouse_id,
@@ -108,6 +114,7 @@ class WarehouseInventoryPosting
                                 'source_id' => $adjustment->id,
                                 'source_item_id' => $line->id,
                                 'physical_operation' => 'adjustment_increase',
+                                'material_lot_id' => $balance->material_lot_id,
                                 'physical_entry_id' => $entry->id,
                                 'remark' => $line->remark,
                             ]);
@@ -142,6 +149,12 @@ class WarehouseInventoryPosting
                     continue;
                 }
                 $cost = [];
+                // 先盘亏可能把余额均价归零，盘盈仍按同张盘点的快照单价入账。
+                $gainUnitCost = null;
+                if ($adjustment->reason === StocktakeFreezeGuard::EXEMPT_ADJUSTMENT_REASON && (float) $line->change_qty > 0 && ! $balance->material_lot_id) {
+                    $gainUnitCost = InventoryStocktakeLine::query()->where('inventory_balance_id', $balance->id)
+                        ->whereHas('stocktake', fn ($query) => $query->where('stocktake_status', 'counting'))->value('unit_cost');
+                }
                 if ($balance->material_lot_id) {
                     $quantity = (string) $line->change_qty;
                     $amount = (string) $balance->inventory_value;
@@ -151,9 +164,11 @@ class WarehouseInventoryPosting
                     } else {
                         if (bccomp($onHand, '0', 8) === 0) {
                             $fact = InventoryTransactionItem::query()->where('item_id', $balance->item_id)
-                                ->where('warehouse_id', $balance->warehouse_id)->where('location_id', $balance->location_id)
                                 ->where('batch_no', $balance->batch_no)->where('material_lot_id', $balance->material_lot_id)
                                 ->where('change_qty', '>', 0)->whereHas('transaction', fn ($query) => $query->where('posting_status', 'posted'))
+                                ->when($adjustment->reason !== StocktakeFreezeGuard::EXEMPT_ADJUSTMENT_REASON,
+                                    fn ($query) => $query->where('warehouse_id', $balance->warehouse_id)->where('location_id', $balance->location_id))
+                                ->orderByRaw('(warehouse_id = ? AND location_id = ?) DESC', [$balance->warehouse_id, $balance->location_id])
                                 ->latest('id')->lockForUpdate()->first();
                             if (! $fact) throw ValidationException::withMessages(['cost_amount' => '该材料批次没有可追溯的入库金额，不能确定盘盈成本。']);
                             $amount = (string) $fact->cost_amount;
@@ -170,7 +185,7 @@ class WarehouseInventoryPosting
                     'batch_no' => $line->batch_no,
                     'unit_id' => $line->unit_id ?: $line->item?->unit_id,
                     'change_qty' => (float) $line->change_qty,
-                    'unit_cost' => (float) $balance->average_unit_cost,
+                    'unit_cost' => $gainUnitCost ?? $balance->average_unit_cost,
                     'source_type' => 'inventory_adjustment',
                     'source_id' => $adjustment->id,
                     'source_item_id' => $line->id,

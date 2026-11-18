@@ -2,6 +2,8 @@
 
 namespace App\Models\Erp;
 
+use App\Domain\Finance\Money;
+
 class PurchaseReceiptItem extends PurchaseBaseModel
 {
     protected $table = 'erp_purchase_receipt_items';
@@ -50,6 +52,26 @@ class PurchaseReceiptItem extends PurchaseBaseModel
     public function effectiveAmount(): string
     {
         return (string) ($this->finance_actual_amount ?? $this->amount_incl_tax ?? $this->receipt_cost ?? '0.0000');
+    }
+
+    public function getUnitPriceAttribute($value)
+    {
+        $receipt = $this->relationLoaded('receipt') ? $this->getRelation('receipt') : null;
+        $quantity = $this->receipt_qty;
+        $amount = $this->receipt_cost;
+        if (!$this->exists || !$receipt || $receipt->settlement_mode !== 'normal'
+            || (float) $this->replacement_received_base_qty > 0 || (float) $quantity <= 0 || (float) $amount <= 0) return $value;
+
+        $source = $this->relationLoaded('orderItem') ? $this->getRelation('orderItem') : null;
+        $orderPrice = $source && (int) $source->purchase_unit_id === (int) $this->purchase_unit_id ? $source->purchase_unit_price : null;
+        $scale = Money::compare($amount, Money::settle($amount)) === 0 ? 2 : 4;
+        foreach ([$orderPrice, $value] as $price) {
+            if ($price === null) continue;
+            $extended = Money::normalize(bcmul((string) $price, (string) $quantity, 16), $scale);
+            if (Money::compare($extended, $amount) === 0) return $price;
+        }
+        // 旧库单价可能只存四位。按已存成交金额反算参考价，金额始终取原行。
+        return Money::normalize(bcdiv((string) $amount, (string) $quantity, 9), 8);
     }
 
     public function receipt() { return $this->belongsTo(PurchaseReceipt::class, 'receipt_id'); }

@@ -2,6 +2,7 @@
 
 namespace App\Services\Erp\Inventory;
 
+use App\Domain\Finance\Money;
 use App\Models\Erp\InventoryBalance;
 use App\Models\Erp\InventoryBatch;
 use App\Models\Erp\InventoryLocationBalance;
@@ -73,39 +74,45 @@ class InventoryPostingKernel
             $this->physicalGuard->assertChange($transaction, $line, $item, $balance);
         }
 
-        $onHand = (float) ($balance->quantity_on_hand ?? 0) + (float) $line['change_qty'];
-        $previousValue = (float) ($balance->inventory_value ?? 0);
+        // 兼容仍传浮点数量/单价的旧适配器；入账金额从这里起只按十进制运算。
+        $changeQty = is_float($line['change_qty']) ? number_format($line['change_qty'], 8, '.', '') : (string) $line['change_qty'];
+        $unitCost = $line['unit_cost'] ?? '0';
+        $unitCost = is_float($unitCost) ? number_format($unitCost, 8, '.', '') : (string) $unitCost;
+        $onHand = bcadd((string) ($balance->quantity_on_hand ?? '0'), $changeQty, 8);
         $costAmount = array_key_exists('cost_amount', $line)
-            ? (float) $line['cost_amount']
-            : (float) $line['change_qty'] * (float) ($line['unit_cost'] ?? 0);
+            ? (is_float($line['cost_amount']) ? number_format($line['cost_amount'], 4, '.', '') : Money::normalize((string) $line['cost_amount']))
+            : Money::normalize(bcmul($changeQty, $unitCost, 16));
         $decimalLot = $item->materialManagementMode() === 'physical'
             || ! empty($line['material_lot_id']) || ! empty($balance->material_lot_id);
         $bySerial = isset($line['outbound_serial_ids']) && $item->materialManagementMode() !== 'physical'
             && ($line['outbound_serial_ids'] || $item->serialTrackingMode() !== 'none') && (float) $line['change_qty'] < 0;
         if ($bySerial) {
-            $take = bcsub('0', (string) $line['change_qty'], 8); $serialCosts = [];
+            $take = bcsub('0', $changeQty, 8); $serialCosts = [];
             $cost = SerialInventoryCost::outbound($balance, $take, $line['outbound_serial_ids'], $serialCosts);
             $costAmount = $line['cost_amount'] = bcsub('0', $cost, 4);
-            $line['unit_cost'] = bcdiv($cost, $take, 8);
+            $unitCost = $line['unit_cost'] = bcdiv($cost, $take, 8);
         }
         if ($decimalLot) {
             if (empty($line['material_lot_id'])) $line['material_lot_id'] = $balance->material_lot_id;
             if ($balance->material_lot_id && (int) $balance->material_lot_id !== (int) $line['material_lot_id'])
                 throw ValidationException::withMessages(['material_lot_id' => '同一库存批次不能混入不同配置、阶段或来源的材料批次。']);
             if (! array_key_exists('cost_amount', $line)) throw ValidationException::withMessages(['cost_amount' => '可追溯材料批次必须传入权威总金额。']);
-            $costAmount = (string) $line['cost_amount'];
             [$packingPhysicalTotal, $cuttingPhysicalTotal] = $this->physicalGuard->assertAuthoritativeTotal($transaction, $line, $item);
             if ((float) $line['change_qty'] < 0 && ! $packingPhysicalTotal && ! $cuttingPhysicalTotal && ! $bySerial) {
-                $consumedQty = number_format(abs((float) $line['change_qty']), 8, '.', '');
+                $consumedQty = bcsub('0', $changeQty, 8);
                 $costAmount = bcsub('0', CuttingDecimal::share((string) $balance->inventory_value, (string) $balance->quantity_on_hand, $consumedQty), 4);
             }
-            $inventoryValue = bcadd((string) ($balance->inventory_value ?? '0'), $costAmount, 4);
-            if (bccomp($inventoryValue, '0', 4) < 0) throw ValidationException::withMessages(['cost_amount' => '库存总金额不足，不能用归零掩盖成本差额。']);
-        } elseif ($bySerial) $inventoryValue = bcadd((string) $balance->inventory_value, $costAmount, 4);
-        else $inventoryValue = max(0, $previousValue + $costAmount);
+        }
+        $inventoryValue = bcadd((string) ($balance->inventory_value ?? '0'), $costAmount, 4);
+        if ($decimalLot && bccomp($inventoryValue, '0', 4) < 0) throw ValidationException::withMessages(['cost_amount' => '库存总金额不足，不能用归零掩盖成本差额。']);
+        if (! $decimalLot && ! $bySerial) $inventoryValue = Money::maxZero($inventoryValue);
         $locked = (float) ($balance->quantity_locked ?? 0);
         if ($onHand < 0 || $onHand - $locked < 0) {
             throw ValidationException::withMessages(['stock' => '当前库存不足，不能执行该调整。']);
+        }
+        $average = '0';
+        if ($onHand > 0) {
+            $average = $decimalLot ? bcdiv($inventoryValue, $onHand, 8) : Money::normalize(bcdiv($inventoryValue, $onHand, 9), 8);
         }
 
         $balance->fill([
@@ -116,12 +123,11 @@ class InventoryPostingKernel
             'quantity_defective' => (float) ($balance->quantity_defective ?? 0),
             'quantity_pending' => (float) ($balance->quantity_pending ?? 0),
             'inventory_value' => $inventoryValue,
-            'average_unit_cost' => $onHand > 0 ? $inventoryValue / $onHand : 0,
+            'average_unit_cost' => $average,
             'last_transaction_at' => now(),
         ])->save();
 
-        if ($decimalLot) $balance->update(['material_lot_id' => $line['material_lot_id'],
-            'average_unit_cost' => $onHand > 0 ? bcdiv($inventoryValue, number_format($onHand, 8, '.', ''), 8) : '0']);
+        if ($decimalLot) $balance->update(['material_lot_id' => $line['material_lot_id']]);
 
         $locationLocator = [
             'item_id' => $line['item_id'],
@@ -164,7 +170,7 @@ class InventoryPostingKernel
             'batch_no' => $line['batch_no'],
             'unit_id' => $line['unit_id'] ?: $item->unit_id,
             'change_qty' => $line['change_qty'],
-            'unit_cost' => (float) ($line['unit_cost'] ?? 0),
+            'unit_cost' => $unitCost,
             'cost_amount' => $costAmount,
             'purchase_amount_snapshot' => $line['purchase_amount_snapshot'] ?? null,
             'freight_amount_snapshot' => $line['freight_amount_snapshot'] ?? 0,

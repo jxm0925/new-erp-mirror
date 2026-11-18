@@ -2,6 +2,7 @@
 
 namespace App\Services\Erp;
 
+use App\Domain\Finance\Money;
 use App\Models\Erp\SalesOrder;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -402,7 +403,7 @@ class PurchaseCostSalesProjectionService
         foreach (DB::table('erp_sales_shipments')->whereIn('id', $shipmentIds)->orderBy('id')->lockForUpdate()->get() as $shipment) {
             $total = DB::table('erp_sales_shipment_lines')->where('shipment_id', $shipment->id)->orderBy('id')->lockForUpdate()->get()
                 ->reduce(fn ($sum, $line) => bcadd($sum, (string) $line->cost_amount_snapshot, 4), '0.0000');
-            $this->write('erp_sales_shipments', $shipment, ['actual_cost_amount' => $total], $evidence);
+            $this->write('erp_sales_shipments', $shipment, ['actual_cost_amount' => Money::settle($total)], $evidence);
         }
         foreach ($orders as $order) {
             $before = (string) $order->actual_sales_cost_amount;

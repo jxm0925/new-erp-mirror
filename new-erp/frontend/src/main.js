@@ -1,4 +1,6 @@
 import Vue from 'vue'
+import { formatMoney } from './utils/money'
+import MoneyInput from './components/common/MoneyInput.vue'
 import VueRouter from 'vue-router'
 import ElementUI from 'element-ui'
 import 'element-ui/lib/theme-chalk/index.css'
@@ -107,6 +109,8 @@ import { canAccessRoute, sessionAccess } from './utils/routeAccess'
 Vue.use(ElementUI)
 Vue.use(VueRouter)
 Vue.config.productionTip = false
+Vue.prototype.$money = formatMoney
+Vue.component('erp-money-input', MoneyInput)
 Vue.prototype.$can = code => {
   if (!code) return true
   const profile = JSON.parse(localStorage.getItem('erp_me') || '{}')

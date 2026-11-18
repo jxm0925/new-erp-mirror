@@ -115,7 +115,7 @@ class SupplierCapabilityController extends Controller
     {
         $this->authorizePermission($request, 'supplier_quotation.view');
         Supplier::findOrFail($supplierId);
-        $query = ItemSupplierPrice::with(['item.unit', 'unit'])
+        $query = ItemSupplierPrice::with(['item.unit', 'unit', 'latestPriceHistory'])
             ->where('supplier_id', $supplierId)
             ->latest('updated_at');
         if ($request->filled('status')) $query->where('status', $request->input('status'));
@@ -142,7 +142,7 @@ class SupplierCapabilityController extends Controller
         $data = $request->validate([
             'item_id' => 'required|exists:erp_items,id',
             'unit_id' => 'required|exists:erp_units,id',
-            'price' => 'required|numeric|gt:0',
+            'price' => 'required|numeric|gt:0|decimal:0,8|max:9999999999.99999999',
             'currency' => 'required|string|max:10',
             'tax_mode' => ['required', Rule::in(['tax_included', 'tax_excluded'])],
             'tax_rate' => 'required|numeric|min:0|max:100',

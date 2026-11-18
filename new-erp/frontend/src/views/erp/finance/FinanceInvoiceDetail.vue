@@ -97,8 +97,8 @@
             <span class="kv-val">{{ invoice.currency || 'CNY' }}</span>
           </div>
           <div class="kv-item">
-            <span class="kv-label">折算税率</span>
-            <span class="kv-val">{{ taxRate }}%</span>
+            <span class="kv-label">票面税率</span>
+            <span class="kv-val">{{ taxRates || '未记录' }}</span>
           </div>
           <div class="kv-item full">
             <span class="kv-label">发票备注</span>
@@ -118,13 +118,19 @@
             <b>¥{{ money(invoice.amount_excl_tax) }}</b>
           </div>
           <div class="amount-row">
-            <span>税额（{{ taxRate }}%）</span>
+            <span>税额</span>
             <b>¥{{ money(invoice.tax_amount) }}</b>
           </div>
           <div class="amount-row total">
             <span>价税合计</span>
             <b class="total-num">¥{{ money(invoice.amount_incl_tax) }}</b>
           </div>
+          <el-table v-if="taxRows.length > 1" :data="taxRows" size="small" border class="detail-table" aria-label="票面税额明细">
+            <el-table-column label="税率" width="70"><template slot-scope="{row}">{{ row.tax_rate == null ? '—' : row.tax_rate + '%' }}</template></el-table-column>
+            <el-table-column label="未税金额" align="right"><template slot-scope="{row}">{{ money(row.amount_excl_tax) }}</template></el-table-column>
+            <el-table-column label="税额" align="right"><template slot-scope="{row}">{{ money(row.tax_amount) }}</template></el-table-column>
+            <el-table-column label="含税金额" align="right"><template slot-scope="{row}">{{ money(row.amount_incl_tax ?? sumInvoiceAmounts([row.amount_excl_tax, row.tax_amount], 4)) }}</template></el-table-column>
+          </el-table>
         </article>
 
         <article class="panel compact-panel match-panel">
@@ -293,6 +299,8 @@
 </template>
 
 <script>
+import { formatMoney as displayMoney } from '../../../utils/money.js'
+import { sumInvoiceAmounts } from '../../../utils/financeInvoiceAmount'
 import { getFinanceInvoiceDetail, previewFinanceAttachment, reverseFinanceInvoiceMatch } from '../../../api/erp/finance'
 
 export default {
@@ -315,10 +323,11 @@ export default {
     reversing: false
   }),
   computed: {
-    taxRate() {
-      const tax = Number(this.invoice.tax_amount || 0)
-      const excl = Number(this.invoice.amount_excl_tax || 0)
-      return excl > 0 ? (tax / excl * 100).toFixed(2).replace(/\.00$/, '') : '0'
+    taxRows() {
+      return this.invoice.tax_detail || []
+    },
+    taxRates() {
+      return [...new Set(this.taxRows.filter(row => row.tax_rate != null && row.tax_rate !== '').map(row => row.tax_rate + '%'))].join(' / ')
     },
     matchText() {
       const amount = Number(this.invoice.amount_incl_tax || 0)
@@ -346,6 +355,7 @@ export default {
     })
   },
   methods: {
+    sumInvoiceAmounts,
     async load() {
       this.loading = true
       try {
@@ -380,7 +390,7 @@ export default {
       }
     },
     money(v) {
-      return Number(v || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+      return displayMoney(v || 0)
     },
     fileSize(v) {
       const n = Number(v || 0)

@@ -119,7 +119,7 @@
 
             <el-form-item :label="'实' + title + '金额'" prop="amount">
               <el-input
-                v-model.trim="doc.amount"
+                v-model.trim="doc.amount" @blur="doc.amount = settlementAmount(doc.amount)"
                 :disabled="!canEdit"
                 placeholder="0.00"
                 class="font-tabular money-input"
@@ -133,7 +133,7 @@
             </el-form-item>
 
             <el-form-item label="平台/手续费">
-              <el-input v-model.trim="doc.platform_fee_amount" :disabled="!canEdit" placeholder="0.00" class="font-tabular">
+              <el-input v-model.trim="doc.platform_fee_amount" @blur="doc.platform_fee_amount = settlementAmount(doc.platform_fee_amount) || doc.platform_fee_amount" :disabled="!canEdit" placeholder="0.00" class="font-tabular">
                 <template slot="append">{{ doc.currency || '—' }}</template>
               </el-input>
             </el-form-item>
@@ -431,6 +431,7 @@
 </template>
 
 <script>
+import { formatMoney as displayMoney, settlementAmount } from '../../../utils/money.js'
 import PagedRecordSelect from '@/components/common/PagedRecordSelect.vue'
 import { listFinanceAccounts, listPaymentMethods, getCashDocument, createCashDocument, updateCashDocument, confirmCashDocument, resolveFinanceSource, uploadFinanceAttachment, previewFinanceAttachment, deleteFinanceAttachment } from '../../../api/erp/finance'
 import { listEntity } from '../../../api/erp/master'
@@ -449,12 +450,12 @@ const today = () => {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
 }
 
-// 金额以 4 位小数存储，界面只保留有意义的位数：65.0000 显示为 65.00，54.8673 保持原样。
-const trimMoney = value => {
-  const text = value === null || value === undefined ? '' : String(value)
-  const match = text.match(/^(-?\d+)\.(\d{2})(\d*?)0*$/)
-  return match ? `${match[1]}.${match[2]}${match[3]}` : text
-}
+const cashForm = doc => ({
+  ...doc,
+  amount: settlementAmount(doc.amount),
+  platform_fee_amount: settlementAmount(doc.platform_fee_amount ?? 0),
+  purchase_order_allocations: (doc.purchase_order_allocations || []).map(row => ({ ...row, amount: settlementAmount(row.amount) })),
+})
 
 const blank = () => ({
   id: null,
@@ -465,7 +466,7 @@ const blank = () => ({
   finance_account_id: null,
   currency: "CNY",
   amount: "",
-  platform_fee_amount: "0",
+  platform_fee_amount: "0.00",
   platform_fee_type: "platform",
   payment_method_id: null,
   payment_method: "",
@@ -526,8 +527,8 @@ export default {
       amount: [
         { required: true, message: "请输入金额", trigger: "blur" },
         {
-          pattern: /^\d+(\.\d{1,4})?$/,
-          message: "金额最多 4 位小数",
+          pattern: /^\d+(\.\d*)?$/,
+          message: "请输入非负金额",
           trigger: "blur",
         },
       ],
@@ -564,7 +565,7 @@ export default {
       return this.doc.status === 'draft' && this.$can(this.confirmPermission) && (!this.isNew || this.canEdit)
     },
     pendingTotal() { return allocationTotal(this.pending) },
-    draftRemaining() { return ((amountUnits(this.doc.amount) || 0) - Math.round(this.pendingTotal * 10000)) / 10000 },
+    draftRemaining() { return ((amountUnits(this.doc.amount) || 0) - Math.round(this.pendingTotal * 100)) / 100 },
     pendingError() { return validatePendingAllocations(this.pending, this.doc.amount) },
     purchaseLinksError() { return validatePurchaseOrderAllocations(this.doc.purchase_order_allocations || [], this.doc.amount, this.doc.party_type) },
     balanceValid() {
@@ -598,11 +599,11 @@ export default {
       const previousUnits = amountUnits(previous)
       if (!(nextUnits > 0) || !(previousUnits > 0)) return
       if (this.pending.length === 1 && amountUnits(this.pending[0].allocated_amount) === previousUnits) {
-        this.$set(this.pending[0], 'allocated_amount', String(next))
+        this.$set(this.pending[0], 'allocated_amount', settlementAmount(next))
       }
       const links = this.doc.purchase_order_allocations || []
       if (links.length === 1 && amountUnits(links[0].amount) === previousUnits) {
-        this.doc.purchase_order_allocations = [{ ...links[0], amount: String(next) }]
+        this.doc.purchase_order_allocations = [{ ...links[0], amount: settlementAmount(next) }]
       }
     },
     direction() {
@@ -621,15 +622,13 @@ export default {
     this.closePreview()
   },
   methods: {
+    settlementAmount,
     listAccounts: listFinanceAccounts,
     listMethods: listPaymentMethods,
     accountLabel(row) { return `${row.account_name}（${row.currency}）` },
     methodLabel(row) { return row.method_name },
     money(v) {
-      return Number(v || 0).toLocaleString("zh-CN", {
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 4,
-      })
+      return displayMoney(v || 0)
     },
     formatDateTime(v) {
       if (!v) return "—"
@@ -701,9 +700,7 @@ export default {
           const response = await getCashDocument(id)
           if (revision !== this.initRevision) return
           if (response.data.data.direction !== this.direction) throw new Error('资金单方向与当前页面不一致，请从对应列表打开')
-          this.doc = { ...blank(), ...response.data.data }
-          this.doc.amount = trimMoney(this.doc.amount)
-          this.doc.platform_fee_amount = trimMoney(this.doc.platform_fee_amount)
+          this.doc = cashForm({ ...blank(), ...response.data.data })
           this.ensureParty()
           await this.restorePending(revision)
         } else {
@@ -736,7 +733,7 @@ export default {
         this.doc.party_id = Number(source.partyId)
         this.doc.party_name_snapshot = source.partyName
         this.doc.currency = source.currency
-        this.doc.amount = trimMoney(initialAmount)
+        this.doc.amount = settlementAmount(initialAmount)
         this.sourceContext = { type: source.type, id: source.id }
         this.ensureParty()
         this.pending = [pendingFromSource(source, this.doc.amount)]
@@ -766,12 +763,12 @@ export default {
         if (planId && !plan) throw new Error('该付款期次已失效，请返回付款安排重新选择')
         if (plan && !(amountUnits(plan.remaining_amount) > 0)) throw new Error('该付款期次已无待付金额，请返回付款安排核对')
         const suggested = plan ? plan.remaining_amount : order.contract_unpaid_amount
-        const amount = amountUnits(suggested) > 0 ? String(suggested) : ''
+        const amount = amountUnits(suggested) > 0 ? settlementAmount(suggested) : ''
         this.doc.party_type = 'supplier'
         this.doc.party_id = Number(order.supplier_id)
         this.doc.party_name_snapshot = order.supplier_name
         this.doc.currency = order.currency
-        this.doc.amount = trimMoney(amount)
+        this.doc.amount = settlementAmount(amount)
         this.doc.purchase_order_allocations = [{ purchase_order_id: orderId, purchase_order_no: order.purchase_order_no, payment_plan_id: planId, sequence_no: plan?.sequence_no || null, trigger_type: plan?.trigger_type || null, due_date: plan?.due_date || null, amount }]
         this.purchaseOrderContext = { purchase_order_id: orderId, payment_plan_id: planId }
         this.ensureParty()
@@ -781,7 +778,7 @@ export default {
     },
     async restorePending(revision = this.initRevision) {
       if (this.doc.status !== 'draft') { this.pending = []; return }
-      const intents = (this.doc.draft_allocation_items || []).map(row => ({ ...row, source_error: '正在核对业务来源' }))
+      const intents = (this.doc.draft_allocation_items || []).map(row => ({ ...row, allocated_amount: settlementAmount(row.allocated_amount), source_error: '正在核对业务来源' }))
       this.pending = intents
       const context = { ...this.doc, direction: this.direction }
       const restored = await Promise.all(intents.map(async row => {
@@ -842,9 +839,9 @@ export default {
         if (mismatch) { this.$message.warning(mismatch); return false }
         return !this.pending.some(row => sourceKey(row) === sourceKey(source)) && amountUnits(source.remainingAmount) > 0
       })
-      if (!this.doc.amount && validSources.length) this.doc.amount = trimMoney((validSources.reduce((sum, row) => sum + amountUnits(row.remainingAmount), 0) / 10000).toFixed(4))
+      if (!this.doc.amount && validSources.length) this.doc.amount = settlementAmount((validSources.reduce((sum, row) => sum + amountUnits(row.remainingAmount), 0) / 100).toFixed(2))
       for (const source of validSources) {
-        this.pending.push(pendingFromSource(source, this.draftRemaining.toFixed(4)))
+        this.pending.push(pendingFromSource(source, this.draftRemaining.toFixed(2)))
       }
       if (this.pending.some(row => amountUnits(row.allocated_amount) === 0)) this.$message.warning('业务已加入，请调整各项核销金额，使合计不超过资金金额')
     },
@@ -853,6 +850,7 @@ export default {
       const valid = await new Promise(resolve => this.$refs.form.validate(resolve))
       if (!valid) return false
       if (!(amountUnits(this.doc.amount) > 0)) throw new Error('收付款金额必须大于 0')
+      if (amountUnits(this.doc.platform_fee_amount || 0) === null) throw new Error('手续费必须是有效的非负金额')
       if (this.pendingError) throw new Error(this.pendingError)
       if (this.purchaseLinksError) throw new Error(this.purchaseLinksError)
       const purchaseError = this.$refs.purchaseLinks?.validate()
@@ -863,6 +861,8 @@ export default {
       const creating = !this.doc.id
       const payload = {
         ...this.doc,
+        amount: settlementAmount(this.doc.amount),
+        platform_fee_amount: settlementAmount(this.doc.platform_fee_amount || 0),
         draft_allocation_items: serializeAllocationItems(this.pending),
         purchase_order_allocations: serializePurchaseOrderAllocations(this.doc.purchase_order_allocations || []),
         purchase_order_allocation_reason: String(this.doc.purchase_order_allocation_reason || '').trim(),
@@ -874,7 +874,7 @@ export default {
         clearCreatePageReservation(this.reservation)
       } else response = await updateCashDocument(this.doc.id, payload)
       if (revision !== this.initRevision) return false
-      this.doc = { ...this.doc, ...response.data.data }
+      this.doc = cashForm({ ...this.doc, ...response.data.data })
       if (creating && navigate) {
         this.savedNavigationId = Number(this.doc.id)
         await this.$router.replace(`${this.basePath}/${this.doc.id}`)
@@ -909,7 +909,7 @@ export default {
         if (this.canEdit && !await this.persistDraft(revision, { navigate: false })) return
         const response = await confirmCashDocument(this.doc.id, { items: serializeAllocationItems(this.pending) })
         if (revision !== this.initRevision) return
-        this.doc = { ...this.doc, ...response.data.data }
+        this.doc = cashForm({ ...this.doc, ...response.data.data })
         this.pending = []
         this.$message.success('已确认')
       } catch (error) {
@@ -919,7 +919,7 @@ export default {
               const current = await getCashDocument(this.doc.id)
               if (revision !== this.initRevision) return
               if (current.data.data.status === 'confirmed') {
-                this.doc = { ...blank(), ...current.data.data }
+                this.doc = cashForm({ ...blank(), ...current.data.data })
                 this.pending = []
                 this.$message.warning('资金单已确认，已刷新实际状态，请核对核销记录')
                 return
@@ -937,7 +937,7 @@ export default {
       }
     },
     async allocationChanged(document) {
-      if (document && Number(document.id) === Number(this.doc.id) && document.status) this.doc = { ...this.doc, ...document }
+      if (document && Number(document.id) === Number(this.doc.id) && document.status) this.doc = cashForm({ ...this.doc, ...document })
       else await this.reload()
     },
     async upload(req) {
@@ -991,7 +991,7 @@ export default {
       const server = r.data.data
       this.doc = this.canEdit && server.status === 'draft'
         ? { ...server, ...this.doc, attachments: server.attachments || [], logs: server.logs || [] }
-        : { ...blank(), ...server }
+        : cashForm({ ...blank(), ...server })
     },
     back() {
       this.$router.push(this.basePath)

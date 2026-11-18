@@ -272,7 +272,7 @@
           </div>
           <div class="preview-field">
             <span class="preview-lbl">单价 (CNY)</span>
-            <div class="preview-val">{{ form.sale_price === null || form.sale_price === '' ? '—' : Number(form.sale_price).toFixed(2) }} <b>¥</b></div>
+            <div class="preview-val">{{ form.sale_price === null || form.sale_price === '' ? '—' : $money(form.sale_price) }} <b>¥</b></div>
           </div>
           <div v-if="form.electric_mode !== 'hidden'" class="preview-field">
             <span class="preview-lbl">电压 <i v-if="form.electric_mode === 'required'">*</i></span>

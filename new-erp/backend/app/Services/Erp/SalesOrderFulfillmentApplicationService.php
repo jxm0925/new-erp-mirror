@@ -547,6 +547,7 @@ class SalesOrderFulfillmentApplicationService
                 // 生产行一行一张工单，资料齐全就自动下达并生成序列号；BOM/路线缺失的停在“计划”等补齐。
                 $workOrderIds = app(\App\Services\Erp\Manufacturing\WorkOrderService::class)
                     ->createForSalesFulfillments($order, $batchFulfillmentIds, $operator, $productionPlans);
+                $shipment = app(SalesShipmentApplicationService::class)->issueForOrder($order, $operatorName);
                 // 生产确认已按库存锁定备货，锁库状态同步回写，避免订单仍显示“待锁库”。
                 $lockStatus = app(SalesOrderInventoryLockService::class)->lockStatus($order->fresh(['lines', 'fulfillments']));
                 $order->update([
@@ -568,7 +569,7 @@ class SalesOrderFulfillmentApplicationService
                 $ledger->update(['status' => 'succeeded', 'processing_finished_at' => now(), 'response_snapshot' => [
                     'sales_order_id' => $orderId, 'business_version' => (int) $order->business_version,
                     'fulfillment_ids' => $batchFulfillmentIds,
-                    'work_order_ids' => $workOrderIds,
+                    'work_order_ids' => $workOrderIds, 'shipment_id' => $shipment?->id, 'shipment_no' => $shipment?->shipment_no,
                 ]]);
                 $result = $order->fresh(['lines', 'fulfillments']);
                 $result->setAttribute('confirmation_command_result', $ledger->response_snapshot);

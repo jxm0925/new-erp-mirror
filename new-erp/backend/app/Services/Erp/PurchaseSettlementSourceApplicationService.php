@@ -79,13 +79,14 @@ class PurchaseSettlementSourceApplicationService
         ]);
 
         $original = Money::normalize((string) ($line->amount_incl_tax ?? '0'));
-        $eligible = Money::normalize((string) ($line->settlement_amount ?? '0'));
-        $frozen = Money::normalize((string) ($line->quality_hold_amount ?? '0'));
+        $eligible = Money::settle((string) ($line->settlement_amount ?? '0'));
+        $frozen = Money::settle((string) ($line->quality_hold_amount ?? '0'));
+        $apOffset = Money::settle($apOffset);
         $allocated = $this->activePaymentAllocated((int) ($source->id ?? 0));
         $invoiceMatched = $this->activeInvoiceMatched((int) ($source->id ?? 0));
         $payableAfterOffset = Money::maxZero(Money::sub($eligible, $apOffset));
         $unallocated = Money::maxZero(Money::sub($payableAfterOffset, $allocated));
-        $invoiceUnmatched = Money::maxZero(Money::sub($payableAfterOffset, $invoiceMatched));
+        $invoiceUnmatched = Money::maxZero(Money::sub($payableAfterOffset, Money::settle($invoiceMatched)));
         $status = $this->status($eligible, $frozen, $apOffset, $allocated, $unallocated);
 
         $source->fill([

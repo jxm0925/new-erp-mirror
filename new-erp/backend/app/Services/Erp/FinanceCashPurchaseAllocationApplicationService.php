@@ -40,7 +40,7 @@ class FinanceCashPurchaseAllocationApplicationService
         foreach ($items as $item) {
             $row = ['purchase_order_id' => (int) $item['purchase_order_id'],
                 'payment_plan_id' => isset($item['payment_plan_id']) ? (int) $item['payment_plan_id'] : null,
-                'amount' => Money::normalize((string) $item['amount'])];
+                'amount' => Money::settle((string) $item['amount'])];
             if (Money::compare($row['amount'], '0') <= 0) $this->fail('用途分配金额必须大于 0。');
             $key = $this->purposeKey($row);
             if (isset($seen[$key])) $this->fail('同一采购订单、同一期付款安排只能填写一行用途。');
@@ -114,7 +114,7 @@ class FinanceCashPurchaseAllocationApplicationService
         $this->lockOrders([$orderId]);
         $budget = $facts->where('purchase_order_id', $orderId)->reduce(fn (string $sum, $row) => Money::add($sum, $row->amount), '0.0000');
         $allocated = $this->allocationAmounts($document->id)[$orderId] ?? '0.0000';
-        if (Money::compare(Money::add($allocated, $amount), $budget) > 0) $this->fail('对该采购订单的核销金额超过本资金单分配给它的用途金额。');
+        if (Money::compare(Money::add(Money::settle($allocated), $amount), Money::settle($budget)) > 0) $this->fail('对该采购订单的核销金额超过本资金单分配给它的用途金额。');
         if ($document->direction === FinanceConstants::DIRECTION_PAYMENT) {
             $available = $this->balances->currentForOrders([$orderId])[$orderId]['prepaid_amount'];
             if (Money::compare($amount, $available) > 0) $this->fail('该采购订单的可用预付余额不足；已退订金不能继续核销，请核对付款、退款及其用途。');
@@ -167,8 +167,9 @@ class FinanceCashPurchaseAllocationApplicationService
             ->where('actual_receipt.settlement_mode', 'normal')->whereNotNull('erp_purchase_receipt_items.finance_actual_amount')
             ->orderBy('erp_purchase_receipt_items.id');
         if (DB::transactionLevel() > 0) $query->lockForUpdate();
-        return $query->get(['erp_purchase_receipt_items.amount_incl_tax', 'erp_purchase_receipt_items.finance_actual_amount'])
+        $amount = $query->get(['erp_purchase_receipt_items.amount_incl_tax', 'erp_purchase_receipt_items.finance_actual_amount'])
             ->reduce(fn (string $sum, $line): string => Money::add($sum, Money::sub((string) $line->finance_actual_amount, (string) $line->amount_incl_tax)), self::contractAmount($order));
+        return Money::settle($amount);
     }
 
     private function validateRows(FinanceCashDocument $document, array $rows): array
@@ -195,7 +196,7 @@ class FinanceCashPurchaseAllocationApplicationService
                 'title' => $plan?->title, 'sequence_no' => $plan?->sequence_no, 'trigger_type' => $plan?->trigger_type];
             $total = Money::add($total, $row['amount']);
         }
-        if (Money::compare($total, (string) $document->amount) !== 0) $this->fail('采购订单用途金额合计必须等于资金单金额。');
+        if (Money::compare($total, Money::settle((string) $document->amount)) !== 0) $this->fail('采购订单用途金额合计必须等于资金单金额。');
         return $rows;
     }
 
@@ -203,7 +204,7 @@ class FinanceCashPurchaseAllocationApplicationService
     {
         $budgets = $this->amountsByOrder($rows);
         foreach ($this->allocationAmounts($document->id) as $orderId => $amount) {
-            if (! $orderId || ! isset($budgets[$orderId]) || Money::compare($amount, $budgets[$orderId]) > 0) {
+            if (! $orderId || ! isset($budgets[$orderId]) || Money::compare(Money::settle($amount), $budgets[$orderId]) > 0) {
                 $this->fail('资金单已有有效核销；修改后用途必须保留每个已核销采购订单及不少于已核销的金额，请先处理不一致的核销。');
             }
         }
@@ -295,7 +296,7 @@ class FinanceCashPurchaseAllocationApplicationService
 
     private function canonical(array $rows): array
     {
-        $canonical = array_map(fn (array $row) => ['purchase_order_id' => $row['purchase_order_id'], 'payment_plan_id' => $row['payment_plan_id'], 'amount' => $row['amount']], $rows);
+        $canonical = array_map(fn (array $row) => ['purchase_order_id' => $row['purchase_order_id'], 'payment_plan_id' => $row['payment_plan_id'], 'amount' => Money::normalize($row['amount'])], $rows);
         usort($canonical, fn (array $a, array $b) => strcmp($this->purposeKey($a), $this->purposeKey($b)));
         return $canonical;
     }

@@ -115,7 +115,7 @@
                 <el-table-column label="发货日期" min-width="120"><template slot-scope="{row}">{{ date(row.shipped_at) }}</template></el-table-column>
                 <el-table-column prop="carrier_name" label="承运方" min-width="110" />
                 <el-table-column label="物流单号" min-width="150"><template slot-scope="{row}">{{ row.tracking_no || '—' }}</template></el-table-column>
-                <el-table-column label="状态" min-width="100"><template slot-scope="{row}">{{ shipmentStatus(row.shipment_status) }}</template></el-table-column>
+                <el-table-column label="状态" min-width="100"><template slot-scope="{row}">{{ shipmentStatus(row.shipment_progress_status || row.shipment_status) }}</template></el-table-column>
               </template>
               <template v-if="historyTab === 'aftersales'">
                 <el-table-column label="问题类型" min-width="100"><template slot-scope="{row}">{{ issueType(row.issue_type) }}</template></el-table-column>
@@ -324,6 +324,7 @@
 </template>
 
 <script>
+import { formatMoney as displayMoney } from '../../utils/money.js'
 import { erpDateTime } from '@/utils/dateTime'
 import { listCrmLeads, listCrmFollowups, listCrmOpportunities, listCustomerOrderAmounts, listCustomerReceipts, listCustomerShipments, listCustomerAftersales } from '@/api/erp/crm'
 import PagedRecordSelect from '@/components/common/PagedRecordSelect.vue'
@@ -495,10 +496,10 @@ export default {
     },
     requestOpportunities: listCrmOpportunities,
     opportunityLabel(row) { return [row.name,row.stage_label,row.owner_name].filter(Boolean).join(' / ') },
-    opportunityMoney(value,currency) { return value === null || value === undefined || value === '' ? '—' : `${currency || 'CNY'} ${Number(value).toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2})}` },
+    opportunityMoney(value,currency) { return value === null || value === undefined || value === '' ? '—' : `${currency || 'CNY'} ${displayMoney(value)}` },
     orderMoney(value, currency) {
       if (value === null || value === undefined || value === '') return `${currency || '—'} 待核实`
-      return `${currency === 'CNY' ? '¥' : (currency || '—') + ' '}${Number(value).toLocaleString('zh-CN', { maximumFractionDigits: 2 })}`
+      return `${currency === 'CNY' ? '¥' : (currency || '—') + ' '}${displayMoney(value)}`
     },
     fulfillmentText(value) { return ({ pending: '待交付', partial: '部分交付', fulfilled: '已交付', cancelled: '已取消' })[value] || value || '—' },
     fulfillmentTag(value) { return ({ pending: 'warning', partial: 'warning', fulfilled: 'success', cancelled: 'danger' })[value] || 'info' },
@@ -559,7 +560,7 @@ export default {
     },
     changeHistorySize(size) { this.activeHistory.perPage = size; this.activeHistory.page = 1; this.loadHistory() },
     historyDocumentNo(row) { return row.document_no || row.shipment_no || row.case_no || '—' },
-    shipmentStatus(value) { return ({ draft: '草稿', pending_outbound: '待移待发区', prepared: '待发作业', partially_shipped: '部分已发货', outbound_posted: '已出库待发货', shipped: '已发货', cancelled: '已取消' })[value] || value || '—' },
+    shipmentStatus(value) { return ({ draft: '草稿', pending_outbound: '待移待发区', prepared: '待发作业', partially_shipped: '部分发货', outbound_posted: '已出库待发货', shipped: '已发货', cancelled: '已取消' })[value] || value || '—' },
     aftersalesStatus(value) { return ({ pending: '待受理', processing: '处理中', ready_to_close: '待关闭', closed: '已关闭', cancelled: '已取消' })[value] || value || '—' },
     issueType(value) { return ({ quality: '质量故障', transport_damage: '运输破损', wrong_shipment: '错发漏发', installation: '安装问题', consultation: '使用咨询', other: '其他' })[value] || value || '—' },
     viewRelatedOrder(row) {

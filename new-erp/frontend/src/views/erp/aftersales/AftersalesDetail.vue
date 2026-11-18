@@ -85,7 +85,7 @@
               </template></el-table-column>
             </el-table>
             <div v-if="a.action_type === 'compensation'" class="rec-content">
-              <template v-if="canViewAmount">¥ {{ (+a.compensation_amount).toFixed(2) }}（{{ compensationMethodLabel(a.compensation_method) }}） · </template>
+              <template v-if="canViewAmount">¥ {{ $money(a.compensation_amount) }}（{{ compensationMethodLabel(a.compensation_method) }}） · </template>
               {{ fmt(a.compensated_at) }}{{ a.compensation_payee ? ` · 收款人 ${a.compensation_payee}` : '' }}
               <div v-if="a.record_content" class="muted sm" style="margin-top:2px">{{ a.record_content }}</div>
             </div>
@@ -131,7 +131,7 @@
       <div class="as-grid" v-if="actionForm.action_type === 'refund' || actionForm.action_type === 'exchange'">
         <div class="fi"><label>退回方式</label><el-select v-model="actionForm.return_method" size="small" clearable><el-option label="客户寄回" value="customer_ship" /><el-option label="上门取回" value="pickup" /><el-option label="随补发带回" value="with_reship" /></el-select></div>
         <div class="fi"><label>运费承担</label><el-select v-model="actionForm.freight_payer" size="small" clearable><el-option label="公司承担" value="company" /><el-option label="客户承担" value="customer" /><el-option label="承运商承担" value="carrier" /></el-select></div>
-        <div v-if="canViewAmount" class="fi"><label>运费金额</label><el-input v-model="actionForm.freight_amount" size="small" /></div>
+        <div v-if="canViewAmount" class="fi"><label>运费金额</label><erp-money-input v-model="actionForm.freight_amount" size="small" /></div>
         <div class="fi"><label>退回件计划处置<b>*</b></label><el-select v-model="actionForm.planned_disposition" size="small"><el-option label="转残次品" value="defective" /><el-option label="转入库（可售）" value="restock" /><el-option label="报废" value="scrap" /></el-select><small>收货后由仓库最终确认</small></div>
         <template v-if="actionForm.action_type === 'exchange'">
           <div class="fi"><label>补发时机<b>*</b></label><el-radio-group v-model="actionForm.reship_timing" size="small"><el-radio label="return_first">先退后发</el-radio><el-radio label="ship_first">先发后退</el-radio></el-radio-group><small>先退后发需退货单收齐后才能出库</small></div>
@@ -149,7 +149,7 @@
       </div>
       <template v-if="actionForm.action_type === 'compensation'">
         <div class="as-grid">
-          <div class="fi"><label>赔付金额<b>*</b></label><el-input v-model="actionForm.compensation_amount" size="small" :disabled="!canViewAmount" /><small v-if="!canViewAmount">无销售金额权限，仅记录说明</small></div>
+          <div class="fi"><label>赔付金额<b>*</b></label><erp-money-input v-model="actionForm.compensation_amount" size="small" :disabled="!canViewAmount" /><small v-if="!canViewAmount">无销售金额权限，仅记录说明</small></div>
           <div class="fi"><label>付款方式<b>*</b></label><el-select v-model="actionForm.compensation_method" size="small"><el-option label="现金" value="cash" /><el-option label="微信" value="wechat" /><el-option label="支付宝" value="alipay" /><el-option label="银行转账" value="bank_transfer" /><el-option label="其他" value="other" /></el-select></div>
           <div class="fi"><label>付款时间<b>*</b></label><el-date-picker v-model="actionForm.compensated_at" size="small" type="datetime" value-format="yyyy-MM-dd HH:mm:ss" style="width:100%" /></div>
           <div class="fi"><label>收款人</label><el-input v-model="actionForm.compensation_payee" size="small" placeholder="选填" /></div>
@@ -237,7 +237,7 @@
           <el-input v-else v-model="claimForm.target_name" size="small" placeholder="手填名称" :disabled="!!claimForm.id" />
         </div>
         <div class="fi"><label>关联单据号</label><el-input v-model="claimForm.related_doc_no" size="small" placeholder="如原发货单号" /></div>
-        <div v-if="canViewAmount" class="fi"><label>索赔金额<b>*</b></label><el-input v-model="claimForm.claim_amount" size="small" /></div>
+        <div v-if="canViewAmount" class="fi"><label>索赔金额<b>*</b></label><erp-money-input v-model="claimForm.claim_amount" size="small" /></div>
         <div class="fi"><label>提出日期<b>*</b></label><el-date-picker v-model="claimForm.claimed_on" size="small" type="date" value-format="yyyy-MM-dd" style="width:100%" :disabled="!!claimForm.id" /></div>
         <div class="fi full"><label>索赔理由<b>*</b></label><el-input v-model="claimForm.reason" type="textarea" :rows="2" /></div>
         <div class="fi full"><label>凭证</label>
@@ -253,7 +253,7 @@
           </div>
         </div>
         <div class="fi"><label>状态<b>*</b></label><el-select v-model="claimForm.status" size="small"><el-option v-for="s in claimStatuses" :key="s.value" :label="s.label" :value="s.value" /></el-select></div>
-        <div v-if="canViewAmount && ['paid','partially_paid'].includes(claimForm.status)" class="fi"><label>实际赔付金额</label><el-input v-model="claimForm.paid_amount" size="small" /></div>
+        <div v-if="canViewAmount && ['paid','partially_paid'].includes(claimForm.status)" class="fi"><label>实际赔付金额</label><erp-money-input v-model="claimForm.paid_amount" size="small" /></div>
         <div v-if="['paid','partially_paid'].includes(claimForm.status)" class="fi"><label>赔付日期</label><el-date-picker v-model="claimForm.paid_on" size="small" type="date" value-format="yyyy-MM-dd" style="width:100%" /></div>
       </div>
       <div class="as-tip warn">本期索赔只做登记和跟进，不生成财务应收或收款单。</div>
@@ -282,6 +282,7 @@
 </template>
 
 <script>
+import { formatMoney as displayMoney } from '../../../utils/money.js'
 import AftersalesCaseForm from './AftersalesCaseForm.vue'
 import AftersalesAttachmentMedia from './AftersalesAttachmentMedia.vue'
 import PagedRecordSelect from '@/components/common/PagedRecordSelect.vue'
@@ -321,7 +322,7 @@ export default {
     customerText() { const s = this.row.customer_snapshot || {}; return [s.name || this.row.order?.customer_name, s.phone].filter(Boolean).join(' · ') },
     freightText() {
       const a = (this.row.actions || []).find(a => a.freight_amount != null)
-      return a ? `¥ ${(+a.freight_amount).toFixed(2)}${{ company: ' · 公司承担', customer: ' · 客户承担', carrier: ' · 承运商承担' }[a.freight_payer] || ''}` : '—'
+      return a ? `¥ ${displayMoney(a.freight_amount)}${{ company: ' · 公司承担', customer: ' · 客户承担', carrier: ' · 承运商承担' }[a.freight_payer] || ''}` : '—'
     },
     shipAction() { return (this.row.actions || []).find(a => a.id === this.ship.action_id) }
   },
@@ -508,7 +509,7 @@ export default {
     goOrder() { if (!this.row.sales_order_id) return; if (this.embeddedCaseId) this.$emit('open-order', this.row.sales_order_id); else this.$router.push(`/sales/orders/${this.row.sales_order_id}/detail`) },
     fmt: v => v ? erpDateTime(v) : '—',
     fmtShort: v => v ? String(v).slice(5, 16) : '',
-    fmtAmt: v => v == null ? '—' : (+v).toLocaleString('zh-CN', { minimumFractionDigits: 2 }),
+    fmtAmt: displayMoney,
     issueLabel: v => ISSUE_TYPES[v] || v || '—',
     responsibilityLabel: v => ({ factory_quality: '工厂质量', carrier: '物流公司', customer: '客户原因', wrong_shipment: '错发漏发', none: '无责任' })[v] || v || '—',
     warrantyLabel: v => ({ in_warranty: '保内', out_of_warranty: '保外', pending_inspection: '待检测' })[v] || '—',

@@ -254,7 +254,7 @@
           </div>
           <div class="issue-info-item">
             <span>不含税 / 税额</span>
-            <b>¥{{ money(issueExcl) }} / ¥{{ money(issueTax) }}</b>
+            <b>¥{{ money(issueAmounts.net) }} / ¥{{ money(issueAmounts.tax) }}</b>
           </div>
         </div>
 
@@ -281,6 +281,28 @@
               </el-select>
             </el-form-item>
           </div>
+          <el-form-item label="票面明细">
+            <el-switch v-model="issue.byLine" active-text="按票面逐行录入" />
+            <template v-if="issue.byLine">
+              <el-table :data="issueRows" size="mini">
+                <el-table-column label="含税金额" min-width="108">
+                  <template slot-scope="{ $index }">
+                    <el-input v-model.trim="issue.grossLines[$index]" inputmode="decimal" placeholder="0.00" :aria-label="'第' + ($index + 1) + '行含税金额'"
+                      @blur="issue.grossLines.splice($index, 1, roundInvoiceAmount(issue.grossLines[$index]) || issue.grossLines[$index])" />
+                  </template>
+                </el-table-column>
+                <el-table-column label="未税金额" min-width="90" align="right"><template slot-scope="{ row }">{{ row.net || '—' }}</template></el-table-column>
+                <el-table-column label="税额" min-width="76" align="right"><template slot-scope="{ row }">{{ row.tax || '—' }}</template></el-table-column>
+                <el-table-column width="52" align="center"><template slot-scope="{ $index }">
+                  <el-button type="text" :disabled="issue.grossLines.length === 1" @click="issue.grossLines.splice($index, 1)">删除</el-button>
+                </template></el-table-column>
+              </el-table>
+              <div class="issue-line-total">
+                <el-button size="mini" :disabled="issue.grossLines.length >= 50" @click="issue.grossLines.push('')">添加一行</el-button>
+                <span>含税合计 ¥{{ money(issueAmounts.gross) }}</span>
+              </div>
+            </template>
+          </el-form-item>
           <el-form-item label="发票文件">
             <div class="file-picker-box">
               <el-button size="small" icon="el-icon-upload2" @click="$refs.issueFile && $refs.issueFile.click()">选择文件</el-button>
@@ -312,6 +334,8 @@
 </template>
 
 <script>
+import { roundInvoiceAmount, splitGrossInvoiceAmount, sumInvoiceAmounts } from '@/utils/financeInvoiceAmount'
+import { formatMoney as displayMoney } from '../../../utils/money.js'
 import { listSalesInvoiceRequests, issueSalesInvoiceRequest, uploadSalesInvoiceRequestFile, rejectSalesInvoiceRequest } from '@/api/erp/finance'
 import { downloadSalesInvoiceFile } from '@/api/erp/sales'
 
@@ -334,7 +358,7 @@ export default {
     dateRange: [],
     taxRates: [13, 9, 6, 3, 1, 0],
     uploadRow: null,
-    issue: { visible: false, saving: false, row: null, file: null, form: {} },
+    issue: { visible: false, saving: false, row: null, file: null, form: {}, byLine: false, grossLines: [''] },
     issueRules: {
       invoice_no: [{ required: true, message: '请填写发票号码', trigger: 'blur' }],
       invoice_date: [{ required: true, message: '请选择开票日期', trigger: 'change' }]
@@ -344,20 +368,25 @@ export default {
     canHandle() {
       return this.$can('finance.invoice_request.handle')
     },
-    issueExcl() {
-      if (!this.issue.row) return 0
-      return Math.round((Number(this.issue.row.amount) / (1 + Number(this.issue.form.tax_rate || 0) / 100)) * 100) / 100
+    issueRows() {
+      const amounts = this.issue.byLine ? this.issue.grossLines : [this.issue.row && this.issue.row.amount]
+      return amounts.map(value => ({
+        gross: roundInvoiceAmount(value),
+        ...splitGrossInvoiceAmount(value, this.issue.form.tax_rate)
+      }))
     },
-    issueTax() {
-      return this.issue.row ? Math.round((Number(this.issue.row.amount) - this.issueExcl) * 100) / 100 : 0
+    issueAmounts() {
+      const total = field => sumInvoiceAmounts(this.issueRows.map(row => row[field]))
+      return { gross: total('gross'), net: total('net'), tax: total('tax') }
     }
   },
   created() {
     this.load()
   },
   methods: {
+    roundInvoiceAmount,
     money(v) {
-      return Number(v || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+      return displayMoney(v || 0)
     },
     dateTime(v) {
       return v ? String(v).replace('T', ' ').slice(0, 16) : '-'
@@ -440,6 +469,8 @@ export default {
         saving: false,
         row,
         file: null,
+        byLine: false,
+        grossLines: [''],
         form: { invoice_no: '', invoice_code: '', invoice_date: today(), tax_rate: Number(row.tax_rate), remark: '' }
       }
       this.$nextTick(() => {
@@ -454,6 +485,11 @@ export default {
         Object.entries(this.issue.form).forEach(([key, value]) => {
           if (value !== '' && value !== null && value !== undefined) form.append(key, value)
         })
+        if (this.issue.byLine) {
+          if (this.issueRows.some(row => !row.gross || row.gross === '0.00')) return this.$message.warning('每行含税金额须大于零')
+          if (this.issueAmounts.gross !== roundInvoiceAmount(this.issue.row.amount)) return this.$message.warning('票面明细含税合计必须等于申请金额')
+          this.issueRows.forEach(row => form.append('gross_amounts[]', row.gross))
+        }
         if (this.issue.file) form.append('file', this.issue.file)
         this.issue.saving = true
         try {
@@ -525,6 +561,13 @@ export default {
 </script>
 
 <style scoped>
+.issue-line-total {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 8px;
+}
+
 .invoice-request-page {
   min-height: calc(100vh - 58px);
   padding: 16px 20px 24px;

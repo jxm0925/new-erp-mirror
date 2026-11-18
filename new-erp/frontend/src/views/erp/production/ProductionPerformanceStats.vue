@@ -1030,6 +1030,7 @@
 </template>
 
 <script>
+import { formatMoney as displayMoney } from '../../../utils/money.js'
 import { listPerformanceOrders, getPerformanceOrder, getPerformanceBatch, getPerformanceMonth, getPerformanceProduction, listPerformanceWorkOrders } from '../../../api/erp/production'
 import SalesOrderChangeLabor from '@/components/sales/SalesOrderChangeLabor.vue'
 
@@ -1409,10 +1410,10 @@ export default {
       return row.kind === 'wo' ? 'wo-row' : (row.kind === 'note' ? 'note-row' : '')
     },
     money(v) {
-      return v === null || v === undefined ? '—' : Number(v).toFixed(2)
+      return displayMoney(v)
     },
     moneySymbol(v) {
-      return v === null || v === undefined ? '—' : '¥' + Number(v).toFixed(2)
+      return v === null || v === undefined ? '—' : '¥' + displayMoney(v)
     },
     hours(m) {
       return (Number(m || 0) / 60).toFixed(2)

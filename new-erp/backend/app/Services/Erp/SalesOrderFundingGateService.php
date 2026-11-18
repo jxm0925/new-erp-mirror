@@ -23,7 +23,7 @@ final class SalesOrderFundingGateService
     {
         if ($value === null || (is_string($value) && trim($value) === '')) return null;
         try {
-            $amount = Money::normalize(trim((string) $value));
+            $amount = Money::settle(trim((string) $value));
         } catch (Throwable) {
             throw ValidationException::withMessages(['agreed_deposit_amount' => '约定定金必须是有效金额。']);
         }
@@ -172,10 +172,10 @@ final class SalesOrderFundingGateService
             $normalized = Money::normalize($thresholdValue);
             if ($thresholdType === 'ratio') {
                 if (Money::compare($normalized, '0') < 0 || Money::compare($normalized, '1') > 0) throw new \InvalidArgumentException();
-                $required = bcmul($receivable, $normalized, Money::SCALE);
+                $required = Money::settle(bcmul($receivable, $normalized, Money::CALC_SCALE));
             } elseif ($thresholdType === 'amount') {
                 if (Money::compare($normalized, '0') < 0) throw new \InvalidArgumentException();
-                $required = Money::compare($normalized, $receivable) > 0 ? $receivable : $normalized;
+                $required = Money::compare($normalized, $receivable) > 0 ? $receivable : Money::settle($normalized);
             } else {
                 throw new \InvalidArgumentException();
             }
@@ -187,7 +187,7 @@ final class SalesOrderFundingGateService
         $agreed = $snapshot['agreed_deposit_amount'] ?? null;
         if ($agreed !== null && $agreed !== '') {
             try {
-                $agreed = Money::normalize((string) $agreed);
+                $agreed = Money::settle((string) $agreed);
             } catch (Throwable) {
                 $agreed = null;
             }

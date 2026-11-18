@@ -219,6 +219,7 @@ class PurchaseDefectApplicationService
         $purchaseQuantity = $actualBase > 0
             ? round($baseQuantity * (float) $source->receipt_qty / $actualBase, 8)
             : $baseQuantity;
+        $replacementCost = $this->finance->proportionalFacts($source, $baseQuantity)['inventory_cost_amount'];
 
         $receipt = PurchaseReceipt::create([
             'receipt_no' => $this->numbers->next('purchase_receipt', 'PRC'),
@@ -231,7 +232,7 @@ class PurchaseDefectApplicationService
             'total_receipt_qty' => $purchaseQuantity,
             'total_qualified_qty' => 0,
             'total_unqualified_qty' => 0,
-            'total_amount' => $purchaseQuantity * (float) $source->unit_price,
+            'total_amount' => $replacementCost,
             'settlement_mode' => 'replacement_no_charge',
             'remark' => "换货处理 {$handling->handling_no} 的替换品到货单",
             'data_source' => 'system',
@@ -260,7 +261,7 @@ class PurchaseDefectApplicationService
             'inventory_posting_status' => 'pending',
             'unit_price' => $source->unit_price,
             'tax_rate' => $source->tax_rate,
-            'receipt_cost' => $purchaseQuantity * (float) $source->unit_price,
+            'receipt_cost' => $replacementCost,
             'batch_no' => $this->numbers->next('inventory_batch', 'BAT'),
             'serial_number_source' => $source->serial_number_source,
             'remark' => "来源不合格品换货处理 {$handling->handling_no}",

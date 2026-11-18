@@ -80,12 +80,12 @@ class FinanceBusinessSourceQueryService
             $amount = $this->allocated(FinanceConstants::SOURCE_SALES_ORDER, (int) $row->id);
             if ($row->order_status === 'cancelled') $amount = Money::maxZero(Money::sub($amount, (string) (\App\Models\Erp\SalesCancellation::where('sales_order_id', $row->id)->value('retained_amount') ?? 0)));
         } elseif ($type === FinanceConstants::SOURCE_PURCHASE_SETTLEMENT_SOURCE) {
-            $amount = Money::maxZero(Money::sub((string) $row->eligible_amount, (string) $row->ap_offset_amount));
+            $amount = Money::maxZero(Money::sub(Money::settle((string) $row->eligible_amount), Money::settle((string) $row->ap_offset_amount)));
         } elseif ($type === FinanceConstants::SOURCE_PURCHASE_RECEIPT) {
             $offset = Money::normalize((string) PurchaseReturn::query()->where('source_receipt_id', $row->id)
                 ->where('settlement_effect_type', FinanceConstants::PURCHASE_EFFECT_AP_OFFSET)
                 ->whereNotIn('return_status', ['draft', 'submitted', 'cancelled'])->sum('settlement_amount'));
-            $amount = Money::maxZero(Money::sub((string) $row->settlement_amount, $offset));
+            $amount = Money::maxZero(Money::sub(Money::settle((string) $row->settlement_amount), Money::settle($offset)));
         } elseif ($type === FinanceConstants::SOURCE_PURCHASE_RETURN_SUPPLIER_REFUND) {
             $amount = Money::normalize((string) $row->settlement_amount);
         } else {
@@ -104,6 +104,7 @@ class FinanceBusinessSourceQueryService
 
     public function withBalances(array $source): array
     {
+        $source['amount'] = Money::settle($source['amount']);
         $allocated = $this->allocated($source['type'], (int) $source['id']);
         if ($source['type'] === FinanceConstants::SOURCE_SALES_ORDER_REFUND && SalesOrder::whereKey($source['id'])->where('order_status', 'cancelled')->exists()) {
             $reserved = app(SalesCancellationService::class)->reservedRefunds((int) $source['id']);

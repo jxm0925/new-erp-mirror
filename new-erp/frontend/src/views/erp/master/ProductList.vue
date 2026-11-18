@@ -154,7 +154,7 @@
                   </el-table-column>
                   <el-table-column label="默认售价" width="115" align="right">
                     <template slot-scope="{ row: sku }">
-                      <span class="price-val">¥{{ Number(sku.sale_price || 0).toFixed(2) }}</span>
+                      <span class="price-val">¥{{ $money(sku.sale_price || 0) }}</span>
                     </template>
                   </el-table-column>
                   <el-table-column label="关联物料" width="125" align="center">
@@ -348,7 +348,7 @@
                   <template slot-scope="{ row }">{{ row.spec_text || row.sku_name || '-' }}</template>
                 </el-table-column>
                 <el-table-column label="售价" width="90" align="right">
-                  <template slot-scope="{ row }">¥{{ Number(row.sale_price || 0).toFixed(2) }}</template>
+                  <template slot-scope="{ row }">¥{{ $money(row.sale_price || 0) }}</template>
                 </el-table-column>
                 <el-table-column label="状态" width="75" align="center">
                   <template slot-scope="{ row }">
@@ -422,7 +422,7 @@
             <el-table-column prop="sku_name" label="SKU名称" min-width="160" show-overflow-tooltip />
             <el-table-column prop="spec_model" label="规格组合" min-width="140" show-overflow-tooltip />
             <el-table-column prop="sale_price" label="销售价" width="90" align="right">
-              <template slot-scope="{ row }">¥{{ Number(row.sale_price || 0).toFixed(2) }}</template>
+              <template slot-scope="{ row }">¥{{ $money(row.sale_price || 0) }}</template>
             </el-table-column>
             <el-table-column label="状态" width="90" align="center">
               <template slot-scope="{ row }">

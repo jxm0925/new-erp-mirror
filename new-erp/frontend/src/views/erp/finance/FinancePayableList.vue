@@ -502,6 +502,7 @@
 </template>
 
 <script>
+import { formatMoney as displayMoney, settlementAmount } from '../../../utils/money.js'
 import PagedRecordSelect from '@/components/common/PagedRecordSelect.vue'
 import Vue from 'vue'
 import { listFinancePayables } from '../../../api/erp/finance'
@@ -573,7 +574,7 @@ export default {
   },
   methods: {
     money(v) {
-      return '¥ ' + Number(v || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+      return '¥ ' + displayMoney(v || 0)
     },
     params() {
       return {
@@ -745,13 +746,13 @@ export default {
         ['来源单据号', r => r.source_document_no],
         ['采购订单号', r => r.purchase_order_no],
         ['业务日期', r => r.business_date],
-        ['当前应付', r => r.current_payable_amount],
-        ['质量冻结', r => r.quality_frozen_amount],
-        ['退货抵扣', r => r.ap_offset_amount],
-        ['已付款', r => r.paid_amount],
-        ['未付款', r => r.unpaid_amount],
-        ['已收发票', r => r.received_invoice_amount],
-        ['未收发票', r => r.unreceived_invoice_amount],
+        ['当前应付', r => settlementAmount(r.current_payable_amount)],
+        ['质量冻结', r => settlementAmount(r.quality_frozen_amount)],
+        ['退货抵扣', r => settlementAmount(r.ap_offset_amount)],
+        ['已付款', r => settlementAmount(r.paid_amount)],
+        ['未付款', r => settlementAmount(r.unpaid_amount)],
+        ['已收发票', r => settlementAmount(r.received_invoice_amount)],
+        ['未收发票', r => settlementAmount(r.unreceived_invoice_amount)],
       ]
       const content = [
         columns.map(c => c[0]).join(','),

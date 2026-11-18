@@ -9,6 +9,7 @@ use App\Models\Erp\AftersalesLog;
 use App\Models\Erp\InventorySerial;
 use App\Models\Erp\SalesOrder;
 use App\Models\Erp\SalesOrderLine;
+use App\Models\Erp\SalesReturnItem;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
@@ -31,22 +32,8 @@ final class AftersalesCaseApplicationService
     /** 候选与保存共用数量、逐台占用口径；写入调用方须已锁订单。 */
     public static function quantitiesForCase(SalesOrderLine $line, ?int $excludeCaseId = null): array
     {
-        $returns = DB::table('erp_sales_return_items')
-            ->join('erp_sales_returns', 'erp_sales_returns.id', '=', 'erp_sales_return_items.sales_return_id')
-            ->where('erp_sales_return_items.sales_order_line_id', $line->id)
-            ->where('erp_sales_returns.return_status', '!=', 'cancelled')
-            ->get(['erp_sales_return_items.id', 'erp_sales_return_items.sales_return_id',
-                'erp_sales_return_items.requested_sales_qty', 'erp_sales_return_items.requested_base_qty',
-                'erp_sales_return_items.received_base_qty', 'erp_sales_returns.return_status']);
-        $returnQuantities = [];
-        foreach ($returns as $row) {
-            // 退货关闭只释放未收余量；已收到货仍按本退货行冻结的销售/基本单位比例占用。
-            $qty = $row->return_status === 'closed'
-                ? ((float) $row->requested_base_qty > 0
-                    ? min((float) $row->requested_sales_qty, (float) $row->received_base_qty / (float) $row->requested_base_qty * (float) $row->requested_sales_qty) : 0)
-                : (float) $row->requested_sales_qty;
-            $returnQuantities[$row->sales_return_id] = ($returnQuantities[$row->sales_return_id] ?? 0.0) + $qty;
-        }
+        $returns = SalesReturnItem::reservationsForLines([$line->id]);
+        $returnQuantities = $returns->groupBy('sales_return_id')->map(fn ($rows) => $rows->sum('reserved_sales_qty'))->all();
         $coveredSerials = DB::table('erp_sales_return_serial_identities')->whereIn('sales_return_item_id', $returns->pluck('id'))
             ->pluck('inventory_serial_id')->flip();
         $openReturnIds = $returns->where('return_status', '!=', 'closed')->pluck('sales_return_id')->all();

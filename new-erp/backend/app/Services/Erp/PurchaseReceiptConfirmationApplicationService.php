@@ -106,7 +106,7 @@ class PurchaseReceiptConfirmationApplicationService
                 'operator' => $operatorName ?: '系统',
             ]);
 
-            return $receipt->fresh(['items.item', 'items.allocations', 'order', 'supplier']);
+            return $receipt->fresh(['items.item', 'items.orderItem', 'items.receipt:id,settlement_mode', 'items.allocations', 'order', 'supplier']);
         }, 5);
     }
 
@@ -124,7 +124,9 @@ class PurchaseReceiptConfirmationApplicationService
             if (!$orderItem || (int) $orderItem->order_id !== (int) $receipt->order_id || (int) $orderItem->item_id !== (int) $line->item_id) {
                 throw ValidationException::withMessages(['items' => '到货明细必须关联当前采购订单的同一物料明细。']);
             }
+            $line->setRelation('orderItem', $orderItem);
         }
+        $line->setRelation('receipt', $receipt);
 
         $base = $this->units->calculateReceiptBaseQuantity(
             $line->receipt_qty,

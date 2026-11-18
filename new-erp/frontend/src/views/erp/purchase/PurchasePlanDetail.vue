@@ -345,6 +345,9 @@
 </template>
 
 <script>
+import { sumInvoiceAmounts } from '@/utils/financeInvoiceAmount'
+import { formatPurchasePrice } from '@/utils/purchaseLineAmount'
+import { formatMoney as displayMoney } from '../../../utils/money.js'
 import { purchaseScopeLabel, purchaseScopeIssue } from '@/utils/purchaseManagementScope.mjs'
 import { planAllocation, planAllocationLabel, planAllocationTag } from '@/utils/purchasePlanAllocation'
 import { getPurchase, previewPlanOrders, generatePlanOrders, submitPlan } from '@/api/erp/purchase'
@@ -434,7 +437,7 @@ export default {
           }
           map[k].lines++
           map[k].quantities.push({ qty: s.purchase_conversion_snapshot?.purchase_qty ?? s.purchase_qty, unit: s.purchase_conversion_snapshot?.purchase_unit_name_snapshot || this.lineUnit(s) })
-          map[k].amount += Number(s.amount || 0)
+          map[k].amount = sumInvoiceAmounts([map[k].amount, s.amount])
         })
         return Object.values(map).map(card => ({ ...card, qty: this.orderQuantitySummary(card.quantities) }))
       }
@@ -553,9 +556,9 @@ export default {
       return ({ manual: '手工创建', purchase_request: '采购需求转入', system: '系统生成' })[v] || v || '手工创建'
     },
     money(v) {
-      return Number(v || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+      return displayMoney(v || 0)
     },
-    purchasePrice(value) { return Number(value || 0).toLocaleString('zh-CN', { maximumFractionDigits: 8 }) },
+    purchasePrice: formatPurchasePrice,
     number(v) {
       return Number(v || 0).toFixed(6).replace(/0+$/, '').replace(/\.$/, '')
     },

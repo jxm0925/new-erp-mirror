@@ -28,9 +28,11 @@
               <el-tag v-if="wo.is_urgent || wo.priority === 4" size="small" :type="wo.priority === 4 ? 'info' : 'danger'" effect="dark" class="urgent-tag">
                 {{ wo.priority_label || '加急' }}
               </el-tag>
+            </div>
+            <div class="head-sub-row">
               <span class="source-crumb-tag">
                 <template v-if="wo.source_type === 'sales_order'">
-                  <i class="el-icon-tickets text-primary" />
+                  <i class="el-icon-tickets text-success" />
                   关联销售订单：<b class="code-mono lk-text" @click="openOrder">{{ wo.sales_order_no }}</b>
                   <template v-if="wo.sales_order_line_no">（第 {{ wo.sales_order_line_no }} 行）</template>
                   · {{ wo.customer_name }}
@@ -132,94 +134,373 @@
       </header>
       <el-alert v-for="(blocker, index) in wo.completion_blockers || []" :key="'completion-' + index" :title="blocker.text" type="warning" :closable="false" show-icon />
 
-      <!-- 工单主档参数与生命周期进度概览卡片 -->
-      <section class="detail-card overview-master-card">
-        <div class="master-meta-grid">
-          <div class="meta-cell meta-cell-primary">
-            <span class="meta-label">制造产品 / 计划数量</span>
-            <div class="meta-val-main">
+      <!-- 双栏响应式主体工作区：左侧文字介绍，右侧进度与执行看板 -->
+      <main class="content-grid">
+        <!-- 左侧文字介绍栏：工单基础信息、业务需求、工艺图纸、异常告警、材料成本与流转日志 -->
+        <aside class="side-column">
+          <!-- 卡片 A：工单基础信息 -->
+          <section class="detail-card">
+            <div class="card-header">
+              <div class="header-title">
+                <i class="el-icon-info" />
+                <h2>工单基础信息</h2>
+              </div>
+            </div>
+
+            <div class="product-highlight-box">
               <strong class="product-title" :title="productName">{{ productName }}</strong>
               <span class="qty-pill code-mono">{{ qty(wo.planned_qty) }} {{ wo.unit_name || '台' }}</span>
             </div>
-          </div>
-          <div class="meta-cell">
-            <span class="meta-label">规格型号 / SKU</span>
-            <div class="meta-val" :title="workOrderSpecText">
-              <span>{{ workOrderSpecText }}</span>
-              <span v-if="wo.sku_code" class="code-mono text-muted ml-1">({{ wo.sku_code }})</span>
-            </div>
-          </div>
-          <div class="meta-cell">
-            <span class="meta-label">工艺路线</span>
-            <div class="meta-val" :title="wo.routing ? `${wo.routing.routing_name} V${wo.routing.version}` : '未配置工艺路线'">
-              {{ wo.routing ? `${wo.routing.routing_name} V${wo.routing.version}` : '未配置工艺路线' }}
-            </div>
-          </div>
-          <div class="meta-cell">
-            <span class="meta-label">制造 BOM</span>
-            <div class="meta-val" :title="wo.bom ? bomLabel(wo.bom.bom_name, wo.bom.bom_no, wo.bom.version) : '未配置 BOM'">
-              {{ wo.bom ? bomLabel(wo.bom.bom_name, wo.bom.bom_no, wo.bom.version) : '未配置 BOM' }}
-            </div>
-          </div>
-          <div class="meta-cell">
-            <span class="meta-label">生产负责人</span>
-            <div class="meta-val">{{ wo.owner_name || '未指定' }}</div>
-          </div>
-          <div class="meta-cell">
-            <span class="meta-label">目标入库仓</span>
-            <div class="meta-val">{{ wo.warehouse_name || '物料默认仓库' }}</div>
-          </div>
-        </div>
 
-        <div class="schedule-stepper-row">
-          <div class="stepper-wrap">
-            <div class="stepper-title">生命周期状态演进</div>
-            <div class="stepper-flow">
-              <div
-                v-for="(s, i) in steps"
-                :key="s.value"
-                class="step-node"
-                :class="{
-                  'step-active': s.value === stepValue,
-                  'step-completed': i < stepIndex
-                }"
-              >
-                <div class="node-circle font-mono">
-                  <i v-if="i < stepIndex" class="el-icon-check" />
-                  <span v-else>{{ i + 1 }}</span>
-                </div>
-                <span class="node-label">{{ s.label }}</span>
-                <div v-if="i < steps.length - 1" class="node-divider" />
+            <div class="spec-kv-list">
+              <div class="spec-kv-row">
+                <span class="kv-label">规格型号 / SKU</span>
+                <span class="kv-val" :title="workOrderSpecText">
+                  <span>{{ workOrderSpecText }}</span>
+                  <span v-if="wo.sku_code" class="code-mono text-muted ml-1">({{ wo.sku_code }})</span>
+                </span>
+              </div>
+              <div class="spec-kv-row">
+                <span class="kv-label">工艺路线</span>
+                <span class="kv-val" :title="wo.routing ? `${wo.routing.routing_name} V${wo.routing.version}` : '未配置工艺路线'">
+                  {{ wo.routing ? `${wo.routing.routing_name} V${wo.routing.version}` : '未配置工艺路线' }}
+                </span>
+              </div>
+              <div class="spec-kv-row">
+                <span class="kv-label">制造 BOM</span>
+                <span class="kv-val" :title="wo.bom ? bomLabel(wo.bom.bom_name, wo.bom.bom_no, wo.bom.version) : '未配置 BOM'">
+                  {{ wo.bom ? bomLabel(wo.bom.bom_name, wo.bom.bom_no, wo.bom.version) : '未配置 BOM' }}
+                </span>
+              </div>
+              <div class="spec-kv-row">
+                <span class="kv-label">生产负责人</span>
+                <span class="kv-val">{{ wo.owner_name || '未指定' }}</span>
+              </div>
+              <div class="spec-kv-row">
+                <span class="kv-label">目标入库仓</span>
+                <span class="kv-val">{{ wo.warehouse_name || '物料默认仓库' }}</span>
               </div>
             </div>
-          </div>
+          </section>
 
-          <div class="due-summary-box">
-            <div class="due-box-header">
-              <span class="due-box-label">计划完工交期进度</span>
-              <span v-if="dueDiff !== null" :class="['due-diff-tag', dueDiff >= 0 ? 'text-success' : 'text-danger font-medium']">
-                {{ dueDiff >= 0 ? `较约定交期提前 ${dueDiff} 天` : `较约定交期滞后 ${-dueDiff} 天` }}
-              </span>
+          <!-- 卡片 B：业务需求与单据关联 -->
+          <section class="detail-card">
+            <div class="card-header">
+              <div class="header-title">
+                <i class="el-icon-tickets" />
+                <h2>业务需求与单据关联</h2>
+              </div>
             </div>
-            <div class="due-main-date code-mono">
-              {{ wo.planned_finish_date || '未指定计划完工日' }}
-            </div>
-            <div class="schedule-progress-bar">
-              <div class="progress-fill" :style="{ width: barPercent + '%' }" />
-            </div>
-            <div class="schedule-milestones">
-              <span>计划开工：{{ shortDate(wo.planned_start_date) }}</span>
-              <span>当前基准：{{ shortDate(today) }}</span>
-              <span v-if="wo.required_date">合同交期：{{ shortDate(wo.required_date) }}</span>
-            </div>
-          </div>
-        </div>
-      </section>
 
-      <!-- 双栏响应式主体工作区 -->
-      <main class="content-grid">
-        <!-- 左侧主体列：三大核心制程与齐套看板 -->
+            <div class="spec-kv-list">
+              <template v-if="wo.sales_order">
+                <div class="spec-kv-row">
+                  <span class="kv-label">销售订单号</span>
+                  <span class="kv-val code-mono lk-text" @click="openOrder">
+                    {{ wo.sales_order.sales_order_no }}
+                  </span>
+                </div>
+                <div class="spec-kv-row">
+                  <span class="kv-label">采购客户</span>
+                  <span class="kv-val font-medium">{{ wo.sales_order.customer_name }}</span>
+                </div>
+                <div v-if="wo.sales_order.order_qty !== null" class="spec-kv-row">
+                  <span class="kv-label">订单行订购数</span>
+                  <span class="kv-val code-mono font-medium">
+                    {{ qty(wo.sales_order.order_qty) }} {{ wo.sales_order.unit_name || '' }}
+                    <span v-if="wo.sales_order.inventory_qty" class="text-muted font-normal ml-1">
+                      （占用库存 {{ qty(wo.sales_order.inventory_qty) }}）
+                    </span>
+                  </span>
+                </div>
+                <div class="spec-kv-row">
+                  <span class="kv-label">约定交付日期</span>
+                  <span class="kv-val code-mono">{{ wo.sales_order.required_delivery_date || '—' }}</span>
+                </div>
+                <div v-if="wo.special_requirement" class="spec-kv-row">
+                  <span class="kv-label">特殊定制要求</span>
+                  <span class="kv-val">{{ wo.special_requirement }}</span>
+                </div>
+                <template v-if="wo.sales_order.funding">
+                  <div class="spec-kv-row">
+                    <span class="kv-label">收付款政策</span>
+                    <span class="kv-val">{{ wo.sales_order.funding.policy_name || '未配置' }}</span>
+                  </div>
+                  <div v-if="wo.sales_order.funding.net_received_amount !== undefined" class="spec-kv-row">
+                    <span class="kv-label">已收金额</span>
+                    <span class="kv-val code-mono">{{ money(wo.sales_order.funding.net_received_amount) }}</span>
+                  </div>
+                </template>
+              </template>
+
+              <template v-else>
+                <div class="spec-kv-row">
+                  <span class="kv-label">备货原因</span>
+                  <span class="kv-val font-medium">{{ wo.stock_reason_label || '常规备货' }}</span>
+                </div>
+                <div class="spec-kv-row">
+                  <span class="kv-label">计划开工日期</span>
+                  <span class="kv-val code-mono">{{ wo.planned_start_date || '—' }}</span>
+                </div>
+                <div class="spec-kv-row">
+                  <span class="kv-label">计划完工日期</span>
+                  <span class="kv-val code-mono">{{ wo.planned_finish_date || '—' }}</span>
+                </div>
+              </template>
+
+              <template v-if="wo.order_info">
+                <div v-if="wo.order_info.changed && wo.order_info.changed.length" class="spec-kv-row">
+                  <span class="kv-label text-danger">销售已修改</span>
+                  <span class="kv-val text-danger">
+                    <div v-for="c in wo.order_info.changed" :key="c.field">{{ c.label }}：{{ c.before }} → <b>{{ c.after }}</b></div>
+                  </span>
+                </div>
+                <div v-if="!wo.sales_order" class="spec-kv-row">
+                  <span class="kv-label">所属订单</span>
+                  <span class="kv-val code-mono">{{ wo.order_info.sales_order_no }} · {{ wo.order_info.customer_name || '—' }}</span>
+                </div>
+                <div class="spec-kv-row">
+                  <span class="kv-label">销售员</span>
+                  <span class="kv-val font-medium">{{ wo.order_info.salesperson_name || '—' }}</span>
+                </div>
+                <div class="spec-kv-row">
+                  <span class="kv-label">联系人 / 电话</span>
+                  <span class="kv-val">{{ wo.order_info.contact_name || '—' }} <span class="code-mono">{{ wo.order_info.contact_phone || '' }}</span></span>
+                </div>
+                <div v-if="wo.order_info.address" class="spec-kv-row">
+                  <span class="kv-label">收货地址</span>
+                  <span class="kv-val">{{ wo.order_info.address }}</span>
+                </div>
+                <div v-if="wo.order_info.order_remark" class="spec-kv-row">
+                  <span class="kv-label">订单备注</span>
+                  <span class="kv-val font-medium">{{ wo.order_info.order_remark }}</span>
+                </div>
+                <div v-if="wo.order_info.line_remark" class="spec-kv-row">
+                  <span class="kv-label">本行备注</span>
+                  <span class="kv-val font-medium">{{ wo.order_info.line_remark }}</span>
+                </div>
+                <div v-if="wo.order_info.customer_remark" class="spec-kv-row">
+                  <span class="kv-label">客户备注</span>
+                  <span class="kv-val">{{ wo.order_info.customer_remark }}</span>
+                </div>
+                <div v-if="wo.order_info.logistics_requirement" class="spec-kv-row">
+                  <span class="kv-label">物流要求</span>
+                  <span class="kv-val">{{ wo.order_info.logistics_requirement }}</span>
+                </div>
+              </template>
+              <div v-for="r in (wo.shipment_repairs || [])" :key="'sr' + r.id" class="spec-kv-row">
+                <span class="kv-label" :class="{ 'text-danger': r.state !== 'returned' }">试水返修</span>
+                <span class="kv-val">
+                  <span class="code-mono">{{ r.serial_no }}</span> · {{ r.state_label }}
+                  <div class="text-muted" style="font-size: 12px;">{{ r.shipment_no }} · {{ r.created_at }} · {{ r.reason }}</div>
+                </span>
+              </div>
+
+              <div v-if="wo.remark" class="spec-kv-row">
+                <span class="kv-label">制令备注</span>
+                <span class="kv-val">{{ wo.remark }}</span>
+              </div>
+              <div class="spec-kv-row">
+                <span class="kv-label">制令创建</span>
+                <span class="kv-val text-muted">
+                  {{ wo.created_by_name || '系统自动' }} · {{ shortDate(wo.created_at) }}
+                </span>
+              </div>
+            </div>
+          </section>
+
+          <!-- 卡片 C：定制工艺与图纸 -->
+          <section v-if="wo.tech" class="detail-card">
+            <div class="card-header">
+              <div class="header-title">
+                <i class="el-icon-picture-outline" />
+                <h2>工艺图纸与定制要求</h2>
+              </div>
+              <el-tag size="mini" :type="wo.tech.status === 'pending' ? 'warning' : 'success'" effect="plain">
+                {{ wo.tech.status_label || wo.tech.status }}
+              </el-tag>
+            </div>
+
+            <div class="spec-kv-list">
+              <div class="spec-kv-row">
+                <span class="kv-label">工艺负责人</span>
+                <span class="kv-val font-medium">{{ wo.tech.tech_owner_name || '待工艺认领' }}</span>
+              </div>
+              <div v-if="wo.tech.released_at" class="spec-kv-row">
+                <span class="kv-label">工艺图纸下发时间</span>
+                <span class="kv-val code-mono">{{ wo.tech.released_at.slice(5, 16) }}</span>
+              </div>
+              <div v-if="wo.tech.drawings_updated_at" class="alert-notice-box">
+                <i class="el-icon-warning text-warning" />
+                <span>下发后图纸已更新（{{ wo.tech.drawings_updated_at.slice(5, 16) }}），车间报工终端将提示图纸已更新。</span>
+              </div>
+              <div class="spec-kv-row">
+                <span class="kv-label">设计图纸附件</span>
+                <span class="kv-val">
+                  <template v-if="wo.tech.drawings && wo.tech.drawings.length">
+                    <a
+                      v-for="g in wo.tech.drawings"
+                      :key="g.id"
+                      class="table-link drawing-link code-mono"
+                      :href="g.url"
+                      target="_blank"
+                      rel="noopener"
+                      @click="openDrawing($event,g)"
+                    >
+                      <i class="el-icon-document" /> {{ g.technical_drawing ? g.technical_drawing.drawing_no + ' · ' : '' }}{{ g.drawing_name }} V{{ g.technical_drawing ? g.technical_drawing.version_no : g.version_no }}
+                    </a>
+                  </template>
+                  <span v-else class="text-muted">未上传技术图纸</span>
+                </span>
+              </div>
+              <div v-if="$can(['production.tech', 'production.tech.manage'])" class="spec-kv-row">
+                <span class="kv-label">工艺工作台</span>
+                <span class="kv-val">
+                  <a class="action-link-theme" @click="$router.push(`/production/tech/${wo.id}`)">前往定制工艺中心 →</a>
+                </span>
+              </div>
+            </div>
+          </section>
+
+          <!-- 卡片 D：异常告警与关注事项 -->
+          <section class="detail-card">
+            <div class="card-header">
+              <div class="header-title">
+                <i class="el-icon-warning-outline" />
+                <h2>异常告警与关注事项</h2>
+              </div>
+              <el-tag size="mini" :type="wo.attention && wo.attention.length ? 'danger' : 'success'" effect="plain">
+                {{ wo.attention && wo.attention.length ? `待处置 ${wo.attention.length} 项` : '正常' }}
+              </el-tag>
+            </div>
+
+            <div v-if="!wo.attention || !wo.attention.length" class="normal-status-box">
+              <i class="el-icon-circle-check text-success" />
+              <div class="normal-status-content">
+                <strong>制程状态运行正常</strong>
+                <p>当前无物料缺料预警、生产暂停或交期延误事项。</p>
+              </div>
+            </div>
+
+            <div v-else class="attention-list">
+              <div
+                v-for="(a, i) in wo.attention"
+                :key="i"
+                class="attention-item"
+                :class="a.type === 'danger' ? 'att-danger' : 'att-warning'"
+              >
+                <div class="att-head">
+                  <i :class="a.type === 'danger' ? 'el-icon-error' : 'el-icon-warning'" />
+                  <strong>{{ a.title }}</strong>
+                </div>
+                <p class="att-text">{{ a.text }}</p>
+              </div>
+            </div>
+            <div v-if="wo.scrap_settle_allowed && $can('production.scrap.approve')" class="more-expand-bar">
+              <el-button size="mini" type="warning" plain :loading="saving" @click="settleScrap">确认报废设备已处理，结束工单</el-button>
+            </div>
+          </section>
+
+          <!-- 卡片 E：材料成本归集与定额 -->
+          <section class="detail-card">
+            <div class="card-header">
+              <div class="header-title">
+                <i class="el-icon-wallet" />
+                <h2>{{ hasActualMaterialCost ? '材料成本归集与定额' : '材料成本预算与定额' }}</h2>
+              </div>
+              <el-tag size="mini" type="info" effect="plain">{{ hasActualMaterialCost ? (wo.material_cost_collection_complete ? '实际归集 · 未结算' : '部分归集 · 未结算') : '暂估预算 · 未结算' }}</el-tag>
+            </div>
+
+            <template v-if="$can('inventory.amount.view') && materialCostPerUnit !== null && materialCostPerUnit !== undefined">
+              <div class="cost-stat-box">
+                <span class="cost-lbl">{{ hasActualMaterialCost ? '每台已归集材料成本' : '每台材料暂估成本' }}</span>
+                <div class="cost-num font-mono text-success">{{ money(materialCostPerUnit) }}</div>
+                <div class="cost-total-sub text-muted">{{ hasActualMaterialCost ? '工单已归集材料' : '工单总材料暂估' }}：{{ money(materialCostTotal) }}</div>
+              </div>
+              <div class="spec-kv-row">
+                <span class="kv-label">标准工时</span>
+                <span class="kv-val code-mono font-medium">{{ standardMinutesText(wo.standard_minutes_per_unit) }}</span>
+              </div>
+              <p class="cost-footnote text-muted">
+                {{ hasActualMaterialCost ? (wo.material_cost_collection_complete ? '依据正式收料金额与已结算开料净耗汇总；人工、外协及后到费用仍待制造结算。' : '仅汇总已发生的收料与已结算开料净耗，按计划数量折算每台；其余材料及制造费用仍待归集和结算。') : '按现存加权平均成本或物料标准成本、最近采购价估算；实际材料按正式用料归集，人工及其他费用待制造结算。' }}
+              </p>
+            </template>
+            <div v-else class="text-muted p-2">
+              当前账号无权查看成本金额数据。标准工时：{{ standardMinutesText(wo.standard_minutes_per_unit) }}。
+            </div>
+          </section>
+
+          <!-- 卡片 F：操作与流转日志 -->
+          <section class="detail-card">
+            <div class="card-header">
+              <div class="header-title">
+                <i class="el-icon-document-copy" />
+                <h2>工单操作流转日志</h2>
+              </div>
+              <span class="header-desc-hint">最近 {{ wo.logs ? wo.logs.slice(0, 8).length : 0 }} 条</span>
+            </div>
+
+            <div v-if="!wo.logs || !wo.logs.length" class="text-muted p-2">暂无操作日志记录</div>
+            <div v-else class="logs-timeline-list">
+              <div v-for="log in wo.logs.slice(0, 8)" :key="log.id" class="log-timeline-row">
+                <span class="log-date code-mono text-muted">{{ shortDate(log.created_at) }}</span>
+                <div class="log-body">
+                  <span class="log-operator font-medium">{{ log.operator_name || '系统自动' }}</span>
+                  <span class="log-content">{{ log.content }}</span>
+                </div>
+              </div>
+            </div>
+          </section>
+        </aside>
+
+        <!-- 右侧主看板列：生命周期进度条与三大核心制程/齐套看板 -->
         <div class="main-column">
+          <!-- 顶部紧凑卡片：生命周期状态演进与交期进度 -->
+          <section class="detail-card overview-master-card">
+            <div class="schedule-stepper-row">
+              <div class="stepper-wrap">
+                <div class="stepper-title">生命周期状态演进</div>
+                <div class="stepper-flow">
+                  <div
+                    v-for="(s, i) in steps"
+                    :key="s.value"
+                    class="step-node"
+                    :class="{
+                      'step-active': s.value === stepValue,
+                      'step-completed': i < stepIndex
+                    }"
+                  >
+                    <div class="node-circle font-mono">
+                      <i v-if="i < stepIndex" class="el-icon-check" />
+                      <span v-else>{{ i + 1 }}</span>
+                    </div>
+                    <span class="node-label">{{ s.label }}</span>
+                    <div v-if="i < steps.length - 1" class="node-divider" />
+                  </div>
+                </div>
+              </div>
+
+              <div class="due-summary-box">
+                <div class="due-box-header">
+                  <span class="due-box-label">计划完工交期进度</span>
+                  <span v-if="dueDiff !== null" :class="['due-diff-tag', dueDiff >= 0 ? 'text-success' : 'text-danger font-medium']">
+                    {{ dueDiff >= 0 ? `较约定交期提前 ${dueDiff} 天` : `较约定交期滞后 ${-dueDiff} 天` }}
+                  </span>
+                </div>
+                <div class="due-main-date code-mono">
+                  {{ wo.planned_finish_date || '未指定计划完工日' }}
+                </div>
+                <div class="schedule-progress-bar">
+                  <div class="progress-fill" :style="{ width: barPercent + '%' }" />
+                </div>
+                <div class="schedule-milestones">
+                  <span>计划开工：{{ shortDate(wo.planned_start_date) }}</span>
+                  <span>当前基准：{{ shortDate(today) }}</span>
+                  <span v-if="wo.required_date">合同交期：{{ shortDate(wo.required_date) }}</span>
+                </div>
+              </div>
+            </div>
+          </section>
           <!-- 卡片 1：整机序列号在制进度与工序过站看板 -->
           <section class="detail-card">
             <div class="card-header">
@@ -638,282 +919,12 @@
             </div>
           </section>
 
+          <section v-if="wo.technical_drawings && wo.technical_drawings.length" class="detail-card">
+            <technical-drawing-source-panel :source="{type:'work_order',id:wo.id,version:wo.business_version}" :source-label="'工单 · ' + wo.work_order_no" />
+          </section>
+
           <shortage-purchase-dialog :visible.sync="shortageDialog" :work-order-id="wo.id" :work-order-no="wo.work_order_no" @done="load" />
         </div>
-
-        <!-- 右侧侧边栏：异常告警、业务单据、工艺图纸、材料成本与流转日志 -->
-        <aside class="side-column">
-          <!-- 卡片 4：异常告警与关注事项 -->
-          <section class="detail-card">
-            <div class="card-header">
-              <div class="header-title">
-                <i class="el-icon-warning-outline" />
-                <h2>异常告警与关注事项</h2>
-              </div>
-              <el-tag size="mini" :type="wo.attention && wo.attention.length ? 'danger' : 'success'" effect="plain">
-                {{ wo.attention && wo.attention.length ? `待处置 ${wo.attention.length} 项` : '正常' }}
-              </el-tag>
-            </div>
-
-            <div v-if="!wo.attention || !wo.attention.length" class="normal-status-box">
-              <i class="el-icon-circle-check text-success" />
-              <div class="normal-status-content">
-                <strong>制程状态运行正常</strong>
-                <p>当前无物料缺料预警、生产暂停或交期延误事项。</p>
-              </div>
-            </div>
-
-            <div v-else class="attention-list">
-              <div
-                v-for="(a, i) in wo.attention"
-                :key="i"
-                class="attention-item"
-                :class="a.type === 'danger' ? 'att-danger' : 'att-warning'"
-              >
-                <div class="att-head">
-                  <i :class="a.type === 'danger' ? 'el-icon-error' : 'el-icon-warning'" />
-                  <strong>{{ a.title }}</strong>
-                </div>
-                <p class="att-text">{{ a.text }}</p>
-              </div>
-            </div>
-            <div v-if="wo.scrap_settle_allowed && $can('production.scrap.approve')" class="more-expand-bar">
-              <el-button size="mini" type="warning" plain :loading="saving" @click="settleScrap">确认报废设备已处理，结束工单</el-button>
-            </div>
-          </section>
-
-          <!-- 卡片 5：业务需求与单据关联 -->
-          <section class="detail-card">
-            <div class="card-header">
-              <div class="header-title">
-                <i class="el-icon-tickets" />
-                <h2>业务需求与单据关联</h2>
-              </div>
-            </div>
-
-            <div class="spec-kv-list">
-              <template v-if="wo.sales_order">
-                <div class="spec-kv-row">
-                  <span class="kv-label">销售订单号</span>
-                  <span class="kv-val code-mono lk-text" @click="openOrder">
-                    {{ wo.sales_order.sales_order_no }}
-                  </span>
-                </div>
-                <div class="spec-kv-row">
-                  <span class="kv-label">采购客户</span>
-                  <span class="kv-val font-medium">{{ wo.sales_order.customer_name }}</span>
-                </div>
-                <div v-if="wo.sales_order.order_qty !== null" class="spec-kv-row">
-                  <span class="kv-label">订单行订购数</span>
-                  <span class="kv-val code-mono font-medium">
-                    {{ qty(wo.sales_order.order_qty) }} {{ wo.sales_order.unit_name || '' }}
-                    <span v-if="wo.sales_order.inventory_qty" class="text-muted font-normal ml-1">
-                      （占用库存 {{ qty(wo.sales_order.inventory_qty) }}）
-                    </span>
-                  </span>
-                </div>
-                <div class="spec-kv-row">
-                  <span class="kv-label">约定交付日期</span>
-                  <span class="kv-val code-mono">{{ wo.sales_order.required_delivery_date || '—' }}</span>
-                </div>
-                <div v-if="wo.special_requirement" class="spec-kv-row">
-                  <span class="kv-label">特殊定制要求</span>
-                  <span class="kv-val">{{ wo.special_requirement }}</span>
-                </div>
-                <template v-if="wo.sales_order.funding">
-                  <div class="spec-kv-row">
-                    <span class="kv-label">收付款政策</span>
-                    <span class="kv-val">{{ wo.sales_order.funding.policy_name || '未配置' }}</span>
-                  </div>
-                  <div v-if="wo.sales_order.funding.net_received_amount !== undefined" class="spec-kv-row">
-                    <span class="kv-label">已收金额</span>
-                    <span class="kv-val code-mono">{{ money(wo.sales_order.funding.net_received_amount) }}</span>
-                  </div>
-                </template>
-              </template>
-
-              <template v-else>
-                <div class="spec-kv-row">
-                  <span class="kv-label">备货原因</span>
-                  <span class="kv-val font-medium">{{ wo.stock_reason_label || '常规备货' }}</span>
-                </div>
-                <div class="spec-kv-row">
-                  <span class="kv-label">计划开工日期</span>
-                  <span class="kv-val code-mono">{{ wo.planned_start_date || '—' }}</span>
-                </div>
-                <div class="spec-kv-row">
-                  <span class="kv-label">计划完工日期</span>
-                  <span class="kv-val code-mono">{{ wo.planned_finish_date || '—' }}</span>
-                </div>
-              </template>
-
-              <template v-if="wo.order_info">
-                <div v-if="wo.order_info.changed && wo.order_info.changed.length" class="spec-kv-row">
-                  <span class="kv-label text-danger">销售已修改</span>
-                  <span class="kv-val text-danger">
-                    <div v-for="c in wo.order_info.changed" :key="c.field">{{ c.label }}：{{ c.before }} → <b>{{ c.after }}</b></div>
-                  </span>
-                </div>
-                <div v-if="!wo.sales_order" class="spec-kv-row">
-                  <span class="kv-label">所属订单</span>
-                  <span class="kv-val code-mono">{{ wo.order_info.sales_order_no }} · {{ wo.order_info.customer_name || '—' }}</span>
-                </div>
-                <div class="spec-kv-row">
-                  <span class="kv-label">销售员</span>
-                  <span class="kv-val font-medium">{{ wo.order_info.salesperson_name || '—' }}</span>
-                </div>
-                <div class="spec-kv-row">
-                  <span class="kv-label">联系人 / 电话</span>
-                  <span class="kv-val">{{ wo.order_info.contact_name || '—' }} <span class="code-mono">{{ wo.order_info.contact_phone || '' }}</span></span>
-                </div>
-                <div v-if="wo.order_info.address" class="spec-kv-row">
-                  <span class="kv-label">收货地址</span>
-                  <span class="kv-val">{{ wo.order_info.address }}</span>
-                </div>
-                <div v-if="wo.order_info.order_remark" class="spec-kv-row">
-                  <span class="kv-label">订单备注</span>
-                  <span class="kv-val font-medium">{{ wo.order_info.order_remark }}</span>
-                </div>
-                <div v-if="wo.order_info.line_remark" class="spec-kv-row">
-                  <span class="kv-label">本行备注</span>
-                  <span class="kv-val font-medium">{{ wo.order_info.line_remark }}</span>
-                </div>
-                <div v-if="wo.order_info.customer_remark" class="spec-kv-row">
-                  <span class="kv-label">客户备注</span>
-                  <span class="kv-val">{{ wo.order_info.customer_remark }}</span>
-                </div>
-                <div v-if="wo.order_info.logistics_requirement" class="spec-kv-row">
-                  <span class="kv-label">物流要求</span>
-                  <span class="kv-val">{{ wo.order_info.logistics_requirement }}</span>
-                </div>
-              </template>
-              <div v-for="r in (wo.shipment_repairs || [])" :key="'sr' + r.id" class="spec-kv-row">
-                <span class="kv-label" :class="{ 'text-danger': r.state !== 'returned' }">试水返修</span>
-                <span class="kv-val">
-                  <span class="code-mono">{{ r.serial_no }}</span> · {{ r.state_label }}
-                  <div class="text-muted" style="font-size: 12px;">{{ r.shipment_no }} · {{ r.created_at }} · {{ r.reason }}</div>
-                </span>
-              </div>
-
-              <div v-if="wo.remark" class="spec-kv-row">
-                <span class="kv-label">制令备注</span>
-                <span class="kv-val">{{ wo.remark }}</span>
-              </div>
-              <div class="spec-kv-row">
-                <span class="kv-label">制令创建</span>
-                <span class="kv-val text-muted">
-                  {{ wo.created_by_name || '系统自动' }} · {{ shortDate(wo.created_at) }}
-                </span>
-              </div>
-            </div>
-          </section>
-
-          <!-- 卡片 6：定制工艺与图纸 -->
-          <section v-if="wo.tech" class="detail-card">
-            <div class="card-header">
-              <div class="header-title">
-                <i class="el-icon-picture-outline" />
-                <h2>工艺图纸与定制要求</h2>
-              </div>
-              <el-tag size="mini" :type="wo.tech.status === 'pending' ? 'warning' : 'success'" effect="plain">
-                {{ wo.tech.status_label || wo.tech.status }}
-              </el-tag>
-            </div>
-
-            <div class="spec-kv-list">
-              <div class="spec-kv-row">
-                <span class="kv-label">工艺负责人</span>
-                <span class="kv-val font-medium">{{ wo.tech.tech_owner_name || '待工艺认领' }}</span>
-              </div>
-              <div v-if="wo.tech.released_at" class="spec-kv-row">
-                <span class="kv-label">工艺图纸下发时间</span>
-                <span class="kv-val code-mono">{{ wo.tech.released_at.slice(5, 16) }}</span>
-              </div>
-              <div v-if="wo.tech.drawings_updated_at" class="alert-notice-box">
-                <i class="el-icon-warning text-warning" />
-                <span>下发后图纸已更新（{{ wo.tech.drawings_updated_at.slice(5, 16) }}），车间报工终端将提示图纸已更新。</span>
-              </div>
-              <div class="spec-kv-row">
-                <span class="kv-label">设计图纸附件</span>
-                <span class="kv-val">
-                  <template v-if="wo.tech.drawings && wo.tech.drawings.length">
-                    <a
-                      v-for="g in wo.tech.drawings"
-                      :key="g.id"
-                      class="table-link drawing-link code-mono"
-                      :href="g.url"
-                      target="_blank"
-                      rel="noopener"
-                      @click="openDrawing($event,g)"
-                    >
-                      <i class="el-icon-document" /> {{ g.technical_drawing ? g.technical_drawing.drawing_no + ' · ' : '' }}{{ g.drawing_name }} V{{ g.technical_drawing ? g.technical_drawing.version_no : g.version_no }}
-                    </a>
-                  </template>
-                  <span v-else class="text-muted">未上传技术图纸</span>
-                </span>
-              </div>
-              <div v-if="$can(['production.tech', 'production.tech.manage'])" class="spec-kv-row">
-                <span class="kv-label">工艺工作台</span>
-                <span class="kv-val">
-                  <a class="action-link-theme" @click="$router.push(`/production/tech/${wo.id}`)">前往定制工艺中心 →</a>
-                </span>
-              </div>
-            </div>
-          </section>
-
-          <section v-if="wo.technical_drawings && wo.technical_drawings.length" class="detail-card"><technical-drawing-source-panel :source="{type:'work_order',id:wo.id,version:wo.business_version}" :source-label="'工单 · ' + wo.work_order_no" /></section>
-
-          <!-- 卡片 7：材料成本归集与定额 -->
-          <section class="detail-card">
-            <div class="card-header">
-              <div class="header-title">
-                <i class="el-icon-wallet" />
-                <h2>{{ hasActualMaterialCost ? '材料成本归集与定额' : '材料成本预算与定额' }}</h2>
-              </div>
-              <el-tag size="mini" type="info" effect="plain">{{ hasActualMaterialCost ? (wo.material_cost_collection_complete ? '实际归集 · 未结算' : '部分归集 · 未结算') : '暂估预算 · 未结算' }}</el-tag>
-            </div>
-
-            <template v-if="$can('inventory.amount.view') && materialCostPerUnit !== null && materialCostPerUnit !== undefined">
-              <div class="cost-stat-box">
-                <span class="cost-lbl">{{ hasActualMaterialCost ? '每台已归集材料成本' : '每台材料暂估成本' }}</span>
-                <div class="cost-num font-mono text-success">{{ money(materialCostPerUnit) }}</div>
-                <div class="cost-total-sub text-muted">{{ hasActualMaterialCost ? '工单已归集材料' : '工单总材料暂估' }}：{{ money(materialCostTotal) }}</div>
-              </div>
-              <div class="spec-kv-row">
-                <span class="kv-label">标准工时</span>
-                <span class="kv-val code-mono font-medium">{{ standardMinutesText(wo.standard_minutes_per_unit) }}</span>
-              </div>
-              <p class="cost-footnote text-muted">
-                {{ hasActualMaterialCost ? (wo.material_cost_collection_complete ? '依据正式收料金额与已结算开料净耗汇总；人工、外协及后到费用仍待制造结算。' : '仅汇总已发生的收料与已结算开料净耗，按计划数量折算每台；其余材料及制造费用仍待归集和结算。') : '按现存加权平均成本或物料标准成本、最近采购价估算；实际材料按正式用料归集，人工及其他费用待制造结算。' }}
-              </p>
-            </template>
-            <div v-else class="text-muted p-2">
-              当前账号无权查看成本金额数据。标准工时：{{ standardMinutesText(wo.standard_minutes_per_unit) }}。
-            </div>
-          </section>
-
-          <!-- 卡片 8：操作与流转日志 -->
-          <section class="detail-card">
-            <div class="card-header">
-              <div class="header-title">
-                <i class="el-icon-document-copy" />
-                <h2>工单操作流转日志</h2>
-              </div>
-              <span class="header-desc-hint">最近 {{ wo.logs ? wo.logs.slice(0, 8).length : 0 }} 条</span>
-            </div>
-
-            <div v-if="!wo.logs || !wo.logs.length" class="text-muted p-2">暂无操作日志记录</div>
-            <div v-else class="logs-timeline-list">
-              <div v-for="log in wo.logs.slice(0, 8)" :key="log.id" class="log-timeline-row">
-                <span class="log-date code-mono text-muted">{{ shortDate(log.created_at) }}</span>
-                <div class="log-body">
-                  <span class="log-operator font-medium">{{ log.operator_name || '系统自动' }}</span>
-                  <span class="log-content">{{ log.content }}</span>
-                </div>
-              </div>
-            </div>
-          </section>
-        </aside>
       </main>
     </template>
 
@@ -1314,7 +1325,7 @@ export default {
     unitStatusType(status) {
       const map = {
         planned: 'info',
-        released: 'primary',
+        released: 'success',
         in_progress: 'warning',
         paused: 'warning',
         completed: 'success',
@@ -1328,7 +1339,7 @@ export default {
     },
     opTagType(row) {
       const s = row.work_status || row.status
-      return ({ done: 'success', in_progress: 'warning', ready: 'primary' })[s] || 'info'
+      return ({ done: 'success', in_progress: 'warning', ready: 'success' })[s] || 'info'
     },
     opStatus(status) {
       return ({ pending: '未开工', in_progress: '在制加工', done: '已完工' })[status] || status
@@ -1650,31 +1661,38 @@ export default {
 <style scoped>
 .field-hint { color: #909399; font-size: 12px; line-height: 1.6; }
 .work-order-detail-page {
-  padding: 16px 20px 24px;
+  position: relative;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  padding: 16px 20px 28px;
   background: #f8fafc;
-  min-height: calc(100vh - 54px);
+  min-height: calc(100vh - 90px);
   box-sizing: border-box;
+  overflow-x: clip;
 }
 
 /* 顶部标头卡片 */
 .page-head {
   display: flex;
   justify-content: space-between;
-  align-items: center;
+  align-items: flex-start;
+  flex-wrap: wrap;
   background: #ffffff;
   padding: 14px 20px;
   border-radius: 8px;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
   border: 1px solid #e2e8f0;
-  margin-bottom: 12px;
+  margin-bottom: 14px;
   gap: 16px;
 }
 
 .head-left {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 12px;
   min-width: 0;
+  flex: 1 1 420px;
 }
 
 .btn-back {
@@ -1706,10 +1724,19 @@ export default {
 .head-title-wrap {
   display: flex;
   flex-direction: column;
+  gap: 6px;
+  flex: 1;
   min-width: 0;
 }
 
 .title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.head-sub-row {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1749,9 +1776,14 @@ export default {
   padding: 2px 8px;
   border-radius: 4px;
   border: 1px solid #e2e8f0;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
+  display: inline-block;
+  line-height: 1.5;
+  max-width: 100%;
+  word-break: break-word;
+}
+
+.source-crumb-tag i {
+  margin-right: 4px;
 }
 
 .head-actions {
@@ -1759,7 +1791,8 @@ export default {
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
-  flex-shrink: 0;
+  flex: 0 1 auto;
+  max-width: 100%;
 }
 
 .btn-refresh {
@@ -1791,58 +1824,31 @@ export default {
   font-weight: 500;
 }
 
-/* 顶部工单主档与进度一体化卡片 */
+/* 顶部生命周期进度与交期概览卡片 */
 .overview-master-card {
-  margin-bottom: 16px;
-  padding: 16px 20px;
+  margin-bottom: 0;
+  padding: 14px 18px;
 }
 
-.master-meta-grid {
-  display: grid;
-  grid-template-columns: 1.6fr 1.1fr 1.2fr 1.2fr 0.9fr 1fr;
-  gap: 12px;
-  padding-bottom: 14px;
-  margin-bottom: 14px;
-  border-bottom: 1px solid #f1f5f9;
-}
-
-.meta-cell {
-  background: #f8fafc;
-  border: 1px solid #eef2f6;
-  border-radius: 6px;
-  padding: 8px 12px;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  gap: 4px;
-}
-
-.meta-cell-primary {
+.product-highlight-box {
   background: linear-gradient(135deg, #f0fdf4 0%, #f8fafc 100%);
-  border-color: #bbf7d0;
-}
-
-.meta-label {
-  font-size: 11px;
-  color: #64748b;
-  line-height: 1.2;
-}
-
-.meta-val-main {
+  border: 1px solid #bbf7d0;
+  border-radius: 6px;
+  padding: 10px 12px;
   display: flex;
   align-items: center;
-  gap: 8px;
-  min-width: 0;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
 }
 
 .product-title {
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 700;
   color: #0f172a;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.4;
+  min-width: 0;
+  word-break: break-word;
 }
 
 .qty-pill {
@@ -1850,18 +1856,9 @@ export default {
   color: #ffffff;
   font-size: 12px;
   font-weight: 600;
-  padding: 1px 8px;
+  padding: 2px 10px;
   border-radius: 999px;
   flex-shrink: 0;
-}
-
-.meta-val {
-  font-size: 13px;
-  font-weight: 600;
-  color: #1e293b;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 /* 进度与交期横幅行 */
@@ -1869,7 +1866,7 @@ export default {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 24px;
+  gap: 18px;
 }
 
 .stepper-wrap {
@@ -1887,7 +1884,8 @@ export default {
 .stepper-flow {
   display: flex;
   align-items: center;
-  gap: 8px;
+  width: 100%;
+  gap: 6px 4px;
   flex-wrap: wrap;
 }
 
@@ -1895,37 +1893,50 @@ export default {
   display: flex;
   align-items: center;
   gap: 6px;
+  flex: 1 0 auto;
+}
+
+.step-node:last-child {
+  flex: 0 0 auto;
 }
 
 .node-circle {
-  width: 22px;
-  height: 22px;
+  width: 24px;
+  height: 24px;
   border-radius: 50%;
   background: #f1f5f9;
-  color: #94a3b8;
+  border: 1px solid #cbd5e1;
+  color: #64748b;
   display: grid;
   place-items: center;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
+  flex-shrink: 0;
 }
 
 .node-label {
   font-size: 13px;
   color: #64748b;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .step-completed .node-circle {
   background: #eaf7ef;
+  border-color: #86efac;
   color: #008b4b;
 }
 
 .step-completed .node-label {
   color: #1e293b;
+  font-weight: 500;
 }
 
 .step-active .node-circle {
   background: #008b4b;
+  border-color: #008b4b;
   color: #ffffff;
+  box-shadow: 0 0 0 3px rgba(0, 139, 75, 0.14);
 }
 
 .step-active .node-label {
@@ -1934,22 +1945,25 @@ export default {
 }
 
 .node-divider {
-  width: 24px;
+  flex: 1;
+  min-width: 10px;
   height: 2px;
   background: #e2e8f0;
   margin: 0 4px;
 }
 
 .step-completed .node-divider {
-  background: #bbf7d0;
+  background: #86efac;
 }
 
 .due-summary-box {
   background: #f8fafc;
   border: 1px solid #e2e8f0;
   border-radius: 8px;
-  padding: 10px 16px;
-  min-width: 300px;
+  padding: 10px 14px;
+  width: 280px;
+  flex-shrink: 0;
+  box-sizing: border-box;
 }
 
 .due-box-header {
@@ -1997,10 +2011,10 @@ export default {
   color: #94a3b8;
 }
 
-/* 主内容双栏 */
+/* 主内容双栏：左侧文字介绍栏 + 右侧进度与执行看板 */
 .content-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 350px;
+  grid-template-columns: clamp(280px, 26vw, 350px) minmax(0, 1fr);
   gap: 16px;
   align-items: start;
 }
@@ -2015,8 +2029,12 @@ export default {
 .side-column {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 14px;
   min-width: 0;
+}
+
+.side-column .detail-card {
+  padding: 14px 16px;
 }
 
 /* 详情卡片通用 */
@@ -2117,8 +2135,8 @@ export default {
 }
 
 .counter-pill.pill-primary {
-  background: #eff6ff;
-  border-color: #bfdbfe;
+  background: #f0fdf4;
+  border-color: #bbf7d0;
 }
 
 .counter-pill.pill-danger {
@@ -2165,7 +2183,7 @@ export default {
 }
 
 .table-group-header .col-grp-ship {
-  color: #2563eb;
+  color: #0f766e;
 }
 
 .table-col-header th {
@@ -2320,6 +2338,7 @@ export default {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  flex-wrap: wrap;
   background: #ffffff;
   border: 1px solid #fcd34d;
   border-radius: 4px;
@@ -2332,10 +2351,10 @@ export default {
   margin-left: 6px;
 }
 
-/* 齐套网格看板 */
+/* 齐套网格看板：单列全宽展开，确保4列物料明细表名称、规格、数量与状态宽敞对齐不挤压 */
 .kitting-grid-wrap {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: 1fr;
   gap: 12px;
 }
 
@@ -2345,11 +2364,12 @@ export default {
 
 .kitting-op-card {
   border: 1px solid #e2e8f0;
-  border-radius: 6px;
-  padding: 10px 12px;
+  border-radius: 8px;
+  padding: 12px 14px;
   background: #ffffff;
   display: flex;
   flex-direction: column;
+  min-width: 0;
 }
 
 .kitting-op-card.kitting-op-span-full {
@@ -2376,6 +2396,7 @@ export default {
   display: flex;
   align-items: center;
   gap: 6px;
+  flex-wrap: wrap;
   min-width: 0;
 }
 
@@ -2539,8 +2560,9 @@ export default {
 }
 
 .mat-sub-tag {
-  background: #eff6ff;
-  color: #2563eb;
+  background: #f0fdf4;
+  color: #00763f;
+  border: 1px solid #bbf7d0;
   padding: 0 5px;
   border-radius: 3px;
   font-size: 11px;
@@ -2605,7 +2627,7 @@ export default {
   padding-top: 12px;
   border-top: 1px solid #e2e8f0;
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
   gap: 10px;
 }
 
@@ -2648,6 +2670,7 @@ export default {
   justify-content: space-between;
   align-items: center;
   gap: 10px;
+  flex-wrap: wrap;
   font-size: 12px;
 }
 
@@ -2756,7 +2779,7 @@ export default {
   color: #64748b;
 }
 
-/* 右侧栏样式：标签定宽、数值紧邻左对齐，消除名称与数值之间的大跨度空白 */
+/* 左侧文字介绍栏样式：标签定宽、数值紧邻左对齐，消除名称与数值之间的大跨度空白 */
 .spec-kv-list {
   display: flex;
   flex-direction: column;
@@ -2766,7 +2789,7 @@ export default {
   display: flex;
   justify-content: flex-start;
   align-items: flex-start;
-  padding: 7px 0;
+  padding: 6px 0;
   border-bottom: 1px solid #f1f5f9;
   gap: 12px;
   font-size: 13px;
@@ -2969,7 +2992,7 @@ export default {
 }
 
 .text-primary {
-  color: #2563eb;
+  color: #008b4b;
 }
 
 .text-danger {
@@ -2995,23 +3018,21 @@ export default {
 }
 
 /* 响应式断点 */
-@media (max-width: 1280px) {
-  .master-meta-grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-}
-
-@media (max-width: 1100px) {
-  .content-grid {
-    grid-template-columns: 1fr;
-  }
+@media (max-width: 1480px) {
   .schedule-stepper-row {
     flex-direction: column;
-    align-items: flex-start;
+    align-items: stretch;
+    gap: 14px;
   }
   .due-summary-box {
     width: 100%;
     min-width: 0;
+  }
+}
+
+@media (max-width: 920px) {
+  .content-grid {
+    grid-template-columns: 1fr;
   }
 }
 
@@ -3028,7 +3049,6 @@ export default {
     width: 100%;
     justify-content: flex-start;
   }
-  .master-meta-grid,
   .kitting-grid-wrap,
   .kitting-related-docs,
   .adj-form {

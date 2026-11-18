@@ -2,6 +2,7 @@
 
 namespace App\Services\Erp;
 
+use App\Domain\Finance\Money;
 use App\Models\Erp\{Item, ItemSupplierPrice, Supplier, SupplierCategoryCapability, SupplierItemRelation};
 use App\Models\Erp\SupplierQuotationHistory;
 use Illuminate\Database\Eloquent\Builder;
@@ -17,7 +18,7 @@ class SupplierQuotationService
         ?int $supplierId = null
     ): Builder {
         return ItemSupplierPrice::query()
-            ->with(['supplier', 'item.unit', 'unit'])
+            ->with(['supplier', 'item.unit', 'unit', 'latestPriceHistory'])
             ->where('item_id', $itemId)
             ->where('status', 'enabled')
             ->where('quote_status', 'approved')
@@ -54,9 +55,9 @@ class SupplierQuotationService
             abort_unless($scopeAllowed, 422, '供应商尚未获准供应该物料或其末级 Item 类目，不能维护报价。');
             $changeReason = $data['change_reason'] ?? null;
             $conversion = $this->conversions->purchaseConversion((int) $data['item_id'], (int) $data['unit_id'], null, true);
-            $standardFactor = (float) $conversion->factor;
+            $standardFactor = (string) $conversion->factor;
             $useSupplierFactor = (bool) ($data['use_supplier_factor'] ?? false);
-            $supplierFactor = (float) ($data['supplier_conversion_factor'] ?? 0);
+            $supplierFactor = $data['supplier_conversion_factor'] ?? 0;
             $supplierFactorReason = trim((string) ($data['supplier_factor_reason'] ?? ''));
             if ($useSupplierFactor && $supplierFactor <= 0) {
                 abort(422, '供应商专用换算因子必须大于 0。');
@@ -70,7 +71,12 @@ class SupplierQuotationService
             $data['final_conversion_factor'] = $finalFactor;
             $data['factor_source'] = $useSupplierFactor ? 'supplier_specific' : 'item_standard';
             $data['supplier_factor_reason'] = $useSupplierFactor ? $supplierFactorReason : null;
+            $price = $data['price'];
+            $data['price'] = Money::normalize(is_float($price) ? sprintf('%.8F', $price) : (string) $price, 8);
             $data['base_unit_price'] = $this->conversions->calculateBaseUnitPrice($data['price'], $finalFactor);
+            $finance = app(PurchaseFinancialFactService::class);
+            $finance->assertUnitPrice($data['price']);
+            $finance->assertUnitPrice($data['base_unit_price']);
             unset($data['change_reason'], $data['use_supplier_factor'], $data['supplier_conversion_factor']);
             $quote = ItemSupplierPrice::where('supplier_id', $data['supplier_id'])
                 ->where('item_id', $data['item_id'])
@@ -91,13 +97,13 @@ class SupplierQuotationService
                 'supplier_id' => $quote->supplier_id,
                 'item_id' => $quote->item_id,
                 'action' => $action,
-                'quotation_snapshot' => $quote->fresh()->toArray(),
+                'quotation_snapshot' => array_replace($quote->fresh()->attributesToArray(), ['price' => $data['price']]),
                 'change_reason' => $changeReason ?: ($action === 'create' ? '新增供应商报价' : '更新供应商报价'),
                 'operator_id' => $operatorId,
                 'created_at' => now(),
             ]);
 
-            return $quote->fresh(['supplier', 'item.unit', 'unit']);
+            return $quote->fresh(['supplier', 'item.unit', 'unit', 'latestPriceHistory']);
         });
     }
 
@@ -114,13 +120,13 @@ class SupplierQuotationService
                 'supplier_id' => $quote->supplier_id,
                 'item_id' => $quote->item_id,
                 'action' => 'disable',
-                'quotation_snapshot' => $quote->fresh()->toArray(),
+                'quotation_snapshot' => $quote->fresh(['latestPriceHistory', 'item'])->attributesToArray(),
                 'change_reason' => $reason,
                 'operator_id' => $operatorId,
                 'created_at' => now(),
             ]);
 
-            return $quote->fresh(['supplier', 'item.unit', 'unit']);
+            return $quote->fresh(['supplier', 'item.unit', 'unit', 'latestPriceHistory']);
         });
     }
 }

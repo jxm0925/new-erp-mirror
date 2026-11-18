@@ -26,6 +26,7 @@ Progress design: 用户确认的订单产品树、单台整链路与工单聚合
       <div class="header-actions">
         <el-button size="small" icon="el-icon-back" @click="returnToList">{{ embeddedOrderId ? '关闭' : '返回列表' }}</el-button>
         <el-button v-if="!order.is_legacy_history && $can('sales_order.shipment.view')" size="small" icon="el-icon-truck" @click="openRelatedRoute({ path: '/sales/shipments', query: { sales_order_id: order.id } })">发货单</el-button>
+        <el-button v-if="canCreatePendingShipment" size="small" :loading="creatingPendingShipment" @click="prepareShipment">{{ openShipmentId ? '打开待发单' : '建立待发单' }}</el-button>
         <el-button v-if="canCreateAftersales" size="small" type="success" plain icon="el-icon-service" @click="$refs.caseForm.open()">售后</el-button>
         <el-button v-if="!order.is_legacy_history && order.allowed_actions && order.allowed_actions.edit" size="small" icon="el-icon-edit" @click="openRelatedRoute(`/sales/orders/${order.id}/edit`)">修改订单</el-button>
         <el-button v-if="!order.is_legacy_history && order.allowed_actions && order.allowed_actions.lock_inventory" size="small" type="success" plain icon="el-icon-lock" @click="openInventoryLock">锁库存</el-button>
@@ -97,6 +98,7 @@ Progress design: 用户确认的订单产品树、单台整链路与工单聚合
         </el-table>
         <div v-if="shortClose.preview.receivable_after !== undefined" class="short-close-summary">
           <div><span>原应收</span><b>¥{{ money(shortClose.preview.receivable_before) }}</b></div>
+          <div v-if="Number(shortClose.preview.rounding_adjustment)"><span>合计舍入尾差</span><b>¥{{ money(shortClose.preview.rounding_adjustment) }}</b></div>
           <div><span>新应收</span><b class="green">¥{{ money(shortClose.preview.receivable_after) }}</b></div>
           <div><span>短交关闭金额</span><b class="orange">¥{{ money(shortClose.preview.short_closed_amount) }}</b></div>
           <div><span>已收净额</span><b>¥{{ money(shortClose.preview.net_received_amount) }}</b></div>
@@ -261,7 +263,7 @@ Progress design: 用户确认的订单产品树、单台整链路与工单聚合
             <span class="kv-label">约定定金</span>
             <span class="kv-value">
               <template v-if="order.funding_status.production_required_amount !== undefined">
-                ¥{{ Number(order.funding_status.production_required_amount || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }}
+                ¥{{ $money(order.funding_status.production_required_amount || 0) }}
                 <small style="color: #909399">{{ order.funding_status.deposit_source === 'agreed' ? '（与客户约定）' : '（按付款条件默认）' }}</small>
               </template>
               <template v-else>{{ order.funding_status.deposit_source === 'agreed' ? '与客户约定' : '按付款条件默认' }}</template>
@@ -362,7 +364,7 @@ Progress design: 用户确认的订单产品树、单台整链路与工单聚合
           </template>
           <template v-else>
           <el-table v-if="dispatchRecords.length" :data="dispatchRecords" size="mini" border>
-            <el-table-column label="发货单" min-width="140"><template slot-scope="{row}"><span class="font-mono">{{ row.dispatch_no }}</span></template></el-table-column>
+            <el-table-column label="发货批次号" min-width="140"><template slot-scope="{row}"><span class="font-mono">{{ row.dispatch_no }}</span></template></el-table-column>
             <el-table-column label="方式" width="60"><template slot-scope="{row}">{{ row.delivery_mode === 'pickup' ? '提货' : '发货' }}</template></el-table-column>
             <el-table-column label="快递公司" min-width="100"><template slot-scope="{row}"><span :class="{ 'text-muted': !row.carrier_name }">{{ row.carrier_name || (row.delivery_mode === 'pickup' ? '-' : '未填写') }}</span></template></el-table-column>
             <el-table-column label="运单号" min-width="130"><template slot-scope="{row}"><span :class="row.tracking_no ? 'font-mono' : 'text-muted'">{{ row.tracking_no || (row.delivery_mode === 'pickup' ? '-' : '未填写') }}</span></template></el-table-column>
@@ -846,8 +848,10 @@ Progress design: 用户确认的订单产品树、单台整链路与工单聚合
 </template>
 
 <script>
+import { formatMoney as displayMoney } from '../../../utils/money.js'
 import { erpDateTime } from '../../../utils/dateTime'
 import { confirmSalesOrder, formalConfirmSalesOrder, previewShortCloseSalesOrder, shortCloseSalesOrder, deleteSalesOrderAttachment, deleteSalesOrderDraft, downloadSalesOrderAttachment, getSalesOrder, listSalesOrderChanges, lockSalesOrderInventory, adjustSalesOrderPriority } from '@/api/erp/sales'
+import { createPendingShipment } from '@/api/erp/shipment-packing'
 import SalesOrderCancellationDialog from '@/components/sales/SalesOrderCancellationDialog.vue'
 import CancellationDispositions from '@/components/production/CancellationDispositions.vue'
 import SalesOrderChangeLabor from '@/components/sales/SalesOrderChangeLabor.vue'
@@ -891,6 +895,7 @@ export default {
     inventoryLockError: '',
     inventoryLockSequence: 0,
     cancelling: false,
+    creatingPendingShipment: false,
     shortClose: { visible: false, loading: false, saving: false, preview: null, reason: '' },
     depositSaving: false,
     priority: { visible: false, saving: false, value: 3, reason: '' },
@@ -909,6 +914,16 @@ export default {
     hasShippedQty() { return (this.order.lines || []).some(line => Number(line.shipped_qty || 0) > 0) },
     canCreateAftersales() { return !this.order.is_legacy_history && this.$can('aftersales.create') && this.hasShippedQty && this.order.order_status !== 'cancelled' },
     canRequestInvoice() { return this.canViewInvoice && this.$can('sales_order.invoice_request') && ['confirmed', 'closed'].includes(this.order.order_status) && !!this.order.customer_id },
+    openShipmentId() {
+      const open = (this.order.shipments || []).filter(row => ['draft', 'pending_outbound', 'prepared', 'partially_shipped'].includes(row.shipment_status) || (row.shipment_status === 'shipped' && !row.cancel_reason))
+      return open.reduce((latest, row) => Math.max(latest, row.id), 0)
+    },
+    canCreatePendingShipment() {
+      return !this.order.is_legacy_history && this.order.order_status === 'confirmed' && !this.order.short_closed_at
+        && this.$can('sales_order.shipment.create') && (this.order.lines || []).some(line =>
+          !['service', 'no_delivery', 'fee', 'auxiliary', 'deduction'].includes(line.line_type) && !['cancelled', 'removed'].includes(line.line_status)
+          && Number(line.order_qty) > Number(line.cancelled_qty || 0) + Number(line.shipped_qty || 0))
+    },
     canShortClose() {
       if (this.order.is_legacy_history || this.order.order_status !== 'confirmed' || this.order.short_closed_at || !this.$can('sales_order.short_close')) return false
       return (this.order.lines || []).some(line => Number(line.shipped_qty || 0) > 0)
@@ -1044,6 +1059,22 @@ export default {
   },
   methods: {
     returnToList() { if (this.embeddedOrderId) this.$emit('close'); else this.$router.push('/sales/orders') },
+    async prepareShipment() {
+      if (this.creatingPendingShipment) return
+      const orderId = this.order.id
+      this.creatingPendingShipment = true
+      try {
+        let id = this.openShipmentId
+        if (!id) {
+          const { data } = await createPendingShipment(orderId)
+          if (orderId !== this.order.id) return
+          this.$message.success(data.message)
+          id = data.data.id
+        }
+        if (this.$can('sales_order.shipment.view')) this.openRelatedRoute({ path: '/sales/shipments', query: { sales_order_id: orderId, shipment_id: id } })
+      } catch (error) { this.$message.error(error.userMessage || '待发单读取或建立失败') }
+      finally { this.creatingPendingShipment = false }
+    },
     openRelatedRoute(location) {
       if (this.embeddedOrderId) window.open(this.$router.resolve(location).href, '_blank', 'noopener')
       else this.$router.push(location)
@@ -1414,7 +1445,7 @@ export default {
     },
     percent(v) { return `${(Number(v || 0) * 100).toFixed(2)}%` },
     money(v) {
-      return Number(v || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+      return displayMoney(v || 0)
     },
     numberText(v) { return Number(v || 0).toLocaleString('zh-CN', { maximumFractionDigits: 8 }) },
     date(v) {

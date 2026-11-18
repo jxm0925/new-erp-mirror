@@ -42,6 +42,7 @@
 </template>
 
 <script>
+import { formatMoney as displayMoney } from '../../utils/money.js'
 import { getSalesOrderFinance, listSalesPurchaseLinks, reverseSalesPurchaseLink } from '@/api/erp/salesFinance'
 
 export default {
@@ -51,7 +52,7 @@ export default {
   watch: { busy(value) { this.$emit('busy-change', value) }, orderId: { immediate: true, handler() { this.linkPage = 1; this.overview = {}; this.load() } } },
   beforeDestroy() { this.loadRequest++ },
   methods: {
-    money(value) { return value === null || value === undefined || value === '' ? '待确认' : Number(value).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 4 }) },
+    money(value) { return value === null || value === undefined || value === '' ? '待确认' : displayMoney(value) },
     qty(value) { return value === null || value === undefined ? '-' : String(value).replace(/(\.\d*?[1-9])0+$|\.0+$/, '$1') },
     date(value) { return value ? String(value).slice(0, 10) : '-' },
     dateTime(value) { return value ? String(value).replace('T', ' ').slice(0, 16) : '-' },

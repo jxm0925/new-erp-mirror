@@ -15,6 +15,7 @@ use Illuminate\Validation\ValidationException;
 final class SalesOrderFulfillmentPolicy
 {
     public const TYPES = ['inventory', 'production', 'purchase', 'service', 'no_delivery'];
+    public const NON_PHYSICAL_LINE_TYPES = ['service', 'no_delivery', 'fee', 'auxiliary', 'deduction'];
 
     /** 待发移位和包装作业不是销售出库；历史已过账和实际发货都不能被订单变更覆盖。 */
     public static function hasShipmentFacts(SalesOrder $order): bool
@@ -55,7 +56,7 @@ final class SalesOrderFulfillmentPolicy
 
     public static function isPhysical(string $lineType): bool
     {
-        return ! in_array($lineType, ['service', 'no_delivery', 'fee', 'auxiliary', 'deduction'], true);
+        return ! in_array($lineType, self::NON_PHYSICAL_LINE_TYPES, true);
     }
 
     /** 扣减项（红包、优惠券、抹零）：订单里按负数减钱，不发货、不生产、不占库存、不算数量。 */

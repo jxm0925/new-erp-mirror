@@ -25,6 +25,17 @@ class PurchaseOrderItem extends PurchaseBaseModel
         'commercial_snapshot_at' => 'datetime',
         'material_policy_snapshot' => 'array',
     ];
+    public function getPurchaseUnitPriceAttribute($value)
+    {
+        if ($value !== null && (float) $value > 0) return $value;
+        return $this->purchase_conversion_snapshot['purchase_unit_price'] ?? $this->attributes['unit_price'] ?? $value;
+    }
+
+    public function getUnitPriceAttribute($value)
+    {
+        return $this->purchase_unit_price ?? $value;
+    }
+
     public function order() { return $this->belongsTo(PurchaseOrder::class, 'order_id'); }
     public function plan() { return $this->belongsTo(PurchasePlan::class, 'plan_id'); }
     public function planItem() { return $this->belongsTo(PurchasePlanItem::class, 'plan_item_id'); }

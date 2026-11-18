@@ -15,6 +15,7 @@
   </el-dialog>
 </template>
 <script>
+import { settlementAmount } from '../../utils/money.js'
 import { getCashDocument } from '../../api/erp/finance'
 import { updateCashPurchaseOrders } from '../../api/erp/purchasePayments'
 import { allocationKey, money } from '../../utils/financeCashAllocation'
@@ -34,7 +35,7 @@ export default {
   methods: {
     money,
     reset() { this.requestRevision += 1; this.doc = null; this.rows = []; this.reason = ''; this.error = ''; this.conflict = false; this.loading = false; this.idempotencyKey = allocationKey() },
-    applyDocument(doc) { this.doc = doc; this.rows = (doc.purchase_order_allocations || []).map(row => ({ ...row })); this.reason = ''; this.conflict = false; this.idempotencyKey = allocationKey() },
+    applyDocument(doc) { this.doc = doc; this.rows = (doc.purchase_order_allocations || []).map(row => ({ ...row, amount: settlementAmount(row.amount) })); this.reason = ''; this.conflict = false; this.idempotencyKey = allocationKey() },
     async load() {
       const revision = ++this.requestRevision
       this.loading = true

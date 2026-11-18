@@ -217,17 +217,12 @@ class SalesReturnIdentityService
         }
         $missing = array_sum($deficits);
         if ($missing > array_sum($free) + 0.00000001) $this->fail('当前退货单没有足够未接收的原出库成本预留，不能重复接收序列号。');
-        $statuses = DB::table('erp_sales_return_items as item')->join('erp_sales_returns as document', 'document.id', '=', 'item.sales_return_id')
-            ->whereIn('item.id', $all->pluck('sales_return_item_id'))->orderBy('item.id')->lockForUpdate()->pluck('document.return_status', 'item.id');
+        $reserved = SalesReturnCostTraceService::reservedByOutbound($all, $bound);
         foreach ($deficits as $outboundId => $count) {
             if ($count <= 0) continue;
             $outbound = $outbounds->get($outboundId);
             if (!$outbound) $this->fail('原出库成本事实不存在。');
-            $reserved = $all->where('outbound_transaction_item_id', $outboundId)->sum(function ($allocation) use ($statuses, $bound) {
-                if (in_array($statuses[$allocation->sales_return_item_id] ?? null, ['cancelled', 'closed'], true)) return max((float) $allocation->posted_base_qty, (int) ($bound[$allocation->id] ?? 0));
-                return (float) $allocation->allocated_base_qty;
-            });
-            if ($reserved + $count > abs((float) $outbound->change_qty) + 0.00000001) $this->fail('所选序列号对应的原发货可退成本额度已被其他退货单占用，请重新核对。');
+            if ((float) ($reserved[$outboundId] ?? 0) + $count > abs((float) $outbound->change_qty) + 0.00000001) $this->fail('所选序列号对应的原发货可退成本额度已被其他退货单占用，请重新核对。');
         }
         foreach ($own as $allocation) {
             if ($missing <= 0) break;

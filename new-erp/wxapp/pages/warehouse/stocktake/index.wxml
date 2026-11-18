@@ -120,11 +120,15 @@
       </view>
 
       <view class="phase-tabs">
-        <view class="{{!lineStatus ? 'active' : ''}}" data-status="" bindtap="lineFilter">全部（{{summary.total_lines || 0}}）</view>
+        <view class="{{!lineStatus && !foundLineId ? 'active' : ''}}" data-status="" bindtap="lineFilter">全部（{{summary.total_lines || 0}}）</view>
         <view class="{{lineStatus === 'uncounted' ? 'active' : ''}}" data-status="uncounted" bindtap="lineFilter">未盘（{{summary.uncounted_lines || 0}}）</view>
         <view class="{{lineStatus === 'diff' ? 'active' : ''}}" data-status="diff" bindtap="lineFilter">有差异（{{summary.diff_lines || 0}}）</view>
       </view>
 
+      <view wx:if="{{canAdd}}" class="warehouse-actions">
+        <button class="warehouse-secondary" bindtap="openFound" disabled="{{saving || pendingCounts || pendingComplete || pendingAdd}}">补录账外物料 / 批次</button>
+      </view>
+      <view wx:if="{{foundLineId}}" class="stk-clear-loc" data-status="" bindtap="lineFilter">正在查看新补录的盘点行 · 查看全部</view>
       <view wx:if="{{!lines.length}}" class="warehouse-empty">当前范围暂无明细</view>
 
       <view wx:for="{{lines}}" wx:key="id" class="phase-line">
@@ -145,13 +149,13 @@
               data-id="{{item.id}}"
               data-field="counted_qty"
               bindinput="lineInput"
-              disabled="{{!canCount || saving || pendingCounts || pendingComplete}}"
+              disabled="{{!canCount || saving || pendingCounts || pendingComplete || pendingAdd}}"
             />
             <text>{{item.unit.unit_name}}</text>
           </view>
           <view wx:else>
             <text>已确认 {{item.confirmed}} / {{item.entryCount}}</text>
-            <button class="warehouse-secondary stk-entry-btn" data-id="{{item.id}}" bindtap="openEntries" disabled="{{saving}}">
+            <button class="warehouse-secondary stk-entry-btn" data-id="{{item.id}}" bindtap="openEntries" disabled="{{saving || pendingAdd}}">
               <text>逐件盘点</text>
               <van-icon name="arrow" />
             </button>
@@ -166,7 +170,7 @@
             data-id="{{item.id}}"
             data-field="remark"
             bindinput="lineInput"
-            disabled="{{!canCount || saving || pendingCounts || pendingComplete}}"
+            disabled="{{!canCount || saving || pendingCounts || pendingComplete || pendingAdd}}"
           />
         </view>
         <view wx:if="{{item.differenceText !== '' && item.differenceText !== '0'}}" class="warehouse-error">
@@ -185,9 +189,12 @@
       <view wx:if="{{pendingComplete}}" class="warehouse-actions">
         <button class="warehouse-secondary" bindtap="complete" loading="{{saving}}" disabled="{{saving}}">核对上次完成结果</button>
       </view>
+      <view wx:if="{{pendingAdd}}" class="warehouse-actions">
+        <button class="warehouse-secondary" bindtap="saveFound" loading="{{saving}}" disabled="{{saving}}">核对上次补录结果</button>
+      </view>
       <view class="warehouse-actions">
-        <button wx:if="{{canCount}}" class="warehouse-secondary" bindtap="save" disabled="{{saving || pendingCounts || pendingComplete}}">保存本次</button>
-        <button wx:if="{{canComplete}}" class="warehouse-primary" bindtap="requestComplete" disabled="{{saving || pendingCounts || pendingComplete}}">完成盘点</button>
+        <button wx:if="{{canCount}}" class="warehouse-secondary" bindtap="save" disabled="{{saving || pendingCounts || pendingComplete || pendingAdd}}">保存本次</button>
+        <button wx:if="{{canComplete}}" class="warehouse-primary" bindtap="requestComplete" disabled="{{saving || pendingCounts || pendingComplete || pendingAdd}}">完成盘点</button>
       </view>
     </view>
   </block>
@@ -200,6 +207,25 @@
 </view>
 
 <warehouse-locator open="{{locatorOpen}}" value="{{locator}}" bind:confirm="chooseLocator" bind:cancel="closeLocator" />
+
+<view wx:if="{{found && !foundItemOpen && !foundLocationOpen}}" class="warehouse-overlay" catchtouchmove="stop">
+  <view class="warehouse-dialog">
+    <view class="warehouse-dialog-header">补录账外物料 / 批次</view>
+    <view class="warehouse-dialog-body">
+      <view class="warehouse-field"><text>物料</text><button class="warehouse-secondary" bindtap="openFoundItems" disabled="{{saving}}">{{found.item ? found.item.item_code + ' · ' + found.item.item_name : '选择物料'}}</button></view>
+      <view class="warehouse-field"><text>实际库位</text><button class="warehouse-secondary" bindtap="openFoundLocation" disabled="{{saving || header.location_id}}">{{found.locator.location_code || '选择库位'}} {{found.locator.location_name || ''}}</button></view>
+      <view class="warehouse-field"><text>实际批次</text><input class="warehouse-input" value="{{found.batch_no}}" data-field="found.batch_no" bindinput="input" maxlength="80" placeholder="填写实际批次" disabled="{{saving}}" /></view>
+      <view wx:if="{{canAmount && found.item && found.item.material_management_mode !== 'physical'}}" class="warehouse-field"><text>盘盈单价（元）</text><input class="warehouse-input" type="digit" value="{{found.unitCostText}}" data-field="found.unit_cost" bindinput="unitCostInput" bindblur="moneyBlur" placeholder="留空按已有成本" disabled="{{saving}}" /></view>
+      <view wx:if="{{foundError}}" class="warehouse-error">{{foundError}}</view>
+    </view>
+    <view class="warehouse-dialog-footer">
+      <button class="warehouse-secondary" bindtap="closeFound" disabled="{{saving}}">取消</button>
+      <button class="warehouse-primary" bindtap="saveFound" loading="{{saving}}" disabled="{{saving}}">补录并录入实盘</button>
+    </view>
+  </view>
+</view>
+<warehouse-select open="{{foundItemOpen}}" mode="stocktake_item" title="选择账外物料" context="{{foundContext}}" bind:confirm="chooseFoundItem" bind:cancel="closeFoundItems" />
+<warehouse-locator open="{{foundLocationOpen}}" value="{{found.locator}}" warehouse-id="{{header.warehouse_id}}" warehouse-name="{{header.warehouse.warehouse_name}}" bind:confirm="chooseFoundLocation" bind:cancel="closeFoundLocation" />
 
 <!-- 逐件盘点弹窗 -->
 <view wx:if="{{entry}}" class="warehouse-overlay stocktake-entry-overlay" catchtouchmove="stop">
@@ -280,8 +306,8 @@
       <block wx:if="{{canCount}}">
         <view class="warehouse-title">批量操作</view>
         <view class="warehouse-actions">
-          <button class="warehouse-secondary" data-present="true" bindtap="markAllEntries" disabled="{{saving || pendingCounts || pendingComplete}}">全部在</button>
-          <button class="warehouse-secondary" data-present="false" bindtap="markAllEntries" disabled="{{saving || pendingCounts || pendingComplete}}">全部不在</button>
+          <button class="warehouse-secondary" data-present="true" bindtap="markPage" disabled="{{entryLoading || !entryEditableCount || saving || pendingCounts || pendingComplete}}">本页 {{entryEditableCount}} 件在库</button>
+          <button class="warehouse-secondary" data-present="false" bindtap="markPage" disabled="{{entryLoading || !entryEditableCount || saving || pendingCounts || pendingComplete}}">本页 {{entryEditableCount}} 件不在</button>
         </view>
         <view class="stocktake-supplement">
           <view class="warehouse-title">补充说明</view>
@@ -313,9 +339,9 @@
           <block wx:elif="{{canAmount}}">
             <view class="stocktake-physical-fields">
               <input class="warehouse-input" placeholder="长 mm" type="digit" data-field="length_mm" value="{{physical.length_mm}}" bindinput="physicalInput" />
-              <input class="warehouse-input" placeholder="宽 mm" type="digit" data-field="width_mm" value="{{physical.width_mm}}" bindinput="physicalInput" />
-              <input class="warehouse-input" placeholder="厚 mm" type="digit" data-field="thickness_mm" value="{{physical.thickness_mm}}" bindinput="physicalInput" />
-              <input class="warehouse-input" placeholder="库存成本（元）" type="digit" data-field="total_cost" value="{{physical.total_cost}}" bindinput="physicalInput" />
+              <input wx:if="{{entry.item.cutting_mode !== 'length'}}" class="warehouse-input" placeholder="宽 mm" type="digit" data-field="width_mm" value="{{physical.width_mm}}" bindinput="physicalInput" />
+              <input wx:if="{{entry.item.cutting_mode !== 'length'}}" class="warehouse-input" placeholder="厚 mm" type="digit" data-field="thickness_mm" value="{{physical.thickness_mm}}" bindinput="physicalInput" />
+              <input class="warehouse-input" placeholder="库存成本（元）" type="digit" data-field="physical.total_cost" value="{{physical.total_cost}}" bindinput="input" bindblur="moneyBlur" />
             </view>
             <view class="warehouse-actions">
               <button class="warehouse-secondary" bindtap="addPhysical" disabled="{{saving || pendingCounts || pendingComplete}}">补录实物</button>

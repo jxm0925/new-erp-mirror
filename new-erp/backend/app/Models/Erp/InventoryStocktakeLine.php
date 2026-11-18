@@ -6,6 +6,19 @@ class InventoryStocktakeLine extends MasterModel
 {
     protected $table = 'erp_inventory_stocktake_lines';
     protected $casts = ['counted_at' => 'datetime'];
+    public const ITEM_RELATION = 'item:id,item_code,item_name,spec,cutting_mode,is_length_cut_material';
+
+    public function presentForCount(?array $entryStats): void
+    {
+        $this->item?->setAttribute('cutting_mode', $this->item->cuttingMode());
+        $this->setAttribute('entry_stats', $entryStats);
+    }
+
+    public function scopeWithDifferences($query)
+    {
+        return $query->whereNotNull('counted_qty')->where(fn ($lines) => $lines->where('difference_qty', '<>', 0)
+            ->orWhereHas('entries', fn ($entries) => $entries->changed()));
+    }
 
     public function stocktake() { return $this->belongsTo(InventoryStocktake::class, 'stocktake_id'); }
     public function item() { return $this->belongsTo(Item::class); }

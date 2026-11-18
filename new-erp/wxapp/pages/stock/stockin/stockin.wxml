@@ -147,7 +147,7 @@
       desc="库存：{{item.stock_nums}}"
       thumb-mode="aspectFill"
       tag="{{ item.badge ? item.badge : '' }}"
-      price = "{{userInfo.can_in?item.univalence?item.univalence:0:''}}"
+      price="{{userInfo.can_in ? item.priceText : ''}}"
       title="{{item.sku_name}}"
       thumb="{{item.image?item.image:'/static/images/emp.jpg'}}"
       tag="{{item.sku_sn}}"
@@ -213,7 +213,7 @@
     </view>
     <view class="l">
       <van-field
-        value="{{ item.univalence }}"
+        value="{{item.priceText}}"
         placeholder="价格"
         border="{{ true }}"
         bind:blur="changePrice"

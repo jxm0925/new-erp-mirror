@@ -416,7 +416,7 @@
               <el-table-column prop="reserved_return_qty" label="已申请退货" width="95" align="right" />
               <el-table-column prop="available_return_qty" label="可退" width="80" align="right" />
               <el-table-column label="本次退货数量 *" width="130"><template slot-scope="{row}"><el-input-number v-model="row.requested_qty" size="mini" :min="0" :max="Number(row.available_return_qty)" :precision="2" :controls="false" :disabled="!row.selected" /></template></el-table-column>
-              <el-table-column v-if="form.return_type === 'refund'" label="退货单价" width="120"><template slot-scope="{row}"><el-input-number v-if="row.default_refund_unit_price != null" v-model="row.refund_unit_price" size="mini" :min="0" :max="Number(row.default_refund_unit_price || 0)" :precision="4" :controls="false" :disabled="!row.selected" /></template></el-table-column>
+              <el-table-column v-if="form.return_type === 'refund'" label="退货单价" width="120"><template slot-scope="{row}"><erp-money-input number-control v-if="row.default_refund_unit_price != null" v-model="row.refund_unit_price" size="mini" :min="0" :max="Number(row.default_refund_unit_price || 0)" :precision="4" :controls="false" :disabled="!row.selected" /></template></el-table-column>
               <el-table-column label="换算后基本数量" width="125" align="right"><template slot-scope="{row}">{{ (Number(row.requested_qty || 0) * Number(row.fulfillment_factor_snapshot || 1)).toFixed(2) }}</template></el-table-column>
               <el-table-column label="备注" min-width="150"><template slot-scope="{row}"><el-input v-model.trim="row.remark" size="mini" maxlength="100" placeholder="请输入（选填）" :disabled="!row.selected" /></template></el-table-column>
               <el-table-column label="删除" width="55" align="center"><template slot-scope="{$index}"><el-button type="text" icon="el-icon-delete" class="danger" @click="selectedLines.splice($index, 1)" /></template></el-table-column>
@@ -442,6 +442,7 @@
 </template>
 
 <script>
+import { formatMoney as displayMoney } from '../../../utils/money.js'
 import { purchaseScopes, purchaseScopeLabel, purchaseScopeMatches, validPurchaseScope } from '@/utils/purchaseManagementScope.mjs'
 import { createPurchaseReturn, listPurchaseReturnSources, listPurchaseReturnSourceSerials, submitPurchaseReturn } from '@/api/erp/purchase'
 import { confirmSalesReturn, createSalesReturn, listSalesReturnSources } from '@/api/erp/sales'
@@ -752,7 +753,7 @@ export default {
         }))
       }
     },
-    money(value) { return `¥ ${Number(value || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` },
+    money(value) { return `¥ ${displayMoney(value || 0)}` },
     async save(advance) {
       if (this.saving || this.scopeChanging || !this.reservation) return
       if (this.kind === 'purchase' && (!validPurchaseScope(this.form.management_scope) || this.selectedLines.some(row => !purchaseScopeMatches(row, this.form.management_scope)))) {

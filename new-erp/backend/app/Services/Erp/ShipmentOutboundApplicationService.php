@@ -79,23 +79,21 @@ final class ShipmentOutboundApplicationService
         $this->fail('发货前不再提交仓库审核，请更新页面，在打包前完成齐套核对，货物交付后直接确认发货。');
     }
 
-    public function dispatchNow(SalesShipment $shipment, ShipmentPackingOperation $op, array $payload, object $actor): void
+    public function dispatchNow(SalesShipment $shipment, ShipmentPackingOperation $op, array $payload, object $actor): string
     {
-        if (! $this->terminalOperation($op, (int) $actor->legacy_id)) $this->fail('请由已完成末道工序的接单人确认发货。');
+        if (! $this->terminalOperation($op, (int) $actor->legacy_id)) $this->fail('请由本单发货作业参与人在已完成的末道工序确认发货。');
         $packageIds = array_key_exists('package_ids', $payload)
             ? array_values(array_unique(array_map('intval', $payload['package_ids'])))
             : $this->linkedPackageIds($shipment, (int) $op->package_id);
         if (array_key_exists('package_ids', $payload) && (int) ($payload['expected_shipment_version'] ?? 0) !== (int) $shipment->business_version)
             $this->fail('发货单已变化，请重新打开设备清单后选择。');
-        $this->assertDispatchPackagesOwned($shipment, $packageIds, (int) $actor->legacy_id);
-        app(ShipmentPackingKittingService::class)->assertDispatchReady($shipment, $packageIds);
-        app(SalesShipmentApplicationService::class)->dispatchFromPacking($shipment, array_replace($payload, ['package_ids' => $packageIds]), $actor);
+        return app(SalesShipmentApplicationService::class)->dispatchFromPacking($shipment, array_replace($payload, ['package_ids' => $packageIds]), $actor)->dispatch_no;
     }
 
     /** 仅提供当前发货单的物品和就绪状态，不暴露订单金额等销售资料。 */
     public function dispatchChoices(ShipmentPackingOperation $op, object $actor, int $page): array
     {
-        if (! $this->terminalOperation($op, (int) $actor->legacy_id)) $this->fail('请由已完成末道工序的接单人选择本次发货设备。');
+        if (! $this->terminalOperation($op, (int) $actor->legacy_id)) $this->fail('请由本单发货作业参与人在已完成的末道工序选择本批产品。');
         $shipment = $op->shipment;
         $packages = collect(app(ShipmentPackingApplicationService::class)->dispatchablePackages($shipment))
             ->where('package_status', '!=', 'shipped')->keyBy('id');
@@ -109,7 +107,6 @@ final class ShipmentOutboundApplicationService
             $reason = null;
             try {
                 app(SalesShipmentApplicationService::class)->dispatchSelection($shipment, $ids, false);
-                $this->assertDispatchPackagesOwned($shipment, $ids, (int) $actor->legacy_id);
             } catch (ValidationException $exception) { $reason = collect($exception->errors())->flatten()->first(); }
             $rows[] = ['id' => implode('-', $ids), 'package_ids' => $ids, 'package_nos' => $members->pluck('package_no')->values()->all(),
                 'contents_text' => $members->pluck('contents_text')->filter()->implode('；'), 'ready' => $reason === null,
@@ -119,17 +116,6 @@ final class ShipmentOutboundApplicationService
         return ['data' => array_slice($rows, ($page - 1) * 10, 10), 'current_page' => $page,
             'last_page' => max(1, (int) ceil(count($rows) / 10)), 'total' => count($rows),
             'shipment_no' => $shipment->shipment_no, 'shipment_version' => (int) $shipment->business_version];
-    }
-
-    private function assertDispatchPackagesOwned(SalesShipment $shipment, array $packageIds, int $actorId): void
-    {
-        $ids = array_values(array_unique(array_map('intval', $packageIds)));
-        if ($ids === [] || $shipment->packages()->whereIn('id', $ids)->whereNotIn('package_status', ['shipped', 'cancelled'])->count() !== count($ids))
-            $this->fail('请选择本发货单尚未发出的设备包裹。');
-        $owned = ShipmentPackingOperation::query()->where('shipment_id', $shipment->id)->whereIn('package_id', $ids);
-        $this->includeOutboundWork($owned, $actorId);
-        if (array_diff($ids, $owned->pluck('package_id')->map('intval')->unique()->all()) !== [])
-            $this->fail('只能确认本人已完成末道作业的包裹，请由对应接单人办理发货。');
     }
 
     public function requestProducts(SalesShipment $shipment, ShipmentPackingOperation $op, array $rows, object $actor): ShipmentOutboundApplication
@@ -252,11 +238,16 @@ final class ShipmentOutboundApplicationService
         }
     }
 
-    public function includeOutboundWork($query, int $actorId): void
+    public function includeOutboundWork($query, int $actorId, bool $includeShipped = false): void
     {
         $table = 'erp_shipment_packing_operations';
-        $query->where('owner_legacy_id', $actorId)->where('status', 'COMPLETED')
-            ->whereHas('package', fn ($q) => $q->whereNotIn('package_status', ['shipped', 'cancelled'])
+        $query->whereHas('shipment.packingOperations', fn ($work) => $work->where('status', '!=', 'CANCELLED')
+                ->where(fn ($person) => $person->where('owner_legacy_id', $actorId)
+                    ->orWhereHas('participants', fn ($p) => $p->where('employee_legacy_id', $actorId)->where('is_active', true))
+                    ->orWhereHas('laborSessions', fn ($labor) => $labor->where('employee_legacy_id', $actorId))))
+            ->where('status', 'COMPLETED')
+            ->whereHas('package', fn ($q) => $q->where('package_status', '!=', 'cancelled')
+                ->when(! $includeShipped, fn ($open) => $open->where('package_status', '!=', 'shipped'))
                 ->whereHas('packingContents', fn ($content) => $content->current()
                     ->whereRaw("JSON_CONTAINS({$table}.packing_content_ids, CAST(erp_shipment_packing_contents.id AS JSON))")))
             ->whereNotExists(fn ($later) => $later->selectRaw('1')->from($table.' as later')
@@ -285,7 +276,11 @@ final class ShipmentOutboundApplicationService
             }
         }
 
-        return ['materials' => $this->operationApplication($materials, $op, $actorId, false),
+        $batch = $op->shipment->dispatches()->whereJsonContains('package_ids', (int) $op->package_id)->latest('id')
+            ->first(['id', 'dispatch_no', 'tracking_no', 'delivery_mode']);
+        return ['actual_dispatch' => $batch?->only(['id', 'dispatch_no', 'tracking_no', 'delivery_mode']),
+            'can_add_tracking' => $batch && $batch->delivery_mode === 'dispatch' && ! $batch->tracking_no && $this->terminalOperation($op, $actorId, true),
+            'materials' => $this->operationApplication($materials, $op, $actorId, false),
             'products' => $this->operationApplication($products, $op, $actorId, false),
             'dispatch' => $this->operationApplication($dispatch, $op, $actorId, $terminal),
             'can_request_dispatch' => false, 'can_dispatch' => $canRequest, 'dispatch_block_reason' => $blocked, 'dispatch_package_nos' => $packageNos];
@@ -484,11 +479,11 @@ final class ShipmentOutboundApplicationService
         return $queue;
     }
 
-    private function terminalOperation(ShipmentPackingOperation $op, int $actorId): bool
+    public function terminalOperation(ShipmentPackingOperation $op, int $actorId, bool $includeShipped = false): bool
     {
-        if ($op->status !== 'COMPLETED' || (int) $op->owner_legacy_id !== $actorId) return false;
+        if ($op->status !== 'COMPLETED') return false;
         $query = ShipmentPackingOperation::query()->whereKey($op->id);
-        $this->includeOutboundWork($query, $actorId);
+        $this->includeOutboundWork($query, $actorId, $includeShipped);
 
         return $query->exists();
     }

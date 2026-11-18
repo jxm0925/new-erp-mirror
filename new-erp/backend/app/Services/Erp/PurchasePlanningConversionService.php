@@ -77,12 +77,17 @@ class PurchasePlanningConversionService
             // Legacy quantity columns store four decimals; reject instead of silently truncating a stock fact.
             $this->assertPrecision($planned, min(4, $basePrecision), 'purchase_quantity', $snapshot['base_unit_name_snapshot']);
             abort_if($quantity <= 0 || $planned + 0.00000001 < $required, 422, '采购数量换算后不能少于本次分配的需求数量');
-            $commercial = app(PurchaseFinancialFactService::class)->commercialLine(
-                $quantity, $line['amount'] ?? null,
-                $line['purchase_unit_price'] ?? ((float) ($line['base_unit_price'] ?? 0) * $factor),
-            );
+            $givenPrice = $line['purchase_unit_price'] ?? null;
+            if ($givenPrice === null && isset($line['base_unit_price'])) {
+                $basePrice = $line['base_unit_price'];
+                $givenPrice = bcmul(is_float($basePrice) ? sprintf('%.8F', $basePrice) : (string) $basePrice, (string) $snapshot['conversion_factor_snapshot'], 16);
+            }
+            $unchangedQuantity = isset($snapshot['purchase_qty']) && $quantity === (float) $snapshot['purchase_qty'];
+            $commercial = app(PurchaseFinancialFactService::class)->commercialLine($quantity,
+                $line['amount'] ?? ($givenPrice === null && $unchangedQuantity ? ($snapshot['amount'] ?? null) : null),
+                $givenPrice ?? (isset($line['amount']) ? '0' : ($snapshot['purchase_unit_price'] ?? '0')));
             $price = $commercial['unit_price'];
-            $basePrice = $this->domain->calculateBaseUnitPrice($price, $factor);
+            $basePrice = $this->domain->calculateBaseUnitPrice($price, $snapshot['conversion_factor_snapshot']);
             app(PurchaseFinancialFactService::class)->assertUnitPrice($basePrice);
             $fingerprint = hash('sha256', json_encode(Arr::only($snapshot, [
                 'item_id', 'conversion_id', 'conversion_version', 'purchase_unit_id', 'base_unit_id',
@@ -120,7 +125,7 @@ class PurchasePlanningConversionService
             abort_if(!empty($split['id']) && !$prior, 422, '供应商拆分不属于当前计划明细');
             $input = [...$split, 'item_id' => $line['item_id'], 'required_qty' => $split['purchase_qty'] ?? 0,
                 'management_scope' => $snapshot['management_scope'],
-                'purchase_unit_id' => $split['purchase_unit_id'] ?? $snapshot['purchase_unit_id'], 'base_unit_price' => $split['unit_price'] ?? 0];
+                'purchase_unit_id' => $split['purchase_unit_id'] ?? $snapshot['purchase_unit_id'], 'base_unit_price' => $split['unit_price'] ?? null];
             $facts = $direct ? $this->fromPurchaseQuantity($input, $prior?->purchase_conversion_snapshot ?? $snapshot)
                 : $this->calculate($input, $prior?->purchase_conversion_snapshot ?? $snapshot);
             $allocation = $direct ? min(max(0, $required - $allocated), (float) $facts['planned_base_qty']) : (float) $split['purchase_qty'];

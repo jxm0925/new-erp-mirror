@@ -338,6 +338,8 @@ Route::prefix('v1/erp/inventory')->group(function () {
     Route::get('stocktakes/active', [InventoryStocktakeController::class, 'active']);
     Route::post('stocktakes', [InventoryStocktakeController::class, 'store']);
     Route::get('stocktakes/{id}', [InventoryStocktakeController::class, 'show'])->whereNumber('id');
+    Route::get('stocktakes/{id}/items', [InventoryStocktakeController::class, 'items'])->whereNumber('id');
+    Route::post('stocktakes/{id}/lines', [InventoryStocktakeController::class, 'addLine'])->whereNumber('id');
     Route::put('stocktakes/{id}/counts', [InventoryStocktakeController::class, 'saveCounts'])->whereNumber('id');
     Route::get('stocktakes/{id}/lines/{lineId}/entries', [InventoryStocktakeController::class, 'entries'])->whereNumber('id')->whereNumber('lineId');
     Route::post('stocktakes/{id}/complete', [InventoryStocktakeController::class, 'complete'])->whereNumber('id');
@@ -553,6 +555,7 @@ Route::prefix('v1/erp/sales')->group(function () {
     Route::post('orders/{id}/priority', [SalesOrderController::class, 'adjustPriority'])->whereNumber('id');
     Route::get('shipments', [SalesShipmentController::class, 'index']);
     Route::post('shipments', [SalesShipmentController::class, 'store']);
+    Route::post('shipments/pending', [SalesShipmentController::class, 'plan']);
     Route::get('shipments/sources', [SalesShipmentController::class, 'sources']);
     Route::get('shipments/sources/{fulfillmentId}/serials', [SalesShipmentController::class, 'sourceSerials'])->whereNumber('fulfillmentId');
     Route::get('shipments/{id}', [SalesShipmentController::class, 'show'])->whereNumber('id');
@@ -562,6 +565,7 @@ Route::prefix('v1/erp/sales')->group(function () {
     Route::post('shipments/{id}/confirm', [SalesShipmentController::class, 'confirm'])->whereNumber('id');
     Route::post('shipments/{id}/post-outbound', [SalesShipmentController::class, 'postOutbound'])->whereNumber('id');
     Route::post('shipments/{id}/dispatch', [SalesShipmentController::class, 'dispatch'])->whereNumber('id');
+    Route::post('shipments/{id}/dispatches/{batchId}/tracking', [SalesShipmentController::class, 'addTracking'])->whereNumber('id')->whereNumber('batchId');
     Route::get('shipments/{id}/serials/{lineId}/rework-operations', [SalesShipmentController::class, 'reworkOperations'])->whereNumber(['id', 'lineId']);
     Route::get('shipments/{id}/serials/{lineId}/replacement-serials', [SalesShipmentController::class, 'replacementSerials'])->whereNumber(['id', 'lineId']);
     Route::post('shipments/{id}/serials/{lineId}/repair-return', [SalesShipmentController::class, 'repairReturn'])->whereNumber(['id', 'lineId']);
@@ -739,6 +743,8 @@ Route::prefix('v1/erp/production')->group(function () {
     Route::delete('tech/drawings/{drawingId}', [MfgTechController::class, 'deleteDrawing'])->whereNumber('drawingId');
     Route::post('tech/{id}/release', [MfgTechController::class, 'release'])->whereNumber('id');
     Route::get('shipment-packing/commands/result', [ShipmentPackingController::class, 'commandResult']);
+    Route::get('shipment-packing/pending-shipments', [ShipmentPackingController::class, 'pendingShipments']);
+    Route::get('shipment-packing/pending-shipments/{id}', [ShipmentPackingController::class, 'pendingShipment'])->whereNumber('id');
     Route::get('shipment-packing/operations', [ShipmentPackingController::class, 'operations']);
     Route::get('shipment-packing/operations/{id}', [ShipmentPackingController::class, 'operation'])->whereNumber('id');
     Route::get('shipment-packing/operations/{id}/dispatch-choices', [ShipmentPackingController::class, 'dispatchChoices'])->whereNumber('id');

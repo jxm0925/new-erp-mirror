@@ -82,8 +82,9 @@
 .drawing-detail-footer { border-top: 1px solid #e2e8f0; display: flex; justify-content: space-between; align-items: center; gap: 15px; padding-top: 14px; }
 .drawing-detail-footer .drawing-note { margin: 0; }
 .drawing-source-panel { margin-top: 18px; }
-.drawing-source-heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
-.drawing-source-heading h3 { margin: 0; font-size: 15px; }
+.detail-card > .drawing-source-panel { margin-top: 0; }
+.drawing-source-heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+.drawing-source-heading h3 { margin: 0; font-size: 15px; font-weight: 700; color: #0f172a; }
 .drawing-inline-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 .drawing-inline-actions .el-button + .el-button { margin-left: 0; }
 .drawing-file-input { width: 100%; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }

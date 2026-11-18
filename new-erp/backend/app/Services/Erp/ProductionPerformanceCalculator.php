@@ -2,6 +2,7 @@
 
 namespace App\Services\Erp;
 
+use App\Domain\Finance\Money;
 use App\Exceptions\Erp\WorkOrderDomainException;
 
 /** Pure decimal rules used only by the PC statistics query after an entire order ships. */
@@ -139,19 +140,40 @@ final class ProductionPerformanceCalculator
     public function amounts(string $basis, string $rate, array $shares): array
     {
         $pool = bcmul($basis, $this->ratio($rate), 12);
-        $personal = '0.000000000000';
+        $ratios = [];
+        foreach ($shares as $share) {
+            $ratios[$share['employee_legacy_id']] = ($share['eligible'] ?? false) ? $this->ratio($share['share_ratio']) : '0';
+        }
+        $allocated = $this->splitCommission($pool, $ratios);
+        $personal = '0.00';
         $employees = [];
         foreach ($shares as $share) {
-            $amount = ($share['eligible'] ?? false) ? bcmul($pool, $this->ratio($share['share_ratio']), 12) : '0.000000000000';
-            $personal = bcadd($personal, $amount, 12);
-            $employees[] = $share + ['performance_amount' => $this->round($amount)];
+            $amount = $allocated[$share['employee_legacy_id']];
+            $personal = bcadd($personal, $amount, 2);
+            $employees[] = $share + ['performance_amount' => $amount];
         }
-        return ['performance_pool_amount' => $this->round($pool), 'personal_performance_amount' => $this->round($personal),
-            'noncredited_amount' => $this->round(bcsub($pool, $personal, 12)), 'shares' => $employees];
+        return ['performance_pool_amount' => $this->round($pool), 'personal_performance_amount' => $personal,
+            'noncredited_amount' => bcsub($this->round($pool), $personal, 2), 'shares' => $employees];
+    }
+
+    /** 按固定人员顺序取累计金额之差，个人实得始终合计到应分的分，不补发历史未分配份额。 */
+    public function splitCommission(string $pool, array $ratios): array
+    {
+        ksort($ratios, SORT_NUMERIC);
+        $cumulative = '0';
+        $settled = '0.00';
+        $amounts = [];
+        foreach ($ratios as $id => $ratio) {
+            $cumulative = bcadd($cumulative, bcmul($pool, $ratio, 24), 24);
+            $next = $this->round($cumulative);
+            $amounts[$id] = bcsub($next, $settled, 2);
+            $settled = $next;
+        }
+        return $amounts;
     }
 
     public function round(string $amount): string
     {
-        return bcadd($amount, '0.00005', 4);
+        return Money::settle($amount);
     }
 }

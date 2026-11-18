@@ -114,7 +114,7 @@
           <template slot-scope="{ row }">
             <el-checkbox
               :value="Boolean(selected[row.id])"
-              :disabled="isFullyMatched || Number(row.available_amount) <= 0"
+              :disabled="isFullyMatched || Number(roundInvoiceAmount(row.available_amount)) <= 0"
               @change="checked => toggleSelection(row, checked)"
             />
           </template>
@@ -137,7 +137,6 @@
               v-model.trim="selected[row.id].allocated_amount"
               size="small"
               placeholder="输入匹配金额"
-              @input="validateRow(row)"
               @blur="normalizeMatch(row)"
             />
             <span v-else class="muted">0.00</span>
@@ -207,6 +206,7 @@
 </template>
 
 <script>
+import { formatMoney as displayMoney } from '../../../utils/money.js'
 import { getFinanceInvoice, listInvoiceMatchingSources, saveFinanceInvoiceMatches, confirmFinanceInvoice } from '../../../api/erp/finance'
 import { roundInvoiceAmount } from '../../../utils/financeInvoiceAmount'
 
@@ -217,7 +217,7 @@ export default {
       props: ['label', 'prop'],
       methods: {
         f(v) {
-          return Number(v || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+          return displayMoney(v || 0)
         }
       },
       template: '<el-table-column :label="label" min-width="126" align="right"><template slot-scope="{row}">¥{{f(row[prop])}}</template></el-table-column>'
@@ -248,7 +248,7 @@ export default {
       return Object.keys(this.selected).length
     },
     matchableRows() {
-      return this.rows.filter(row => Number(row.available_amount) > 0)
+      return this.rows.filter(row => Number(roundInvoiceAmount(row.available_amount)) > 0)
     },
     allPageSourcesSelected() {
       return this.matchableRows.length > 0 && this.matchableRows.every(row => Boolean(this.selected[row.id]))
@@ -354,8 +354,8 @@ export default {
         item.allocated_amount = ''
         return
       }
-      if (amount > Number(row.available_amount)) {
-        item.allocated_amount = String(row.available_amount)
+      if (amount > Number(roundInvoiceAmount(row.available_amount))) {
+        item.allocated_amount = roundInvoiceAmount(row.available_amount)
         this.$message.warning(`本次匹配金额不能超过 ${this.money(row.available_amount)} CNY`)
       }
     },
@@ -365,7 +365,7 @@ export default {
       this.validateRow(row)
     },
     money(v) {
-      return Number(v || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+      return displayMoney(v || 0)
     },
     payload() {
       return Object.values(this.selected).map(x => ({ ...x, allocated_amount: roundInvoiceAmount(x.allocated_amount || 0) })).filter(x => Number(x.allocated_amount) > 0)

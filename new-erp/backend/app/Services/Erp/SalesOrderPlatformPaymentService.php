@@ -2,6 +2,7 @@
 
 namespace App\Services\Erp;
 
+use App\Domain\Finance\Money;
 use App\Models\Erp\SalesOrder;
 use App\Models\Erp\SalesOrderLog;
 use Illuminate\Support\Str;
@@ -35,6 +36,12 @@ final class SalesOrderPlatformPaymentService
         $basis = $this->basis($order, $settlement);
         $record = $order->order_flags[self::FLAG] ?? [];
         $recordBasis = (array) ($record['basis'] ?? []);
+        // 同一已核对金额从四位展示改为两位，不应撤销平台放行。
+        foreach (['contract_amount', 'net_receivable_amount', 'refunded_amount'] as $key) {
+            if (isset($recordBasis[$key]) && preg_match('/^\d+(?:\.\d+)?$/D', (string) $recordBasis[$key])) {
+                $recordBasis[$key] = Money::settle((string) $recordBasis[$key]);
+            }
+        }
         ksort($recordBasis);
         $valid = $basis !== null && $recordBasis === $basis
             && (int) $order->created_by_legacy_id > 0
@@ -126,9 +133,9 @@ final class SalesOrderPlatformPaymentService
             'platform_order_no' => $number,
             'customer_id' => (int) $order->customer_id,
             'currency' => (string) $order->currency,
-            'contract_amount' => $settlement['contract_amount'],
-            'net_receivable_amount' => $settlement['net_receivable_amount'],
-            'refunded_amount' => $settlement['refunded_amount'],
+            'contract_amount' => Money::settle($settlement['contract_amount']),
+            'net_receivable_amount' => Money::settle($settlement['net_receivable_amount']),
+            'refunded_amount' => Money::settle($settlement['refunded_amount']),
         ];
         ksort($basis);
         return $basis;

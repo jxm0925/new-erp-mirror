@@ -34,7 +34,7 @@ class FinanceAllocationApplicationService
                 if ($document->status !== FinanceConstants::STATUS_CONFIRMED) throw ValidationException::withMessages(['status' => '只有已确认资金单可以核销。']);
                 app(SalesCancellationService::class)->assertRefundIntents($document, $rows);
                 $allocatedBefore = $this->activeTotalForDocument($document->id);
-                $remainingFunds = Money::sub((string) $document->amount, $allocatedBefore);
+                $remainingFunds = Money::sub(Money::settle((string) $document->amount), $allocatedBefore);
                 $created = [];
                 foreach ($rows as $row) {
                     $amount = $this->amountForRow($row);
@@ -143,7 +143,7 @@ class FinanceAllocationApplicationService
 
     public function amountForRow(array $row): string
     {
-        $amount = Money::normalize((string) $row['allocated_amount']);
+        $amount = Money::settle((string) $row['allocated_amount']);
         if (Money::compare($amount, '0') <= 0) throw ValidationException::withMessages(['allocated_amount' => '核销金额必须大于 0。']);
         return $amount;
     }

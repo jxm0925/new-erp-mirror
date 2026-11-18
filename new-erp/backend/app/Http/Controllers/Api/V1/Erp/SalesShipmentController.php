@@ -8,6 +8,7 @@ use App\Models\Erp\SalesShipment;
 use App\Services\Erp\SalesShipmentApplicationService;
 use App\Services\Erp\SalesCostVisibilityService;
 use App\Services\Erp\AuthContextService;
+use App\Services\Erp\PendingShipmentLines;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -69,10 +70,9 @@ class SalesShipmentController extends Controller
     public function index(Request $request)
     {
         $this->authorizePermission($request, 'sales_order.shipment.view');
-        $query = SalesShipment::query()
+        $query = SalesShipment::query()->withProgress($request->filled('shipment_status') ? (string) $request->input('shipment_status') : null)
             ->with(['order:id,sales_order_no,customer_name', 'lines.orderLine:id,sales_order_id,line_no,product_name,sku_name,item_name', 'packages', 'dispatches'])
             ->when($request->filled('sales_order_id'), fn ($q) => $q->where('sales_order_id', $request->integer('sales_order_id')))
-            ->when($request->filled('shipment_status'), fn ($q) => $q->where('shipment_status', $request->input('shipment_status')))
             ->when($request->filled('keyword'), function ($q) use ($request) {
                 $keyword = trim((string) $request->input('keyword'));
                 $q->where(fn ($where) => $where->where('shipment_no', 'like', "%{$keyword}%")
@@ -90,11 +90,12 @@ class SalesShipmentController extends Controller
     public function show(Request $request, int $id)
     {
         $this->authorizePermission($request, 'sales_order.shipment.view');
-        $query = SalesShipment::query()->with([
+        $query = SalesShipment::query()->withProgress()->with([
             'order.lines', 'lines.orderLine.item', 'lines.reservation', 'packages', 'logs', 'dispatches',
         ])->whereKey($id);
         $this->applySalesOrderVisibility($query, $request, true);
         $shipment = $query->firstOrFail();
+        $shipment->setAttribute('pending_lines', app(PendingShipmentLines::class)->forShipment($shipment));
         $shipment->setAttribute('serial_results', app(\App\Services\Erp\ShipmentSerialApplicationService::class)->projection($shipment));
         $shipment->setAttribute('dispatchable_packages', app(\App\Services\Erp\ShipmentPackingApplicationService::class)->dispatchablePackages($shipment));
         return $this->costSafeJson(['data' => $shipment]);
@@ -103,10 +104,22 @@ class SalesShipmentController extends Controller
     public function store(Request $request, SalesShipmentApplicationService $service)
     {
         $actor = $this->authorizePermission($request, 'sales_order.shipment.create');
-        $payload = $this->validateShipment($request);
+        $payload = $this->validateShipment($request) + $request->validate(['shipment_id' => 'sometimes|integer|min:1']);
         $this->assertSalesOrderVisible($request, (int) $payload['sales_order_id']);
         $shipment = $service->create((int) $payload['sales_order_id'], $payload, $this->operator($request), $actor);
-        return $this->costSafeJson(['message' => $shipment->getAttribute('appended') ? '这个订单已有发货单 '.$shipment->shipment_no.'，已追加到这张单上' : '销售发货单已创建', 'data' => $shipment], 201);
+        return $this->costSafeJson(['message' => ($shipment->appended ? '已备库存已加入发货单 ' : '已建立发货单 ').$shipment->shipment_no, 'data' => $shipment], 201);
+    }
+
+    public function plan(Request $request, SalesShipmentApplicationService $service)
+    {
+        $actor = $this->authorizePermission($request, 'sales_order.shipment.create');
+        $payload = $request->validate([
+            'sales_order_id' => 'required|integer|exists:erp_sales_orders,id', 'client_command_id' => 'required|string|max:100',
+            'carrier_name' => 'nullable|string|max:120', 'tracking_no' => 'nullable|string|max:120', 'remark' => 'nullable|string|max:2000',
+        ]);
+        $this->assertSalesOrderVisible($request, (int) $payload['sales_order_id']);
+        $shipment = $service->plan((int) $payload['sales_order_id'], $payload, $this->operator($request), $actor);
+        return $this->costSafeJson(['message' => '待发单 '.$shipment->shipment_no, 'data' => $shipment]);
     }
 
     public function confirm(Request $request, int $id, SalesShipmentApplicationService $service)
@@ -132,6 +145,19 @@ class SalesShipmentController extends Controller
             'carrier_name' => 'nullable|string|max:120', 'tracking_no' => 'nullable|string|max:120']);
         $shipment = $service->dispatch($this->visibleShipment($request, $id), $this->operator($request), $data, $actor);
         return $this->costSafeJson(['message' => '本次包裹已正式发出', 'data' => $shipment]);
+    }
+
+    public function addTracking(Request $request, int $id, int $batchId, SalesShipmentApplicationService $service)
+    {
+        $actor = $this->authorizePermission($request, 'sales_order.shipment.dispatch');
+        $shipment = $this->visibleShipment($request, $id);
+        $payload = $this->command($request) + $request->validate(['tracking_no' => 'required|string|max:120']) + ['dispatch_id' => $batchId];
+        $result = app(\App\Services\Erp\ShipmentCommandService::class)->run('add_dispatch_tracking', (int) $shipment->id, $payload, $actor, function ($locked) use ($batchId, $payload, $service, $request) {
+            $batch = $locked->dispatches()->lockForUpdate()->findOrFail($batchId);
+            $service->recordTracking($locked, $batch, $payload['tracking_no'], $this->operator($request));
+            return ['shipment_id' => (int) $locked->id, 'dispatch_id' => $batchId];
+        });
+        return response()->json(['data' => $result]);
     }
 
     public function cancel(Request $request, int $id, SalesShipmentApplicationService $service)

@@ -320,6 +320,7 @@
 </template>
 
 <script>
+import { formatMoney as displayMoney } from '../../../utils/money.js'
 import { listTransfers, getTransferOptions, listTransferBalances, listInventoryBalanceSerials, getTransfer, saveTransfer, postTransfer, confirmTransfer, recordTransferException, cancelTransfer, deleteTransfer } from '@/api/erp/inventory'
 import { pendingWarehouseCommands, submitWarehouseCommand } from '@/api/erp/warehouse'
 import { erpDateTime } from '@/utils/dateTime'
@@ -420,7 +421,7 @@ export default {
       return Number.isInteger(n) ? String(n) : String(Number(n.toFixed(4)))
     },
     money(value) {
-      return Number(value || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+      return displayMoney(value || 0)
     },
     statusType(status) {
       return { draft: 'warning', in_transit: 'warning', posted: 'success', cancelled: 'info' }[status] || ''

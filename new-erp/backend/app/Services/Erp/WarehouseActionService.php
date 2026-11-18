@@ -45,7 +45,7 @@ final class WarehouseActionService
         'material_return.approve' => 'inventory.inbound.confirm', 'material_return.reject' => 'inventory.inbound.confirm',
         'material_return.dispose' => 'production.material_return.approve',
         'material_return.cancel' => ['production.material_return.request', 'production.material_return.approve', 'inventory.inbound.confirm'],
-        'stocktake.counts' => 'inventory.stocktake.create', 'stocktake.complete' => 'inventory.stocktake.complete',
+        'stocktake.counts' => 'inventory.stocktake.create', 'stocktake.add_line' => 'inventory.stocktake.create', 'stocktake.complete' => 'inventory.stocktake.complete',
     ];
 
     public function authorize(string $action, int $id, array $payload, object $user, array $permissions, bool $super): void
@@ -198,6 +198,7 @@ final class WarehouseActionService
                 'lines.*.action' => 'required|in:release,scrap,supplier_return', 'lines.*.qty' => 'nullable|numeric|min:0|max:1000000',
                 'remark' => 'nullable|string|max:500'],
             'stocktake.counts' => InventoryStocktakeService::COUNT_RULES,
+            'stocktake.add_line' => InventoryStocktakeService::ADD_LINE_RULES,
             default => throw new WorkOrderDomainException('warehouse_action_invalid', '不支持的仓库操作。', 422),
         };
         return Validator::make($payload, $rules + $confirmationRemark)->validate();
@@ -292,6 +293,7 @@ final class WarehouseActionService
         }
         if (str_starts_with($action, 'stocktake.')) {
             $stocktakes = app(InventoryStocktakeService::class);
+            if ($action === 'stocktake.add_line') return $stocktakes->addLine($id, $payload, $user);
             $stocktake = $action === 'stocktake.counts' ? $stocktakes->saveCounts($id, $payload['lines'], $actor, (int) $payload['expected_version'])
                 : $stocktakes->complete($id, $actor);
             return $stocktake->only(['id', 'stocktake_no', 'stocktake_status', 'business_version', 'completed_at']);

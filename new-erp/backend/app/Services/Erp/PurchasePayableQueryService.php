@@ -75,8 +75,8 @@ class PurchasePayableQueryService
                     ->orWhereHas('supplier', fn (Builder $supplier) => $supplier->where('supplier_code', 'like', "%{$keyword}%"));
             });
         }
-        if (($filters['has_balance'] ?? null) === 'yes') $query->whereRaw('(eligible_amount - ap_offset_amount - allocated_amount) > 0');
-        if (($filters['has_balance'] ?? null) === 'no') $query->whereRaw('(eligible_amount - ap_offset_amount - allocated_amount) <= 0');
+        if (($filters['has_balance'] ?? null) === 'yes') $query->whereRaw('(ROUND(eligible_amount, 2) - ROUND(ap_offset_amount, 2) - ROUND(allocated_amount, 2)) > 0');
+        if (($filters['has_balance'] ?? null) === 'no') $query->whereRaw('(ROUND(eligible_amount, 2) - ROUND(ap_offset_amount, 2) - ROUND(allocated_amount, 2)) <= 0');
         if (!empty($filters['payment_status'])) $this->applyPaymentStatus($query, (string) $filters['payment_status']);
         if (!empty($filters['invoice_status'])) $this->applyInvoiceStatus($query, (string) $filters['invoice_status']);
 
@@ -86,10 +86,10 @@ class PurchasePayableQueryService
     private function applyPaymentStatus(Builder $query, string $status): void
     {
         match ($status) {
-            'unpaid' => $query->where('allocated_amount', '<=', 0)->whereRaw('(eligible_amount - ap_offset_amount) > 0'),
-            'partial' => $query->where('allocated_amount', '>', 0)->whereRaw('allocated_amount < (eligible_amount - ap_offset_amount)'),
-            'paid' => $query->whereRaw('allocated_amount >= (eligible_amount - ap_offset_amount)')->whereRaw('(eligible_amount - ap_offset_amount) > 0'),
-            'frozen' => $query->where('frozen_amount', '>', 0),
+            'unpaid' => $query->whereRaw('ROUND(allocated_amount, 2) <= 0')->whereRaw('(ROUND(eligible_amount, 2) - ROUND(ap_offset_amount, 2)) > 0'),
+            'partial' => $query->whereRaw('ROUND(allocated_amount, 2) > 0')->whereRaw('ROUND(allocated_amount, 2) < (ROUND(eligible_amount, 2) - ROUND(ap_offset_amount, 2))'),
+            'paid' => $query->whereRaw('ROUND(allocated_amount, 2) >= (ROUND(eligible_amount, 2) - ROUND(ap_offset_amount, 2))')->whereRaw('(ROUND(eligible_amount, 2) - ROUND(ap_offset_amount, 2)) > 0'),
+            'frozen' => $query->whereRaw('ROUND(frozen_amount, 2) > 0'),
             default => null,
         };
     }
@@ -97,9 +97,9 @@ class PurchasePayableQueryService
     private function applyInvoiceStatus(Builder $query, string $status): void
     {
         match ($status) {
-            'unreceived' => $query->where('invoice_matched_amount', '<=', 0)->whereRaw('(eligible_amount - ap_offset_amount) > 0'),
-            'partial' => $query->where('invoice_matched_amount', '>', 0)->whereRaw('invoice_matched_amount < (eligible_amount - ap_offset_amount)'),
-            'received' => $query->whereRaw('invoice_matched_amount >= (eligible_amount - ap_offset_amount)')->whereRaw('(eligible_amount - ap_offset_amount) > 0'),
+            'unreceived' => $query->whereRaw('ROUND(invoice_matched_amount, 2) <= 0')->whereRaw('(ROUND(eligible_amount, 2) - ROUND(ap_offset_amount, 2)) > 0'),
+            'partial' => $query->whereRaw('ROUND(invoice_matched_amount, 2) > 0')->whereRaw('ROUND(invoice_matched_amount, 2) < (ROUND(eligible_amount, 2) - ROUND(ap_offset_amount, 2))'),
+            'received' => $query->whereRaw('ROUND(invoice_matched_amount, 2) >= (ROUND(eligible_amount, 2) - ROUND(ap_offset_amount, 2))')->whereRaw('(ROUND(eligible_amount, 2) - ROUND(ap_offset_amount, 2)) > 0'),
             default => null,
         };
     }
@@ -108,13 +108,13 @@ class PurchasePayableQueryService
     {
         $rows = $query->get(['eligible_amount', 'ap_offset_amount', 'frozen_amount', 'allocated_amount', 'invoice_matched_amount']);
         return $rows->reduce(function (array $carry, PurchaseSettlementSource $source): array {
-            $payable = Money::maxZero(Money::sub((string) $source->eligible_amount, (string) $source->ap_offset_amount));
+            $payable = Money::maxZero(Money::sub(Money::settle((string) $source->eligible_amount), Money::settle((string) $source->ap_offset_amount)));
             $carry['current_payable_amount'] = Money::add($carry['current_payable_amount'], $payable);
-            $carry['quality_frozen_amount'] = Money::add($carry['quality_frozen_amount'], (string) $source->frozen_amount);
-            $carry['paid_amount'] = Money::add($carry['paid_amount'], (string) $source->allocated_amount);
-            $carry['unpaid_amount'] = Money::add($carry['unpaid_amount'], Money::maxZero(Money::sub($payable, (string) $source->allocated_amount)));
-            $carry['received_invoice_amount'] = Money::add($carry['received_invoice_amount'], (string) $source->invoice_matched_amount);
-            $carry['unreceived_invoice_amount'] = Money::add($carry['unreceived_invoice_amount'], Money::maxZero(Money::sub($payable, (string) $source->invoice_matched_amount)));
+            $carry['quality_frozen_amount'] = Money::add($carry['quality_frozen_amount'], Money::settle((string) $source->frozen_amount));
+            $carry['paid_amount'] = Money::add($carry['paid_amount'], Money::settle((string) $source->allocated_amount));
+            $carry['unpaid_amount'] = Money::add($carry['unpaid_amount'], Money::maxZero(Money::sub($payable, Money::settle((string) $source->allocated_amount))));
+            $carry['received_invoice_amount'] = Money::add($carry['received_invoice_amount'], Money::settle((string) $source->invoice_matched_amount));
+            $carry['unreceived_invoice_amount'] = Money::add($carry['unreceived_invoice_amount'], Money::maxZero(Money::sub($payable, Money::settle((string) $source->invoice_matched_amount))));
             return $carry;
         }, [
             'current_payable_amount' => '0.0000', 'quality_frozen_amount' => '0.0000', 'paid_amount' => '0.0000',
@@ -124,9 +124,9 @@ class PurchasePayableQueryService
 
     private function payablePayload(PurchaseSettlementSource $source, array $extras, bool $hasAvailablePrepayment): array
     {
-        $payable = Money::maxZero(Money::sub((string) $source->eligible_amount, (string) $source->ap_offset_amount));
-        $paid = Money::normalize((string) $source->allocated_amount);
-        $receivedInvoice = Money::normalize((string) $source->invoice_matched_amount);
+        $payable = Money::maxZero(Money::sub(Money::settle((string) $source->eligible_amount), Money::settle((string) $source->ap_offset_amount)));
+        $paid = Money::settle((string) $source->allocated_amount);
+        $receivedInvoice = Money::settle((string) $source->invoice_matched_amount);
         return [
             'id' => $source->id,
             'supplier_id' => $source->supplier_id,
@@ -139,15 +139,15 @@ class PurchasePayableQueryService
             'item_code' => $source->receiptItem?->item?->item_code,
             'item_name' => $source->receiptItem?->item?->item_name,
             'spec_model' => $source->receiptItem?->spec_model ?: ($source->receiptItem?->item?->spec ?: $source->receiptItem?->item?->model),
-            'original_amount' => Money::normalize((string) ($source->receiptItem?->amount_incl_tax ?? $source->original_amount)),
+            'original_amount' => Money::settle((string) ($source->receiptItem?->amount_incl_tax ?? $source->original_amount)),
             'current_actual_amount' => $source->receiptItem?->effectiveAmount(),
             'finance_actual_amount' => $source->receiptItem?->finance_actual_amount,
             'purchase_order_no' => $source->purchase_order_no_snapshot,
             'business_date' => $source->business_date?->toDateString(),
             'currency' => $source->currency,
             'current_payable_amount' => $payable,
-            'quality_frozen_amount' => Money::normalize((string) $source->frozen_amount),
-            'ap_offset_amount' => Money::normalize((string) $source->ap_offset_amount),
+            'quality_frozen_amount' => Money::settle((string) $source->frozen_amount),
+            'ap_offset_amount' => Money::settle((string) $source->ap_offset_amount),
             'paid_amount' => $paid,
             'unpaid_amount' => Money::maxZero(Money::sub($payable, $paid)),
             'prepayment_applied_amount' => $extras['prepayment_applied_amount'],
@@ -156,9 +156,9 @@ class PurchasePayableQueryService
             'red_invoice_amount' => $extras['red_invoice_amount'],
             'received_invoice_amount' => $receivedInvoice,
             'unreceived_invoice_amount' => Money::maxZero(Money::sub($payable, $receivedInvoice)),
-            'payment_status' => $this->paymentStatus($payable, $paid, (string) $source->frozen_amount),
+            'payment_status' => $this->paymentStatus($payable, $paid, Money::settle((string) $source->frozen_amount)),
             'invoice_status' => $this->invoiceStatus($payable, $receivedInvoice),
-            'finance_status' => $this->financeStatus($payable, $paid, $receivedInvoice, (string) $source->frozen_amount, $extras['pending_refund_amount']),
+            'finance_status' => $this->financeStatus($payable, $paid, $receivedInvoice, Money::settle((string) $source->frozen_amount), $extras['pending_refund_amount']),
         ];
     }
 
@@ -210,8 +210,8 @@ class PurchasePayableQueryService
 
         return $sources->mapWithKeys(function (PurchaseSettlementSource $source) use ($prepayments, $refundsByLine, $redBySource): array {
             return [(int) $source->id => [
-                'prepayment_applied_amount' => Money::normalize((string) ($prepayments[$source->id] ?? '0')),
-                'pending_refund_amount' => Money::normalize((string) ($refundsByLine[$source->source_line_id] ?? '0')),
+                'prepayment_applied_amount' => Money::settle((string) ($prepayments[$source->id] ?? '0')),
+                'pending_refund_amount' => Money::settle((string) ($refundsByLine[$source->source_line_id] ?? '0')),
                 'red_invoice_amount' => Money::maxZero(Money::negate((string) ($redBySource[$source->id] ?? '0'))),
             ]];
         })->all();

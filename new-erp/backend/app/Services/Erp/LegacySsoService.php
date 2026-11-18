@@ -22,6 +22,7 @@ class LegacySsoService
         $legacyId = (int) $payload['admin_id'];
         $identity = $payload;
 
+
         return DB::transaction(function () use ($payload, $identity, $legacyId, $requestIp): int {
             // Use the same organization lock as local maintenance so a signed
             // ticket cannot recreate a just-deleted account or reuse a local ID.

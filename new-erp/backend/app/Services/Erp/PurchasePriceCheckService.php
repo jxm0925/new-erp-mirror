@@ -38,7 +38,7 @@ class PurchasePriceCheckService
                 'item_id' => $itemId,
                 'item_code' => $item?->item_code,
                 'item_name' => $item?->item_name,
-                'current_base_price' => round($current, 4),
+                'current_base_price' => $line['base_unit_price'],
             ];
             if (!$reference) {
                 $rows[] = [...$row, 'level' => 'new', 'diff_percent' => null];
@@ -48,7 +48,7 @@ class PurchasePriceCheckService
             $diff = round(($current - $last) / $last * 100, 1);
             $order = $reference->order_id ? PurchaseOrder::query()->whereKey($reference->order_id)->value('purchase_order_no') : null;
             $rows[] = [...$row,
-                'last_base_price' => round($last, 4),
+                'last_base_price' => $reference->base_unit_price,
                 'last_date' => $reference->effective_date?->toDateString(),
                 'last_supplier_name' => $reference->supplier?->supplier_name,
                 'last_order_no' => $order,

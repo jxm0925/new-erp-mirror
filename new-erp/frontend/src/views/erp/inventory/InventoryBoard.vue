@@ -1185,6 +1185,7 @@
 </template>
 
 <script>
+import { formatMoney as displayMoney } from '../../../utils/money.js'
 import { erpDateTime } from '../../../utils/dateTime'
 import cachedPageRoute from '@/utils/cachedPageRoute'
 import PopupManager from 'element-ui/lib/utils/popup/popup-manager'
@@ -2163,7 +2164,7 @@ export default {
     },
     money(value) {
       if (value === null || value === undefined || value === '') return '—'
-      return Number(value || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+      return displayMoney(value || 0)
     },
     dateTime(value) {
       return value ? erpDateTime(value, 19) : '--'

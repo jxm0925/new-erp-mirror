@@ -180,7 +180,7 @@ class SalesInventoryPosting
         }
         $cost = $shipment->lines()->orderBy('id')->lockForUpdate()->get(['cost_amount_snapshot'])
             ->reduce(fn (string $sum, $line): string => Money::add($sum, (string) $line->cost_amount_snapshot), '0.0000');
-        $shipment->update(['actual_cost_amount' => $cost]);
+        $shipment->update(['actual_cost_amount' => Money::settle($cost)]);
         InventoryPostingLog::create(['source_type' => 'sales_shipment_dispatch', 'source_id' => $dispatch->id, 'source_no' => $dispatch->dispatch_no,
             'transaction_type' => 'sales_shipment_outbound', 'transaction_id' => $transaction->id, 'posting_status' => 'posted', 'posted_at' => now(), 'message' => '发货批次正式销售出库成功']);
         return $transaction->fresh('items');

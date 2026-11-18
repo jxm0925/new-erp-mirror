@@ -186,6 +186,7 @@ Design status: 按“基础档案”页面风格重做（页头卡片 / 提示�
 </template>
 
 <script>
+import { formatMoney as displayMoney } from '../../../utils/money.js'
 import { erpDateTime } from '@/utils/dateTime'
 import { salesOrderOriginalNo } from '@/utils/salesOrderOriginalNo'
 import { confirmSalesOrder, deleteSalesOrderDraft, listSalesOrders } from '@/api/erp/sales'
@@ -347,7 +348,7 @@ export default {
       }
     },
     money(value) {
-      return Number(value || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+      return displayMoney(value || 0)
     },
     statusText,
     orderStatusText,

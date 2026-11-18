@@ -48,10 +48,10 @@ export default {
   data: () => ({ loading: false, saving: false, doc: { allocations: [] }, pending: [], pickerVisible: false, loadError: '', initialSourceError: '', loadRevision: 0 }),
   computed: {
     resolvedCashId() { return this.cashId || Number(this.$route?.params?.id || 0) },
-    remaining() { return Number(this.doc.unallocated_amount || 0) },
+    remaining() { return (amountUnits(this.doc.unallocated_amount) || 0) / 100 },
     canAllocate() { return !this.loadError && this.doc.status === 'confirmed' && this.remaining > 0 && this.$can('finance.allocation.create') },
     pendingTotal() { return allocationTotal(this.pending) },
-    remainingAfterPending() { return ((amountUnits(this.doc.unallocated_amount) || 0) - Math.round(this.pendingTotal * 10000)) / 10000 },
+    remainingAfterPending() { return ((amountUnits(this.doc.unallocated_amount) || 0) - Math.round(this.pendingTotal * 100)) / 100 },
   },
   watch: {
     resolvedCashId: { immediate: true, handler() { this.load(true) } },
@@ -96,7 +96,7 @@ export default {
         if (mismatch) { this.$message.warning(mismatch); continue }
         if (this.pending.some(row => sourceKey(row) === sourceKey(source))) continue
         if (!(amountUnits(source.remainingAmount) > 0)) { this.$message.warning('该业务来源已无可核销余额'); continue }
-        this.pending.push(pendingFromSource(source, this.remainingAfterPending.toFixed(4)))
+        this.pending.push(pendingFromSource(source, this.remainingAfterPending.toFixed(2)))
         added += 1
       }
       if (added) this.initialSourceError = ''

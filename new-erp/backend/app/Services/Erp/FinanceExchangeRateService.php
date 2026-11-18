@@ -2,6 +2,7 @@
 
 namespace App\Services\Erp;
 
+use App\Domain\Finance\Money;
 use App\Models\Erp\FinanceCurrency;
 use App\Models\Erp\FinanceExchangeRate;
 use Illuminate\Support\Carbon;
@@ -105,22 +106,13 @@ class FinanceExchangeRateService
         ];
     }
 
-    public function convert(string $amount, string $rate, int $scale = 4): string
+    public function convert(string $amount, string $rate, int $scale = 2): string
     {
         if (bccomp($rate, '0', 10) <= 0) {
             throw ValidationException::withMessages(['exchange_rate' => '汇率必须大于 0。']);
         }
 
-        return $this->round(bcmul($amount, $rate, $scale + 8), $scale);
-    }
-
-    private function round(string $amount, int $scale): string
-    {
-        $negative = str_starts_with($amount, '-');
-        $absolute = $negative ? substr($amount, 1) : $amount;
-        $rounded = bcadd($absolute, '0.'.str_repeat('0', $scale).'5', $scale);
-
-        return $negative && bccomp($rounded, '0', $scale) !== 0 ? '-'.$rounded : $rounded;
+        return Money::normalize(bcmul($amount, $rate, $scale + 10), $scale);
     }
 
     private function rateTypeLabel(string $type): string

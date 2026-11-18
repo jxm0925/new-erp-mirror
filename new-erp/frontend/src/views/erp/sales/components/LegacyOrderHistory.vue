@@ -71,6 +71,7 @@
 </template>
 
 <script>
+import { formatMoney as displayMoney } from '../../../../utils/money.js'
 import { getSalesOrderLegacyHistory } from '@/api/erp/sales'
 import { erpDateTime } from '@/utils/dateTime'
 
@@ -84,7 +85,7 @@ export default {
   },
   beforeDestroy() { this.sequence++ },
   methods: {
-    hours(value) { return Number(value || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 4 }) },
+    hours(value) { return displayMoney(value || 0) },
     date(value) { return value ? erpDateTime(value) : '-' },
     names(value) { return Array.isArray(value) ? value.join('、') || '-' : value || '-' },
     filterWorkOrder(row) { this.selectedWorkOrder = row; this.page = 1; this.load() },

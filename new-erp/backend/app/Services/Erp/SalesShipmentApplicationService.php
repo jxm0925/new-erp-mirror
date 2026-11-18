@@ -47,10 +47,58 @@ class SalesShipmentApplicationService
      */
     private function openShipment(SalesOrder $order): ?SalesShipment
     {
-        return SalesShipment::query()->where('sales_order_id', $order->id)
-            ->where(fn ($q) => $q->whereIn('shipment_status', ['draft', 'pending_outbound', 'prepared', 'partially_shipped'])
-                ->orWhere(fn ($w) => $w->where('shipment_status', 'shipped')->whereNull('cancel_reason')))
+        return SalesShipment::query()->where('sales_order_id', $order->id)->appendable()
             ->orderByDesc('id')->lockForUpdate()->first();
+    }
+
+    public function plan(int $orderId, array $payload, string $operator, object $actor): SalesShipment
+    {
+        $result = $this->commands->run('plan_shipment', $orderId, $payload, $actor, function () use ($orderId, $payload, $operator): array {
+            $order = SalesOrder::findOrFail($orderId);
+            $order->assertCurrentBusiness();
+            $shipment = $this->issueForOrder($order, $operator, $payload);
+            if (! $shipment) throw ValidationException::withMessages(['order' => '只有已确认且还有实物待发的销售订单可以建待发单。']);
+            return ['shipment_id' => $shipment->id];
+        });
+        return SalesShipment::findOrFail($result['shipment_id']);
+    }
+
+    /** 自动下达和手动建单都在持有销售订单行锁时复用原单。 */
+    public function issueForOrder(SalesOrder $order, string $operator, array $payload = []): ?SalesShipment
+    {
+        if (app(PendingShipmentLines::class)->forOrder($order) === []) return null;
+        $shipment = $this->openShipment($order);
+        if ($shipment) return $shipment;
+
+        $shipment = $this->newDraft($order, $payload, $operator);
+        $this->log($shipment, 'create', null, 'draft', $operator, '按销售订单建立待发单。');
+        return $shipment;
+    }
+
+    public function cancelEmptyDraftsForOrder(SalesOrder $order, string $operator, string $reason): void
+    {
+        $drafts = $order->shipments()->where('shipment_status', 'draft')->doesntHave('lines')->doesntHave('packages')
+            ->doesntHave('packingOperations')->doesntHave('dispatches')->orderBy('id')->lockForUpdate()->get();
+        foreach ($drafts as $shipment) {
+            $shipment->update(['shipment_status' => 'cancelled', 'cancelled_at' => now(), 'cancel_reason' => $reason,
+                'business_version' => $shipment->business_version + 1]);
+            $this->log($shipment, 'cancel', 'draft', 'cancelled', $operator, $reason);
+        }
+    }
+
+    private function newDraft(SalesOrder $order, array $payload, string $operator): SalesShipment
+    {
+        return SalesShipment::create([
+            'shipment_no' => $this->numbers->next('sales_shipment', 'SHP'),
+            'sales_order_id' => $order->id,
+            'shipment_status' => 'draft',
+            'carrier_name_snapshot' => $payload['carrier_name'] ?? $order->default_carrier_name_snapshot,
+            'tracking_no' => $payload['tracking_no'] ?? null,
+            'receiver_snapshot' => $order->shipping_address_snapshot,
+            'actual_freight_amount' => $payload['actual_freight_amount'] ?? 0,
+            'remark' => $payload['remark'] ?? null,
+            'created_by' => $operator,
+        ]);
     }
 
     private function createDraft(int $orderId, array $payload, string $operator): SalesShipment
@@ -62,22 +110,15 @@ class SalesShipmentApplicationService
                 throw ValidationException::withMessages(['order' => '只有已确认的销售订单才可以创建发货单。']);
             }
             $shipment = $this->openShipment($order);
+            if (isset($payload['shipment_id']) && (int) $payload['shipment_id'] !== (int) $shipment?->id) {
+                throw ValidationException::withMessages(['shipment_id' => '本单没有可追加的待发安排，请刷新后核对订单下达状态。']);
+            }
             $appended = $shipment !== null;
             $beforeStatus = $shipment?->shipment_status;
             // 追加到已确认的发货单：新明细等「移至待发区」；草稿上追加的仍是草稿
             $lineStatus = $appended && $beforeStatus !== 'draft' ? 'pending_outbound' : 'draft';
             $existingLineIds = $appended ? $shipment->lines()->pluck('id')->all() : [];
-            $shipment ??= SalesShipment::create([
-                'shipment_no' => $this->numbers->next('sales_shipment', 'SHP'),
-                'sales_order_id' => $order->id,
-                'shipment_status' => 'draft',
-                'carrier_name_snapshot' => $payload['carrier_name'] ?? $order->default_carrier_name_snapshot,
-                'tracking_no' => $payload['tracking_no'] ?? null,
-                'receiver_snapshot' => $order->shipping_address_snapshot,
-                'actual_freight_amount' => $payload['actual_freight_amount'] ?? 0,
-                'remark' => $payload['remark'] ?? null,
-                'created_by' => $operator,
-            ]);
+            $shipment ??= $this->newDraft($order, $payload, $operator);
 
             $usedSerialIds = [];
             foreach ($payload['lines'] ?? [] as $index => $row) {
@@ -247,6 +288,9 @@ class SalesShipmentApplicationService
         return $this->mutate('confirm_shipment', $shipment, $payload, $actor, function ($shipment) use ($operator): void {
             abort_if($shipment->order->order_status === 'cancelled', 422, '销售订单已取消，不能确认发货安排。');
             if ($shipment->shipment_status !== 'draft') throw ValidationException::withMessages(['shipment' => '只有草稿发货单可以确认。']);
+            if (! $shipment->lines()->where('line_status', 'draft')->exists()) {
+                throw ValidationException::withMessages(['shipment' => '尚无已备货的发货明细，请先加入实际库存或完成工单交接。']);
+            }
             $shipment->update(['shipment_status' => 'pending_outbound', 'confirmed_at' => now(), 'confirmed_by' => $operator]);
             $shipment->lines()->where('line_status', 'draft')->update(['line_status' => 'pending_outbound']);
             $this->log($shipment, 'confirm', 'draft', 'pending_outbound', $operator, '发货安排已确认，等待移至待发区，尚未正式发货。');
@@ -300,7 +344,7 @@ class SalesShipmentApplicationService
         return $dispatch;
     }
 
-    /** 调用方已锁定发货单，并验证末道作业负责人；正式库存逻辑与管理端共用。 */
+    /** 调用方已锁定发货单并验证作业参与人。 */
     public function dispatchFromPacking(SalesShipment $shipment, array $payload, object $actor): ShipmentDispatch
     {
         $dispatch = $this->postDispatch($shipment, $actor->nickname ?: $actor->username, $payload, $actor);
@@ -308,6 +352,19 @@ class SalesShipmentApplicationService
         $shipment->increment('business_version');
 
         return $dispatch;
+    }
+
+    /** 在已锁定发货单的命令事务中补录实际批次的运单。 */
+    public function recordTracking(SalesShipment $shipment, ShipmentDispatch $batch, string $tracking, string $operator): void
+    {
+        $tracking = trim($tracking);
+        if ($batch->delivery_mode !== 'dispatch' || $tracking === '') throw ValidationException::withMessages(['tracking_no' => '请选择物流发货批次并填写运单号。']);
+        if ($batch->tracking_no === $tracking) return;
+        if ($batch->tracking_no !== null && $batch->tracking_no !== '') throw ValidationException::withMessages(['tracking_no' => '该批次已登记运单号，请刷新核对。']);
+        $batch->update(['tracking_no' => $tracking]);
+        $shipment->packages()->whereIn('id', $batch->package_ids)->update(['tracking_no' => $tracking]);
+        $shipment->increment('business_version');
+        $this->log($shipment, 'add_tracking', $shipment->shipment_status, $shipment->shipment_status, $operator, "批次 {$batch->dispatch_no} 补录运单号 {$tracking}");
     }
 
     public function dispatchSelection(SalesShipment $shipment, array $packageIds, bool $lock = true): array

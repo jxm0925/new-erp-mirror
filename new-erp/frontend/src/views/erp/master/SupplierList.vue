@@ -322,7 +322,7 @@
             </el-table-column>
             <el-table-column label="报价" width="95" align="right">
               <template slot-scope="{ row }">
-                <span class="font-tabular font-bold">{{ row.currency }} {{ money(row.price) }}</span>
+                <span class="font-tabular font-bold">{{ row.currency }} {{ purchasePrice(row.price) }}</span>
               </template>
             </el-table-column>
             <el-table-column prop="lead_time_days" label="交期" width="60" align="center">
@@ -365,7 +365,7 @@
             </el-table-column>
             <el-table-column label="采购单价" width="95" align="right">
               <template slot-scope="{ row }">
-                <span class="font-tabular font-bold">{{ row.currency }} {{ money(row.price) }}</span>
+                <span class="font-tabular font-bold">{{ row.currency }} {{ purchasePrice(row.price) }}</span>
               </template>
             </el-table-column>
             <el-table-column prop="effective_date" label="采购日期" min-width="95">
@@ -637,7 +637,7 @@
 
         <div class="form-grid-2">
           <el-form-item label="报价价格" prop="price">
-            <el-input v-model="quoteForm.price" type="number" min="0.0001" step="0.0001" class="full font-tabular" placeholder="单价" />
+            <erp-money-input unit-price v-model="quoteForm.price" type="number" min="0.00000001" step="0.00000001" class="full font-tabular" placeholder="单价" />
           </el-form-item>
           <el-form-item label="币种">
             <el-input v-model="quoteForm.currency" class="full font-tabular" placeholder="如 CNY" />
@@ -679,6 +679,7 @@
 </template>
 
 <script>
+import { formatPurchasePrice, purchaseDecimal, purchasePriceRatio } from '@/utils/purchaseLineAmount'
 import PagedRecordSelect from '@/components/common/PagedRecordSelect.vue'
 import { erpDateTime } from '../../../utils/dateTime'
 import pagedScroll from '../../../directives/pagedScroll'
@@ -823,10 +824,10 @@ export default {
       return this.quoteConversions.find(row => Number(row.purchase_unit_id) === Number(this.quoteForm.unit_id))
     },
     quoteStandardFactor () {
-      return Number((this.quoteConversion && this.quoteConversion.factor) || 0).toLocaleString('zh-CN', { maximumFractionDigits: 8 })
+      return formatPurchasePrice(this.quoteFinalFactor)
     },
     quoteFinalFactor () {
-      return Number((this.quoteConversion && this.quoteConversion.factor) || 0)
+      return (this.quoteConversion && this.quoteConversion.factor) || 0
     },
     quotePurchaseUnit () {
       return this.quoteConversion && this.quoteConversion.purchase_unit ? this.quoteConversion.purchase_unit.unit_name : '-'
@@ -836,15 +837,15 @@ export default {
     },
     quoteBaseUnitPrice () {
       return this.quoteFinalFactor > 0 && Number(this.quoteForm.price || 0) > 0
-        ? (Number(this.quoteForm.price) / this.quoteFinalFactor).toLocaleString('zh-CN', { minimumFractionDigits: 4, maximumFractionDigits: 8 })
+        ? formatPurchasePrice(purchasePriceRatio(this.quoteForm.price, this.quoteFinalFactor))
         : '-'
     },
     quoteFormulaText () {
       if (!this.quoteConversion || this.quoteFinalFactor <= 0 || Number(this.quoteForm.price || 0) <= 0) {
         return '请先选择 物料、采购单位并填写有效报价'
       }
-      const price = Number(this.quoteForm.price).toLocaleString('zh-CN', { maximumFractionDigits: 4 })
-      const factor = Number(this.quoteFinalFactor).toLocaleString('zh-CN', { maximumFractionDigits: 8 })
+      const price = formatPurchasePrice(this.quoteForm.price)
+      const factor = this.quoteStandardFactor
       const tax = this.quoteForm.tax_mode === 'tax_included' ? `含税 ${Number(this.quoteForm.tax_rate || 0)}%` : '未税'
       return `${price} ${this.quoteForm.currency}/${this.quotePurchaseUnit} ÷ ${factor} ${this.quoteBaseUnit}/${this.quotePurchaseUnit} = ${this.quoteBaseUnitPrice} ${this.quoteForm.currency}/${this.quoteBaseUnit}（${tax}）`
     },
@@ -1132,6 +1133,7 @@ export default {
         try {
           await saveSupplierQuotation(this.selectedSupplier.id, {
             ...this.quoteForm,
+            price: purchaseDecimal(this.quoteForm.price),
             max_order_qty: Number(this.quoteForm.max_order_qty) > 0 ? this.quoteForm.max_order_qty : null,
             valid_from: this.quoteDates[0],
             valid_until: this.quoteDates[1]
@@ -1238,9 +1240,7 @@ export default {
     formatDateOnly (v) {
       return v ? String(v).slice(0, 10) : '长期'
     },
-    money (v) {
-      return Number(v || 0).toFixed(2)
-    },
+    purchasePrice: formatPurchasePrice,
     rowClass ({ row }) {
       return row.id === this.selectedSupplier.id ? 'selected-row' : ''
     }

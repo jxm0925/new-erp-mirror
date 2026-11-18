@@ -73,6 +73,16 @@ final class PerformanceLedgerService
                     foreach ($events as &$event) $event['rf'] = $this->opRateFor((int) $unit['wo']->id, $op['operation'], $event);
                     unset($event);
                 }
+                $pool = '0';
+                foreach ($events as $event) {
+                    $amount = $this->lines[$event['line_id']]['amount'] ?? null;
+                    // 同批产出可能进入不同整机位置或单独销售，比例按实际销售事件取。
+                    $factor = $op['rate'] === 'event' ? ($event['rf'] ?? null) : $op['rate'];
+                    if ($amount !== null && $factor !== null && bccomp($factor, '0', 12) > 0) {
+                        $pool = bcadd($pool, bcmul(bcmul($amount, $event['lf'], 12), $factor, 12), 12);
+                    }
+                }
+                $allocated = $this->calc->splitCommission($pool, $this->shares[$unit['key']][$opId] ?? []);
                 foreach ($this->labor[$unit['key']][$opId] ?? [] as $emp => $rows) {
                     if ($employeeId && $emp !== $employeeId) continue;
                     $lb = $this->sumLabor($rows, $start, false);
@@ -83,17 +93,7 @@ final class PerformanceLedgerService
                     $new = $le - $lb;
                     $settled = $le * $fe - $lb * $fb;
                     $scrap = $le * $se - $lb * $sb;
-                    $commission = '0';
-                    $share = $this->shares[$unit['key']][$opId][$emp] ?? '0';
-                    if ($op['rate'] !== null) {
-                        foreach ($events as $e) {
-                            $amount = $this->lines[$e['line_id']]['amount'] ?? null;
-                            // 同批产出可以进入不同整机位置或单独销售方案，比例跟着实际销售事件取。
-                            $factor = $op['rate'] === 'event' ? ($e['rf'] ?? '0') : $op['rate'];
-                            if ($amount === null || $factor === null || bccomp($factor, '0', 12) <= 0) continue;
-                            $commission = bcadd($commission, bcmul(bcmul(bcmul($amount, $e['lf'], 12), $factor, 12), $share, 12), 12);
-                        }
-                    }
+                    $commission = $allocated[$emp] ?? '0.00';
                     if (abs($opening) < 0.05 && abs($new) < 0.05 && abs($settled) < 0.05 && abs($scrap) < 0.05 && bccomp($commission, '0', 4) === 0) continue;
                     $people[$emp] ??= ['employee_legacy_id' => $emp, 'employee_name' => $this->name($unit['key'], $opId, $emp),
                         'opening' => 0.0, 'new' => 0.0, 'settled' => 0.0, 'scrap' => 0.0, 'closing' => 0.0, 'commission' => '0', 'rows' => []];
@@ -624,14 +624,8 @@ final class PerformanceLedgerService
     {
         foreach (['opening', 'new', 'closing', 'scrap', 'rework', 'disposition', 'cancelled', 'actual_new_minutes'] as $k) $r[$k] = round(max(0, $r[$k] ?? 0), 1);
         $r['settled'] = round(max(0, $r['settled']), 1);
-        $r['commission'] = $amounts ? $this->money($r['commission']) : null;
+        $r['commission'] = $amounts ? $this->calc->round($r['commission']) : null;
         return $r;
-    }
-
-    /** 四舍五入到 4 位，负数（退货扣回）按绝对值舍入。 */
-    private function money(string $v): string
-    {
-        return bccomp($v, '0', 12) < 0 ? '-'.$this->calc->round(ltrim($v, '-')) : $this->calc->round($v);
     }
 
     private function name(string $key, int $opId, int $emp): string
@@ -657,7 +651,7 @@ final class PerformanceLedgerService
             $foreign = strtoupper((string) ($o->currency ?: 'CNY')) !== strtoupper((string) ($o->base_currency ?: 'CNY'));
             $rate = ! $foreign ? '1' : (bccomp((string) ($o->business_exchange_rate ?? 0), '0', 10) > 0 ? (string) $o->business_exchange_rate : null);
             $q = (float) $l->item_base_required_qty > 0 ? (string) $l->item_base_required_qty : (string) $l->order_qty;
-            $this->lines[(int) $l->id] = ['amount' => $rate === null || $l->amount_incl_tax === null ? null : bcmul((string) $l->amount_incl_tax, $rate, 4),
+            $this->lines[(int) $l->id] = ['amount' => $rate === null || $l->amount_incl_tax === null ? null : bcmul((string) $l->amount_incl_tax, $rate, 12),
                 'qty' => $q, 'order_no' => $o->sales_order_no, 'item_name' => $l->product_name ?: $l->item_name];
         }
         // 出库（发货）事实

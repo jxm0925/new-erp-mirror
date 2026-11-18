@@ -1,6 +1,7 @@
 // pages/orders/detail/index.js
 var util = require('../../../utils/util.js');
 var api = require('../../../config/api.js');
+const moneyText = require('../../../utils/money');
 import Notify from '@vant/weapp/notify/notify';
 var app = getApp();
 Page({
@@ -70,7 +71,10 @@ Page({
         data.delivery_show = res.data.delivery.name;
         data.carrier_id = res.data.carrier_id;
       }
-      data.orderInfo=res.data;
+      data.orderInfo = Object.assign({}, res.data, {
+        amountText: moneyText(res.data.amount),
+        ordergoods: (res.data.ordergoods || []).map(item => Object.assign({}, item, { priceText: moneyText(item.price_unit) }))
+      });
       if(res.code){
         that.setData(data);
       }else{
@@ -135,6 +139,10 @@ Page({
       send_cost:e.detail
     });
   },
+  formatCost() {
+    const cost = moneyText(this.data.send_cost);
+    if (cost) this.setData({ send_cost: cost });
+  },
   async send(){
     var that=this;
     var images = [];
@@ -151,7 +159,8 @@ Page({
       Notify({ type: 'warning', message: '请填写快递单号' });
       return;
     }
-    if(!that.data.send_cost){
+    const carrierFee = moneyText(that.data.send_cost);
+    if(!carrierFee || carrierFee.startsWith('-')){
       Notify({ type: 'warning', message: '请填写快递费用' });
       return;
     }
@@ -161,7 +170,7 @@ Page({
     }
     extJsonStr['carrier_id'] = that.data.carrier_id
     extJsonStr['order_id'] = that.data.order_id
-    extJsonStr['carrier_fee'] = that.data.send_cost
+    extJsonStr['carrier_fee'] = carrierFee
     extJsonStr['carrier_tracking_ref'] = that.data.send_no
     extJsonStr['sender'] = that.data.userInfo.name
     // 批量上传附件

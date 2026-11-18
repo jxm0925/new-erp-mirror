@@ -294,6 +294,7 @@
 </template>
 
 <script>
+import { formatMoney as displayMoney } from '../../../utils/money.js'
 import { erpDateTime } from '../../../utils/dateTime'
 import { getEntity } from '../../../api/erp/master'
 import { legacyMediaUrl } from '../../../utils/legacyMedia'
@@ -391,7 +392,7 @@ export default {
       return v ? erpDateTime(v, 16) : '—'
     },
     money (value) {
-      return value === null || value === undefined || value === '' ? '—' : `¥ ${Number(value).toFixed(2)}`
+      return value === null || value === undefined || value === '' ? '—' : `¥ ${displayMoney(value)}`
     }
   }
 }

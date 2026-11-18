@@ -42,7 +42,7 @@ class PurchaseSupplierRecommendationService
         $quotes = $quoteRows->groupBy('supplier_id')->map(function (Collection $rows) use ($item, $unitId, $currency, $taxMode) {
             return $rows->map(function ($quote) use ($item, $unitId, $currency, $taxMode) {
                 return ['quote' => $quote] + $this->prices->comparableQuote($quote, $item, $unitId, $currency, $taxMode);
-            })->sortBy(fn (array $row) => $row['comparable'] ? $row['comparable_price'] : PHP_FLOAT_MAX)->first();
+            })->sort(fn (array $a, array $b) => $this->comparePrices($a['comparable_price'], $b['comparable_price']))->first();
         });
 
         $purchases = $this->prices->recentComparablePurchases($item, $unitId, $currency, $taxMode);
@@ -105,7 +105,7 @@ class PurchaseSupplierRecommendationService
                     'comparable_price' => $quoteResult['comparable_price'] ?? $purchase['comparable_price'] ?? null,
                     'price_source' => $quoteResult['price_source'] ?? $purchase['price_source'] ?? null,
                     'price_date' => $quoteResult['price_date'] ?? $purchase['price_date'] ?? null,
-                    'quote_price' => $quote?->price !== null ? (float) $quote->price : null,
+                    'quote_price' => $quote?->price,
                     'quote_unit_id' => $quote?->unit_id,
                     'currency' => $quote?->currency,
                     'tax_mode' => $quote?->tax_mode,
@@ -170,7 +170,7 @@ class PurchaseSupplierRecommendationService
             ->filter(fn (array $candidate) => $candidate['auto_selectable'])
             ->sortBy([
                 fn (array $a, array $b) => ($b['recommendation_score'] ?? 0) <=> ($a['recommendation_score'] ?? 0),
-                fn (array $a, array $b) => ($a['comparable_price'] ?? PHP_FLOAT_MAX) <=> ($b['comparable_price'] ?? PHP_FLOAT_MAX),
+                fn (array $a, array $b) => $this->comparePrices($a['comparable_price'], $b['comparable_price']),
                 fn (array $a, array $b) => $a['supplier_id'] <=> $b['supplier_id'],
             ])
             ->first();
@@ -185,12 +185,14 @@ class PurchaseSupplierRecommendationService
         $weights = config('purchase_algorithm.supplier_recommendation.weights');
         $neutral = (float) config('purchase_algorithm.supplier_recommendation.no_history_score', 60);
         $threshold = (float) config('purchase_algorithm.supplier_recommendation.price_abnormal_threshold', 0.12);
-        $lowestPrice = $candidates->where('auto_selectable', true)->pluck('comparable_price')->filter(fn ($price) => $price !== null && $price > 0)->min();
+        $lowestPrice = $candidates->where('auto_selectable', true)->pluck('comparable_price')
+            ->filter(fn ($price) => $price !== null && bccomp($price, '0', 8) > 0)
+            ->sort(fn ($a, $b) => bccomp($a, $b, 8))->first();
         $weightTotal = max(1, array_sum($weights));
 
         return $candidates->map(function (array $candidate) use ($weights, $neutral, $threshold, $lowestPrice, $weightTotal, $stats): array {
             $stat = $stats->get($candidate['supplier_id']);
-            $priceScore = $candidate['comparable_price'] && $lowestPrice
+            $priceScore = $lowestPrice !== null && bccomp($candidate['comparable_price'] ?? '0', '0', 8) > 0
                 ? min(100, round($lowestPrice / $candidate['comparable_price'] * 100, 2))
                 : $neutral;
             $qualityScore = $stat?->qualified_rate !== null ? round((float) $stat->qualified_rate * 100, 2) : $neutral;
@@ -225,6 +227,12 @@ class PurchaseSupplierRecommendationService
 
             return $candidate;
         });
+    }
+
+    private function comparePrices(?string $left, ?string $right): int
+    {
+        if ($left === null || $right === null) return ($left === null) <=> ($right === null);
+        return bccomp($left, $right, 8);
     }
 
     private function categoryLineage(?int $categoryId): array

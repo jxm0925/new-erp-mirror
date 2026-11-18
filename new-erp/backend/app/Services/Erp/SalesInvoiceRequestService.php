@@ -44,7 +44,7 @@ class SalesInvoiceRequestService
     {
         $receivable = $this->settlements->receivableAmount($order);
         $invoiced = $this->invoicedAmount((int) $order->id);
-        $pending = Money::normalize((string) SalesInvoiceRequest::query()
+        $pending = Money::settle((string) SalesInvoiceRequest::query()
             ->where('sales_order_id', $order->id)->where('status', self::PENDING)->sum('amount'));
         return [
             'receivable_amount' => $receivable,
@@ -84,7 +84,7 @@ class SalesInvoiceRequestService
             }
             $account = FinanceAccount::query()->whereKey($data['finance_account_id'] ?? null)->where('status', 'enabled')->lockForUpdate()->first();
             if (!$account) throw ValidationException::withMessages(['finance_account_id' => '请选择启用的资金账户。']);
-            $amount = Money::normalize((string) $data['amount']);
+            $amount = Money::settle((string) $data['amount']);
             $summary = $this->summary($order);
             if (Money::compare($amount, '0') <= 0) throw ValidationException::withMessages(['amount' => '开票金额必须大于 0。']);
             if (Money::compare($amount, $summary['available_amount']) > 0) {
@@ -150,7 +150,7 @@ class SalesInvoiceRequestService
             if (trim((string) $request->invoice_tax_no) === '') throw ValidationException::withMessages(['invoice_tax_no' => '该申请缺少纳税人识别号，请驳回后补齐并重新申请。']);
             $order = SalesOrder::query()->lockForUpdate()->findOrFail($request->sales_order_id);
             if ($order->order_status === 'cancelled') throw ValidationException::withMessages(['status' => '订单已取消，请驳回该申请。']);
-            $amount = Money::normalize((string) $request->amount);
+            $amount = Money::settle((string) $request->amount);
             $room = Money::sub($this->settlements->receivableAmount($order), $this->invoicedAmount((int) $order->id));
             if (Money::compare($amount, $room) > 0) {
                 throw ValidationException::withMessages(['amount' => '订单应收已变化，剩余可开票 '.$this->moneyText(Money::maxZero($room)).'，请驳回后让销售重新申请。']);
@@ -161,8 +161,7 @@ class SalesInvoiceRequestService
                 throw ValidationException::withMessages(['invoice_no' => '发票号码 '.$invoiceNo.' 已登记过。']);
             }
             $rate = round((float) ($data['tax_rate'] ?? $request->tax_rate), 2);
-            $excl = Money::normalize(number_format(round((float) $amount / (1 + $rate / 100), 2), 2, '.', ''));
-            $tax = Money::sub($amount, $excl);
+            $amounts = $this->invoiceAmounts($amount, $rate, $data['gross_amounts'] ?? [$amount]);
             $party = $this->parties->resolve(FinanceConstants::PARTY_CUSTOMER, (int) $request->customer_id);
             $invoice = FinanceInvoice::create([
                 'invoice_direction' => FinanceConstants::INVOICE_SALES,
@@ -171,8 +170,7 @@ class SalesInvoiceRequestService
                 'invoice_type' => $request->invoice_type, ...$party,
                 'invoice_date' => $data['invoice_date'], 'received_date' => $data['invoice_date'],
                 'currency' => $request->currency ?: 'CNY',
-                'amount_excl_tax' => $excl, 'tax_amount' => $tax, 'amount_incl_tax' => $amount,
-                'tax_detail' => [['tax_rate' => $rate, 'amount_excl_tax' => $excl, 'tax_amount' => $tax]],
+                ...$amounts,
                 'remark' => trim('开票申请 '.$request->request_no.'；抬头：'.$request->invoice_title.($request->invoice_tax_no ? '；税号：'.$request->invoice_tax_no : '')),
                 'status' => FinanceConstants::STATUS_CONFIRMED,
                 'created_by' => $operatorId, 'confirmed_by' => $operatorId, 'confirmed_at' => now(),
@@ -208,6 +206,26 @@ class SalesInvoiceRequestService
         return $request;
     }
 
+    private function invoiceAmounts(string $amount, float $rate, array $grossAmounts): array
+    {
+        $grossTotal = $netTotal = '0.00';
+        $rateText = number_format($rate, 2, '.', '');
+        $rows = [];
+        foreach ($grossAmounts as $gross) {
+            $gross = Money::settle((string) $gross);
+            $net = Money::netFromGross($gross, $rateText);
+            $grossTotal = bcadd($grossTotal, $gross, 2);
+            $netTotal = bcadd($netTotal, $net, 2);
+            $rows[] = ['tax_rate' => $rate, 'amount_basis' => 'gross', 'amount_incl_tax' => $gross,
+                'amount_excl_tax' => $net, 'tax_amount' => bcsub($gross, $net, 2)];
+        }
+        if (bccomp($grossTotal, $amount, 2) !== 0) {
+            throw ValidationException::withMessages(['gross_amounts' => '票面明细含税合计必须等于申请金额 '.$amount.'。']);
+        }
+        return ['amount_incl_tax' => $grossTotal, 'amount_excl_tax' => $netTotal,
+            'tax_amount' => bcsub($grossTotal, $netTotal, 2), 'tax_detail' => $rows];
+    }
+
     /** 已开票的申请补传发票文件（电子发票 PDF / 纸票扫描件）。 */
     public function uploadFile(int $id, UploadedFile $file, object $user): SalesInvoiceRequest
     {
@@ -234,8 +252,8 @@ class SalesInvoiceRequestService
         $payload['data'] = collect($page->items())->map(fn (SalesInvoiceRequest $row) => $this->payload($row))->values();
         $payload['summary'] = [
             'pending_count' => SalesInvoiceRequest::where('status', self::PENDING)->count(),
-            'pending_amount' => Money::normalize((string) SalesInvoiceRequest::where('status', self::PENDING)->sum('amount')),
-            'issued_month_amount' => Money::normalize((string) SalesInvoiceRequest::where('status', self::ISSUED)->where('handled_at', '>=', now()->startOfMonth())->sum('amount')),
+            'pending_amount' => Money::settle((string) SalesInvoiceRequest::where('status', self::PENDING)->sum('amount')),
+            'issued_month_amount' => Money::settle((string) SalesInvoiceRequest::where('status', self::ISSUED)->where('handled_at', '>=', now()->startOfMonth())->sum('amount')),
         ];
         return $payload;
     }
@@ -296,7 +314,7 @@ class SalesInvoiceRequestService
     /** 已确认销项发票（含红冲负数）在该订单上的净开票额。 */
     private function invoicedAmount(int $orderId): string
     {
-        return Money::normalize((string) FinanceInvoiceAllocation::query()
+        return Money::settle((string) FinanceInvoiceAllocation::query()
             ->where('source_business_type', FinanceConstants::SOURCE_SALES_ORDER)->where('source_document_id', $orderId)
             ->where('status', FinanceConstants::ALLOCATION_ACTIVE)
             ->whereHas('invoice', fn ($q) => $q->where('invoice_direction', FinanceConstants::INVOICE_SALES)

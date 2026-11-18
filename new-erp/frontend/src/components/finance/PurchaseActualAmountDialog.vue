@@ -12,7 +12,7 @@
             <div class="actual-summary"><span>原到货金额<strong>{{ money(facts ? facts.original_amount : source.original_amount) }}</strong></span><span>当前实际金额<strong>{{ money(facts ? facts.current_actual_amount : source.current_actual_amount) }}</strong></span><span>当前应付<strong>{{ money(facts ? facts.current_payable_amount : source.current_payable_amount) }}</strong></span></div>
             <el-form label-position="top" class="actual-form" @submit.native.prevent>
               <el-form-item label="最终实际总额（元）" required :error="amountError">
-                <el-input v-model.trim="actualAmount" inputmode="decimal" maxlength="13" placeholder="输入本行最终总额，最多两位小数" :disabled="loading || saving || Boolean(pendingRequest) || Boolean(recoveryError)" @input="invalidatePreview" />
+                <el-input v-model.trim="actualAmount" inputmode="decimal" maxlength="32" @blur="normalizeAmount" placeholder="输入本行最终总额" :disabled="loading || saving || Boolean(pendingRequest) || Boolean(recoveryError)" @input="invalidatePreview" />
               </el-form-item>
               <el-form-item label="修正原因" required>
                 <el-input v-model.trim="reason" type="textarea" :rows="2" maxlength="1000" show-word-limit placeholder="填写本次实际金额修正原因" :disabled="loading || saving || Boolean(pendingRequest) || Boolean(recoveryError)" />
@@ -52,6 +52,7 @@
   </el-dialog>
 </template>
 <script>
+import { settlementAmount } from '@/utils/money'
 import { previewPurchaseActualAmount, confirmPurchaseActualAmount, listPurchaseActualAmountHistory } from '../../api/erp/finance'
 import { allocationKey, money } from '../../utils/financeCashAllocation'
 import { paymentErrorMessage } from '../../utils/purchasePayment'
@@ -65,12 +66,13 @@ export default {
   computed: {
     contextKey() { return `${this.visible}:${this.source.id}` },
     editable() { return this.$can('finance.payable.view') && this.$can('finance.payment.confirm') },
-    amountError() { return this.actualAmount && !/^\d{1,10}(?:\.\d{1,2})?$/.test(this.actualAmount) ? '请输入非负最终总额，整数最多十位，小数最多两位' : '' },
+    amountError() { return this.actualAmount && !/^\d{1,10}\.\d{2}$/.test(settlementAmount(this.actualAmount)) ? '请输入非负最终总额，整数最多十位' : '' },
     canConfirmPreview() { return !!this.preview && this.previewedAmount === this.actualAmount && Boolean(this.preview.can_apply) },
   },
   watch: { contextKey: { immediate: true, handler() { this.reset(); if (this.visible && this.source.id && this.$can('finance.payable.view')) this.open() } } },
   beforeDestroy() { this.contextRevision += 1; this.previewRevision += 1; this.historyRevision += 1 },
   methods: {
+    normalizeAmount() { this.actualAmount = settlementAmount(this.actualAmount) || this.actualAmount },
     money,
     impactCounts(summary) {
       if (!summary || typeof summary !== 'object') return []
@@ -108,7 +110,7 @@ export default {
         this.loadFacts()
       } else this.loadHistory()
     },
-    restorePending(data) { this.pendingRequest = data; this.actualAmount = data.actual_amount; this.reason = data.reason },
+    restorePending(data) { this.pendingRequest = data; this.actualAmount = settlementAmount(data.actual_amount); this.reason = data.reason },
     async loadFacts() {
       const context = this.contextRevision
       this.loading = true; this.error = ''
@@ -123,6 +125,7 @@ export default {
       if (!this.editable || this.saving || this.loading || this.pendingRequest || this.recoveryError || !this.actualAmount || this.amountError) return
       const context = this.contextRevision
       const revision = ++this.previewRevision
+      this.normalizeAmount()
       const amount = this.actualAmount
       this.previewing = true; this.preview = null; this.error = ''
       try {

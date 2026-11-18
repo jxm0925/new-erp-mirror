@@ -168,7 +168,7 @@ final class CancellationProductionService
         foreach (MfgWorkOrderUnit::whereIn('id', $unitIds)->orderBy('id')->lockForUpdate()->get() as $unit)
             $hasWork[(int) $unit->id] = $labor->hasActualWork([(int) $unit->work_order_id], [(int) $unit->id]);
         $labor->freezeAt($workIds, $at, $unitIds);
-        foreach ($workIds as $workId) MaterialDeliveryService::excludeUnitsFromPrepared($workId,
+        foreach ($workIds as $workId) app(MaterialDeliveryService::class)->excludeUnitsFromPrepared($workId,
             MfgWorkOrderUnit::where('work_order_id', $workId)->whereIn('id', $unitIds)->pluck('id')->map(fn ($id) => (int) $id)->all(), $actor);
         $result = ['cancelled' => [], 'kept' => []]; $touched = [];
         foreach ($selections as $selection) {

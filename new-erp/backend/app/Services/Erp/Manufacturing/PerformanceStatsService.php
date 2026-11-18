@@ -74,8 +74,8 @@ final class PerformanceStatsService
             if (in_array($line->line_type, self::SKIP_TYPES, true) || $line->line_status === 'cancelled') continue;
             $qty = bccomp((string) ($line->item_base_required_qty ?? 0), '0', 8) > 0 ? (string) $line->item_base_required_qty : (string) $line->order_qty;
             if (bccomp($qty, '0', 8) <= 0) continue;
-            $amount = $rate === null || $line->amount_incl_tax === null ? null : bcmul((string) $line->amount_incl_tax, $rate, 4);
-            if ($amount !== null) $goodsAmount = bcadd($goodsAmount, $amount, 4);
+            $amount = $rate === null || $line->amount_incl_tax === null ? null : bcmul((string) $line->amount_incl_tax, $rate, 12);
+            if ($amount !== null) $goodsAmount = bcadd($goodsAmount, $amount, 12);
             $ctx = ['amount' => $amount, 'qty' => $qty, 'issues' => &$issues, 'employees' => &$employees, 'line' => $line, 'blocks' => &$blocks];
             $sources = [];
             $covered = '0';
@@ -101,7 +101,7 @@ final class PerformanceStatsService
             if ($returned > 0.0001) $issues[] = "{$line->item_name}：客户退货 ".$this->num((string) $returned).'（只记录，不扣工时和提成；售后按责任手动处理）。';
             if (bccomp($covered, $qty, 8) < 0) $issues[] = "{$line->item_name}：还有 ".$this->num(bcsub($qty, $covered, 8)).' 没有生产或发货来源（还没开工单或还没发货），这部分暂不统计。';
             $out[] = ['sales_order_line_id' => (int) $line->id, 'line_no' => $line->line_no, 'product_name' => $line->product_name, 'sku_name' => $line->sku_name,
-                'item_name' => $line->item_name, 'qty' => $this->num($qty), 'amount' => $amounts ? $amount : null,
+                'item_name' => $line->item_name, 'qty' => $this->num($qty), 'amount' => $amounts && $amount !== null ? $this->calc->round($amount) : null,
                 'shipped_qty' => $this->num($shippedQty = (string) array_sum(array_map(fn ($s) => $s['kind'] === 'shipped' ? $s['used_qty'] : 0, $sources))),
                 'pending_qty' => $this->num(bccomp($qty, $shippedQty, 8) > 0 ? bcsub($qty, $shippedQty, 8) : '0'), 'returned_qty' => round($returned, 4),
                 'sources' => $sources, 'packing' => $packing];
@@ -112,7 +112,7 @@ final class PerformanceStatsService
         $laborTotal = 0.0;
         $reworkTotal = 0.0;
         foreach ($employeeRows as &$e) {
-            $perfTotal = bcadd($perfTotal, $e['performance_amount'], 4);
+            $perfTotal = bcadd($perfTotal, $e['performance_amount'], 12);
             $laborTotal += $e['labor_minutes'];
             $reworkTotal += $e['rework_minutes'];
             $e['labor_minutes'] = round($e['labor_minutes'], 1);
@@ -358,12 +358,13 @@ final class PerformanceStatsService
         }
         $hasRate = $rate !== null && bccomp((string) $rate, '0', 8) > 0;
         $pool = $hasRate && $ctx['amount'] !== null ? bcmul(bcmul($ctx['amount'], $fraction, 12), (string) $rate, 12) : '0';
+        $allocated = $this->calc->splitCommission($pool, $shares);
         $employees = [];
         $totalMinutes = 0.0;
         $attributedTotal = 0.0;
         foreach ($people as $id => $p) {
             $share = $shares[$id] ?? '0';
-            $amount = bcmul($pool, $share, 12);
+            $amount = $allocated[$id] ?? '0.00';
             $minutes = $p['attributed_minutes'] ?? ($p['minutes'] * $laborRatio);
             $attributedTotal += $minutes;
             $totalMinutes += $p['minutes'];

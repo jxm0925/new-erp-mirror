@@ -102,8 +102,11 @@ class SalesInvoiceRequestController extends Controller
         $data = $request->validate([
             'invoice_no' => 'required|string|max:120', 'invoice_code' => 'nullable|string|max:80',
             'invoice_date' => 'required|date', 'tax_rate' => 'required|numeric|min:0|max:100',
+            'gross_amounts' => 'sometimes|required|array|min:1|max:50',
+            'gross_amounts.*' => ['required', 'numeric', 'gt:0', 'regex:/^\d{1,14}(?:\.\d{1,2})?$/'],
             'remark' => 'nullable|string|max:500', 'file' => 'nullable|file|max:10240',
-        ], [], ['invoice_no' => '发票号码', 'invoice_date' => '开票日期', 'tax_rate' => '税率', 'file' => '发票文件']);
+        ], [], ['invoice_no' => '发票号码', 'invoice_date' => '开票日期', 'tax_rate' => '税率', 'file' => '发票文件',
+            'gross_amounts' => '票面明细', 'gross_amounts.*' => '每行含税金额']);
         $row = $this->service->issue($id, $data, $request->file('file'), $user);
         $message = $row->getAttribute('upload_failed') ? '已登记开票，但发票文件上传失败，请在列表里补传' : '已登记开票，销项发票已生成';
         return response()->json(['message' => $message, 'data' => $this->service->payload($row)]);

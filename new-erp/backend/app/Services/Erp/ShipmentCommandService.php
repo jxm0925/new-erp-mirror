@@ -23,9 +23,10 @@ final class ShipmentCommandService
         };
         try {
             return DB::transaction(function () use ($action, $shipmentId, $actorId, $commandId, $hash, $mutation, $replay): array {
-                $orderId = $action === 'create_shipment' ? $shipmentId : SalesShipment::query()->whereKey($shipmentId)->value('sales_order_id');
+                $fromOrder = in_array($action, ['create_shipment', 'plan_shipment'], true);
+                $orderId = $fromOrder ? $shipmentId : SalesShipment::query()->whereKey($shipmentId)->value('sales_order_id');
                 SalesOrder::query()->whereKey($orderId)->lockForUpdate()->firstOrFail();
-                $shipment = $action === 'create_shipment' ? null : SalesShipment::query()->lockForUpdate()->findOrFail($shipmentId);
+                $shipment = $fromOrder ? null : SalesShipment::query()->lockForUpdate()->findOrFail($shipmentId);
                 $existing = DB::table('erp_shipment_packing_commands')->where('operator_legacy_id', $actorId)->where('client_command_id', $commandId)->first();
                 if ($existing) return $replay($existing);
                 $response = $mutation($shipment);

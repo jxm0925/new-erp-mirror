@@ -1,3 +1,4 @@
+import { formatMoney as displayMoney, settlementAmount } from './money.js'
 const sourceLabels = {
   sales_order: '销售订单',
   sales_order_refund: '客户退款',
@@ -10,7 +11,7 @@ const sourceLabels = {
 export const sourceLabel = type => sourceLabels[type] || type
 export const sourceKey = row => `${row.type || row.source_business_type}:${row.id || row.source_document_id}`
 export const allocationKey = () => globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`
-export const money = value => Number(value || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 4 })
+export const money = value => displayMoney(value || 0)
 
 export function sourceOptionsFor(direction, partyType) {
   const type = direction === 'receipt'
@@ -26,17 +27,16 @@ export function sourceMismatch(source, doc) {
   return ''
 }
 
-// 用四位小数的整数比较金额，避免 0.1 + 0.2 的浮点误差影响即时提示；正式金额仍由服务端复核。
+// 每笔先结算到分，再用整数比较和分配。
 export function amountUnits(value) {
-  const text = String(value ?? '')
-  if (!/^\d+(\.\d{1,4})?$/.test(text)) return null
-  const [whole, decimal = ''] = text.split('.')
-  const units = Number(whole) * 10000 + Number(decimal.padEnd(4, '0'))
+  const text = settlementAmount(value)
+  if (!text || text.startsWith('-')) return null
+  const units = Number(text.replace('.', ''))
   return Number.isSafeInteger(units) ? units : null
 }
 
 export function allocationTotal(rows) {
-  return rows.reduce((sum, row) => sum + (amountUnits(row.allocated_amount) || 0), 0) / 10000
+  return rows.reduce((sum, row) => sum + (amountUnits(row.allocated_amount) || 0), 0) / 100
 }
 
 export function pendingFromSource(source, available, existing = null) {
@@ -50,7 +50,7 @@ export function pendingFromSource(source, available, existing = null) {
     source_amount: source.amount,
     source_allocated_amount: source.allocatedAmount,
     source_remaining_amount: source.remainingAmount,
-    allocated_amount: existing ? existing.allocated_amount : (Math.min(balance, Math.max(0, amountUnits(available) || 0)) / 10000).toFixed(4),
+    allocated_amount: existing ? settlementAmount(existing.allocated_amount) : (Math.min(balance, Math.max(0, amountUnits(available) || 0)) / 100).toFixed(2),
     idempotency_key: existing?.idempotency_key || allocationKey(),
     source_error: '',
   }
@@ -61,7 +61,7 @@ export function serializeAllocationItems(rows) {
     source_business_type: row.source_business_type,
     source_document_id: Number(row.source_document_id),
     ...(row.source_line_id ? { source_line_id: Number(row.source_line_id) } : {}),
-    allocated_amount: String(row.allocated_amount),
+    allocated_amount: settlementAmount(row.allocated_amount),
     idempotency_key: row.idempotency_key,
   }))
 }
@@ -77,7 +77,7 @@ export function validatePendingAllocations(rows, available, { allowEmpty = true 
     if (seen.has(sourceKey(row))) return '同一业务来源不能重复添加'
     seen.add(sourceKey(row))
     const amount = amountUnits(row.allocated_amount)
-    if (amount === null || amount <= 0) return '每项核销金额必须大于 0，且最多 4 位小数'
+    if (amount === null || amount <= 0) return '每项核销金额舍入后须大于 0'
     const remaining = amountUnits(row.source_remaining_amount)
     if (remaining === null) return '业务来源余额未取得，请重新选择'
     if (amount > remaining) return `业务单 ${row.source_document_no || row.source_document_id} 的核销金额超过当前待结算余额，请调整金额或重新选择`

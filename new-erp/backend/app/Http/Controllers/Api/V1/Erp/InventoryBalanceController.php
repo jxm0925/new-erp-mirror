@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\V1\Erp;
 
 use App\Http\Controllers\Controller;
+use App\Domain\Finance\Money;
 use App\Http\Controllers\Concerns\AuthorizesErpPermissions;
 use App\Models\Erp\InventoryBalance;
 use App\Models\Erp\InventoryQualityEvent;
@@ -63,9 +64,9 @@ class InventoryBalanceController extends Controller
             'stock_item_count' => (clone $statsQuery)->where('quantity_on_hand', '>', 0)->distinct()->count('item_id'),
             'balance_line_count' => (clone $statsQuery)->count(),
             'quality_line_count' => (clone $statsQuery)->where(fn ($q) => $q->where('quantity_defective', '>', 0)->orWhere('quantity_pending', '>', 0))->count(),
-            'inventory_value' => (float) $warehouseCost,
+            'inventory_value' => (float) Money::settle($warehouseCost),
         ];
-        $stats = $this->withTransitStats($request, $stats, $warehouseCost);
+        $stats += $this->transitStats($this->transitBase($request), $warehouseCost);
         if ($request->boolean('include_quantity_summary')) {
             // 不同库存单位不可直接相加；全量汇总后按余额快照单位返回，保留小数精度。
             $quantities = (clone $statsQuery)->toBase()->reorder()->select('unit_id')
@@ -198,7 +199,6 @@ class InventoryBalanceController extends Controller
         $request->validate(['item_id' => 'nullable|integer|min:1', 'warehouse_id' => 'nullable|integer|min:1',
             'location_id' => 'nullable|integer|min:1', 'has_exception' => 'nullable|boolean', 'per_page' => 'nullable|integer|min:1|max:100']);
         $query = $this->transitBase($request);
-        $stats = $this->transitStats(clone $query);
         $warehouseQuery = $this->activeBalanceQuery($request);
         if ($request->filled('keyword')) {
             $keyword = '%'.trim((string) $request->input('keyword')).'%';
@@ -206,7 +206,7 @@ class InventoryBalanceController extends Controller
                 ->orWhere('spec', 'like', $keyword)->orWhere('model', 'like', $keyword));
         }
         $warehouseCost = (string) $warehouseQuery->sum('inventory_value');
-        $stats += ['warehouse_cost_amount' => $warehouseCost, 'asset_cost_amount' => bcadd($warehouseCost, $stats['in_transit_cost_amount'], 4)];
+        $stats = $this->transitStats(clone $query, $warehouseCost);
         $query->leftJoin('erp_units as transit_unit', 'transit_unit.id', '=', 'transit.unit_id')
             ->leftJoin('erp_warehouses as transit_source', 'transit_source.id', '=', 'transit.source_warehouse_id')
             ->leftJoin('erp_warehouses as transit_target', 'transit_target.id', '=', 'transit.target_warehouse_id')
@@ -245,23 +245,17 @@ class InventoryBalanceController extends Controller
         return $query;
     }
 
-    private function transitStats(\Illuminate\Database\Query\Builder $query): array
+    private function transitStats(\Illuminate\Database\Query\Builder $query, string $warehouseCost): array
     {
         $row = (clone $query)->selectRaw('COALESCE(SUM(transit.cost_amount), 0) AS cost_amount, COUNT(DISTINCT transit.item_id) AS item_count,
             COUNT(DISTINCT CONCAT(transit.kind, ":", transit.id)) AS transfer_count,
             COUNT(DISTINCT CASE WHEN transit.receipt_exception IS NOT NULL AND transit.receipt_exception <> "" THEN CONCAT(transit.kind, ":", transit.id) END) AS exception_count')->first();
         $quantities = (clone $query)->select('transit.unit_id')->selectRaw('SUM(transit.quantity) AS quantity')->groupBy('transit.unit_id')->get();
         $units = \App\Models\Erp\Unit::query()->whereIn('id', $quantities->pluck('unit_id')->filter())->pluck('unit_name', 'id');
-        return ['in_transit_cost_amount' => (string) $row->cost_amount, 'in_transit_item_count' => (int) $row->item_count,
+        return ['in_transit_cost_amount' => Money::settle((string) $row->cost_amount), 'warehouse_cost_amount' => Money::settle($warehouseCost),
+            'asset_cost_amount' => Money::settle(bcadd($warehouseCost, (string) $row->cost_amount, 4)), 'in_transit_item_count' => (int) $row->item_count,
             'in_transit_transfer_count' => (int) $row->transfer_count, 'in_transit_exception_count' => (int) $row->exception_count, 'in_transit_quantity_by_unit' => $quantities->map(fn ($q) => [
                 'unit_id' => $q->unit_id, 'unit_name' => $units[$q->unit_id] ?? '未指定单位', 'quantity' => (string) $q->quantity])->all()];
-    }
-
-    private function withTransitStats(Request $request, array $stats, string $warehouseCost): array
-    {
-        $transit = $this->transitStats($this->transitBase($request));
-        return $stats + $transit + ['warehouse_cost_amount' => $warehouseCost,
-            'asset_cost_amount' => bcadd($warehouseCost, $transit['in_transit_cost_amount'], 4)];
     }
 
     private function itemSummary(Request $request)
@@ -279,9 +273,9 @@ class InventoryBalanceController extends Controller
             'stock_item_count' => (clone $statsQuery)->where('quantity_on_hand', '>', 0)->distinct()->count('item_id'),
             'batch_count' => (clone $statsQuery)->selectRaw("COUNT(DISTINCT CONCAT(item_id, '|', COALESCE(batch_no, ''))) as aggregate")->value('aggregate'),
             'quality_item_count' => (clone $statsQuery)->where(fn ($q) => $q->where('quantity_defective', '>', 0)->orWhere('quantity_pending', '>', 0))->distinct()->count('item_id'),
-            'inventory_value' => (float) $warehouseCost,
+            'inventory_value' => (float) Money::settle($warehouseCost),
         ];
-        $stats = $this->withTransitStats($request, $stats, $warehouseCost);
+        $stats += $this->transitStats($this->transitBase($request), $warehouseCost);
         $query = $base->selectRaw('item_id, SUM(quantity_on_hand) as quantity_on_hand, SUM(quantity_available) as quantity_available, SUM(quantity_locked) as quantity_locked, SUM(quantity_defective) as quantity_defective, SUM(quantity_pending) as quantity_pending, SUM(inventory_value) as inventory_value, COUNT(DISTINCT batch_no) as batch_count, COUNT(*) as balance_count, MAX(last_transaction_at) as last_transaction_at')
             ->groupBy('item_id')->orderByDesc('last_transaction_at');
         $paginator = $query->paginate($this->perPage($request));

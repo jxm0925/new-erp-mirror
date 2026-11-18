@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Api\V1\Erp;
 
+use App\Domain\Finance\Money;
 use App\Http\Controllers\Controller;
 use App\Http\Controllers\Concerns\AuthorizesErpPermissions;
 use App\Models\Erp\{ApprovalTask, Item, PurchaseAttachment, PurchaseDefectHandling, PurchaseExchangeOrder, PurchaseLog, PurchaseOrder, PurchaseOrderItem, PurchasePlan, PurchasePlanItem, PurchasePlanSupplierSplit, PurchasePriceHistory, PurchaseReceipt, PurchaseReceiptItem, PurchaseRequest, PurchaseRequestItem, Supplier, SupplierItemStat};
@@ -111,6 +112,8 @@ class PurchaseController extends Controller
             'items.*.id' => 'nullable|integer|distinct',
             'items.*.request_qty' => 'required_without:items.*.purchase_quantity|numeric|min:0.0001|decimal:0,4',
             'items.*.purchase_quantity' => 'nullable|numeric|gt:0|decimal:0,4',
+            'items.*.purchase_unit_price' => 'nullable|numeric|min:0|decimal:0,8',
+            'items.*.amount' => 'nullable|numeric|min:0|max:9999999999.99|decimal:0,2',
             'items.*.expected_date' => 'nullable|date',
             'items.*.warehouse_id' => 'nullable|exists:erp_warehouses,id',
             'items.*.priority' => 'nullable|in:low,normal,high,urgent',
@@ -179,6 +182,8 @@ class PurchaseController extends Controller
             'items.*.id' => 'nullable|integer|distinct',
             'items.*.request_qty' => 'required_without:items.*.purchase_quantity|numeric|min:0.0001|decimal:0,4',
             'items.*.purchase_quantity' => 'nullable|numeric|gt:0|decimal:0,4',
+            'items.*.purchase_unit_price' => 'nullable|numeric|min:0|decimal:0,8',
+            'items.*.amount' => 'nullable|numeric|min:0|max:9999999999.99|decimal:0,2',
             'items.*.expected_date' => 'nullable|date',
             'items.*.warehouse_id' => 'nullable|exists:erp_warehouses,id',
             'items.*.priority' => 'nullable|in:low,normal,high,urgent',
@@ -264,6 +269,10 @@ class PurchaseController extends Controller
                 'created_by' => $operator,
             ]);
             foreach ($requestItems as $requestItem) {
+                $snapshot = $requestItem->purchase_conversion_snapshot && abs((float) $requestItem->remaining_qty - (float) $requestItem->request_qty) < 0.00000001
+                    ? $requestItem->purchase_conversion_snapshot : app(\App\Services\Erp\PurchasePlanningConversionService::class)->calculate([
+                        'item_id' => $requestItem->item_id, 'required_qty' => $requestItem->remaining_qty,
+                    ], $requestItem->purchase_conversion_snapshot);
                 PurchasePlanItem::create([
                     'plan_id' => $plan->id,
                     'request_id' => $request->id,
@@ -271,10 +280,8 @@ class PurchaseController extends Controller
                     'item_id' => $requestItem->item_id,
                     'spec_model' => $requestItem->spec_model ?? $requestItem->item?->spec ?? $requestItem->item?->model ?? null,
                     'unit_id' => $requestItem->unit_id,
-                    'purchase_conversion_snapshot' => $requestItem->purchase_conversion_snapshot && abs((float) $requestItem->remaining_qty - (float) $requestItem->request_qty) < 0.00000001
-                        ? $requestItem->purchase_conversion_snapshot : app(\App\Services\Erp\PurchasePlanningConversionService::class)->calculate([
-                        'item_id' => $requestItem->item_id, 'required_qty' => $requestItem->remaining_qty,
-                    ], $requestItem->purchase_conversion_snapshot),
+                    'purchase_conversion_snapshot' => $snapshot,
+                    'unit_price' => $snapshot['base_unit_price'] ?? '0',
                     'plan_qty' => $requestItem->remaining_qty,
                     'required_qty' => $requestItem->remaining_qty,
                     'allocated_qty' => 0,
@@ -444,7 +451,7 @@ class PurchaseController extends Controller
                     );
                     $conversion['amount'] = $commercial['amount'];
                     $conversion['purchase_unit_price'] = $commercial['unit_price'];
-                    $conversion['base_unit_price'] = bcdiv($commercial['unit_price'], (string) $conversion['conversion_factor_snapshot'], 8);
+                    $conversion['base_unit_price'] = app(\App\Services\Erp\UnitConversionDomainService::class)->calculateBaseUnitPrice($commercial['unit_price'], $conversion['conversion_factor_snapshot']);
                     app(\App\Services\Erp\PurchaseFinancialFactService::class)->assertUnitPrice($conversion['base_unit_price']);
                     $conversion['purchase_conversion_snapshot'] = array_replace($conversion['purchase_conversion_snapshot'], [
                         'amount' => $commercial['amount'], 'purchase_unit_price' => $conversion['purchase_unit_price'],
@@ -586,7 +593,8 @@ class PurchaseController extends Controller
             'items.supplierSplit.supplier',
             'items.supplierSplit.plan',
             'items.supplierSplit.planItem',
-            'receipts.items',
+            'receipts.items.orderItem',
+            'receipts.items.receipt:id,settlement_mode',
             'attachments' => fn ($query) => $query->where('status', 'active')->latest('id'),
             'logs',
         ])->findOrFail($id);
@@ -682,7 +690,7 @@ class PurchaseController extends Controller
     public function receipts(Request $request)
     {
         $this->erpAuthorize($request, 'purchase.receipt.view');
-        $query = PurchaseReceipt::with(['supplier', 'order', 'items.item.unit', 'items.orderItem', 'items.warehouse', 'items.location', 'items.defectHandlings'])->latest('updated_at');
+        $query = PurchaseReceipt::with(['supplier', 'order', 'items.item.unit', 'items.orderItem', 'items.receipt:id,settlement_mode', 'items.warehouse', 'items.location', 'items.defectHandlings'])->latest('updated_at');
         $this->keyword($query, $request, ['receipt_no'], ['supplier' => ['supplier_code', 'supplier_name']]);
         if ($request->filled('status')) $query->where('confirm_status', $request->input('status'));
         $this->filterManagementScope($query, $request);
@@ -701,7 +709,7 @@ class PurchaseController extends Controller
     {
         $this->erpAuthorize($request, 'purchase.receipt.view');
         return response()->json(PurchaseReceipt::with([
-            'supplier', 'order', 'items.item.unit', 'items.orderItem', 'items.warehouse', 'items.location', 'items.allocations.warehouse', 'items.allocations.location', 'items.allocations.physicalEntries', 'items.defectHandlings',
+            'supplier', 'order', 'items.item.unit', 'items.orderItem', 'items.receipt:id,settlement_mode', 'items.warehouse', 'items.location', 'items.allocations.warehouse', 'items.allocations.location', 'items.allocations.physicalEntries', 'items.defectHandlings',
             'attachments' => fn ($query) => $query->where('status', 'active')->latest('id'),
             'logs' => fn ($query) => $query->withoutCostDetails(),
         ])->findOrFail($id));
@@ -999,7 +1007,7 @@ class PurchaseController extends Controller
             'required_qty' => 'required_without:purchase_quantity|numeric|gt:0',
             'purchase_unit_id' => 'nullable|integer|exists:erp_units,id',
             'purchase_quantity' => 'nullable|numeric|gt:0',
-            'purchase_unit_price' => 'nullable|numeric|min:0',
+            'purchase_unit_price' => 'nullable|numeric|min:0|decimal:0,8',
             'amount' => 'nullable|numeric|min:0|max:9999999999.99|decimal:0,2',
             'document_type' => 'required|in:request,plan',
             'document_id' => 'nullable|integer', 'line_id' => 'nullable|integer',
@@ -1045,6 +1053,8 @@ class PurchaseController extends Controller
             'items.*.expected_conversion_fingerprint' => 'nullable|string|size:64',
             'items.*.required_qty' => 'required_without:items.*.purchase_quantity|numeric|min:0.0001|decimal:0,4',
             'items.*.purchase_quantity' => 'nullable|numeric|gt:0|decimal:0,4',
+            'items.*.purchase_unit_price' => 'nullable|numeric|min:0|decimal:0,8',
+            'items.*.amount' => 'nullable|numeric|min:0|max:9999999999.99|decimal:0,2',
             'items.*.warehouse_id' => 'nullable|exists:erp_warehouses,id',
             'items.*.expected_date' => 'nullable|date',
             'items.*.splits' => 'nullable|array',
@@ -1053,9 +1063,9 @@ class PurchaseController extends Controller
             'items.*.splits.*.purchase_unit_id' => 'nullable|exists:erp_units,id',
             'items.*.splits.*.expected_conversion_fingerprint' => 'nullable|string|size:64',
             'items.*.splits.*.purchase_quantity' => 'nullable|numeric|gt:0|decimal:0,4',
-            'items.*.splits.*.purchase_unit_price' => 'nullable|numeric|min:0',
+            'items.*.splits.*.purchase_unit_price' => 'nullable|numeric|min:0|decimal:0,8',
             'items.*.splits.*.purchase_qty' => 'required_without:items.*.splits.*.purchase_quantity|numeric|min:0|decimal:0,4',
-            'items.*.splits.*.unit_price' => 'nullable|numeric|min:0',
+            'items.*.splits.*.unit_price' => 'nullable|numeric|min:0|decimal:0,8',
             'items.*.splits.*.amount' => 'nullable|numeric|min:0|max:9999999999.99|decimal:0,2',
             'items.*.splits.*.tax_rate' => 'nullable|numeric|min:0|max:100',
             'items.*.splits.*.delivery_days' => 'nullable|integer|min:0|max:999',
@@ -1101,7 +1111,7 @@ class PurchaseController extends Controller
             'items.*.id' => 'nullable|integer|distinct',
             'items.*.expected_conversion_factor' => 'nullable|numeric|gt:0',
             'items.*.order_qty' => 'required|numeric|min:0.0001|decimal:0,4',
-            'items.*.unit_price' => 'nullable|numeric|min:0',
+            'items.*.unit_price' => 'nullable|numeric|min:0|decimal:0,8',
             'items.*.amount' => 'nullable|numeric|min:0|max:9999999999.99|decimal:0,2',
             'items.*.tax_rate' => 'nullable|numeric|min:0|max:100',
             'items.*.expected_arrival_date' => 'nullable|date',
@@ -1141,7 +1151,7 @@ class PurchaseController extends Controller
             'items.*.difference_reason' => 'nullable|string|max:255',
             'items.*.qualified_qty' => 'nullable|numeric|min:0',
             'items.*.unqualified_qty' => 'nullable|numeric|min:0',
-            'items.*.unit_price' => 'nullable|numeric|min:0',
+            'items.*.unit_price' => 'nullable|numeric|min:0|decimal:0,8',
             'items.*.tax_rate' => 'nullable|numeric|min:0|max:100',
             'items.*.batch_no' => 'nullable|string|max:80',
             'items.*.stock_length_mm' => 'nullable|numeric|min:1|max:100000',
@@ -1206,6 +1216,7 @@ class PurchaseController extends Controller
                 'unit_id' => $snapshot['base_unit_id'],
                 'purchase_conversion_snapshot' => $snapshot,
                 'plan_qty' => $requiredQty,
+                'unit_price' => $snapshot['base_unit_price'],
                 'required_qty' => $requiredQty,
                 'allocated_qty' => $allocatedQty,
                 'remaining_qty' => max(0, $requiredQty - $allocatedQty),
@@ -1271,7 +1282,12 @@ class PurchaseController extends Controller
             if (!empty($line['target_warehouse_id'])) app(\App\Services\Erp\WarehouseManagementScopeService::class)
                 ->assertWarehouseItem($item, (int) $line['target_warehouse_id'], 'target_warehouse_id', $order->management_scope);
             $qty = (float) $line['order_qty'];
-            $commercial = $finance->commercialLine($line['order_qty'], $line['amount'] ?? null, $line['unit_price'] ?? '0');
+            $prior = $priorItems?->get($line['id'] ?? 0);
+            $sameSource = $prior && (int) $prior->item_id === (int) $line['item_id']
+                && (int) ($line['purchase_unit_id'] ?? $prior->purchase_unit_id) === (int) $prior->purchase_unit_id;
+            $keepAmount = $sameSource && !isset($line['unit_price']) && $qty === (float) $prior->order_qty;
+            $commercial = $finance->commercialLine($line['order_qty'], $line['amount'] ?? ($keepAmount ? $prior->amount : null),
+                $line['unit_price'] ?? ($sameSource && !isset($line['amount']) ? $prior->unit_price : '0'));
             $price = $commercial['unit_price'];
             $line['unit_price'] = $price;
             $line['amount'] = $commercial['amount'];
@@ -1402,7 +1418,7 @@ class PurchaseController extends Controller
                 ->assertWarehouseItem($item, (int) $line['warehouse_id'], 'warehouse_id', $scope);
             $qty = (float) $line['receipt_qty'];
             // 修改到货单时未传单价：沿用原到货行单价，新行取采购单行单价，不能清零。
-            $price = (float) ($line['unit_price'] ?? ($priorLine ? $priorLine->unit_price : ($orderItem && $receipt->settlement_mode !== 'replacement_no_charge' ? $orderItem->unit_price : 0)));
+            $price = $line['unit_price'] ?? $priorLine?->unit_price ?? $orderItem?->unit_price ?? '0';
             $finance = app(\App\Services\Erp\PurchaseFinancialFactService::class);
             if ($orderItem && $receipt->settlement_mode !== 'replacement_no_charge') {
                 $amountFacts = $finance->orderReceiptFacts($receipt, $orderItem, $line['receipt_qty']);
@@ -1410,7 +1426,9 @@ class PurchaseController extends Controller
                 $amountFacts = ['unit_price' => $priorLine->unit_price, 'receipt_cost' => $priorLine->receipt_cost,
                     'amount_excl_tax' => $priorLine->receipt_cost, 'tax_amount_snapshot' => '0.0000', 'amount_incl_tax' => $priorLine->receipt_cost];
             } else {
-                $commercial = $finance->commercialLine($line['receipt_qty'], $line['receipt_cost'] ?? null, $line['unit_price'] ?? $price);
+                $keepAmount = $priorLine && !isset($line['unit_price']) && (float) $priorLine->receipt_qty === $qty;
+                $commercial = $finance->commercialLine($line['receipt_qty'], $line['receipt_cost'] ?? ($keepAmount ? $priorLine->receipt_cost : null),
+                    $line['unit_price'] ?? (isset($line['receipt_cost']) ? '0' : $price));
                 $amountFacts = ['unit_price' => $commercial['unit_price'], 'receipt_cost' => $commercial['amount'],
                     ...$finance->amountFacts($commercial['amount'], $line['tax_rate'] ?? 13, 'tax_included', 2)];
             }
@@ -1461,7 +1479,7 @@ class PurchaseController extends Controller
         app(PurchaseAttachmentApplicationService::class)->bindDraft('receipt', $receipt->id, $payload['attachment_draft_token'] ?? null);
         $this->refreshReceiptTotal($receipt->id);
         $this->log('purchase_receipt', $receipt->id, $action, $action === 'create' ? '新增到货单' : '编辑到货单');
-        return response()->json(['message' => '到货单已保存', 'data' => $receipt->fresh(['items.item.unit', 'items.warehouse', 'items.location', 'items.allocations.warehouse', 'items.allocations.location', 'items.allocations.physicalEntries', 'order', 'supplier', 'attachments'])], $action === 'create' ? 201 : 200);
+        return response()->json(['message' => '到货单已保存', 'data' => $receipt->fresh(['items.item.unit', 'items.orderItem', 'items.receipt:id,settlement_mode', 'items.warehouse', 'items.location', 'items.allocations.warehouse', 'items.allocations.location', 'items.allocations.physicalEntries', 'order', 'supplier', 'attachments'])], $action === 'create' ? 201 : 200);
     }
 
     private function visibleAttachment(Request $request, int $id): PurchaseAttachment
@@ -1506,7 +1524,7 @@ class PurchaseController extends Controller
                 abort_if(!$supplier || $this->isBadSupplierName($supplier), 422, '供应商为空或名称异常，不能生成采购订单');
                 $items = $lines->map(function ($split) {
                     $qty = (float) $split->purchase_qty - (float) $split->ordered_qty;
-                    $price = (float) $split->unit_price;
+                    $price = $split->unit_price;
                     abort_if((float) $split->ordered_qty > 0, 422, '该拆分已部分生成，请核对原订单后处理');
                     $conversion = app(\App\Services\Erp\PurchasePlanningConversionService::class)->orderSnapshot($split);
                     return [
@@ -1541,7 +1559,7 @@ class PurchaseController extends Controller
                     'supplier_name' => $supplier->supplier_name,
                     'line_count' => count($items),
                     'total_qty' => array_sum(array_column($items, 'purchase_qty')),
-                    'total_amount' => array_sum(array_column($items, 'amount')),
+                    'total_amount' => Money::settle(array_reduce($items, fn (string $total, array $line) => Money::add($total, (string) $line['amount']), '0')),
                     'items' => $items,
                 ];
             })->values()->all();

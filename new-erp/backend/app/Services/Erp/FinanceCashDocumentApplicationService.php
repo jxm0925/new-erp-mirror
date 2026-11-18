@@ -38,11 +38,11 @@ class FinanceCashDocumentApplicationService
                 $direction
             );
             $party = $this->parties->resolve($data['party_type'], (int) $data['party_id']);
-            $amount = Money::normalize((string) $data['amount']);
+            $amount = Money::settle((string) $data['amount']);
             $currency = $this->rates->assertEnabledCurrency($data['currency'] ?? 'CNY')->currency_code;
             if (Money::compare($amount, '0') <= 0) throw ValidationException::withMessages(['amount' => '收付金额必须大于 0。']);
             if ((string) $account->currency !== $currency) throw ValidationException::withMessages(['currency' => '资金账户币种与单据币种不一致。']);
-            $fee = Money::normalize((string) ($data['platform_fee_amount'] ?? '0'));
+            $fee = Money::settle((string) ($data['platform_fee_amount'] ?? '0'));
             if (Money::compare($fee, '0') < 0 || Money::compare($fee, $amount) >= 0) throw ValidationException::withMessages(['platform_fee_amount' => '平台手续费必须大于等于零且小于收付款金额。']);
             $feeAccount = null;
             if (Money::compare($fee, '0') > 0) {
@@ -114,7 +114,7 @@ class FinanceCashDocumentApplicationService
                 $changes['payment_method_snapshot'] = $this->paymentMethods->snapshot($method);
             }
             if (isset($changes['amount'])) {
-                $changes['amount'] = Money::normalize((string) $changes['amount']);
+                $changes['amount'] = Money::settle((string) $changes['amount']);
                 if (Money::compare($changes['amount'], '0') <= 0) throw ValidationException::withMessages(['amount' => '收付金额必须大于 0。']);
             }
             $currency = $this->rates->assertEnabledCurrency((string) $document->currency)->currency_code;
@@ -136,8 +136,8 @@ class FinanceCashDocumentApplicationService
                     'base_amount' => $this->rates->convert((string) ($changes['amount'] ?? $document->amount), $exchange['rate']),
                 ];
             }
-            $fee = Money::normalize((string) ($changes['platform_fee_amount'] ?? $document->platform_fee_amount));
-            $amount = Money::normalize((string) ($changes['amount'] ?? $document->amount));
+            $fee = Money::settle((string) ($changes['platform_fee_amount'] ?? $document->platform_fee_amount));
+            $amount = Money::settle((string) ($changes['amount'] ?? $document->amount));
             if (Money::compare($fee, '0') < 0 || Money::compare($fee, $amount) >= 0) throw ValidationException::withMessages(['platform_fee_amount' => '平台手续费必须大于等于零且小于收付款金额。']);
             if (Money::compare($fee, '0') > 0) {
                 $feeAccount = FinanceAccount::query()->whereKey($changes['platform_fee_account_id'] ?? $document->platform_fee_account_id ?? $document->finance_account_id)->where('status', 'enabled')->lockForUpdate()->firstOrFail();
@@ -147,6 +147,7 @@ class FinanceCashDocumentApplicationService
             } else {
                 $changes = [...$changes, 'platform_fee_currency' => null, 'platform_fee_account_id' => null, 'platform_fee_base_amount' => '0.0000', 'platform_fee_type' => null];
             }
+            $changes['platform_fee_amount'] = $fee;
             $document->fill($changes);
             $this->purchasePurposes->validateDraft($document, $purchaseOrders ?? $this->purchasePurposes->normalize($document->purchase_order_allocations ?? []));
             $document->save();
@@ -168,6 +169,11 @@ class FinanceCashDocumentApplicationService
             // The draft rate is only a preview. Confirmation fixes the final
             // historical snapshot so later rate changes cannot recalculate it.
             $exchange = $this->rates->businessSnapshot((string) $document->currency, $document->business_date->toDateString());
+            $document->amount = Money::settle((string) $document->amount);
+            $document->platform_fee_amount = Money::settle((string) ($document->platform_fee_amount ?? 0));
+            if (Money::compare($document->amount, '0') <= 0 || Money::compare($document->platform_fee_amount, $document->amount) >= 0) {
+                throw ValidationException::withMessages(['amount' => '按分结算后收付金额必须大于零且大于手续费，请调整草稿金额。']);
+            }
             $baseAmount = $this->rates->convert((string) $document->amount, $exchange['rate']);
             $this->purchasePurposes->freezeForConfirmation($document, $operatorId, $operatorName);
             $document->update([

@@ -13,7 +13,7 @@ class CounterpartyBalanceService
 {
     public function customer(int $customerId): array
     {
-        $receivable = Money::normalize((string) SalesOrder::query()->where('customer_id', $customerId)->whereNotIn('order_status', ['draft', 'cancelled'])->sum('total_amount'));
+        $receivable = Money::settle((string) SalesOrder::query()->where('customer_id', $customerId)->whereNotIn('order_status', ['draft', 'cancelled'])->sum('total_amount'));
         $received = $this->allocated(FinanceConstants::PARTY_CUSTOMER, $customerId, FinanceConstants::DIRECTION_RECEIPT);
         $refunded = $this->allocated(FinanceConstants::PARTY_CUSTOMER, $customerId, FinanceConstants::DIRECTION_PAYMENT);
         $net = Money::maxZero(Money::sub($received, $refunded));
@@ -34,8 +34,8 @@ class CounterpartyBalanceService
 
     public function supplier(int $supplierId): array
     {
-        $payable = Money::normalize((string) PurchaseReceipt::query()->where('supplier_id', $supplierId)->where('confirm_status', 'confirmed')->where('settlement_mode', '<>', 'replacement_no_charge')->sum('settlement_amount'));
-        $offset = Money::normalize((string) PurchaseReturn::query()->where('supplier_id', $supplierId)->where('settlement_effect_type', FinanceConstants::PURCHASE_EFFECT_AP_OFFSET)->whereNotIn('return_status', ['draft', 'submitted', 'cancelled'])->sum('settlement_amount'));
+        $payable = Money::settle((string) PurchaseReceipt::query()->where('supplier_id', $supplierId)->where('confirm_status', 'confirmed')->where('settlement_mode', '<>', 'replacement_no_charge')->sum('settlement_amount'));
+        $offset = Money::settle((string) PurchaseReturn::query()->where('supplier_id', $supplierId)->where('settlement_effect_type', FinanceConstants::PURCHASE_EFFECT_AP_OFFSET)->whereNotIn('return_status', ['draft', 'submitted', 'cancelled'])->sum('settlement_amount'));
         $payable = Money::maxZero(Money::sub($payable, $offset));
         $paid = $this->allocated(FinanceConstants::PARTY_SUPPLIER, $supplierId, FinanceConstants::DIRECTION_PAYMENT);
         $refund = $this->allocated(FinanceConstants::PARTY_SUPPLIER, $supplierId, FinanceConstants::DIRECTION_RECEIPT);
@@ -44,7 +44,7 @@ class CounterpartyBalanceService
 
     private function allocated(string $partyType, int $partyId, string $direction): string
     {
-        return Money::normalize((string) FinanceAllocation::query()->where('party_type', $partyType)->where('party_id', $partyId)
+        return Money::settle((string) FinanceAllocation::query()->where('party_type', $partyType)->where('party_id', $partyId)
             ->where('status', FinanceConstants::ALLOCATION_ACTIVE)
             ->whereHas('cashDocument', fn ($q) => $q->where('direction', $direction)->where('status', FinanceConstants::STATUS_CONFIRMED))
             ->sum('allocated_amount'));

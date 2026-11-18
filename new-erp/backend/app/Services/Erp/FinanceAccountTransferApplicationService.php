@@ -81,11 +81,11 @@ class FinanceAccountTransferApplicationService
         $target = FinanceAccount::query()->where('status', 'enabled')->when($forUpdate, fn ($q) => $q->lockForUpdate())->findOrFail($data['target_account_id']);
         if ($source->id === $target->id) throw ValidationException::withMessages(['target_account_id' => '转出和转入账户不能相同。']);
         $this->assertMode($data, $source, $target);
-        $out = Money::normalize($data['source_amount']); $gross = Money::normalize($data['target_amount']);
+        $out = Money::settle($data['source_amount']); $gross = Money::settle($data['target_amount']);
         if (Money::compare($out, '0') <= 0 || Money::compare($gross, '0') <= 0) throw ValidationException::withMessages(['amount' => '金额必须大于零。']);
-        $fee = Money::normalize($data['fee_amount'] ?? '0'); $bearer = $data['fee_bearer'] ?? 'source';
+        $fee = Money::settle($data['fee_amount'] ?? '0'); $bearer = $data['fee_bearer'] ?? 'source';
         $feeAccount = $this->resolveFeeAccount($data, $source, $target, $forUpdate);
-        $feeCurrency = $fee === '0.0000' ? null : strtoupper($data['fee_currency'] ?? $feeAccount->currency);
+        $feeCurrency = Money::compare($fee, '0') === 0 ? null : strtoupper($data['fee_currency'] ?? $feeAccount->currency);
         if ($feeCurrency && $feeCurrency !== $feeAccount->currency) throw ValidationException::withMessages(['fee_currency' => '手续费币种必须与扣费账户币种一致。']);
         $exchangeSource = $bearer === 'source' ? Money::sub($out, $fee) : $out;
         if (Money::compare($exchangeSource, '0') <= 0) throw ValidationException::withMessages(['fee_amount' => '转出账户承担手续费时，手续费必须小于实际扣款金额。']);
@@ -105,7 +105,7 @@ class FinanceAccountTransferApplicationService
         // original currency.  A base-currency result would be wrong for e.g.
         // USD -> EUR, even though the company ledger itself is in CNY.
         $referenceBase = $same ? $sourceBase : $this->rates->convert($exchangeSource, $reference['rate']);
-        $referenceExpected = $same ? $exchangeSource : Money::normalize(bcdiv($referenceBase, $targetRate['rate'], 4));
+        $referenceExpected = $same ? $exchangeSource : Money::settle(bcdiv($referenceBase, $targetRate['rate'], Money::CALC_SCALE));
         $actualRate = $same ? '1.0000000000' : bcdiv($gross, $exchangeSource, 10);
         $realized = $same ? '0.0000' : Money::sub($grossBase, $sourceBase);
         $preview = ['source_account_id'=>(int) $source->id, 'target_account_id'=>(int) $target->id, 'source_currency'=>$source->currency, 'target_currency'=>$target->currency, 'business_date'=>$data['business_date'], 'source_amount'=>$out, 'exchange_source_amount'=>$exchangeSource, 'gross_target_amount'=>$gross, 'gross_target_base_amount'=>$grossBase, 'fee_amount'=>$fee, 'fee_currency'=>$feeCurrency, 'fee_bearer'=>$bearer, 'fee_account_id'=>(int) $feeAccount->id, 'source_original_balance'=>$carrying['original_balance'], 'source_carrying_base_amount'=>$carrying['base_balance'], 'target_original_balance'=>$targetCarrying['original_balance'], 'target_carrying_base_amount'=>$targetCarrying['base_balance'], 'source_weighted_carrying_rate'=>Money::compare($carrying['original_balance'], '0') === 0 ? null : bcdiv($carrying['base_balance'], $carrying['original_balance'], 10), 'source_base_amount'=>$sourceBase, 'reference_exchange_rate'=>$reference['rate'], 'reference_exchange_rate_id'=>$reference['exchange_rate_id'], 'reference_expected_amount'=>$referenceExpected, 'actual_exchange_rate'=>$actualRate, 'reference_difference_amount'=>$same ? '0.0000' : Money::sub($gross, $referenceExpected), 'net_target_amount'=>$net, 'realized_fx_gain_loss'=>$realized, 'same_currency'=>$same];
@@ -122,12 +122,12 @@ class FinanceAccountTransferApplicationService
             $target = FinanceAccount::query()->where('status', 'enabled')->lockForUpdate()->findOrFail($data['target_account_id']);
             if ($source->id === $target->id) throw ValidationException::withMessages(['target_account_id' => '转出和转入账户不能相同。']);
             $this->assertMode($data, $source, $target);
-            $out = Money::normalize($data['source_amount']); $gross = Money::normalize($data['target_amount']);
+            $out = Money::settle($data['source_amount']); $gross = Money::settle($data['target_amount']);
             if (Money::compare($out, '0') <= 0 || Money::compare($gross, '0') <= 0) throw ValidationException::withMessages(['amount' => '金额必须大于零。']);
-            $fee = Money::normalize($data['fee_amount'] ?? '0'); $bearer = $data['fee_bearer'] ?? 'source';
+            $fee = Money::settle($data['fee_amount'] ?? '0'); $bearer = $data['fee_bearer'] ?? 'source';
             if (!in_array($bearer, ['source', 'target', 'third_account'], true)) throw ValidationException::withMessages(['fee_bearer' => '手续费承担方式无效。']);
             $feeAccount = $this->resolveFeeAccount($data, $source, $target, true);
-            $feeCurrency = $fee === '0.0000' ? null : strtoupper($data['fee_currency'] ?? $feeAccount->currency);
+            $feeCurrency = Money::compare($fee, '0') === 0 ? null : strtoupper($data['fee_currency'] ?? $feeAccount->currency);
             if ($feeCurrency && $feeCurrency !== $feeAccount->currency) throw ValidationException::withMessages(['fee_currency' => '手续费币种必须与扣费账户币种一致。']);
             $exchangeSource = $bearer === 'source' ? Money::sub($out, $fee) : $out;
             if (Money::compare($exchangeSource, '0') <= 0) throw ValidationException::withMessages(['fee_amount' => '转出账户承担手续费时，手续费必须小于实际扣款金额。']);
@@ -137,20 +137,24 @@ class FinanceAccountTransferApplicationService
             if (Money::compare($net, '0') <= 0) throw ValidationException::withMessages(['fee_amount' => '手续费不能大于等于换汇毛所得。']);
             // The ledger relieves the historical carrying amount by the amount
             // actually exchanged, not by a source-borne platform fee.
-            if ($bearer === 'source' && Money::compare($fee, '0') > 0) $this->ledger->outgoingCarryingAmount($source->id, $out, true);
+            $sourceDebitBase = $bearer === 'source' && $feeCurrency ? $this->ledger->outgoingCarryingAmount($source->id, $out, true) : null;
             if ($bearer === 'third_account' && Money::compare($fee, '0') > 0) $this->ledger->outgoingCarryingAmount($feeAccount->id, $fee, true);
             $sourceBase = $this->ledger->outgoingCarryingAmount($source->id, $exchangeSource, true);
             $targetRate = $same ? null : $this->rates->businessSnapshot($target->currency, $data['business_date']);
             $grossBase = $same ? $sourceBase : $this->rates->convert($gross, $targetRate['rate']);
             // A target-borne fee is withheld from the gross incoming amount;
             // it must not require an opening balance in the target account.
-            $feeBase = ! $feeCurrency ? '0.0000' : ($bearer === 'target'
-                ? ($same ? Money::normalize(bcdiv(bcmul($grossBase, $fee, 8), $gross, 4)) : $this->rates->convert($fee, $targetRate['rate']))
-                : $this->ledger->outgoingCarryingAmount($feeAccount->id, $fee));
+            $feeBase = match (true) {
+                !$feeCurrency => '0.00',
+                $sourceDebitBase !== null => Money::sub($sourceDebitBase, $sourceBase),
+                $bearer !== 'target' => $this->ledger->outgoingCarryingAmount($feeAccount->id, $fee),
+                $same => Money::settle(bcdiv(bcmul($grossBase, $fee, 8), $gross, Money::CALC_SCALE)),
+                default => $this->rates->convert($fee, $targetRate['rate']),
+            };
             $actualRate = $same ? '1.0000000000' : bcdiv($gross, $exchangeSource, 10);
             $reference = $same ? ['rate' => '1.0000000000'] : $this->rates->businessSnapshot($source->currency, $data['business_date']);
             $referenceBase = $same ? $sourceBase : $this->rates->convert($exchangeSource, $reference['rate']);
-            $referenceExpected = $same ? $exchangeSource : Money::normalize(bcdiv($referenceBase, $targetRate['rate'], 4));
+            $referenceExpected = $same ? $exchangeSource : Money::settle(bcdiv($referenceBase, $targetRate['rate'], Money::CALC_SCALE));
             $realized = $same ? '0.0000' : Money::sub($grossBase, $sourceBase);
             $payload = ['source_account_id'=>$source->id,'target_account_id'=>$target->id,'source_currency'=>$source->currency,'source_amount'=>$out,'exchange_source_amount'=>$exchangeSource,'target_currency'=>$target->currency,'target_amount'=>$gross,'gross_target_amount'=>$gross,'net_target_amount'=>$net,'base_currency'=>$this->rates->baseCurrency()->currency_code,'actual_exchange_rate'=>$actualRate,'reference_exchange_rate'=>$reference['rate'],'reference_difference_amount'=>$same?'0.0000':Money::sub($gross,$referenceExpected),'source_base_amount'=>$sourceBase,'target_base_amount'=>$grossBase,'realized_fx_gain_loss'=>$realized,'fee_amount'=>$fee,'fee_currency'=>$feeCurrency,'fee_bearer'=>$bearer,'fee_account_id'=>$feeCurrency?$feeAccount->id:null,'fee_base_amount'=>$feeBase,'business_date'=>$data['business_date'],'status'=>'confirmed','remark'=>$data['remark']??null,'confirmed_by'=>$operatorId,'confirmed_at'=>now()];
             $transfer = $draft ? tap($draft)->update($payload)->fresh() : FinanceAccountTransfer::create(['transfer_no'=>$this->numbers->next('finance_transfer','FT'), ...$payload, 'created_by'=>$operatorId]);
@@ -216,7 +220,7 @@ class FinanceAccountTransferApplicationService
         if ($bearer === 'source') return $source;
         if ($bearer === 'target') return $target;
 
-        if (Money::compare(Money::normalize($data['fee_amount'] ?? '0'), '0') === 0) return $source;
+        if (Money::compare(Money::settle($data['fee_amount'] ?? '0'), '0') === 0) return $source;
         if (empty($data['fee_account_id'])) {
             throw ValidationException::withMessages(['fee_account_id' => '第三方账户承担手续费时必须选择扣费账户。']);
         }

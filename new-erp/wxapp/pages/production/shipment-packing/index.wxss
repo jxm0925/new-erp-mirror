@@ -269,6 +269,18 @@
   padding: 18rpx 24rpx 14rpx;
 }
 
+.sp-pending-toggle {
+  color: #bd1c0a;
+  font-size: 25rpx;
+  font-weight: 700;
+}
+
+.sp-pending-line {
+  margin-top: 16rpx;
+  padding-top: 16rpx;
+  border-top: 1rpx solid #e2e8f0;
+}
+
 .sp-title-row {
   display: flex;
   align-items: baseline;

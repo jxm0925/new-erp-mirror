@@ -131,7 +131,7 @@
               <div class="deal-item">
                 <span class="deal-label">实际支出 (原币)</span>
                 <div class="deal-field">
-                  <el-input v-if="!confirmed" v-model.trim="form.source_amount" size="small" placeholder="0.00" @input="recalculate">
+                  <el-input v-if="!confirmed" v-model.trim="form.source_amount" @blur="normalizeAmount('source_amount')" size="small" placeholder="0.00" @input="recalculate">
                     <template slot="append">{{ sourceCurrency || '—' }}</template>
                   </el-input>
                   <span v-else class="deal-val font-semibold">{{ money(form.source_amount) }} {{ sourceCurrency }}</span>
@@ -156,7 +156,7 @@
               <div class="deal-item highlight-gross">
                 <span class="deal-label">实际到账 (毛额)</span>
                 <div class="deal-field">
-                  <el-input v-if="!confirmed" v-model.trim="form.target_amount" size="small" class="green-input" placeholder="0.00" @input="recalculate">
+                  <el-input v-if="!confirmed" v-model.trim="form.target_amount" @blur="normalizeAmount('target_amount')" size="small" class="green-input" placeholder="0.00" @input="recalculate">
                     <template slot="append">{{ targetCurrency || '—' }}</template>
                   </el-input>
                   <span v-else class="deal-val text-green font-bold">{{ money(form.target_amount) }} {{ targetCurrency }}</span>
@@ -262,7 +262,7 @@
               <div class="fee-line">
                 <span class="fee-label">平台手续费</span>
                 <div class="fee-field">
-                  <el-input v-if="!confirmed" v-model.trim="form.fee_amount" size="small" placeholder="0.00" @input="recalculate">
+                  <el-input v-if="!confirmed" v-model.trim="form.fee_amount" @blur="normalizeAmount('fee_amount')" size="small" placeholder="0.00" @input="recalculate">
                     <template slot="append">{{ feeCurrency || '—' }}</template>
                   </el-input>
                   <span v-else class="fee-val">{{ money(form.fee_amount) }} {{ feeCurrency }}</span>
@@ -392,7 +392,7 @@
     <section class="summary-banner">
       <div class="summary-col">
         <span class="summary-label">
-          历史账面价值 (转出 {{ form.source_amount || '—' }} {{ sourceCurrency || '—' }})
+          历史账面价值 (转出 {{ $money(form.source_amount) }} {{ sourceCurrency || '—' }})
         </span>
         <div class="summary-value-wrap">
           <strong class="summary-num">{{ fxPreview.source_base_amount !== undefined ? `${money(fxPreview.source_base_amount)} CNY` : '—' }}</strong>
@@ -450,6 +450,8 @@
 </template>
 
 <script>
+import { amountUnits } from '@/utils/financeCashAllocation'
+import { formatMoney as displayMoney, settlementAmount } from '../../../utils/money.js'
 import PagedRecordSelect from '@/components/common/PagedRecordSelect.vue'
 import { erpDateTime } from '../../../utils/dateTime'
 import {
@@ -470,7 +472,7 @@ const blank = () => ({
   target_account_id: null,
   source_amount: '',
   target_amount: '',
-  fee_amount: '0',
+  fee_amount: '0.00',
   fee_bearer: 'target',
   business_date: new Date().toISOString().slice(0, 10),
   remark: ''
@@ -569,6 +571,7 @@ export default {
     this.bootstrap()
   },
   methods: {
+    normalizeAmount(field) { this.form[field] = settlementAmount(this.form[field]) || this.form[field]; this.recalculate() },
     listAccounts: listFinanceAccounts,
     accountLabel(row) { return `${row.account_name} · ${row.currency}` },
     async bootstrap() {
@@ -604,6 +607,7 @@ export default {
       this.accounts = [...this.accounts.filter(row => ![this.detail.source_account_id, this.detail.target_account_id].some(id => Number(id) === Number(row.id))), ...[this.detail.source_account, this.detail.target_account].filter(Boolean)]
       this.status = this.detail.status
       this.form = { ...blank(), ...this.detail }
+      for (const field of ['source_amount', 'target_amount', 'fee_amount']) this.form[field] = settlementAmount(this.form[field])
       this.mode = this.detail.source_currency === this.detail.target_currency ? 'transfer' : 'exchange'
       if (!this.confirmed) this.schedulePreview()
     },
@@ -624,9 +628,9 @@ export default {
     },
     recalculate() {
       if (this.mode === 'transfer') {
-        const out = Number(this.form.source_amount || 0)
-        const fee = Number(this.form.fee_amount || 0)
-        this.form.target_amount = (this.form.fee_bearer === 'source' ? Math.max(0, out - fee) : out).toFixed(4)
+        const out = amountUnits(this.form.source_amount) || 0
+        const fee = amountUnits(this.form.fee_amount) || 0
+        this.form.target_amount = ((this.form.fee_bearer === 'source' ? Math.max(0, out - fee) : out) / 100).toFixed(2)
       }
       this.schedulePreview()
     },
@@ -634,7 +638,7 @@ export default {
       clearTimeout(this.previewTimer)
       this.previewRequestId += 1
       this.previewData = null
-      if (!this.form.source_account_id || !this.form.target_account_id || !this.form.business_date || Number(this.form.source_amount) <= 0 || Number(this.form.target_amount) <= 0) return
+      if (!this.form.source_account_id || !this.form.target_account_id || !this.form.business_date || !(amountUnits(this.form.source_amount) > 0) || !(amountUnits(this.form.target_amount) > 0)) return
       this.previewTimer = setTimeout(() => this.loadPreview(), 300)
     },
     async loadPreview() {
@@ -654,14 +658,15 @@ export default {
       }
     },
     payload() {
-      return { ...this.form, mode: this.mode, fee_currency: this.feeCurrency || undefined }
+      return { ...this.form, source_amount: settlementAmount(this.form.source_amount), target_amount: settlementAmount(this.form.target_amount),
+        fee_amount: settlementAmount(this.form.fee_amount || 0), mode: this.mode, fee_currency: this.feeCurrency || undefined }
     },
     async saveDraft() {
       if (!this.form.source_account_id || !this.form.target_account_id || !this.form.business_date) return this.$message.error('请完整选择转出账户、转入账户和业务日期')
       if (!this.sourceCurrency || !this.targetCurrency) return this.$message.error('请先选择转出和转入账户')
       if (Number(this.form.source_account_id) === Number(this.form.target_account_id)) return this.$message.error('转出和转入账户不能相同')
-      if (Number(this.form.source_amount) <= 0 || Number(this.form.target_amount) <= 0) return this.$message.error('实际支付和实际到账毛额必须大于 0')
-      if (Number(this.form.fee_amount || 0) < 0) return this.$message.error('手续费不能小于 0')
+      if (!(amountUnits(this.form.source_amount) > 0) || !(amountUnits(this.form.target_amount) > 0)) return this.$message.error('实际支付和实际到账毛额必须大于 0')
+      if (amountUnits(this.form.fee_amount || 0) === null) return this.$message.error('手续费不能小于 0')
       if ((this.mode === 'transfer') !== (this.sourceCurrency === this.targetCurrency)) {
         return this.$message.error(this.mode === 'transfer' ? '不同币种账户必须选择跨币种换汇' : '相同币种账户必须选择同币种转账')
       }
@@ -749,7 +754,7 @@ export default {
     },
     money(v) {
       if (v === null || v === undefined || v === '') return '—'
-      return Number(v).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+      return displayMoney(v)
     },
     rate(v) {
       return Number(v || 0).toFixed(4)

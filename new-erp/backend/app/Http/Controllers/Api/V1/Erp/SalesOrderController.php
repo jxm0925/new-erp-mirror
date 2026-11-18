@@ -1053,8 +1053,9 @@ class SalesOrderController extends Controller
             $this->abortUnlessOrderVisible($request, $order);
             abort_if($order->order_status === 'cancelled', 422, '订单已经取消，不能重复取消');
             abort_if(isset($payload['expected_version']) && (int) $payload['expected_version'] !== (int) $order->business_version, 409, '订单已变化，请刷新后取消。');
-            abort_if(! in_array($order->shipment_status, ['not_shipped', 'not_required'], true) || $order->lines->sum('shipped_qty') > 0
-                || $order->shipments()->where('shipment_status', '<>', 'cancelled')->exists(), 422, '已有有效发货单或发货事实，不能直接取消，请先处理发货逆向流程');
+            abort_if(SalesOrderFulfillmentPolicy::hasShipmentFacts($order), 422, '已有发货事实，请先处理发货逆向流程。');
+            app(\App\Services\Erp\SalesShipmentApplicationService::class)->cancelEmptyDraftsForOrder($order, $this->operatorName($request), '随销售订单取消：'.$payload['reason']);
+            abort_if($order->shipments()->where('shipment_status', '<>', 'cancelled')->exists(), 422, '已有实物或发货作业，请先处理发货逆向流程。');
             $actor = app(AuthContextService::class)->currentUser($request);
             abort_unless($actor, 401, '请先登录 ERP');
 
@@ -2095,16 +2096,7 @@ class SalesOrderController extends Controller
 
     private function refreshOrderTotals(int $orderId): void
     {
-        $totals = SalesOrderLine::where('sales_order_id', $orderId)
-            ->where('line_status', '!=', 'removed')
-            ->selectRaw("COALESCE(SUM(CASE WHEN line_type = 'deduction' THEN 0 ELSE order_qty END),0) qty, COALESCE(SUM(amount),0) amount")
-            ->first();
-        $order = SalesOrder::findOrFail($orderId);
-        $order->update([
-            'total_qty' => $totals->qty,
-            'total_amount' => (float) $totals->amount + (float) $order->freight_amount,
-            'base_total_amount' => round(((float) $totals->amount + (float) $order->freight_amount) * (float) ($order->business_exchange_rate ?: 1), 4),
-        ]);
+        app(\App\Services\Erp\SalesOrderAmountService::class)->refresh(SalesOrder::findOrFail($orderId));
     }
 
     private function version(int $orderId, string $changeType, ?array $before, ?array $after, string $operator): void

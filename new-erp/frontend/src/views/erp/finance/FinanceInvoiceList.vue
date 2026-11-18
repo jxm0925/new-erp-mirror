@@ -361,6 +361,7 @@
 </template>
 
 <script>
+import { formatMoney as displayMoney, settlementAmount } from '../../../utils/money.js'
 import { listFinanceInvoices, listSalesInvoiceRequests } from '../../../api/erp/finance'
 import FinanceInvoiceRequestList from './FinanceInvoiceRequestList.vue'
 
@@ -371,7 +372,7 @@ export default {
       props: ['label', 'prop', 'strong', 'green'],
       methods: {
         f(v) {
-          return Number(v || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+          return displayMoney(v || 0)
         }
       },
       template:
@@ -508,7 +509,7 @@ export default {
       this.$router.push(`/finance/invoices/${r.id}/match`)
     },
     money(v) {
-      return Number(v || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+      return displayMoney(v || 0)
     },
     invoiceType(v) {
       return { vat_special: '增值税专用发票', vat_normal: '增值税普通发票', other: '其他' }[v] || v || '—'
@@ -532,9 +533,9 @@ export default {
         ['发票代码', r => r.invoice_code],
         [this.isSales ? '客户' : '供应商', r => r.party_name_snapshot],
         ...(this.isSales ? [['关联销售订单', r => (r.sales_orders || []).map(o => o.no).join(' ')]] : []),
-        ['价税合计', r => r.amount_incl_tax],
-        ['已匹配', r => r.matched_amount],
-        ['未匹配', r => r.unmatched_amount]
+        ['价税合计', r => settlementAmount(r.amount_incl_tax)],
+        ['已匹配', r => settlementAmount(r.matched_amount)],
+        ['未匹配', r => settlementAmount(r.unmatched_amount)]
       ]
       const useCols = this.isSales ? cols.filter(c => !['已匹配', '未匹配'].includes(c[0])) : cols
       const csv = [

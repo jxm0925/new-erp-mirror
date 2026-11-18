@@ -26,6 +26,7 @@
   </div>
 </template>
 <script>
+import { formatMoney as displayMoney } from '../../../utils/money.js'
 import { getCrmOpportunityMetadata, listCrmOpportunities, crmDate, crmError } from '@/api/erp/crm'
 import { erpDateTime } from '@/utils/dateTime'
 import CrmOpportunityFormDialog from '@/components/crm/CrmOpportunityFormDialog.vue'
@@ -76,7 +77,7 @@ export default {
     groupValue(row) { return this.viewConfiguration.group_by === 'stage' ? row.stage_label : this.viewConfiguration.group_by === 'status' ? row.status_label : (row[this.viewConfiguration.group_by] || '未填写') },
     date:crmDate,
     shortDate(value) { return erpDateTime(value,10) || '—' },
-    money(value,currency) { return value === null || value === undefined || value === '' ? '—' : `${currency || 'CNY'} ${Number(value).toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2})}` },
+    money(value,currency) { return value === null || value === undefined || value === '' ? '—' : `${currency || 'CNY'} ${displayMoney(value)}` },
     async load() {
       const sequence = ++this.sequence
       this.loading = true

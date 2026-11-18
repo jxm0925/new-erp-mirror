@@ -50,11 +50,12 @@
         <el-form-item label="开户行及账号" prop="invoice_bank_account"><el-input v-model.trim="form.invoice_bank_account" maxlength="300" :placeholder="isSpecial ? '专票必填' : '选填'" /></el-form-item>
         <el-form-item label="收票邮箱" prop="invoice_email"><el-input v-model.trim="form.invoice_email" maxlength="160" placeholder="电子发票发到这个邮箱（选填）" /></el-form-item>
         <el-form-item label="开票金额" prop="amount">
-          <el-input-number v-model="form.amount" :min="0.01" :max="maxAmount" :precision="2" :step="100" controls-position="right" style="width: 200px" />
+          <el-input v-model.trim="form.amount" inputmode="decimal" placeholder="0.00" style="width: 200px" @blur="form.amount = settlementAmount(form.amount) || form.amount" />
           <span class="muted amount-hint">最多 ¥{{ money(summary && summary.available_amount) }}（含税）</span>
         </el-form-item>
         <el-form-item label="税率">
           <el-select v-model="form.tax_rate" style="width: 200px"><el-option v-for="rate in taxRates" :key="rate" :label="`${rate}%`" :value="rate" /></el-select>
+          <span v-if="form.amount && invoiceAmounts.net" class="muted amount-hint">未税 ¥{{ money(invoiceAmounts.net) }}，税额 ¥{{ money(invoiceAmounts.tax) }}</span>
         </el-form-item>
         <el-form-item label="备注"><el-input v-model.trim="form.remark" type="textarea" :rows="2" maxlength="500" placeholder="例如：开票内容写“机械设备”、随货寄出纸票等" /></el-form-item>
         <el-form-item label=""><el-checkbox v-model="form.save_to_customer">同时保存为该客户的开票资料，下次自动带出</el-checkbox></el-form-item>
@@ -65,6 +66,8 @@
 </template>
 
 <script>
+import { formatMoney as displayMoney, settlementAmount } from '../../utils/money.js'
+import { splitGrossInvoiceAmount } from '../../utils/financeInvoiceAmount.js'
 import { getSalesOrderInvoiceRequests, listSalesInvoiceAccounts, createSalesOrderInvoiceRequest, withdrawSalesInvoiceRequest, downloadSalesInvoiceFile } from '@/api/erp/sales'
 import PagedRecordSelect from '@/components/common/PagedRecordSelect.vue'
 
@@ -83,8 +86,9 @@ export default {
   computed: {
     summary() { return this.info.summary || null },
     isSpecial() { return this.form.invoice_type === 'vat_special' },
-    maxAmount() { return Math.max(0.01, Number((this.summary && this.summary.available_amount) || 0)) },
-    availableZero() { return !this.summary || Number(this.summary.available_amount) <= 0 },
+    maxCents() { return BigInt((settlementAmount(this.summary && this.summary.available_amount) || '0').replace('.', '')) },
+    availableZero() { return this.maxCents <= 0n },
+    invoiceAmounts() { return splitGrossInvoiceAmount(this.form.amount, this.form.tax_rate) },
     rules() {
       const special = this.isSpecial
       return {
@@ -101,10 +105,11 @@ export default {
   },
   watch: { orderId: { immediate: true, handler() { this.load() } } },
   methods: {
+    settlementAmount,
     emptyForm() { return { invoice_type: '', finance_account_id: null, invoice_title: '', invoice_tax_no: '', invoice_address_phone: '', invoice_bank_account: '', invoice_email: '', amount: undefined, tax_rate: 13, remark: '', save_to_customer: true } },
     listAccounts(params) { return listSalesInvoiceAccounts(this.orderId, params) },
     accountLabel(row) { return `${row.account_name}（${row.currency}）` },
-    money(v) { return Number(v || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) },
+    money(v) { return displayMoney(v || 0) },
     date(v) { return v ? String(v).slice(0, 10) : '-' },
     statusTone(v) { return ({ pending: 'warning', issued: 'success', rejected: 'danger', withdrawn: 'info' })[v] || 'info' },
     async load() {
@@ -122,16 +127,19 @@ export default {
     openCreate() {
       const d = this.info.billing_defaults || {}
       this.accounts = this.info.receipt_accounts || []
-      this.form = { ...this.emptyForm(), finance_account_id: this.accounts.length === 1 ? this.accounts[0].id : null, invoice_title: d.invoice_title || '', invoice_tax_no: d.invoice_tax_no || '', invoice_address_phone: d.invoice_address_phone || '', invoice_bank_account: d.invoice_bank_account || '', invoice_email: d.invoice_email || '', amount: Number((this.summary && this.summary.available_amount) || 0) || undefined }
+      this.form = { ...this.emptyForm(), finance_account_id: this.accounts.length === 1 ? this.accounts[0].id : null, invoice_title: d.invoice_title || '', invoice_tax_no: d.invoice_tax_no || '', invoice_address_phone: d.invoice_address_phone || '', invoice_bank_account: d.invoice_bank_account || '', invoice_email: d.invoice_email || '', amount: settlementAmount(this.summary && this.summary.available_amount) }
       this.dialogVisible = true
       this.$nextTick(() => this.$refs.form && this.$refs.form.clearValidate())
     },
     submit() {
       this.$refs.form.validate(async valid => {
         if (!valid) return
+        const amount = settlementAmount(this.form.amount)
+        const cents = BigInt((amount || '0').replace('.', ''))
+        if (cents <= 0n || cents > this.maxCents) return this.$message.warning('开票金额须大于零且不超过剩余可开票金额')
         this.saving = true
         try {
-          const { data } = await createSalesOrderInvoiceRequest(this.orderId, { ...this.form, amount: Number(this.form.amount).toFixed(2) })
+          const { data } = await createSalesOrderInvoiceRequest(this.orderId, { ...this.form, amount })
           this.$message.success(data.message || '开票申请已提交')
           this.dialogVisible = false
           this.load()

@@ -47,7 +47,9 @@ Component({
         } else {
           const query = { page: this.data.page, per_page: 10, keyword: this.data.keyword.trim(), warehouse_id: context.warehouse_id || undefined,
             location_id: context.location_id || undefined, category_id: (this.data.categories[this.data.categoryIndex] || {}).id || undefined };
-          const response = this.properties.mode === 'cutting_unit'
+          const response = this.properties.mode === 'stocktake_item'
+            ? await warehouse.stocktakeItems(context.stocktake_id, query)
+            : this.properties.mode === 'cutting_unit'
             ? await production.cutting(context.work_order_id, Object.assign(query, { operation_id: context.operation_id, batch_id: context.batch_id || undefined, scope: 'units' }))
             : this.properties.mode === 'production_unit'
             ? await production.receivableUnits(context.work_order_id, context.operation_id, query)

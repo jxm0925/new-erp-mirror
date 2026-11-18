@@ -177,7 +177,7 @@
             <el-form-item label="结算方式"><el-input v-model="form.settlement_method" placeholder="如：月结30天、货到付款" /></el-form-item>
             <el-form-item label="交付方式"><el-input v-model="form.delivery_method" placeholder="如：送货上门、物流自提" /></el-form-item>
             <el-form-item label="运费"><el-input-number v-model="form.freight_amount" :min="0" :precision="2" controls-position="right" style="width: 100%" /></el-form-item>
-            <el-form-item :label="form.tax_mode === 'tax_excluded' ? '整单优惠（未税）' : '整单优惠（含税）'"><el-input-number v-model="form.discount_amount" :min="0" :max="subtotalAmount" :precision="2" controls-position="right" style="width: 100%" /></el-form-item>
+            <el-form-item :label="form.tax_mode === 'tax_excluded' ? '整单优惠（未税）' : '整单优惠（含税）'"><el-input-number v-model="form.discount_amount" :min="0" :max="Number(subtotalAmount)" :precision="2" controls-position="right" style="width: 100%" /></el-form-item>
             <el-form-item label="单据状态">
               <div class="readonly-status-box">
                 <el-tag size="small" :type="currentStatusTag" effect="light">{{ currentStatusLabel }}</el-tag>
@@ -611,7 +611,7 @@
             <el-table :data="recommendations" size="mini" border empty-text="请选择一行采购物料后获取推荐">
               <el-table-column prop="supplier_name" label="供应商" min-width="130" show-overflow-tooltip />
               <el-table-column label="能力" width="82"><template slot-scope="{row}">{{ capabilityText(row.capability_level) }}</template></el-table-column>
-              <el-table-column label="可比价" width="90"><template slot-scope="{row}">{{ row.comparable_price == null ? '-' : money(row.comparable_price) }}</template></el-table-column>
+              <el-table-column label="基本单位可比价" width="130"><template slot-scope="{row}">{{ row.comparable_price == null ? '-' : purchasePrice(row.comparable_price) }}</template></el-table-column>
               <el-table-column label="综合评分" width="82" align="right"><template slot-scope="{row}">{{ row.recommendation_score == null ? '-' : row.recommendation_score }}</template></el-table-column>
               <el-table-column label="推荐依据" min-width="150"><template slot-scope="{row}"><el-tooltip :content="row.recommendation_explanation || basisText(row.recommendation_basis)" placement="top"><el-tag size="mini" :type="row.recommended ? 'success' : 'info'">{{ basisText(row.recommendation_basis) }}</el-tag></el-tooltip></template></el-table-column>
               <el-table-column label="操作" width="76"><template slot-scope="{row}"><el-button type="text" size="mini" :disabled="!row.auto_selectable || Boolean(form.plan_id)" @click="chooseRecommendation(row)">选用</el-button></template></el-table-column>
@@ -656,8 +656,8 @@
             <el-table-column v-if="type==='receipt'" label="实际基本数量" width="132"><template slot-scope="{row}"><el-input v-model.number="row.actual_base_qty" size="small" type="number" :disabled="!actualConversionAllowed(row)" min="0" step="0.000001" /></template></el-table-column>
             <el-table-column v-if="type==='receipt'" label="差异数量" width="110" align="right"><template slot-scope="{row}">{{ differenceQty(row) }} {{ baseUnitName(row) }}</template></el-table-column>
             <el-table-column v-if="type==='receipt'" label="差异原因" min-width="150"><template slot-scope="{row}"><el-input v-model="row.difference_reason" size="small" :disabled="!hasDifference(row)" :placeholder="hasDifference(row) ? '必填' : '无差异'" /></template></el-table-column>
-            <el-table-column :label="type==='order' ? (form.tax_mode === 'tax_excluded' ? '包装单价（未税）' : '包装单价（含税）') : '单价'" :width="type==='order' ? 168 : 132"><template slot-scope="{row}"><el-input-number class="line-number-input" v-model="row.unit_price" size="small" :min="0" :precision="type==='order' || type==='receipt' ? 8 : undefined" :disabled="type==='receipt' && Boolean(row.order_item_id)" controls-position="right" @change="handleOrderPriceChange(row)" /><div v-if="row._priceHint" class="price-hint">{{ row._priceHint }}</div></template></el-table-column>
-            <el-table-column v-if="type==='order'" :label="form.tax_mode === 'tax_excluded' ? '成交总额（未税）' : '成交总额（含税）'" width="168"><template slot-scope="{row}"><el-input-number class="line-number-input" v-model="row.amount" size="small" :min="0" :precision="2" controls-position="right" @change="handleOrderAmountChange(row)" /></template></el-table-column>
+            <el-table-column :label="type==='order' ? (form.tax_mode === 'tax_excluded' ? '包装单价（未税）' : '包装单价（含税）') : '单价'" :width="type==='order' ? 168 : 132"><template slot-scope="{row}"><erp-money-input unit-price type="number" step="0.00000001" min="0" class="line-number-input" v-model="row.unit_price" size="small" :disabled="type==='receipt' && Boolean(row.order_item_id)" @change="handleOrderPriceChange(row)" /><div v-if="row._priceHint" class="price-hint">{{ row._priceHint }}</div></template></el-table-column>
+            <el-table-column v-if="type==='order'" :label="form.tax_mode === 'tax_excluded' ? '成交总额（未税）' : '成交总额（含税）'" width="168"><template slot-scope="{row}"><erp-money-input type="number" min="0" step="0.01" class="line-number-input" v-model="row.amount" size="small" @change="handleOrderAmountChange(row)" /></template></el-table-column>
             <el-table-column v-if="type==='order'" label="基本单位单价" width="120" align="right"><template slot-scope="{row}">{{ baseUnitPrice(row) }}</template></el-table-column>
             <el-table-column v-if="type==='order'" label="税率（%）" width="126"><template slot-scope="{row}"><el-input-number class="line-number-input" v-model="row.tax_rate" size="small" :min="0" :max="100" controls-position="right" /></template></el-table-column>
             <el-table-column v-if="type==='receipt'" label="合格/不合格" width="190"><template slot-scope="{row}"><el-input v-model.number="row.qualified_qty" size="small" type="number" min="0" step="0.0001" /><el-input v-model.number="row.unqualified_qty" size="small" type="number" min="0" step="0.0001" /></template></el-table-column>
@@ -830,8 +830,8 @@
             <el-table-column label="能力级别" width="85">
               <template slot-scope="scope">{{ capabilityText(scope.row.capability_level) }}</template>
             </el-table-column>
-            <el-table-column label="可比单价" width="95" align="right">
-              <template slot-scope="scope">{{ scope.row.comparable_price == null ? '-' : '¥' + money(scope.row.comparable_price) }}</template>
+            <el-table-column label="基本单位可比价" width="130" align="right">
+              <template slot-scope="scope">{{ scope.row.comparable_price == null ? '-' : '¥' + purchasePrice(scope.row.comparable_price) }}</template>
             </el-table-column>
             <el-table-column label="综合评分" width="80" align="right">
               <template slot-scope="scope">{{ scope.row.recommendation_score == null ? '-' : scope.row.recommendation_score }}</template>
@@ -896,12 +896,9 @@
           </el-table-column>
           <el-table-column label="采购单价（含税）" width="162">
             <template slot-scope="scope">
-              <el-input-number
+              <erp-money-input unit-price type="number" step="0.00000001" min="0"
                 v-model="scope.row.purchase_unit_price"
-                :min="0"
-                :precision="8"
                 size="small"
-                controls-position="right"
                 style="width: 100%"
                 @change="handleDialogSplitPriceChange(scope.row)"
               />
@@ -921,7 +918,7 @@
           </el-table-column>
           <el-table-column label="成交总额（含税）" width="155" align="right">
             <template slot-scope="scope">
-              <el-input-number v-model="scope.row.amount" :min="0" :precision="2" size="small" controls-position="right" style="width: 100%" @change="handleDialogSplitAmountChange(scope.row)" />
+              <erp-money-input type="number" min="0" step="0.01" v-model="scope.row.amount" size="small" style="width: 100%" @change="handleDialogSplitAmountChange(scope.row)" />
             </template>
           </el-table-column>
           <el-table-column label="期望交期" width="135">
@@ -989,12 +986,14 @@
 </template>
 
 <script>
+import { formatPurchasePrice, purchaseLineAmount, purchaseUnitPrice, purchaseTaxParts, purchaseCents, amountFromCents, purchaseShare, purchaseDecimal, purchasePriceText, purchasePriceRatio, purchasePriceProduct } from '@/utils/purchaseLineAmount'
+import { formatMoney as displayMoney } from '../../../utils/money.js'
 import PagedRecordSelect from '@/components/common/PagedRecordSelect.vue'
 import { erpDateTime } from '../../../utils/dateTime'
 import { listEntity, listItemPurchaseConversionOptions } from '@/api/erp/master'
 import { minimalValidPurchaseQuantity } from '@/utils/unitConversion'
 import { priceCheckText, priceWarnings } from '@/utils/purchasePriceCheck'
-import { roundInvoiceAmount } from '@/utils/financeInvoiceAmount'
+import { roundInvoiceAmount, sumInvoiceAmounts } from '@/utils/financeInvoiceAmount'
 import { listPurchaseSalesCandidates, listPurchaseWorkOrderCandidates, checkPurchasePrices, listPriceHistories, previewPurchaseConversion, generateReceiptSerials, getPurchase, getSupplierRecommendations, savePurchaseRequest, savePurchasePlan, savePurchaseOrder, savePurchaseReceipt, submitRequest, submitPlan, submitOrder } from '@/api/erp/purchase'
 import { reserveForCreatePage, clearCreatePageReservation } from '@/utils/documentNumberReservation'
 import PurchaseItemPicker from '@/components/purchase/PurchaseItemPicker.vue'
@@ -1165,38 +1164,18 @@ export default {
     },
     subtotalAmount() {
       const rows = this.type === 'plan' ? this.form.items.flatMap(line => line.splits || []) : this.form.items
-      return this.roundAmount(rows.reduce((sum, line) => sum + this.dealAmount(line, this.type === 'plan'), 0))
+      return sumInvoiceAmounts(rows.map(line => this.dealAmount(line, this.type === 'plan')))
+    },
+    lineTotals() {
+      if (this.type === 'receipt') return this.form.items.map(line => this.receiptAmounts(line))
+      return this.linesForAmount().map(line => purchaseTaxParts(line.amount, line.tax, this.form.tax_mode))
     },
     untaxedAmount() {
-      if (this.type === 'receipt') return this.form.items.reduce((sum, line) => sum + this.receiptAmounts(line).excl, 0)
-      return this.linesForAmount().reduce((sum, line) => {
-        const amount = line.amount
-        const rate = Number(line.tax || 0)
-        const untaxed = (this.form.tax_mode || 'tax_included') === 'tax_included' && rate > 0 ? amount * 100 / (100 + rate) : amount
-        return sum + (this.type === 'receipt' ? untaxed : Number(roundInvoiceAmount(untaxed, 4)))
-      }, this.type === 'order' ? Number(this.form.freight_amount || 0) : 0)
+      const freight = this.type === 'order' ? this.form.freight_amount : 0
+      return sumInvoiceAmounts([...this.lineTotals.map(line => line.excl), freight])
     },
-    taxAmount() {
-      if (this.type === 'receipt') return this.form.items.reduce((sum, line) => sum + this.receiptAmounts(line).tax, 0)
-      return this.linesForAmount().reduce((sum, line) => {
-        const amount = line.amount
-        const rate = Number(line.tax || 0)
-        if ((this.form.tax_mode || 'tax_included') === 'tax_included' && rate > 0) {
-          const untaxed = amount * 100 / (100 + rate)
-          return sum + (amount - (this.type === 'receipt' ? untaxed : Number(roundInvoiceAmount(untaxed, 4))))
-        }
-        const tax = amount * rate / 100
-        return sum + (this.type === 'receipt' ? tax : Number(roundInvoiceAmount(tax, 4)))
-      }, 0)
-    },
-    totalAmount() {
-      if (this.type === 'receipt') return this.form.items.reduce((sum, line) => sum + this.receiptAmounts(line).incl, 0)
-      // 计划生成的订单采用含税价；没有显式口径时，预览必须与生成结果一致。
-      const lineAmount = (this.form.tax_mode || 'tax_included') === 'tax_included'
-        ? this.linesForAmount().reduce((sum, line) => sum + line.amount, 0) + Number(this.form.freight_amount || 0)
-        : this.untaxedAmount + this.taxAmount
-      return lineAmount + (this.type !== 'order' && this.form.tax_mode === 'tax_excluded' ? Number(this.form.freight_amount || 0) : 0)
-    },
+    taxAmount() { return sumInvoiceAmounts(this.lineTotals.map(line => line.tax)) },
+    totalAmount() { return sumInvoiceAmounts([this.untaxedAmount, this.taxAmount]) },
     expectedOrderCount() { return new Set(this.form.items.flatMap(i => (i.splits || []).map(s => s.supplier_id).filter(Boolean))).size }
   },
   watch: {
@@ -1307,8 +1286,8 @@ export default {
       this.$set(split, 'purchase_unit_id', split.purchase_unit_id || snapshot?.purchase_unit_id || line.purchase_unit_id)
       this.$set(split, '_conversionOptions', snapshot ? this.withSnapshotOption(line._conversionOptions || [], snapshot) : line._conversionOptions || [])
       this.$set(split, 'purchase_quantity', split.purchase_quantity ?? Number(snapshot?.purchase_qty ?? 1))
-      this.$set(split, 'purchase_unit_price', split.purchase_unit_price ?? Number(snapshot?.purchase_unit_price ?? Number(split.unit_price || 0) * Number(line._planningPreview?.conversion_factor_snapshot || 1)))
-      this.$set(split, 'amount', Number(split.amount ?? snapshot?.amount ?? this.dealAmount(split, true)))
+      this.$set(split, 'purchase_unit_price', split.purchase_unit_price ?? snapshot?.purchase_unit_price ?? purchasePriceProduct(split.unit_price, line._planningPreview?.conversion_factor_snapshot || 1))
+      this.$set(split, 'amount', roundInvoiceAmount(split.amount ?? snapshot?.amount ?? this.dealAmount(split, true)))
       this.handleDialogSplitAmountChange(split)
       await this.refreshPlanning(line, split)
     },
@@ -1350,7 +1329,7 @@ export default {
         this.$set(target._planningPreview, 'planned_base_qty', optimisticPlannedBase)
         this.$set(target._planningPreview, 'purchase_qty', quantity)
         if (split && split.purchase_unit_price != null) {
-          this.$set(target._planningPreview, 'purchase_unit_price', Number(split.purchase_unit_price || 0))
+          this.$set(target._planningPreview, 'purchase_unit_price', purchasePriceText(split.purchase_unit_price || 0))
           this.$set(target._planningPreview, 'amount', this.splitAmount(split))
         }
       } else {
@@ -1372,8 +1351,8 @@ export default {
         const { data } = await previewPurchaseConversion({
           item_id: line.item_id,
           purchase_unit_id: target.purchase_unit_id || line.purchase_unit_id,
-          purchase_quantity: quantity, is_split: Boolean(split),
-          purchase_unit_price: split ? Number(split.purchase_unit_price || 0) : 0,
+          purchase_quantity: purchaseDecimal(quantity), is_split: Boolean(split),
+          purchase_unit_price: split ? purchaseDecimal(split.purchase_unit_price) : 0,
           amount: split ? this.splitAmount(split) : undefined,
           document_type: this.type, document_id: this.form.id || null,
           line_id: line.id || null, split_id: split?.id || null,
@@ -1662,11 +1641,11 @@ export default {
       this.attachmentDraftToken = ''
       ;(data.items || []).forEach(line => this.rememberItem(line.item))
       if (this.type === 'request') this.form = { ...data, items: (data.items || []).map(i => ({ ...i, spec_model: i.spec_model || i.item?.spec_model || i.item?.spec || i.item?.model || '', purchase_quantity: Number(i.purchase_conversion_snapshot?.purchase_qty ?? i.request_qty), purchase_unit_id: i.purchase_conversion_snapshot?.purchase_unit_id || i.unit_id })) }
-      if (this.type === 'plan') this.form = { ...data, items: (data.items || []).map(i => ({ _rowKey: i.id || (Date.now() + Math.random()), ...i, spec_model: i.spec_model || i.item?.spec_model || i.item?.spec || i.item?.model || '', purchase_quantity: Number(i.purchase_conversion_snapshot?.purchase_qty ?? i.required_qty ?? i.plan_qty), purchase_unit_id: i.purchase_conversion_snapshot?.purchase_unit_id || i.unit_id, splits: (i.splits || []).map(s => ({ ...s, purchase_quantity: Number(s.purchase_conversion_snapshot?.purchase_qty ?? s.purchase_qty), purchase_unit_id: s.purchase_conversion_snapshot?.purchase_unit_id || i.unit_id, purchase_unit_price: Number(s.purchase_conversion_snapshot?.purchase_unit_price ?? s.unit_price), unit_price: Number(s.unit_price), tax_rate: Number(s.tax_rate) })) })) }
-      if (this.type === 'order') this.form = { ...data, discount_amount: Number(data.discount_amount || 0), freight_amount: Number(data.freight_amount || 0), items: (data.items || []).map(i => ({ ...i, spec_model: i.spec_model || i.item?.spec_model || i.item?.spec || i.item?.model || '', qty: Number(i.purchase_qty || i.order_qty), unit_price: Number(i.purchase_unit_price ?? i.unit_price), amount: Number(i.amount ?? this.roundAmount(Number(i.purchase_qty || i.order_qty) * Number(i.purchase_unit_price ?? i.unit_price))), tax_rate: Number(i.tax_rate), _conversionOptions: [] })) }
+      if (this.type === 'plan') this.form = { ...data, items: (data.items || []).map(i => ({ _rowKey: i.id || (Date.now() + Math.random()), ...i, spec_model: i.spec_model || i.item?.spec_model || i.item?.spec || i.item?.model || '', purchase_quantity: Number(i.purchase_conversion_snapshot?.purchase_qty ?? i.required_qty ?? i.plan_qty), purchase_unit_id: i.purchase_conversion_snapshot?.purchase_unit_id || i.unit_id, splits: (i.splits || []).map(s => ({ ...s, purchase_quantity: Number(s.purchase_conversion_snapshot?.purchase_qty ?? s.purchase_qty), purchase_unit_id: s.purchase_conversion_snapshot?.purchase_unit_id || i.unit_id, purchase_unit_price: purchasePriceText(s.purchase_conversion_snapshot?.purchase_unit_price ?? s.unit_price), unit_price: purchasePriceText(s.unit_price), tax_rate: Number(s.tax_rate) })) })) }
+      if (this.type === 'order') this.form = { ...data, discount_amount: Number(data.discount_amount || 0), freight_amount: Number(data.freight_amount || 0), items: (data.items || []).map(i => ({ ...i, spec_model: i.spec_model || i.item?.spec_model || i.item?.spec || i.item?.model || '', qty: Number(i.purchase_qty || i.order_qty), unit_price: purchasePriceText(i.purchase_unit_price ?? i.unit_price), amount: roundInvoiceAmount(i.amount ?? purchaseLineAmount(i.purchase_qty || i.order_qty, i.purchase_unit_price ?? i.unit_price)), tax_rate: Number(i.tax_rate), _conversionOptions: [] })) }
       if (this.type === 'receipt') this.form = { ...data, items: (data.items || []).map(i => {
         const qty = Number(i.receipt_qty)
-        const price = qty > 0 && i.receipt_cost != null ? Number((Number(i.receipt_cost) / qty).toFixed(8)) : Number(i.unit_price)
+        const price = purchaseUnitPrice(qty, i.receipt_cost, i.unit_price)
         return { ...i, qty, unit_price: price, _receiptSavedPrice: price, qualified_qty: Number(i.qualified_qty), unqualified_qty: Number(i.unqualified_qty), actual_base_qty: i.actual_base_qty == null ? null : Number(i.actual_base_qty), _conversionOptions: [] }
       }) }
       await Promise.all(this.form.items.map(async line => {
@@ -1768,7 +1747,7 @@ export default {
       try {
         const lines = this.form.items.filter(line => line.item_id && Number(line.unit_price) > 0).map((line, index) => {
           const factor = this.effectiveConversionFactor(line) || 1
-          return { line_key: index, item_id: line.item_id, base_unit_price: Number((Number(line.unit_price) / factor).toFixed(8)) }
+          return { line_key: index, item_id: line.item_id, base_unit_price: purchasePriceRatio(line.unit_price, factor) }
         })
         if (!lines.length) return []
         const res = await checkPurchasePrices({ supplier_id: this.form.supplier_id || null, exclude_order_id: this.$route.params.id ? Number(this.$route.params.id) : null, lines })
@@ -1784,9 +1763,9 @@ export default {
     },
     priceForUnit(history, unitId, factor) {
       if (!history) return 0
-      if (unitId && Number(history.unit_id) === Number(unitId)) return Number(history.price || 0)
-      const base = Number(history.base_unit_price || 0) || (Number(history.conversion_factor_snapshot || 0) > 0 ? Number(history.price || 0) / Number(history.conversion_factor_snapshot) : 0)
-      return factor > 0 ? base * factor : 0
+      if (unitId && Number(history.unit_id) === Number(unitId)) return purchasePriceText(history.price || 0)
+      const base = Number(history.base_unit_price) > 0 ? history.base_unit_price : purchasePriceRatio(history.price || 0, history.conversion_factor_snapshot)
+      return purchasePriceProduct(base, factor)
     },
     async fillReferencePrice(line) {
       if (this.type !== 'order' || !line || !line.item_id || Number(line.unit_price || 0) > 0) return
@@ -1794,7 +1773,7 @@ export default {
       if (!history || Number(line.unit_price || 0) > 0) return
       const price = this.priceForUnit(history, line.purchase_unit_id, this.effectiveConversionFactor(line))
       if (!(price > 0)) return
-      this.$set(line, 'unit_price', Number(price.toFixed(8)))
+      this.$set(line, 'unit_price', price)
       this.handleOrderPriceChange(line)
       this.$set(line, '_priceHint', `已带出 ${String(history.effective_date || '').slice(0, 10)} 采购价`)
     },
@@ -1952,14 +1931,14 @@ export default {
       if (!c) return
       const previousFactor = Number(line._effectiveConversionFactor || line.conversion_factor_preview || line.conversion_factor_snapshot || 0)
       const previousBaseQuantity = Number(line.qty || 0) * previousFactor
-      const previousBaseUnitPrice = previousFactor > 0 ? Number(line.unit_price || 0) / previousFactor : 0
+      const previousBaseUnitPrice = purchasePriceRatio(line.unit_price || 0, previousFactor)
       const nextFactor = Number(c.factor)
       const purchaseUnit = this.canonicalUnit(c.purchase_unit)
       const baseUnit = this.canonicalUnit(c.base_unit)
       if (preserveBaseQuantity && previousFactor > 0 && nextFactor > 0) {
         const scale = Math.pow(10, Number(purchaseUnit?.decimal_places ?? 4))
         this.$set(line, 'qty', Math.ceil(previousBaseQuantity / nextFactor * scale - 0.00000001) / scale)
-        this.$set(line, 'unit_price', previousBaseUnitPrice * nextFactor)
+        this.$set(line, 'unit_price', purchasePriceProduct(previousBaseUnitPrice, nextFactor))
       }
       this.$set(line, 'conversion_factor_preview', nextFactor)
       this.$set(line, 'purchase_unit_name_preview', purchaseUnit && (purchaseUnit.unit_name || purchaseUnit.symbol || purchaseUnit.unit_code))
@@ -1987,7 +1966,7 @@ export default {
     differenceQtyNumber(line) { return Number(line.actual_base_qty == null ? this.standardBaseQtyNumber(line) : line.actual_base_qty) - this.standardBaseQtyNumber(line) },
     differenceQty(line) { return this.differenceQtyNumber(line).toLocaleString('zh-CN', { maximumFractionDigits: 6 }) },
     hasDifference(line) { return Math.abs(this.differenceQtyNumber(line)) > 0.0000001 },
-    baseUnitPrice(line) { const factor = this.effectiveConversionFactor(line); return factor > 0 ? Number((Number(line.unit_price || 0) / factor).toFixed(8)).toLocaleString('zh-CN', { maximumFractionDigits: 8 }) : '-' },
+    baseUnitPrice(line) { const factor = this.effectiveConversionFactor(line); return factor > 0 ? formatPurchasePrice(purchasePriceRatio(line.unit_price || 0, factor)) : '-' },
     selectLine(row) {
       const index = this.form.items.indexOf(row)
       if (index >= 0) this.activeIndex = index
@@ -2039,33 +2018,29 @@ export default {
       const canonical = unit && (unit.standard_unit || unit.standardUnit || unit)
       return canonical ? (canonical.unit_name || canonical.symbol || canonical.unit_code) : '-'
     },
-    purchasePrice(value) { return Number(value || 0).toLocaleString('zh-CN', { maximumFractionDigits: 8 }) },
-    roundAmount(value) { return Number(roundInvoiceAmount(value)) },
+    purchasePrice: formatPurchasePrice,
     receiptAmounts(line) {
       const qty = Number(line.qty || 0)
-      const samePrice = Number(line.unit_price) === line._receiptSavedPrice
+      const samePrice = purchasePriceText(line.unit_price) === purchasePriceText(line._receiptSavedPrice)
       if (samePrice && qty === Number(line.receipt_qty) && line.amount_incl_tax != null && line.amount_excl_tax != null && line.tax_amount_snapshot != null) {
-        return { amount: Number(line.receipt_cost), excl: Number(line.amount_excl_tax), tax: Number(line.tax_amount_snapshot), incl: Number(line.amount_incl_tax) }
+        return { amount: roundInvoiceAmount(line.receipt_cost), excl: roundInvoiceAmount(line.amount_excl_tax), tax: roundInvoiceAmount(line.tax_amount_snapshot), incl: roundInvoiceAmount(line.amount_incl_tax) }
       }
-      const ratio = Number(line.receipt_qty) > 0 ? qty / Number(line.receipt_qty) : 0
-      const amount = this.roundAmount(samePrice && line.receipt_cost != null ? Number(line.receipt_cost) * ratio : qty * Number(line.unit_price || 0))
+      const prorate = value => purchaseShare(value, qty, line.receipt_qty)
+      const amount = samePrice && line.receipt_cost != null ? prorate(line.receipt_cost) : purchaseLineAmount(qty, line.unit_price)
       const taxMode = this.form.order?.tax_mode || this.form.tax_mode_snapshot || this.form.tax_mode || 'tax_included'
-      const freight = line.order_item_id ? this.roundAmount(Number(line.freight_allocated_amount || 0) * ratio) : 0
-      const rate = Number(line.tax_rate || 0)
-      const tax = line.order_item_id && line.tax_amount_snapshot != null ? this.roundAmount(Number(line.tax_amount_snapshot) * ratio)
-        : (taxMode === 'tax_excluded' ? this.roundAmount(amount * rate / 100) : this.roundAmount(amount - this.roundAmount(amount * 100 / (100 + rate))))
-      const incl = this.roundAmount(amount + freight + (taxMode === 'tax_excluded' ? tax : 0))
-      return { amount, excl: this.roundAmount(incl - tax), tax, incl }
+      const freight = line.order_item_id ? prorate(line.freight_allocated_amount) : 0
+      const tax = line.order_item_id && line.tax_amount_snapshot != null ? prorate(line.tax_amount_snapshot) : null
+      return purchaseTaxParts(amount, line.tax_rate || 0, taxMode, freight, tax)
     },
     dealAmount(line, split = false) {
       if (this.type === 'receipt') return this.receiptAmounts(line).amount
-      const amount = Number((split ? line.purchase_quantity : line.qty) || 0) * Number((split ? line.purchase_unit_price : line.unit_price) || 0)
+      const amount = purchaseLineAmount(split ? line.purchase_quantity : line.qty, split ? line.purchase_unit_price : line.unit_price)
       if (!['order', 'plan'].includes(this.type)) return amount
-      return line.amount == null || line.amount === '' ? this.roundAmount(amount) : Number(line.amount)
+      return line.amount == null || line.amount === '' ? amount : roundInvoiceAmount(purchaseDecimal(line.amount))
     },
     handleOrderPriceChange(line) {
       this.$set(line, '_priceHint', '')
-      if (this.type === 'order') this.$set(line, 'amount', this.roundAmount(Number(line.qty || 0) * Number(line.unit_price || 0)))
+      if (this.type === 'order') this.$set(line, 'amount', purchaseLineAmount(line.qty, line.unit_price))
     },
     handleOrderQuantityChange(line) {
       this.syncReceiptActualQty(line)
@@ -2073,24 +2048,25 @@ export default {
     },
     handleOrderAmountChange(line) {
       // 成交总额独立保存，反算单价的八位舍入不能再覆盖该金额。
-      this.$set(line, 'amount', this.roundAmount(line.amount))
-      if (Number(line.qty) > 0) this.$set(line, 'unit_price', Number((Number(line.amount) / Number(line.qty)).toFixed(8)))
+      this.$set(line, 'amount', roundInvoiceAmount(purchaseDecimal(line.amount) || 0))
+      if (Number(line.qty) > 0) this.$set(line, 'unit_price', purchaseUnitPrice(line.qty, line.amount, line.unit_price))
       this.$set(line, '_priceHint', '')
     },
     linesForAmount() {
       const rows = this.type === 'plan' ? this.form.items.flatMap(line => line.splits || []) : this.form.items
       const amounts = rows.map(line => this.dealAmount(line, this.type === 'plan'))
       if (!['order', 'plan'].includes(this.type)) return rows.map((line, index) => ({ amount: amounts[index], tax: line.tax_rate || 0 }))
-      const weights = amounts.map(amount => BigInt(roundInvoiceAmount(amount).replace('.', '')))
+      const weights = amounts.map(purchaseCents)
       let remainingWeight = weights.reduce((sum, weight) => sum + weight, 0n)
-      let remainingDiscount = this.type === 'order' ? BigInt(roundInvoiceAmount(Math.min(Number(this.form.discount_amount || 0), this.subtotalAmount)).replace('.', '')) : 0n
+      const discount = this.type === 'order' ? purchaseCents(this.form.discount_amount) : 0n
+      let remainingDiscount = discount < remainingWeight ? discount : remainingWeight
       return rows.map((line, index) => {
         const weight = weights[index]
         // 与服务端一致按剩余金额分摊，最后一个非零金额行收尾。
         const share = remainingWeight > 0n ? (remainingDiscount * weight + remainingWeight / 2n) / remainingWeight : 0n
         remainingDiscount -= share
         remainingWeight -= weight
-        return { amount: Number(weight - share) / 100, tax: line.tax_rate || 0 }
+        return { amount: amountFromCents(weight - share), tax: line.tax_rate || 0 }
       })
     },
     async loadRecommendations() {
@@ -2217,22 +2193,22 @@ export default {
       }
       await this.refreshPlanning(row, split)
       // 选定供应商后带出该供应商最近一次采购价（仅单价为空时）。
-      if (!split || !split.supplier_id || Number(split.purchase_unit_price || 0) > 0) return
+      if (!split || !split.supplier_id || purchasePriceText(split.purchase_unit_price || 0) > 0) return
       const history = await this.latestSupplierPrice(split.supplier_id, row.item_id)
       const factor = Number(split._planningPreview?.conversion_factor_snapshot || row._planningPreview?.conversion_factor_snapshot || 0)
       const price = this.priceForUnit(history, split.purchase_unit_id, factor)
-      if (!(price > 0) || Number(split.purchase_unit_price || 0) > 0) return
-      this.$set(split, 'purchase_unit_price', Number(price.toFixed(8)))
+      if (!(price > 0) || purchasePriceText(split.purchase_unit_price || 0) > 0) return
+      this.$set(split, 'purchase_unit_price', price)
       this.handleDialogSplitPriceChange(split)
-      this.$message.info(`已带出 ${this.supplierName(split.supplier_id)} ${String(history.effective_date || '').slice(0, 10)} 的采购价 ¥${this.money(price)}，可修改`)
+      this.$message.info(`已带出 ${this.supplierName(split.supplier_id)} ${String(history.effective_date || '').slice(0, 10)} 的采购价 ¥${this.purchasePrice(price)}，可修改`)
     },
     handleDialogSplitUnitChange(row, split) {
       this.refreshPlanning(row, split)
     },
     handleDialogSplitPriceChange(split) {
-      this.$set(split, 'amount', this.roundAmount(Number(split.purchase_quantity || 0) * Number(split.purchase_unit_price || 0)))
+      this.$set(split, 'amount', purchaseLineAmount(split.purchase_quantity, split.purchase_unit_price))
       if (split && split._planningPreview) {
-        this.$set(split._planningPreview, 'purchase_unit_price', Number(split.purchase_unit_price || 0))
+        this.$set(split._planningPreview, 'purchase_unit_price', purchasePriceText(split.purchase_unit_price || 0))
         this.$set(split._planningPreview, 'amount', this.splitAmount(split))
       }
     },
@@ -2241,8 +2217,8 @@ export default {
       this.refreshPlanning(line, split)
     },
     handleDialogSplitAmountChange(split) {
-      this.$set(split, 'amount', this.roundAmount(split.amount))
-      if (Number(split.purchase_quantity) > 0) this.$set(split, 'purchase_unit_price', Number((Number(split.amount) / Number(split.purchase_quantity)).toFixed(8)))
+      this.$set(split, 'amount', roundInvoiceAmount(purchaseDecimal(split.amount) || 0))
+      if (Number(split.purchase_quantity) > 0) this.$set(split, 'purchase_unit_price', purchaseUnitPrice(split.purchase_quantity, split.amount, split.purchase_unit_price))
       if (split._planningPreview) {
         this.$set(split._planningPreview, 'purchase_unit_price', split.purchase_unit_price)
         this.$set(split._planningPreview, 'amount', split.amount)
@@ -2301,6 +2277,16 @@ export default {
         await this.loadRecommendations()
       }
     },
+    recommendedUnitPrice(candidate, line, split) {
+      if (!line) return null
+      const unitId = (split || line).purchase_unit_id
+      const sameQuote = candidate.price_source !== 'purchase_history_base_unit' && Number(unitId) === Number(candidate.quote_unit_id)
+        && candidate.currency === (this.form.currency || 'CNY') && candidate.tax_mode === (this.form.tax_mode || 'tax_included')
+      if (sameQuote && candidate.quote_price != null) return purchasePriceText(candidate.quote_price)
+      if (candidate.comparable_price == null) return null
+      const factor = this.type === 'order' ? this.effectiveConversionFactor(line) : this.getLineConversionFactor(line, split)
+      return factor > 0 ? purchasePriceProduct(candidate.comparable_price, factor) : null
+    },
     chooseRecommendationForLine(candidate, line) {
       if (!candidate.auto_selectable) return
       line.splits = line.splits || []
@@ -2326,8 +2312,11 @@ export default {
       Object.assign(split, snapshot)
       if (candidate.comparable_price != null) split.unit_price = candidate.comparable_price
       if (!existing) line.splits.push(split)
-      this.$set(split, 'purchase_unit_price', candidate.comparable_price == null ? Number(split.purchase_unit_price || 0) : Number(candidate.comparable_price))
-      this.handleDialogSplitPriceChange(split)
+      const price = this.recommendedUnitPrice(candidate, line, split)
+      if (price != null) {
+        this.$set(split, 'purchase_unit_price', price)
+        this.handleDialogSplitPriceChange(split)
+      }
       this.refreshPlanning(line, split)
       this.$refs.planTable?.toggleRowExpansion(line, true)
       this.$message.success(`已选用 ${candidate.supplier_name}，推荐依据和价格已留存快照`)
@@ -2336,7 +2325,7 @@ export default {
       return this.dealAmount(split, true)
     },
     lineTotalAmount(line) {
-      return (line.splits || []).reduce((sum, s) => sum + this.splitAmount(s), 0)
+      return sumInvoiceAmounts((line.splits || []).map(split => this.splitAmount(split)))
     },
     async batchSetPlanDeliveryDate() {
       if (!this.selectedPlanRows.length) return this.$message.warning('请先勾选需要设置交期的物料行')
@@ -2371,14 +2360,18 @@ export default {
         Object.assign(split, snapshot)
         if (candidate.comparable_price != null) split.unit_price = candidate.comparable_price
         if (!existing) this.activeLine.splits.push(split)
-        this.$set(split, 'purchase_unit_price', candidate.comparable_price == null ? Number(split.purchase_unit_price || 0) : Number(candidate.comparable_price))
-        this.handleDialogSplitPriceChange(split)
+        const price = this.recommendedUnitPrice(candidate, this.activeLine, split)
+        if (price != null) {
+          this.$set(split, 'purchase_unit_price', price)
+          this.handleDialogSplitPriceChange(split)
+        }
         this.initializeSplit(this.activeLine, split)
       } else if (this.type === 'order') {
         this.form.supplier_id = candidate.supplier_id
         Object.assign(this.activeLine, snapshot)
-        if (candidate.comparable_price != null) {
-          this.activeLine.unit_price = candidate.comparable_price
+        const price = this.recommendedUnitPrice(candidate, this.activeLine)
+        if (price != null) {
+          this.activeLine.unit_price = price
           this.handleOrderPriceChange(this.activeLine)
         }
       }
@@ -2407,13 +2400,13 @@ export default {
     payload() {
       let payload
       if (this.type === 'request') payload = { ...this.form, items: this.form.items.map(i => {
-        const line = { ...i, purchase_quantity: i.purchase_quantity, expected_conversion_fingerprint: i._planningPreview?.conversion_fingerprint }
+        const line = { ...i, purchase_quantity: purchaseDecimal(i.purchase_quantity), expected_conversion_fingerprint: i._planningPreview?.conversion_fingerprint }
         delete line.sales_allocations
         return line
       }) }
-      else if (this.type === 'plan') payload = { ...this.form, items: this.form.items.map(i => ({ ...i, purchase_quantity: i.purchase_quantity, expected_conversion_fingerprint: i._planningPreview?.conversion_fingerprint, splits: (i.splits || []).map(split => ({ ...split, expected_conversion_fingerprint: split._planningPreview?.conversion_fingerprint })) })) }
-      else if (this.type === 'order') payload = { ...this.form, items: this.form.items.map(i => ({ ...i, order_qty: i.qty, expected_conversion_factor: this.effectiveConversionFactor(i) })) }
-      else payload = { ...this.form, items: this.form.items.map(i => ({ ...i, receipt_qty: i.qty, receipt_cost: this.receiptAmounts(i).amount })) }
+      else if (this.type === 'plan') payload = { ...this.form, items: this.form.items.map(i => ({ ...i, purchase_quantity: purchaseDecimal(i.purchase_quantity), expected_conversion_fingerprint: i._planningPreview?.conversion_fingerprint, splits: (i.splits || []).map(split => ({ ...split, purchase_quantity: purchaseDecimal(split.purchase_quantity), purchase_unit_price: purchaseDecimal(split.purchase_unit_price), expected_conversion_fingerprint: split._planningPreview?.conversion_fingerprint })) })) }
+      else if (this.type === 'order') payload = { ...this.form, items: this.form.items.map(i => ({ ...i, order_qty: purchaseDecimal(i.qty), unit_price: purchaseDecimal(i.unit_price), expected_conversion_factor: this.effectiveConversionFactor(i) })) }
+      else payload = { ...this.form, items: this.form.items.map(i => ({ ...i, receipt_qty: purchaseDecimal(i.qty), unit_price: purchaseDecimal(i.unit_price), receipt_cost: this.receiptAmounts(i).amount })) }
       if (!this.$route.params.id && this.reservation) {
         payload.reservation_token = this.reservation.reservation_token
         payload.creation_session_id = this.reservation.creation_session_id
@@ -2428,7 +2421,7 @@ export default {
       if (this.scopeIssue) return this.$message.error(this.scopeIssue)
       if (this.form.items.some(line => line.warehouse_id && !this.scopedWarehouses.some(row => Number(row.id) === Number(line.warehouse_id)))) return this.$message.error('目标仓库与单据管理类型不一致或不可用，请重新选择')
       if (!this.form.items.length) return this.$message.error('请至少添加一行采购物料')
-      if (this.type === 'order' && Number(this.form.discount_amount || 0) > this.subtotalAmount) return this.$message.error('整单优惠不能超过成交总额')
+      if (this.type === 'order' && purchaseCents(this.form.discount_amount) > purchaseCents(this.subtotalAmount)) return this.$message.error('整单优惠不能超过成交总额')
       if (this.type === 'plan' && this.form.items.some(line => (line.splits || []).some(split => !split.supplier_id))) return this.$message.error('请为每条供应商分配选择供应商，或删除空白分配行')
       if (!['plan', 'request'].includes(this.type) && !this.form.supplier_id) { this.$refs.headerForm && this.$refs.headerForm.validateField('supplier_id'); return this.$message.error('供应商不能为空') }
       // 交期跟踪：提交订单前必须填写预计到货（订单头未填时，明细都填了也可以）。
@@ -2501,7 +2494,7 @@ export default {
         this.$router.push(this.type === 'request' ? '/purchase/requests' : this.type === 'plan' ? '/purchase/plans' : this.type === 'order' ? '/purchase/orders' : '/purchase/receipts')
       } finally { this.saving = false }
     },
-    money(v) { return Number(v || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }
+    money(v) { return displayMoney(v || 0) }
   }
 }
 </script>

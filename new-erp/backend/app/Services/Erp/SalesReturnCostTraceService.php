@@ -2,12 +2,54 @@
 
 namespace App\Services\Erp;
 
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
 /** 按原过账消费顺序还原退货成本来源，不以批次或当前设备位置猜测历史来源。 */
 class SalesReturnCostTraceService
 {
+    /** 占用仍按原分配行计算；闭单保留已入库、已绑定序列和其余已收数量，未收部分释放。 */
+    public static function reservedByOutbound(Collection $allocations, ?Collection $boundSerials = null): array
+    {
+        if ($allocations->isEmpty()) return [];
+        $items = DB::table('erp_sales_return_items as item')->join('erp_sales_returns as document', 'document.id', '=', 'item.sales_return_id')
+            ->whereIn('item.id', $allocations->pluck('sales_return_item_id')->unique())->orderBy('item.id')->lockForUpdate()
+            ->get(['item.id', 'item.received_base_qty', 'document.return_status'])->keyBy('id');
+        $boundSerials ??= DB::table('erp_sales_return_serial_identities')->whereIn('cost_allocation_id', $allocations->pluck('id'))
+            ->orderBy('id')->lockForUpdate()->get(['cost_allocation_id'])->countBy('cost_allocation_id');
+        $totals = [];
+        foreach ($allocations->groupBy('sales_return_item_id') as $itemId => $rows) {
+            $item = $items->get($itemId);
+            $closed = in_array($item->return_status, ['closed', 'cancelled'], true);
+            $retained = [];
+            $remaining = (string) $item->received_base_qty;
+            if ($closed) {
+                foreach ($rows as $row) {
+                    $bound = (string) $boundSerials->get($row->id, 0);
+                    $retained[$row->id] = bccomp($row->posted_base_qty, $bound, 8) >= 0 ? $row->posted_base_qty : $bound;
+                    $remaining = bcsub($remaining, $retained[$row->id], 8);
+                }
+            }
+            foreach ($rows as $row) {
+                $qty = $row->allocated_base_qty;
+                if ($closed) {
+                    $qty = $retained[$row->id];
+                    // 普通物料的报废等去向没有逐台来源，沿用该退货行预留的先入先出顺序。
+                    $free = bcsub($row->allocated_base_qty, $qty, 8);
+                    if (bccomp($remaining, '0', 8) > 0 && bccomp($free, '0', 8) > 0) {
+                        $used = bccomp($remaining, $free, 8) < 0 ? $remaining : $free;
+                        $qty = bcadd($qty, $used, 8);
+                        $remaining = bcsub($remaining, $used, 8);
+                    }
+                }
+                $source = $row->outbound_transaction_item_id;
+                $totals[$source] = bcadd($totals[$source] ?? '0', $qty, 8);
+            }
+        }
+        return $totals;
+    }
+
     public function quantityPool(object $source, ?string $total = null, array $knownCosts = []): array
     {
         $total ??= bcsub('0', (string) $source->cost_amount, 4);

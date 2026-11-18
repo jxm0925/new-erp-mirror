@@ -29,6 +29,7 @@
 </template>
 
 <script>
+import { formatMoney as displayMoney } from '../../../utils/money.js'
 import PagedRecordSelect from '@/components/common/PagedRecordSelect.vue'
 import { listFinanceAccountValuations, listFinanceCurrencies } from '../../../api/erp/finance'
 import FinanceRateMaintenanceDialog from './FinanceRateMaintenanceDialog.vue'
@@ -45,7 +46,7 @@ export default {
     async load () { this.loading = true; try { const r = await listFinanceAccountValuations({ ...this.query, page: this.page, per_page: this.perPage }); this.rows = r.data.data || []; this.total = Number(r.data.total || 0); this.summary = r.data.summary || {} } catch (e) { this.$message.error(e.userMessage || '账户估值加载失败') } finally { this.loading = false } },
     openFlow (kind) { const id = this.viewRow.account.id; this.viewRow = null; this.$router.push({ path: '/finance/' + kind, query: { finance_account_id: String(id) } }) },
     search () { this.page = 1; this.load() }, reset () { this.query = { valuation_date: new Date().toISOString().slice(0, 10), currency: '', status: '', keyword: '' }; this.search() },
-    money (value) { return value === null || value === undefined ? '—' : Number(value).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }, signed (value) { const n = Number(value || 0); return `${n > 0 ? '+' : ''}${this.money(n)}` }, rate (value) { return Number(value).toFixed(4) }, rateText (row) { if (row.valuation_status === 'base_currency') return '—（本位币）'; if (row.valuation_status === 'zero_balance') return '—'; return row.valuation_rate === null ? '—' : `1 ${row.account.currency} = ${this.rate(row.valuation_rate)} CNY` }, statusLabel (row) { return ({ complete: '正常', zero_balance: '无需估值', base_currency: '本位币', missing_rate: '缺少估值汇率' })[row.valuation_status] || row.valuation_status }, statusType (row) { return row.valuation_status === 'missing_rate' ? 'danger' : row.valuation_status === 'zero_balance' ? 'info' : 'success' }
+    money (value) { return value === null || value === undefined ? '—' : displayMoney(value) }, signed (value) { const n = Number(value || 0); return `${n > 0 ? '+' : ''}${this.money(n)}` }, rate (value) { return Number(value).toFixed(4) }, rateText (row) { if (row.valuation_status === 'base_currency') return '—（本位币）'; if (row.valuation_status === 'zero_balance') return '—'; return row.valuation_rate === null ? '—' : `1 ${row.account.currency} = ${this.rate(row.valuation_rate)} CNY` }, statusLabel (row) { return ({ complete: '正常', zero_balance: '无需估值', base_currency: '本位币', missing_rate: '缺少估值汇率' })[row.valuation_status] || row.valuation_status }, statusType (row) { return row.valuation_status === 'missing_rate' ? 'danger' : row.valuation_status === 'zero_balance' ? 'info' : 'success' }
   }
 }
 </script>

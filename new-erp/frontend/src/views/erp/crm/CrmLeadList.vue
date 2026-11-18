@@ -390,6 +390,7 @@
 </template>
 
 <script>
+import { formatMoney as displayMoney } from '../../../utils/money.js'
 import { getCrmLeadMetadata, listCrmLeads, crmError, crmDate } from '@/api/erp/crm'
 import CrmLeadFormDialog from '@/components/crm/CrmLeadFormDialog.vue'
 import CrmLeadDetailDialog from '@/components/crm/CrmLeadDetailDialog.vue'
@@ -608,7 +609,7 @@ export default {
     },
     formatMoney(value, currency) {
       if (value === null || value === undefined || value === '') return ''
-      return `${currency || 'CNY'} ${Number(value).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+      return `${currency || 'CNY'} ${displayMoney(value)}`
     },
     isOverdue(row) {
       if (!row.next_contact_at || row.status !== 'active') return false

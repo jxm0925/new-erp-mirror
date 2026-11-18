@@ -31,18 +31,29 @@ Page({
   closeLocator() { this.setData({ locatorOpen: false }); },
   chooseLocator(event) {
     const side = this.data.locatorSide; const value = event.detail;
-    if (side === 'source' && (Number(value.warehouse_id) !== Number(this.data.source.warehouse_id) || Number(value.location_id) !== Number(this.data.source.location_id))) { this.balanceSequence = (this.balanceSequence || 0) + 1; this.setData({ lines: [], selectedBalance: null, serials: [], physical: null, balanceOpen: false }); }
+    if (side === 'source') { this.setData({ locatorOpen: false }); return this.changeSource(value); }
     this.setData({ [side]: value, locatorOpen: false });
+  },
+  async changeSource(source, physical) {
+    const current = this.data.source;
+    const sameLocation = Number(source.warehouse_id || 0) === Number(current.warehouse_id || 0) && Number(source.location_id || 0) === Number(current.location_id || 0);
+    if (sameLocation && (!physical || this.data.physical && physical.id === this.data.physical.id)) return;
+    if (this.data.lines.length || this.data.selectedBalance || this.data.physical) {
+      const answer = await page.modal(this, { title: '更换调出来源？', content: '更换后，已选物料、批次和序列号需要重新选择。', confirmText: '更换来源' });
+      if (!answer.confirm || !this.data.formOpen) return;
+    }
+    this.balanceSequence = (this.balanceSequence || 0) + 1;
+    this.setData({ source, lines: [], selectedBalance: null, quantity: '', serials: [], physical: physical || null, targetBatch: physical && physical.batch_no || '', balanceOpen: false, formError: '' });
   },
   async scanSource(event) {
     return this.acceptSource(event.detail.result);
   },
   acceptSource(result) {
     if (this.data.physicalMode && result.type !== 'physical') return this.setData({ formError: '请扫码或手动选择可用的板材、管材实物' });
-    if (result.type === 'location') { this.balanceSequence = (this.balanceSequence || 0) + 1; this.setData({ source: result, lines: [], selectedBalance: null, serials: [], physical: null, balanceOpen: false }); return; }
+    if (result.type === 'location') return this.changeSource(result);
     if (result.type === 'physical') {
       if (!this.data.physicalMode || result.status !== 'AVAILABLE' || !result.warehouse_id) return this.setData({ formError: '请选择实物调拨，并选择可用的仓内实物' });
-      this.setData({ physical: result, source: { warehouse_id: result.warehouse_id, warehouse_name: result.warehouse_name, location_id: result.location_id, location_code: result.location_code }, targetBatch: result.batch_no || '', formError: '' }); return;
+      return this.changeSource({ warehouse_id: result.warehouse_id, warehouse_name: result.warehouse_name, location_id: result.location_id, location_code: result.location_code }, result);
     }
     if (this.data.physicalMode) return this.setData({ formError: '请扫描板材或管材实物编号' });
     if (!this.data.source.warehouse_id) return this.setData({ formError: '请先选择调出仓库与库位' });
@@ -72,7 +83,7 @@ Page({
       const response = await warehouse.resolveScan('ERP:PHY:' + row.id); const result = response.data || response;
       if (token !== wx.getStorageSync('erp_token') || source !== JSON.stringify(this.data.source) || !this.data.formOpen) return;
       if ((this.data.source.warehouse_id && Number(result.warehouse_id) !== Number(this.data.source.warehouse_id)) || (this.data.source.location_id && Number(result.location_id) !== Number(this.data.source.location_id))) throw new Error('该实物已离开所选来源仓库或库位，请重新选择');
-      this.acceptSource(result); this.setData({ selectionOpen: false });
+      await this.acceptSource(result); this.setData({ selectionOpen: false });
     } catch (error) { this.setData({ selectionOpen: false, formError: page.errorText(error) }); }
     finally { this.setData({ saving: false }); }
   },

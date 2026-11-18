@@ -4,9 +4,13 @@ namespace App\Http\Controllers\Api\V1\Erp;
 
 use App\Http\Controllers\Controller;
 use App\Models\Erp\InventoryStocktake;
+use App\Models\Erp\InventoryStocktakeLine;
+use App\Models\Erp\Item;
 use App\Models\Erp\InventoryAdjustment;
 use App\Services\Erp\AuthContextService;
 use App\Services\Erp\Inventory\InventoryStocktakeService;
+use App\Services\Erp\Inventory\InventoryTransferService;
+use App\Services\Erp\ItemCategoryApplicationService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -65,32 +69,26 @@ class InventoryStocktakeController extends Controller
     {
         $this->authorizePermission($request, 'inventory.stocktake.view');
         $page = $request->validate(['page' => 'sometimes|integer|min:1', 'per_page' => 'sometimes|integer|min:1|max:100',
-            'keyword' => 'nullable|string|max:120', 'location_id' => 'nullable|integer|min:1', 'line_status' => 'nullable|in:uncounted,diff']);
+            'keyword' => 'nullable|string|max:120', 'location_id' => 'nullable|integer|min:1', 'line_id' => 'nullable|integer|min:1', 'line_status' => 'nullable|in:uncounted,diff']);
         $stocktake = InventoryStocktake::query()->with(['warehouse:id,warehouse_code,warehouse_name', 'location:id,location_code,location_name',
             'adjustment:id,adjustment_no,adjustment_status'])->findOrFail($id);
         $keyword = trim((string) ($page['keyword'] ?? ''));
-        $lines = $stocktake->lines()->with(['item:id,item_code,item_name,spec', 'location:id,location_code,location_name', 'unit:id,unit_name'])
+        $lines = $stocktake->lines()->with([InventoryStocktakeLine::ITEM_RELATION, 'location:id,location_code,location_name', 'unit:id,unit_name'])
+            ->when($page['line_id'] ?? null, fn ($q, $lineId) => $q->whereKey($lineId))
             ->when($keyword !== '', fn ($q) => $q->where(fn ($w) => $w->where('batch_no', 'like', "%{$keyword}%")
                 ->orWhereHas('item', fn ($item) => $item->where('item_code', 'like', "%{$keyword}%")->orWhere('item_name', 'like', "%{$keyword}%"))))
             ->when($page['location_id'] ?? null, fn ($q, $locationId) => $q->where('location_id', $locationId))
             ->when(($page['line_status'] ?? null) === 'uncounted', fn ($q) => $q->whereNull('counted_qty'))
-            ->when(($page['line_status'] ?? null) === 'diff', fn ($q) => $q->whereNotNull('difference_qty')->where('difference_qty', '<>', 0))
+            ->when(($page['line_status'] ?? null) === 'diff', fn ($q) => $q->withDifferences())
             ->orderBy('location_id')->orderBy('item_id')->orderBy('batch_no')->orderBy('id')
             ->paginate($page['per_page'] ?? 10);
-        // 进度与差异汇总按整张单一条聚合 SQL 计算，不受当前页和筛选影响。
-        $summary = (array) DB::table('erp_inventory_stocktake_lines')->where('stocktake_id', $stocktake->id)->selectRaw(
-            'COUNT(*) AS total_lines, SUM(counted_qty IS NOT NULL) AS counted_lines, SUM(counted_qty IS NULL) AS uncounted_lines,
-            SUM(difference_qty IS NOT NULL AND difference_qty <> 0) AS diff_lines,
-            COALESCE(SUM(CASE WHEN difference_qty > 0 THEN difference_qty ELSE 0 END), 0) AS gain_qty,
-            COALESCE(SUM(CASE WHEN difference_qty < 0 THEN -difference_qty ELSE 0 END), 0) AS loss_qty,
-            COALESCE(SUM(difference_amount), 0) AS difference_amount')->first();
-        $stocktake->setAttribute('summary', array_map(fn ($value) => $value === null ? 0 : (float) $value, $summary));
+        $stocktake->setAttribute('summary', app(InventoryStocktakeService::class)->summary($stocktake));
         $stocktake->setAttribute('location_options', DB::table('erp_inventory_stocktake_lines as line')
             ->join('erp_locations as location', 'location.id', '=', 'line.location_id')->where('line.stocktake_id', $stocktake->id)
             ->distinct()->orderBy('location.location_code')->limit(500)->get(['location.id', 'location.location_code', 'location.location_name']));
         $entryStats = app(\App\Services\Erp\Inventory\InventoryStocktakeEntryService::class)
             ->stats($lines->getCollection()->where('count_mode', '!=', 'quantity')->pluck('id')->all());
-        $lines->getCollection()->each(fn ($line) => $line->setAttribute('entry_stats', $line->count_mode === 'quantity' ? null
+        $lines->getCollection()->each(fn ($line) => $line->presentForCount($line->count_mode === 'quantity' ? null
             : ($entryStats[$line->id] ?? app(\App\Services\Erp\Inventory\InventoryStocktakeEntryService::class)->emptyStats())));
         $stocktake->setRelation('lines', $lines->getCollection());
         $stocktake->setAttribute('lines_pagination', ['current_page' => $lines->currentPage(), 'per_page' => $lines->perPage(), 'total' => $lines->total()]);
@@ -124,6 +122,32 @@ class InventoryStocktakeController extends Controller
         $user = $this->authorizePermission($request, 'inventory.stocktake.create');
         $data = $request->validate(InventoryStocktakeService::COUNT_RULES);
         return response()->json(['message' => '实盘数已保存', 'data' => $service->saveCounts($id, $data['lines'], (int) $user->legacy_id, $data['expected_version'])]);
+    }
+
+    public function items(Request $request, int $id)
+    {
+        $actor = $this->authorizePermission($request, 'inventory.stocktake.create');
+        $stocktake = InventoryStocktake::with('warehouse')->findOrFail($id);
+        InventoryTransferService::assertWarehouseScope((int) $stocktake->warehouse_id, $actor);
+        $filters = $request->validate(['keyword' => 'nullable|string|max:120', 'category_id' => 'nullable|integer|min:1',
+            'page' => 'nullable|integer|min:1', 'per_page' => 'nullable|integer|min:1|max:100']);
+        $keyword = trim($filters['keyword'] ?? '');
+        $items = Item::query()->whereIn('status', ['enabled', 'active'])->where('is_stock_item', true)->where('item_type', '<>', 'service')
+            ->where('management_scope', $stocktake->warehouse->management_scope)
+            ->where(fn ($q) => $q->whereNull('manufacturing_strategy')->orWhere('manufacturing_strategy', '<>', 'phantom'))
+            ->when($filters['category_id'] ?? null, fn ($q, $category) => $q->whereIn('category_id', [$category, ...app(ItemCategoryApplicationService::class)->descendantIds((int) $category)]))
+            ->when($keyword !== '', fn ($q) => $q->where(fn ($w) => $w->where('item_code', 'like', "%{$keyword}%")
+                ->orWhere('item_name', 'like', "%{$keyword}%")->orWhere('spec', 'like', "%{$keyword}%")))
+            ->orderBy('item_code')->orderBy('id')->paginate($filters['per_page'] ?? 10, ['id', 'item_code', 'item_name', 'spec', 'unit_id',
+                'material_management_mode', 'serial_tracking_mode', 'cutting_mode', 'is_length_cut_material']);
+        $items->getCollection()->each(fn ($item) => $item->setAttribute('cutting_mode', $item->cuttingMode()));
+        return response()->json($items);
+    }
+
+    public function addLine(Request $request, int $id, InventoryStocktakeService $service)
+    {
+        $actor = $this->authorizePermission($request, 'inventory.stocktake.create');
+        return response()->json(['data' => $service->addLine($id, $request->validate(InventoryStocktakeService::ADD_LINE_RULES), $actor)], 201);
     }
 
     /** 逐件明细（序列号/实物），分页并支持按编号搜索。 */

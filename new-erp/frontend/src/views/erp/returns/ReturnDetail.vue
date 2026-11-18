@@ -366,6 +366,7 @@
 </template>
 
 <script>
+import { formatMoney as displayMoney } from '../../../utils/money.js'
 import { erpDateTime } from '../../../utils/dateTime'
 import { purchaseScopeLabel, purchaseScopeIssue } from '@/utils/purchaseManagementScope.mjs'
 import { approvePurchaseReturn, cancelPurchaseReturn, closePurchaseReturn, getPurchaseReturn, offsetPurchaseReturnPayable, postPurchaseReturn, submitPurchaseReturn } from '@/api/erp/purchase'
@@ -444,7 +445,7 @@ export default {
     fmt(v) { return v ? erpDateTime(v, 16) : '-' },
     dateOnly(v) { return v ? String(v).slice(0, 10) : '-' },
     number(v) { return Number(v || 0).toFixed(2) },
-    money(v) { return `¥ ${Number(v || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` },
+    money(v) { return `¥ ${displayMoney(v || 0)}` },
     totalRequested() { return this.number((this.row.items || []).reduce((s, i) => s + Number(i.requested_base_qty || i.requested_sales_qty || 0), 0)) },
     totalSourceQty() { return this.number((this.row.items || []).reduce((s, i) => s + Number(i.source_posted_base_qty || i.requested_base_qty || 0), 0)) },
     totalPostedQty() { return this.number((this.row.items || []).reduce((s, i) => s + Number(i.previous_returned_base_qty || 0), 0)) },
@@ -467,7 +468,7 @@ export default {
     async offsetPayable() {
       if (this.saving || !this.canShowApOffset || !this.apOffsetPreview.available) return
       const preview = this.apOffsetPreview
-      await this.$confirm(`原到货：${preview.receipt_no}；抵扣金额：人民币 ${preview.amount} 元；说明：${preview.audit_reason}。确认将本退货整笔抵扣原到货应付？`, '退货抵扣应付', { type: 'warning', confirmButtonText: '确认抵扣' })
+      await this.$confirm(`原到货：${preview.receipt_no}；抵扣金额：人民币 ${displayMoney(preview.amount)} 元；说明：${preview.audit_reason}。确认将本退货整笔抵扣原到货应付？`, '退货抵扣应付', { type: 'warning', confirmButtonText: '确认抵扣' })
       if (!this.apOffsetRequest || this.apOffsetRequest.expected_fingerprint !== preview.expected_fingerprint) this.apOffsetRequest = { expected_fingerprint: preview.expected_fingerprint, idempotency_key: allocationKey() }
       this.saving = true
       let completed = false

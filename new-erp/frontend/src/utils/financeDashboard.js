@@ -1,7 +1,8 @@
+import { formatMoney as displayMoney } from './money.js'
 const colors = ['#008b4b', '#d99a32', '#657b94', '#a783b5', '#36a99c', '#c67c65']
 const amount = value => Number(value || 0)
 
-export const money = value => value === null || value === undefined ? '—' : Number(value).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 4 })
+export const money = value => value === null || value === undefined ? '—' : displayMoney(value)
 export const axisMoney = value => Math.abs(value) >= 100000000 ? `${Number((value / 100000000).toFixed(1))}亿` : Math.abs(value) >= 10000 ? `${Number((value / 10000).toFixed(1))}万` : value
 export const hasAmounts = (rows, keys) => rows.some(row => keys.some(key => amount(row[key]) !== 0))
 

@@ -98,6 +98,7 @@ class FinanceCashConfirmationApplicationService
             && (int) $allocation->source_document_id === (int) $item['source_document_id']
             && ($allocation->source_line_id === null ? null : (int) $allocation->source_line_id)
                 === (isset($item['source_line_id']) ? (int) $item['source_line_id'] : null)
-            && Money::compare((string) $allocation->allocated_amount, (string) $item['allocated_amount']) === 0;
+            && (Money::compare((string) $allocation->allocated_amount, (string) $item['allocated_amount']) === 0
+                || Money::compare((string) $allocation->allocated_amount, Money::settle((string) $item['allocated_amount'])) === 0);
     }
 }

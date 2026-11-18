@@ -67,6 +67,7 @@
 </template>
 
 <script>
+import { formatMoney as displayMoney } from '../../../utils/money.js'
 import PagedRecordSelect from '@/components/common/PagedRecordSelect.vue'
 import { listFinanceAccounts, listFinanceTransfers, listFinanceCurrencies } from '../../../api/erp/finance'
 
@@ -99,7 +100,7 @@ export default {
     open (row) { this.$router.push(`/finance/transfers/${row.id}`) },
     typeLabel (row) { return row.source_currency === row.target_currency ? '同币种转账' : '跨币种换汇' },
     accountLabel (account, currency) { return account ? `${account.account_name} (${currency})` : `— (${currency || '—'})` },
-    amount (value, currency) { return `${Number(value || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 4 })} ${currency || ''}`.trim() },
+    amount (value, currency) { return `${displayMoney(value || 0)} ${currency || ''}`.trim() },
     fxAmount (row) { const value = Number(row.realized_fx_gain_loss || 0); return `${value > 0 ? '+' : ''}${this.amount(value, row.base_currency || 'CNY')}` },
     fxClass (row) { const value = Number(row.realized_fx_gain_loss || 0); return value > 0 ? 'fx-up' : value < 0 ? 'fx-down' : 'fx-flat' },
     statusLabel (status) { return ({ draft: '草稿', confirmed: '已确认', voided: '已作废' })[status] || status || '—' },

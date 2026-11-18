@@ -1,5 +1,6 @@
 const packing = require('../../../services/packing');
 const view = require('../../../utils/warehouse-page');
+const shipmentLabels = require('../../../utils/warehouse-document').labels;
 const personalShares = require('../../../utils/personal-shares');
 const materialUsage = require('../../../utils/packing-material-usage');
 const statusLabels = { READY: '待作业', WAITING: '等待前序', IN_PROGRESS: '作业中', WAIT_QUALITY: '待质检', COMPLETED: '已完成', CANCELLED: '已取消' };
@@ -7,6 +8,7 @@ const statusTags = { READY: 'blue', WAITING: 'gray', IN_PROGRESS: 'amber', WAIT_
 const outboundLabels = { pending: '待库管审核', approved: '审核通过', rejected: '已驳回', posted: '已出库', withdrawn: '已撤回' };
 const outboundTags = { pending: 'amber', approved: 'green', rejected: 'red', posted: 'green', withdrawn: 'gray' };
 const TABS = [{ key: 'mine', label: '我的待做' }, { key: 'available', label: '可接作业' }, { key: 'all', label: '全部作业' }];
+const SHIPMENT_TABS = [...TABS, { key: 'orders', label: '订单待发' }];
 const clone = value => JSON.parse(JSON.stringify(value));
 const pad = n => (n < 10 ? '0' : '') + n;
 function clock(seconds) {
@@ -44,7 +46,8 @@ function describeOutbound(application) {
 }
 Page({
   data: { shipmentId: 0, page: 1, lastPage: 1, total: 0, rows: [], loading: true, busy: false, error: '', keyword: '',
-    tabs: TABS, scope: 'mine', counts: { mine: 0, available: 0 }, userName: '', userInitial: '工', clockText: '00:00:00', detailTab: 'work',
+    tabs: SHIPMENT_TABS, scope: 'mine', counts: { mine: 0, available: 0 }, userName: '', userInitial: '工', clockText: '00:00:00', detailTab: 'work',
+    expandedShipmentId: 0, pendingLines: [], pendingLinesLoading: false, pendingLinesError: '',
     repairReturnOpen: false, repairReturnSerial: {}, repairReturnReason: '', repairReturnError: '', finishedLocatorOpen: false, finishedLocator: {},
     detailOpen: false, showMaterials: false, operation: {}, pending: false, operationError: '', peopleOpen: false, peopleRows: [], selectedPeople: [], peopleKeyword: '',
     peoplePage: 1, peopleLast: 1, departments: [{ id: 0, name: '全部部门' }], departmentIndex: 0, shareRows: [], peopleError: '', showCollaborationShares: false,
@@ -58,8 +61,9 @@ Page({
     repairLocatorOpen: false, repairLocator: {}, reworkOpen: false, reworkRows: [], reworkPage: 1, reworkLast: 1, reworkKeyword: '', reworkError: '', returnOperation: null },
   onLoad(options = {}) { this.peopleSelected = {}; this.materialSelected = {}; this.identitySelected = {}; const user = wx.getStorageSync('erp_user') || {};
     this.fromOutside = Boolean(options.operation_id);
+    const tabs = options.shipment_id ? TABS : SHIPMENT_TABS;
     this.setData({ shipmentId: Number(options.shipment_id || 0), userName: user.nickname || user.display_name || user.username || '', userInitial: String(user.nickname || user.display_name || user.username || '工')[0],
-      scope: TABS.some(t => t.key === options.scope) ? options.scope : (options.shipment_id ? 'all' : 'mine') }); this.load(); if (options.operation_id) { this.showOperation(Number(options.operation_id)); } },
+      tabs, scope: tabs.some(t => t.key === options.scope) ? options.scope : (options.shipment_id ? 'all' : 'mine') }); this.load(); if (options.operation_id) { this.showOperation(Number(options.operation_id)); } },
   onHide() { this.stopClock(); },
   onShow() { if (this.data.detailOpen && this.data.operation.id) this.startClock(); },
   onUnload() { this.stopClock(); this.sequence = (this.sequence || 0) + 1; this.detailSequence = (this.detailSequence || 0) + 1; this.invalidateSelectors(); },
@@ -86,7 +90,8 @@ Page({
     const outboundMaterials = describeOutbound(outbound.materials);
     actions.materials = Boolean(actions.materials && !['pending', 'approved'].includes(outboundMaterials?.status));
     return Object.assign({}, row, { statusLabel: statusLabels[row.status] || row.status, statusTag: statusTags[row.status] || 'gray', ownerName: owner ? owner.name : '待接单',
-      my, productText: contents.map(c => c.product_name || c.item_name).filter(Boolean).filter((v, i, a) => a.indexOf(v) === i).join('、'),
+      shipmentProgress: shipmentLabels[row.shipment_progress_status],
+      my, productText: contents.map(c => c.item_name || c.product_name).filter(Boolean).filter((v, i, a) => a.indexOf(v) === i).join('、'),
       specText,
       kitting: row.kitting ? Object.assign({}, row.kitting, {
         products: (row.kitting.products || []).map(item => Object.assign({}, item, { requiredText: view.quantity(item.required_qty), serialText: (item.serial_nos || []).join('、') })),
@@ -101,6 +106,8 @@ Page({
         materials: outboundMaterials, dispatch: describeOutbound(outbound.dispatch),
         can_request_dispatch: false,
         can_dispatch: Boolean(outbound.can_dispatch && can('sales_order.shipment.packing.execute')),
+        actual_dispatch: outbound.actual_dispatch,
+        can_add_tracking: Boolean(outbound.can_add_tracking && can('sales_order.shipment.packing.execute')),
         products: describeOutbound(outbound.products),
         dispatch_block_reason: outbound.dispatch_block_reason || '',
         dispatchPackageText: (outbound.dispatch_package_nos || []).join('、') || row.package_no || '',
@@ -151,13 +158,43 @@ Page({
   },
   load() {
     const sequence = this.sequence = (this.sequence || 0) + 1;
-    this.setData({ loading: true, error: '' });
-    return packing.operations({ shipment_id: this.data.shipmentId || undefined, page: this.data.page, per_page: 10, keyword: this.data.keyword,
-      scope: this.data.scope === 'all' ? undefined : this.data.scope, include_counts: 1 }).then(response => {
+    this.setData({ loading: true, error: '', expandedShipmentId: 0, pendingLines: [] });
+    const orders = this.data.scope === 'orders';
+    const query = { page: this.data.page, per_page: 10, keyword: this.data.keyword };
+    const request = orders ? packing.pendingShipments(query) : packing.operations({ ...query, shipment_id: this.data.shipmentId || undefined,
+      scope: this.data.scope, include_counts: 1 });
+    return request.then(response => {
       if (sequence !== this.sequence) return;
-      const paged = view.rows(response); this.setData({ rows: paged.rows.map(row => this.decorate(row)), page: paged.page, lastPage: paged.lastPage, total: paged.total, loading: false,
+      const paged = view.rows(response);
+      const hasMoreOrders = orders && Boolean(response.data.next_page_url || response.data.has_more);
+      this.setData({ rows: orders ? paged.rows.map(row => ({ ...row, shipmentProgress: shipmentLabels[row.shipment_progress_status || row.shipment_status] })) : paged.rows.map(row => this.decorate(row)), page: paged.page,
+        lastPage: orders ? paged.page + Number(hasMoreOrders) : paged.lastPage, total: paged.total, loading: false,
         counts: response.counts || this.data.counts });
     }).catch(error => { if (sequence === this.sequence) this.setData({ loading: false, error: view.errorText(error) }); });
+  },
+  togglePendingShipment(event) {
+    const id = Number(event.currentTarget.dataset.id);
+    const sequence = this.pendingLinesSequence = (this.pendingLinesSequence || 0) + 1;
+    const listSequence = this.sequence;
+    if (this.data.expandedShipmentId === id && !this.data.pendingLinesError) {
+      this.setData({ expandedShipmentId: 0 });
+      return;
+    }
+    this.setData({ expandedShipmentId: id, pendingLines: [], pendingLinesLoading: true, pendingLinesError: '' });
+    return packing.pendingShipment(id).then(response => {
+      if (sequence !== this.pendingLinesSequence || listSequence !== this.sequence) return;
+      const lines = (response.data.pending_lines || []).map(line => ({
+        id: line.sales_order_line_id, product: line.item_name || line.product_name,
+        spec: line.sku_name !== (line.item_name || line.product_name) ? line.sku_name : '',
+        remaining: view.quantity(line.remaining_qty), inProgress: view.quantity(line.in_progress_qty),
+        available: view.quantity(line.available_qty), waiting: view.quantity(line.waiting_qty), unit: line.unit_name || '',
+      }));
+      this.setData({ pendingLines: lines, pendingLinesLoading: false });
+    }).catch(error => {
+      if (sequence === this.pendingLinesSequence && listSequence === this.sequence) {
+        this.setData({ pendingLinesLoading: false, pendingLinesError: view.errorText(error) });
+      }
+    });
   },
   keywordInput(event) { this.setData({ keyword: event.detail.value }); },
   clearKeyword() { this.setData({ keyword: '', page: 1 }); this.load(); },
@@ -244,9 +281,12 @@ Page({
     if (this.data.busy || !this.data.operation.id) return Promise.resolve(false);
     this.setData({ busy: true, operationError: '', materialError: '', dispatchError: '' });
     const op = this.data.operation;
-    return packing.action(op.id, Object.assign({ action, expected_version: op.business_version }, payload || {})).then(() => {
+    return packing.action(op.id, Object.assign({ action, expected_version: op.business_version }, payload || {})).then(result => {
       this.setData({ pending: false, peopleOpen: false, materialsOpen: false, dispatchOpen: false, identityOpen: false, inspectionOpen: false, operationSerialIds: [] });
-      return Promise.all([this.load(), this.showOperation(op.id)]).then(() => true);
+      return Promise.all([this.load(), this.showOperation(op.id)]).then(() => {
+        if (result.dispatch_no) view.modal(this, { title: '已确认发出', content: '发货批次号 ' + result.dispatch_no, showCancel: false });
+        return true;
+      });
     }).catch(error => {
       const message = Object.values(error.errors || (error.details && error.details.errors) || {}).flat().join('；') || view.errorText(error);
       this.setData({ operationError: message, materialError: message, dispatchError: message, peopleError: error.pendingCommand ? '原操作结果待确认，请重试原操作。' : message, pending: Boolean(error.pendingCommand) });
@@ -276,6 +316,17 @@ Page({
     if (this.data.busy || this.data.pending || this.data.showKittingShortages || !op.kitting?.can_confirm) return;
     view.modal(this, { title: '东西都齐了吗？', content: '请确认清单中的整机、随货配件和包装材料已经全部拿齐，设备编号与现场一致。', confirmText: '确认已拿齐',
       success: result => { if (result.confirm && this.data.operation.id === op.id) this.execute('confirm_kitting', { kitting_fingerprint: op.kitting.fingerprint }); } });
+  },
+  addTracking() {
+    const op = this.data.operation;
+    if (this.data.pending || this.data.busy || !op.outbound?.can_add_tracking) return;
+    view.modal(this, { mode: 'input', editable: true, title: '补录运单号', content: op.outbound.actual_dispatch.dispatch_no,
+      placeholderText: '填写该批包裹的运单号或柜号', confirmText: '保存', success: result => {
+        if (!result.confirm || this.data.operation.id !== op.id) return;
+        const tracking = (result.content || '').trim();
+        if (!tracking || tracking.length > 120) return wx.showToast({ title: '请输入 1 至 120 个字符的运单号', icon: 'none' });
+        this.execute('add_tracking', { dispatch_id: op.outbound.actual_dispatch.id, tracking_no: tracking });
+      } });
   },
   openDispatch() {
     const op = this.data.operation;

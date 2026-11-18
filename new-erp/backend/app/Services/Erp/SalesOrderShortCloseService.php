@@ -31,6 +31,7 @@ class SalesOrderShortCloseService
         $order->loadMissing('lines');
         $lines = [];
         $newReceivable = Money::normalize((string) ($order->freight_amount ?? 0));
+        $displayedTotal = Money::settle($newReceivable);
         foreach ($order->lines->sortBy('id') as $line) {
             $physical = SalesOrderFulfillmentPolicy::isPhysical((string) ($line->line_type ?? 'physical'));
             $orderQty = (float) $line->order_qty;
@@ -38,28 +39,38 @@ class SalesOrderShortCloseService
             $amount = Money::normalize((string) ($line->amount_incl_tax ?? $line->amount ?? 0));
             $closeQty = $physical ? max(0, round($orderQty - $shippedQty, 8)) : 0.0;
             $shippedAmount = ! $physical ? $amount
-                : ($orderQty <= 0 ? '0.0000' : Money::normalize(bcdiv(bcmul($amount, $this->decimal($shippedQty), 8), $this->decimal($orderQty), 2)));
-            $newReceivable = Money::add($newReceivable, $shippedAmount);
+                : ($orderQty <= 0 ? '0' : bcdiv(
+                    bcmul($amount, (string) $line->shipped_qty, Money::SCALE + Money::CALC_SCALE),
+                    (string) $line->order_qty, Money::CALC_SCALE
+                ));
+            $newReceivable = bcadd($newReceivable, $shippedAmount, Money::CALC_SCALE);
+            $displayedShippedAmount = Money::settle($shippedAmount);
+            $displayedTotal = bcadd($displayedTotal, $displayedShippedAmount, 2);
             $lines[] = [
                 'id' => $line->id, 'line_no' => $line->line_no, 'name' => $line->product_name ?: ($line->item_name ?: $line->sku_name),
                 'sku_name' => $line->sku_name, 'unit_name' => $line->unit_name_snapshot,
                 'is_physical' => $physical, 'order_qty' => $orderQty, 'shipped_qty' => $shippedQty, 'close_qty' => $closeQty,
-                'amount' => $amount, 'shipped_amount' => $shippedAmount,
+                'amount' => Money::settle($amount), 'shipped_amount' => $displayedShippedAmount,
             ];
         }
+        $newReceivable = Money::settle($newReceivable);
+        $roundingAdjustment = bcsub($newReceivable, $displayedTotal, 2);
+        // 折扣超过实发金额时，应收最低为零；该业务调整不属于舍入尾差。
+        if (bccomp($newReceivable, '0', 2) < 0) $newReceivable = '0.00';
         $status = $this->settlements->status($order);
         $before = $this->settlements->receivableAmount($order);
         $returnCredit = $status['return_credit_amount'];
         $netAfter = Money::maxZero(Money::sub($newReceivable, $returnCredit));
         return [
             'lines' => $lines,
-            'contract_amount' => Money::normalize((string) ($order->total_amount ?? 0)),
+            'contract_amount' => Money::settle((string) ($order->total_amount ?? 0)),
             'receivable_before' => $before,
             'receivable_after' => $newReceivable,
-            'short_closed_amount' => Money::sub($before, $newReceivable),
+            'rounding_adjustment' => $roundingAdjustment,
+            'short_closed_amount' => Money::settle(Money::sub($before, $newReceivable)),
             'return_credit_amount' => $returnCredit,
             'net_received_amount' => $status['net_received_amount'],
-            'overpaid_amount' => Money::maxZero(Money::sub($status['net_received_amount'], $netAfter)),
+            'overpaid_amount' => Money::settle(Money::maxZero(Money::sub($status['net_received_amount'], $netAfter))),
             'blockers' => $this->blockers($order),
         ];
     }
@@ -116,10 +127,5 @@ class SalesOrderShortCloseService
             $reasons[] = '订单有进行中的退货';
         }
         return $reasons;
-    }
-
-    private function decimal(float $value): string
-    {
-        return number_format($value, 8, '.', '');
     }
 }

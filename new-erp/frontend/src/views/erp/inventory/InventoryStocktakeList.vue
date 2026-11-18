@@ -211,6 +211,7 @@
     </el-dialog>
 
     <stocktake-entry-dialog :visible.sync="entryVisible" :stocktake="detail" :line="entryLine" :editable="editable" @saved="entrySaved" />
+    <stocktake-found-line-dialog v-if="foundLineOpen && editable" :stocktake="detail" @close="foundLineOpen = false" @added="foundLineAdded" />
 
     <el-dialog :title="detail ? `盘点工作台 · ${detail.stocktake_no}` : '盘点单详情'" :visible.sync="detailVisible" :width="dialogWidth('1140px')" :before-close="closeDetail" append-to-body :close-on-click-modal="false">
       <div v-if="detail" v-loading="detailLoading" class="detail-dialog-body">
@@ -272,6 +273,8 @@
             <el-button size="small" type="success" class="btn-theme-create" icon="el-icon-search" :disabled="detailLoading || saving" @click="filterLines">筛选</el-button>
           </div>
           <div class="line-filter-right">
+            <el-button v-if="focusedLineId" size="small" :disabled="detailLoading || saving" @click="filterLines">查看全部明细</el-button>
+            <el-button v-if="editable" size="small" plain icon="el-icon-plus" :disabled="detailLoading || saving" @click="openFoundLine">补录账外物料</el-button>
             <span v-if="draftCount" class="draft-pill"><i class="el-icon-edit" /> 当前有 {{ draftCount }} 行未保存修改</span>
             <el-button v-if="editable" size="small" plain icon="el-icon-check" :disabled="detailLoading || saving" @click="fillPageWithBookQty">本页未盘按账面数填充</el-button>
           </div>
@@ -368,12 +371,14 @@
 </template>
 
 <script>
+import { formatMoney as displayMoney } from '../../../utils/money.js'
 import { listStocktakes, getStocktakeOptions, getStocktake, createStocktake, saveStocktakeCounts, completeStocktake, cancelStocktake } from '@/api/erp/inventory'
 import StocktakeEntryDialog from './StocktakeEntryDialog.vue'
+import StocktakeFoundLineDialog from './StocktakeFoundLineDialog.vue'
 
 export default {
   name: 'InventoryStocktakeList',
-  components: { StocktakeEntryDialog },
+  components: { StocktakeEntryDialog, StocktakeFoundLineDialog },
   data() {
     return {
       loading: false,
@@ -398,6 +403,8 @@ export default {
       originalCounts: {},
       lineFilters: { keyword: '', location_id: null, line_status: '' },
       entryVisible: false,
+      foundLineOpen: false,
+      focusedLineId: null,
       entryLine: null,
       windowWidth: window.innerWidth
     }
@@ -435,7 +442,7 @@ export default {
     },
     money(value) {
       if (value === null || value === undefined || value === '') return '—'
-      return Number(value || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+      return displayMoney(value || 0)
     },
     countedLines(row) {
       if (row.counted_lines_count !== undefined && row.counted_lines_count !== null) return Number(row.counted_lines_count)
@@ -551,6 +558,8 @@ export default {
       })
     },
     async openDetail(id) {
+      this.foundLineOpen = false
+      this.focusedLineId = null
       this.detail = null
       this.detailPage = 1
       this.draftCounts = {}
@@ -580,6 +589,19 @@ export default {
       this.entryLine = line
       this.entryVisible = true
     },
+    openFoundLine() {
+      this.captureEdits()
+      this.foundLineOpen = true
+    },
+    async foundLineAdded(result) {
+      this.foundLineOpen = false
+      this.detail.business_version = result.business_version
+      this.focusedLineId = result.line_id
+      this.lineFilters = { keyword: '', location_id: null, line_status: '' }
+      this.$message.success('已添加账外物料，请录入实盘结果')
+      await this.loadDetailPage(this.detail.id, 1)
+      this.load()
+    },
     async entrySaved(version) {
       this.detail.business_version = version
       await this.loadDetailPage(this.detail.id, this.detailPage)
@@ -608,6 +630,7 @@ export default {
     async filterLines() {
       if (!this.detail || this.detailLoading || this.saving) return
       this.captureEdits()
+      this.focusedLineId = null
       await this.loadDetailPage(this.detail.id, 1)
     },
     async changeDetailPage(page) {
@@ -619,7 +642,7 @@ export default {
       this.detailLoading = true
       try {
         const filters = Object.fromEntries(Object.entries(this.lineFilters).filter(([, value]) => value !== '' && value !== null))
-        const { data } = await getStocktake(id, { ...filters, page, per_page: 10 })
+        const { data } = await getStocktake(id, { ...filters, line_id: this.focusedLineId || undefined, page, per_page: 10 })
         if (this.detail && Object.keys(this.draftCounts).length) data.data.business_version = this.detail.business_version
         data.data.lines.forEach(line => {
           if (!this.draftCounts[line.id]) this.$set(this.originalCounts, line.id, this.countInput(line))

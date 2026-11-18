@@ -12,7 +12,7 @@
         <text class="sp-badge">发货作业</text>
       </view>
     </view>
-    <view class="sp-summary">待做 {{counts.mine || 0}} · 可接 {{counts.available || 0}}</view>
+    <view wx:if="{{scope !== 'orders'}}" class="sp-summary">待做 {{counts.mine || 0}} · 可接 {{counts.available || 0}}</view>
   </view>
 
   <view class="sp-list-body">
@@ -21,7 +21,7 @@
       <view class="sp-tabs">
         <view wx:for="{{tabs}}" wx:key="key" class="sp-tab {{scope === item.key ? 'on' : ''}}" data-scope="{{item.key}}" bindtap="pickScope">
           <text>{{item.label}}</text>
-          <text wx:if="{{item.key !== 'all'}}" class="sp-tab-count">({{counts[item.key] || 0}})</text>
+          <text wx:if="{{item.key === 'mine' || item.key === 'available'}}" class="sp-tab-count">({{counts[item.key] || 0}})</text>
         </view>
       </view>
 
@@ -31,7 +31,7 @@
           class="sp-search-input"
           value="{{keyword}}"
           bindinput="keywordInput"
-          placeholder="搜工序名称 / 发货单号 / 订单号 / 产品 / 规格型号"
+          placeholder="{{scope === 'orders' ? '搜订单号 / 发货单号 / 客户' : '搜工序名称 / 发货单号 / 订单号 / 产品 / 规格型号'}}"
           confirm-type="search"
           bindconfirm="search"
         />
@@ -44,15 +44,48 @@
     <view wx:if="{{error}}" class="mt-error">{{error}}</view>
     <view wx:if="{{loading && !rows.length}}" class="sp-empty">
       <van-loading color="#d81e06" size="44rpx" />
-      <text class="sp-empty-sub">正在读取发货作业…</text>
+      <text class="sp-empty-sub">{{scope === 'orders' ? '正在读取待发订单…' : '正在读取发货作业…'}}</text>
     </view>
-    <view wx:elif="{{!rows.length}}" class="sp-empty">
+    <view wx:elif="{{!rows.length && !error}}" class="sp-empty">
       <van-icon name="notes-o" size="76rpx" color="#cbd5e1" />
-      <text class="sp-empty-title">{{scope === 'mine' ? '暂无进行中的发货作业' : (scope === 'available' ? '暂无可接的发货作业' : '暂无发货作业记录')}}</text>
-      <text class="sp-empty-sub">{{scope === 'mine' ? '可切换至「可接作业」接单作业' : '可调整搜索关键词查询发货作业'}}</text>
+      <text class="sp-empty-title">{{scope === 'orders' ? '暂无待发订单' : (scope === 'mine' ? '暂无进行中的发货作业' : (scope === 'available' ? '暂无可接的发货作业' : '暂无发货作业记录'))}}</text>
+      <text wx:if="{{scope !== 'orders' || keyword}}" class="sp-empty-sub">{{scope === 'mine' ? '可切换至「可接作业」接单作业' : '可调整搜索关键词重新查询'}}</text>
     </view>
 
+    <block wx:if="{{scope === 'orders'}}">
+      <view wx:for="{{rows}}" wx:key="id" class="sp-card">
+        <view class="sp-card-head" data-id="{{item.id}}" bindtap="togglePendingShipment">
+          <view class="sp-head-left">
+            <text class="sp-no">{{item.sales_order_no}}</text>
+            <text wx:if="{{item.customer_name}}" class="sp-meta-chip">{{item.customer_name}}</text>
+          </view>
+          <text class="sp-pending-toggle">{{expandedShipmentId !== item.id ? '查看产品' : (pendingLinesError ? '重新加载' : '收起')}}</text>
+        </view>
+        <view class="sp-card-main">
+          <view class="sp-cf-info">发货单 {{item.shipment_no}}<text wx:if="{{item.shipmentProgress}}"> · {{item.shipmentProgress}}</text></view>
+          <view wx:if="{{item.expected_delivery_date}}" class="sp-cf-info">交期 {{item.expected_delivery_date}}</view>
+          <block wx:if="{{expandedShipmentId === item.id}}">
+            <view wx:if="{{pendingLinesLoading}}" class="mt-muted">正在读取待发产品…</view>
+            <view wx:elif="{{pendingLinesError}}" class="mt-error">{{pendingLinesError}}</view>
+            <view wx:elif="{{!pendingLines.length}}" class="mt-muted">这张订单已无待发产品</view>
+            <view wx:for="{{pendingLines}}" wx:key="id" wx:for-item="line" class="sp-pending-line">
+              <view class="sp-title-row">
+                <text class="sp-no">{{line.product}}</text>
+                <text class="sp-no">待发 {{line.remaining}}{{line.unit}}</text>
+              </view>
+              <view wx:if="{{line.spec}}" class="sp-cf-info">{{line.spec}}</view>
+              <view class="sp-meta-chips">
+                <text class="sp-meta-chip">已加入发货单 {{line.inProgress}}{{line.unit}}</text>
+                <text class="sp-meta-chip">可加入库存 {{line.available}}{{line.unit}}</text>
+                <text class="sp-meta-chip">待备实物 {{line.waiting}}{{line.unit}}</text>
+              </view>
+            </view>
+          </block>
+        </view>
+      </view>
+    </block>
     <!-- 发货作业卡片列表（对齐 tasks/index .wo-group-card.pack-card） -->
+    <block wx:else>
     <view wx:for="{{rows}}" wx:for-item="operation" wx:key="id" class="sp-card" data-id="{{operation.id}}" bindtap="openOperation">
       <view class="sp-card-head">
         <view class="sp-head-left">
@@ -87,7 +120,7 @@
         <view class="sp-card-foot">
           <view class="sp-cf-info">
             <view class="mono">{{operation.shipment_no}} · {{operation.package_no}}</view>
-            <view>主责接单：{{operation.ownerName}} · 我的工时 {{operation.myMinutesText}} · 本道合计 {{operation.totalMinutesText}}</view>
+            <view wx:if="{{!operation.dispatch_only}}">主责接单：{{operation.ownerName}} · 我的工时 {{operation.myMinutesText}} · 本道合计 {{operation.totalMinutesText}}</view>
           </view>
           <button
             class="sp-cf-btn {{operation.allowed_actions.claim ? '' : 'outline'}}"
@@ -98,10 +131,11 @@
         </view>
       </view>
     </view>
+    </block>
 
     <view wx:if="{{lastPage > 1}}" class="mt-pager">
       <button class="mt-btn ghost mt-btn-mini" disabled="{{page <= 1 || busy}}" data-delta="-1" bindtap="turnPage">上一页</button>
-      <text>{{page}} / {{lastPage}}</text>
+      <text>{{scope === 'orders' ? '第 ' + page + ' 页' : page + ' / ' + lastPage}}</text>
       <button class="mt-btn ghost mt-btn-mini" disabled="{{page >= lastPage || busy}}" data-delta="1" bindtap="turnPage">下一页</button>
     </view>
   </view>
@@ -117,6 +151,7 @@
     <view class="tk-mc-head">
       <view class="tk-mc-head-left">
         <text class="mono tk-mc-wo-no">{{operation.shipment_no || '-'}}</text>
+        <text wx:if="{{operation.shipmentProgress}}" class="tk-mini-tag">整单{{operation.shipmentProgress}}</text>
         <text class="tk-mini-tag blue">{{operation.operation_name || '发货作业'}}</text>
         <text class="tk-mini-tag {{operation.statusTag === 'green' ? 'green' : (operation.statusTag === 'amber' ? 'amber' : '')}}">{{operation.is_public_snapshot ? '公共工序 · ' : ''}}{{operation.statusLabel}}</text>
         <text wx:if="{{operation.repairCount}}" class="tk-mini-tag red">{{operation.repairCount}}台返修</text>
@@ -169,7 +204,7 @@
     </view>
 
     <!-- 4 列核心进度指标栏（与 task/index .tk-kpi-bar 完全一致） -->
-    <view class="tk-kpi-bar">
+    <view wx:if="{{!operation.dispatch_only}}" class="tk-kpi-bar">
       <view class="tk-kpi-cell">
         <view class="tk-kpi-val">{{operation.qtyText || 0}}</view>
         <view class="tk-kpi-lbl">计划数量</view>
@@ -230,7 +265,7 @@
   <view wx:if="{{operation.order_info && operation.order_info.changed.length}}" class="mt-error" data-tab="docs" bindtap="switchDetailTab">销售订单已变更（{{operation.changedText}}），点击查看最新订单要求 ›</view>
 
   <!-- 3. 工作区三栏分段 Tab 切换器（与 task/index .tk-seg-tabs 完全一致） -->
-  <view class="tk-seg-tabs">
+  <view wx:if="{{!operation.dispatch_only}}" class="tk-seg-tabs">
     <view class="tk-seg-item {{detailTab === 'work' ? 'active' : ''}}" data-tab="work" bindtap="switchDetailTab">
       <text>报工与核对</text>
       <view class="tk-seg-badge">{{operation.serialResults.length || operation.contents.length || 0}}</view>
@@ -246,7 +281,7 @@
   </view>
 
   <!-- ==================== TAB 1: 报工与核对 ==================== -->
-  <block wx:if="{{detailTab === 'work'}}">
+  <block wx:if="{{operation.dispatch_only || detailTab === 'work'}}">
     <!-- 本次作业设备序列号（对齐 task/index 单件选择卡片） -->
     <view wx:if="{{operation.serialResults.length}}" class="mt-card">
       <view class="mt-card-title">
@@ -365,11 +400,17 @@
     </view>
 
     <!-- 确认发货 / 提货 -->
-    <view wx:if="{{operation.outbound.can_dispatch || operation.outbound.dispatch || operation.outbound.dispatch_block_reason}}" class="mt-card">
+    <view wx:if="{{operation.outbound.can_dispatch || operation.outbound.actual_dispatch || operation.outbound.dispatch || operation.outbound.dispatch_block_reason}}" class="mt-card">
       <view class="mt-card-title">
         <text>确认发货 / 提货</text>
         <text wx:if="{{operation.outbound.can_dispatch && !pending}}" class="tk-link red" bindtap="openDispatch">确认发货 / 提货 ›</text>
       </view>
+      <block wx:if="{{operation.outbound.actual_dispatch}}">
+        <view class="mt-kv"><text class="k">发货批次号</text><text class="v mono">{{operation.outbound.actual_dispatch.dispatch_no}}</text></view>
+        <view wx:if="{{operation.outbound.actual_dispatch.delivery_mode === 'dispatch'}}" class="mt-kv"><text class="k">运单号</text><text class="v mono">{{operation.outbound.actual_dispatch.tracking_no || '待补录'}}</text>
+          <text wx:if="{{operation.outbound.can_add_tracking && !pending}}" class="tk-link red" bindtap="addTracking">补录运单号 ›</text>
+        </view>
+      </block>
       <view wx:if="{{operation.outbound.dispatch_block_reason}}" class="mt-muted mt-gap">{{operation.outbound.dispatch_block_reason}}</view>
       <block wx:if="{{operation.outbound.dispatch}}">
         <view class="mt-kv">
@@ -412,7 +453,7 @@
         </view>
         <view wx:for="{{operation.contents}}" wx:for-item="content" wx:key="id" class="tk-mt-tr">
           <view class="tk-mt-td col-name">
-            <view class="tk-mt-name">{{content.product_name || content.item_name}}</view>
+            <view class="tk-mt-name">{{content.item_name || content.product_name}}</view>
           </view>
           <view class="tk-mt-td col-spec">
             <view>{{content.specText || '标准规格'}}</view>

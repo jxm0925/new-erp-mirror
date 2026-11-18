@@ -1,4 +1,5 @@
 const { formatTime } = require('./util');
+const moneyText = require('./money');
 function dateTime(value) {
   if (!value) return '';
   const text = String(value);
@@ -14,9 +15,8 @@ function quantity(value) {
   return String(value).replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '');
 }
 function money(value) {
-  if (value === null || value === undefined || value === '') return '';
-  const amount = Number(value);
-  return Number.isFinite(amount) ? `¥${amount.toFixed(4)}` : '';
+  const amount = moneyText(value);
+  return amount ? '¥' + amount : '';
 }
 function rows(response) {
   const body = response && response.data && !Array.isArray(response.data) ? response.data : response;
@@ -62,4 +62,4 @@ function modal(page, options) {
   if (dlg && typeof dlg.show === 'function') return dlg.show(options);
   return wx.showModal(options);
 }
-module.exports = { permissions, quantity, money, dateTime, rows, decorate, openDocument, errorText, resumingScan, back, modal };
+module.exports = { permissions, quantity, money, moneyText, dateTime, rows, decorate, openDocument, errorText, resumingScan, back, modal };

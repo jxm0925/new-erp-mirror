@@ -118,7 +118,7 @@ final class CrmCustomerLifecycleQueryService
     public function shipments(int $customerId, array $filters, object $actor): array
     {
         $this->assertCustomer($customerId, $actor, 'view_shipments');
-        $query = SalesShipment::query()->whereHas('order', function (Builder $orders) use ($customerId, $actor): void {
+        $query = SalesShipment::query()->withProgress()->whereHas('order', function (Builder $orders) use ($customerId, $actor): void {
             $orders->where('customer_id', $customerId);
             $this->orders->apply($orders, $actor, true);
         })->with('order:id,sales_order_no');
@@ -126,6 +126,7 @@ final class CrmCustomerLifecycleQueryService
         $page->through(fn (SalesShipment $shipment) => [
             'id' => $shipment->id, 'shipment_no' => $shipment->shipment_no, 'order_id' => $shipment->sales_order_id,
             'sales_order_no' => $shipment->order?->sales_order_no, 'shipment_status' => $shipment->shipment_status,
+            'shipment_progress_status' => $shipment->shipment_progress_status,
             'delivery_mode' => $shipment->delivery_mode,
             'carrier_name' => $shipment->carrier_name_snapshot, 'tracking_no' => $shipment->tracking_no,
             'shipped_at' => $shipment->shipped_at?->toDateTimeString(), 'completed_at' => $shipment->completed_at?->toDateTimeString(),

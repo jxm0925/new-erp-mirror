@@ -482,6 +482,7 @@
 </template>
 
 <script>
+import { formatMoney as displayMoney } from '../../../utils/money.js'
 import PagedRecordSelect from '@/components/common/PagedRecordSelect.vue'
 import { listCashDocuments, confirmCashDocument, voidCashDocument, listFinanceAccounts, resolveFinanceSource, getCashDocument } from '../../../api/erp/finance'
 import FinanceAllocation from './FinanceAllocation.vue'
@@ -522,7 +523,7 @@ export default {
   methods: {
     listAccounts: listFinanceAccounts,
     accountLabel(row) { return row.account_name },
-    money(value) { return Number(value || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 4 }) },
+    money(value) { return displayMoney(value || 0) },
     dateText(value) { return String(value || '').slice(0, 10) || '—' },
     tagType(value) { return value === 'confirmed' ? 'success' : value === 'voided' ? 'danger' : 'warning' },
     statusLabel(row) {
@@ -739,7 +740,7 @@ export default {
         return this.$router.push(this.basePath + '/' + row.id)
       }
       try {
-        await this.$confirm(`确认${this.title}单 ${row.document_no}：${row.party_name_snapshot || ''} ${Number(row.amount || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${row.currency || ''}。确认后金额不可编辑，是否继续？`, '确认资金事实', { type: 'warning' })
+        await this.$confirm(`确认${this.title}单 ${row.document_no}：${row.party_name_snapshot || ''} ${displayMoney(row.amount || 0)} ${row.currency || ''}。确认后金额不可编辑，是否继续？`, '确认资金事实', { type: 'warning' })
         await confirmCashDocument(row.id)
         this.$message.success('已确认')
         await this.load()

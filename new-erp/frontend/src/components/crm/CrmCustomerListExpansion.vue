@@ -18,6 +18,7 @@
 </template>
 
 <script>
+import { formatMoney as displayMoney } from '../../utils/money.js'
 import { listCrmLeads, listCrmOpportunities, crmDate, crmError } from '@/api/erp/crm'
 export default {
   name: 'CrmCustomerListExpansion',
@@ -35,7 +36,7 @@ export default {
   methods: {
     date: crmDate,
     tabChanged() { this.page = 1; this.load() },
-    money(value,currency) { return value === null || value === undefined ? '待核实' : `${currency || 'CNY'} ${Number(value).toLocaleString('zh-CN',{maximumFractionDigits:2})}` },
+    money(value,currency) { return value === null || value === undefined ? '待核实' : `${currency || 'CNY'} ${displayMoney(value)}` },
     async load() {
       if ((this.tab === 'opportunities' && !this.canOpportunities) || (this.tab === 'leads' && !this.canLeads)) return
       const sequence = ++this.sequence

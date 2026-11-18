@@ -116,27 +116,27 @@
           </thead>
           <tbody>
             <tr>
-              <td class="col-center">{{ taxRate }}%</td>
+              <td class="col-center">{{ taxRates.map(rate => rate + '%').join(' / ') || '—' }}</td>
               <td class="col-center">{{ money(original.amount_excl_tax) }}</td>
               <td class="col-center">{{ money(original.tax_amount) }}</td>
               <td class="col-center">{{ money(alreadyRedExcl) }}</td>
               <td class="col-center">
                 <el-input
-                  v-model.trim="form.amount_excl_tax"
+                  :value="form.red_scope === 'full' || draftId ? settlementAmount(form.amount_excl_tax) : form.amount_excl_tax"
+                  @input="editAmount('amount_excl_tax', $event)"
                   :disabled="form.red_scope === 'full' || !!draftId"
                   size="small"
                   class="table-cell-input"
-                  @input="syncGross"
                   @blur="normalizeAmounts"
                 />
               </td>
               <td class="col-center">
                 <el-input
-                  v-model.trim="form.tax_amount"
+                  :value="form.red_scope === 'full' || draftId ? settlementAmount(form.tax_amount) : form.tax_amount"
+                  @input="editAmount('tax_amount', $event)"
                   :disabled="form.red_scope === 'full' || !!draftId"
                   size="small"
                   class="table-cell-input"
-                  @input="syncGross"
                   @blur="normalizeAmounts"
                 />
               </td>
@@ -180,7 +180,7 @@
               <path v-if="taxValid" fill-rule="evenodd" d="M10 18a8 8 0 1 0 0-16 8 8 0 0 0 0 16Zm3.857-9.809a.75.75 0 0 0-1.214-.882l-3.483 4.79-1.88-1.88a.75.75 0 1 0-1.06 1.061l2.5 2.5a.75.75 0 0 0 1.137-.089l4-5.5Z" clip-rule="evenodd" />
               <path v-else fill-rule="evenodd" d="M10 18a8 8 0 1 0 0-16 8 8 0 0 0 0 16ZM8.28 7.22a.75.75 0 0 0-1.06 1.06L8.94 10l-1.72 1.72a.75.75 0 1 0 1.06 1.06L10 11.06l1.72 1.72a.75.75 0 1 0 1.06-1.06L11.06 10l1.72-1.72a.75.75 0 0 0-1.06-1.06L10 8.94 8.28 7.22Z" clip-rule="evenodd" />
             </svg>
-            <span>税额按税率自动计算：{{ money(form.amount_excl_tax) }} × {{ taxRate }}% = {{ money(form.tax_amount) }}</span>
+            <span>本次未税金额、税额均须在各自可红冲余额内</span>
           </p>
           <p :class="scopeValid ? 'pass' : 'fail'">
             <svg class="chk-svg" viewBox="0 0 20 20" width="14" height="14" fill="currentColor">
@@ -273,6 +273,7 @@
 </template>
 
 <script>
+import { formatMoney as displayMoney, settlementAmount } from '../../../utils/money.js'
 import { reserveForCreatePage, clearCreatePageReservation } from '../../../utils/documentNumberReservation'
 import {
   getFinanceInvoice,
@@ -281,7 +282,7 @@ import {
   createFinanceRedInvoiceDraft,
   confirmFinanceRedInvoiceDraft
 } from '../../../api/erp/finance'
-import { roundInvoiceAmount } from '../../../utils/financeInvoiceAmount'
+import { roundInvoiceAmount, sumInvoiceAmounts } from '../../../utils/financeInvoiceAmount'
 
 const today = () => new Date().toISOString().slice(0, 10)
 
@@ -319,9 +320,8 @@ export default {
     blueLabel() {
       return [this.original.document_no, this.original.invoice_no || this.original.invoice_code].filter(Boolean).join(' / ')
     },
-    taxRate() {
-      const x = Number(this.original.amount_excl_tax || 0)
-      return x ? (Number(this.original.tax_amount || 0) / x * 100).toFixed(2).replace(/\.00$/, '') : '13'
+    taxRates() {
+      return [...new Set((this.original.tax_detail || []).map(row => row.tax_rate).filter(rate => rate != null && rate !== ''))]
     },
     alreadyRedExcl() {
       return Math.max(0, Number(this.original.amount_excl_tax || 0) - Number(this.preview.red_remaining_excl_tax || 0))
@@ -331,10 +331,14 @@ export default {
       return a > 0 && a <= Number(this.preview.red_remaining_amount || 0) + 0.0001
     },
     taxValid() {
-      return Math.abs(Number(this.form.amount_incl_tax || 0) - Number(this.form.amount_excl_tax || 0) - Number(this.form.tax_amount || 0)) < 0.0001
+      return this.form.amount_excl_tax !== '' && this.form.tax_amount !== '' &&
+        Number(this.form.amount_excl_tax) <= Number(this.preview.red_remaining_excl_tax) &&
+        Number(this.form.tax_amount) <= Number(this.preview.red_remaining_tax_amount)
     },
     scopeValid() {
-      return this.form.red_scope === 'partial' || Math.abs(Number(this.form.amount_incl_tax || 0) - Number(this.preview.red_remaining_amount || 0)) < 0.0001
+      const gross = roundInvoiceAmount(this.form.amount_incl_tax, this.amountScale)
+      return gross === sumInvoiceAmounts([this.form.amount_excl_tax, this.form.tax_amount], this.amountScale) &&
+        (this.form.red_scope === 'partial' || gross === roundInvoiceAmount(this.preview.red_remaining_amount, this.amountScale))
     },
     unmatchedExcl() {
       return Math.max(0, Number(this.original.amount_excl_tax || 0) - Number(this.original.matched_amount || 0))
@@ -356,6 +360,7 @@ export default {
     this.init()
   },
   methods: {
+    settlementAmount,
     async init() {
       this.loading = true
       try {
@@ -396,7 +401,7 @@ export default {
       }
     },
     money(v) {
-      return Number(v || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+      return displayMoney(v || 0)
     },
     invoiceType(v) {
       return { vat_special: '增值税专用发票', vat_normal: '增值税普通发票', other: '其他' }[v] || v || '—'
@@ -406,16 +411,19 @@ export default {
         this.form.amount_excl_tax = roundInvoiceAmount(this.preview.red_remaining_excl_tax || 0, this.amountScale)
         this.form.tax_amount = roundInvoiceAmount(this.preview.red_remaining_tax_amount || 0, this.amountScale)
         this.form.amount_incl_tax = roundInvoiceAmount(this.preview.red_remaining_amount || 0, this.amountScale)
-      }
+      } else this.normalizeAmounts()
+    },
+    editAmount(field, value) {
+      this.form[field] = value.trim()
+      this.syncGross()
     },
     syncGross() {
-      const excl = roundInvoiceAmount(this.form.amount_excl_tax || 0, this.amountScale)
-      const tax = roundInvoiceAmount(this.form.tax_amount || 0, this.amountScale)
-      this.form.amount_incl_tax = (Number(excl) + Number(tax)).toFixed(this.amountScale)
+      this.form.amount_incl_tax = sumInvoiceAmounts([this.form.amount_excl_tax, this.form.tax_amount])
     },
     normalizeAmounts() {
-      this.form.amount_excl_tax = roundInvoiceAmount(this.form.amount_excl_tax || 0, this.amountScale)
-      this.form.tax_amount = roundInvoiceAmount(this.form.tax_amount || 0, this.amountScale)
+      if (this.draftId || this.form.red_scope === 'full') return
+      this.form.amount_excl_tax = roundInvoiceAmount(this.form.amount_excl_tax || 0)
+      this.form.tax_amount = roundInvoiceAmount(this.form.tax_amount || 0)
       this.syncGross()
     },
     selectOriginal() {
@@ -435,13 +443,12 @@ export default {
     payload() {
       return {
         ...this.form,
-        tax_detail: [
-          {
-            tax_rate: Number(this.taxRate),
-            amount_excl_tax: Number(this.form.amount_excl_tax || 0),
-            tax_amount: Number(this.form.tax_amount || 0)
-          }
-        ],
+        tax_detail: this.form.red_scope === 'full' && Number(this.preview.red_total_amount) === 0
+          ? this.original.tax_detail : [{
+            tax_rate: this.taxRates.length === 1 ? this.taxRates[0] : null,
+            amount_excl_tax: this.form.amount_excl_tax,
+            tax_amount: this.form.tax_amount
+          }],
         reservation_token: this.reservation && this.reservation.reservation_token,
         creation_session_id: this.reservation && this.reservation.creation_session_id
       }

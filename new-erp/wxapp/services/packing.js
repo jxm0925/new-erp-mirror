@@ -45,6 +45,8 @@ function action(id, payload) {
 }
 module.exports = {
   pending, action,
+  pendingShipments: query => get(`${base}/pending-shipments`, query),
+  pendingShipment: id => get(`${base}/pending-shipments/${Number(id)}`),
   operations: query => get(`${base}/operations`, query),
   operation: id => get(`${base}/operations/${Number(id)}`),
   dispatchChoices: (id, query) => get(`${base}/operations/${Number(id)}/dispatch-choices`, query),

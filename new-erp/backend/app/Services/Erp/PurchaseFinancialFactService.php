@@ -16,12 +16,16 @@ class PurchaseFinancialFactService
     {
         $quantity = $this->decimal($quantity, 8);
         abort_if(bccomp($quantity, '0', 8) <= 0, 422, '采购数量必须大于0');
-        $amount = $amount === null
-            ? Money::normalize(bcmul($quantity, $this->decimal($unitPrice, 8), 16), 2)
-            : $this->decimal($amount, 2);
+        $price = $this->decimal($unitPrice, 8);
+        $this->assertUnitPrice($price);
+        $calculated = Money::settle(bcmul($quantity, $price, 16));
+        $amount = $amount === null ? $calculated : $this->decimal($amount, 2);
         abort_if(bccomp($amount, '0', 2) < 0, 422, '成交金额不能小于0');
-        $price = bcdiv($amount, $quantity, 8);
-        abort_if(bccomp($amount, '9999999999.99', 2) > 0 || bccomp($price, '9999999999.9999', 8) > 0, 422, '成交金额或反算单价超出系统允许范围');
+        if (bccomp($calculated, $amount, 2) !== 0) {
+            $price = Money::normalize(bcdiv($amount, $quantity, 9), 8);
+            $this->assertUnitPrice($price);
+        }
+        abort_if(bccomp($amount, '9999999999.99', 2) > 0, 422, '成交金额超出系统允许范围');
 
         // 成交总额是权威事实，单价仅供参考，不能再乘数量覆盖人工录入的金额。
         return ['amount' => $amount, 'unit_price' => $price];
@@ -42,9 +46,9 @@ class PurchaseFinancialFactService
         foreach ($lines as $line) {
             $weight = (string) $line->amount;
             $discountShare = bccomp($weight, '0', 4) > 0
-                ? Money::normalize(CuttingDecimal::share($remainingDiscount, $remainingWeight, $weight), 2) : '0.00';
+                ? $this->share($remainingDiscount, $remainingWeight, $weight, 2) : '0.00';
             $freightShare = bccomp($weight, '0', 4) > 0
-                ? Money::normalize(CuttingDecimal::share($remainingFreight, $remainingWeight, $weight), 2) : '0.00';
+                ? $this->share($remainingFreight, $remainingWeight, $weight, 2) : '0.00';
             $facts = $this->amountFacts(Money::sub($weight, $discountShare), (string) $line->tax_rate, (string) $order->tax_mode, 2);
             // 运费沿用原合同口径：直接加入应付，不按物料税率另计税，也不在成本中重复叠加。
             $facts['amount_excl_tax'] = Money::add((string) $facts['amount_excl_tax'], $freightShare);
@@ -115,7 +119,8 @@ class PurchaseFinancialFactService
     public function assertUnitPrice(float|string $price): void
     {
         $price = $this->decimal($price, 8);
-        abort_if(bccomp($price, '0', 8) < 0 || bccomp($price, '9999999999.99999999', 8) > 0, 422, '折算后的基本单价或库存单位成本超出系统允许范围，请核对数量和换算');
+        // 四位兼容字段取整时也不能进位到第十一位整数。
+        abort_if(bccomp($price, '0', 8) < 0 || bccomp(Money::normalize($price, 4), '9999999999.9999', 4) > 0, 422, '单价超出系统允许范围，请核对数量和换算');
     }
 
     public function orderReceiptFacts(PurchaseReceipt $receipt, PurchaseOrderItem $orderLine, float|string $quantity, ?int $confirmingLineId = null): array
@@ -137,7 +142,8 @@ class PurchaseFinancialFactService
             ->lockForUpdate()->get(['erp_purchase_receipt_items.receipt_qty', 'erp_purchase_receipt_items.receipt_cost',
                 'erp_purchase_receipt_items.tax_amount_snapshot', 'erp_purchase_receipt_items.freight_allocated_amount']);
         $usedQty = $prior->reduce(fn (string $sum, $line) => bcadd($sum, (string) $line->receipt_qty, 8), '0.00000000');
-        $remainingQty = bcsub((string) ($orderLine->purchase_qty ?: $orderLine->order_qty), $usedQty, 8);
+        $orderedQty = (float) $orderLine->purchase_qty > 0 ? $orderLine->purchase_qty : $orderLine->order_qty;
+        $remainingQty = bcsub((string) $orderedQty, $usedQty, 8);
         abort_if(bccomp($quantity, '0', 8) <= 0 || bccomp($quantity, $remainingQty, 8) > 0, 422, '到货数量超过采购订单剩余可到货数量');
         $taxMode = (string) ($orderLine->tax_mode_snapshot ?: $receipt->order?->tax_mode ?: 'tax_included');
         $commercial = Money::sub((string) $orderLine->amount_incl_tax, (string) $orderLine->freight_allocated_amount);
@@ -150,12 +156,15 @@ class PurchaseFinancialFactService
             $used = $prior->reduce(fn (string $sum, $line) => Money::add($sum, (string) ($line->{$field} ?? '0')), '0.0000');
             $remaining = Money::sub($total, $used);
             abort_if(Money::compare($remaining, '0') < 0, 422, '已确认到货金额超过订单冻结金额，请核对来源单据');
-            $facts[$field] = Money::normalize(CuttingDecimal::share($remaining, $remainingQty, $quantity), $scale);
+            $facts[$field] = $this->share($remaining, $remainingQty, $quantity, $scale);
         }
         $incl = Money::add($facts['receipt_cost'], $facts['freight_allocated_amount']);
         if ($taxMode === 'tax_excluded') $incl = Money::add($incl, $facts['tax_amount_snapshot']);
-        $price = bcdiv($facts['receipt_cost'], $quantity, 8);
-        abort_if(bccomp($price, '9999999999.9999', 8) > 0, 422, '本批到货金额反算单价超出系统范围，请调整本次到货数量');
+        $price = $this->decimal($orderLine->purchase_unit_price ?? '0', 8);
+        if (Money::normalize(bcmul($price, $quantity, 16), $scale) !== $facts['receipt_cost']) {
+            $price = Money::normalize(bcdiv($facts['receipt_cost'], $quantity, 9), 8);
+        }
+        $this->assertUnitPrice($price);
 
         return [
             ...$facts, 'unit_price' => $price, 'tax_rate' => $orderLine->tax_rate,
@@ -186,10 +195,7 @@ class PurchaseFinancialFactService
 
     public function proportionalFacts(PurchaseReceiptItem $source, float $baseQuantity): array
     {
-        $sourceBase = max(0, (float) ($source->original_received_base_qty
-            ?: $source->actual_base_qty
-            ?: $source->standard_base_qty
-            ?: $source->receipt_qty));
+        $sourceBase = (float) $this->receivedBaseQuantity($source);
         $quantity = $this->decimal(min($sourceBase, max(0, $baseQuantity)), 8);
         $base = $this->decimal($sourceBase, 8);
         $incl = $sourceBase > 0 && bccomp($quantity, '0', 8) > 0 ? CuttingDecimal::share((string) ($source->amount_incl_tax ?? '0'), $base, $quantity) : '0.0000';
@@ -217,7 +223,7 @@ class PurchaseFinancialFactService
     public function dispositionFacts(PurchaseReceiptItem $source, float $baseQuantity): array
     {
         $source = PurchaseReceiptItem::query()->lockForUpdate()->findOrFail($source->id);
-        $base = (string) ($source->original_received_base_qty ?: $source->actual_base_qty ?: $source->standard_base_qty ?: $source->receipt_qty);
+        $base = $this->receivedBaseQuantity($source);
         $returns = PurchaseReturnItem::query()->join('erp_purchase_returns as source_return', 'source_return.id', '=', 'erp_purchase_return_items.return_id')
             ->where('erp_purchase_return_items.source_receipt_item_id', $source->id)
             ->where(function ($query) {
@@ -225,28 +231,58 @@ class PurchaseFinancialFactService
                     ->orWhere('source_return.stock_post_status', 'posted')
                     ->orWhere('erp_purchase_return_items.posted_base_qty', '>', 0);
             })
-            ->lockForUpdate()->get(['erp_purchase_return_items.requested_base_qty', 'erp_purchase_return_items.settlement_amount']);
+            ->lockForUpdate()->get(['erp_purchase_return_items.requested_base_qty', 'erp_purchase_return_items.settlement_amount',
+                'erp_purchase_return_items.return_amount_incl_tax', 'erp_purchase_return_items.return_tax_amount']);
         $exchanges = PurchaseExchangeOrder::query()->where('source_receipt_item_id', $source->id)
-            ->lockForUpdate()->get(['exchange_base_qty', 'original_payable_amount', 'replacement_inventory_cost']);
+            ->lockForUpdate()->get(['exchange_base_qty', 'original_payable_amount', 'original_contract_amount', 'replacement_inventory_cost']);
         $usedQty = $returns->reduce(fn (string $sum, $line) => bcadd($sum, (string) $line->requested_base_qty, 8), '0.00000000');
         $returnedQty = $usedQty;
         $usedQty = $exchanges->reduce(fn (string $sum, $line) => bcadd($sum, (string) $line->exchange_base_qty, 8), $usedQty);
-        $usedAmount = $returns->reduce(fn (string $sum, $line) => Money::add($sum, (string) $line->settlement_amount), '0.0000');
-        $usedAmount = $exchanges->reduce(fn (string $sum, $line) => Money::add($sum, (string) $line->original_payable_amount), $usedAmount);
+        $sum = fn ($rows, string $field) => $rows->reduce(fn (string $total, $row) => Money::add($total, (string) ($row->{$field} ?? 0)), '0.0000');
+        $usedAmount = Money::add($sum($returns, 'settlement_amount'), $sum($exchanges, 'original_payable_amount'));
         $remainingQty = bcsub($base, $usedQty, 8);
-        $remainingAmount = Money::sub($source->effectiveAmount(), $usedAmount);
+        $remainingAmount = Money::sub(Money::settle($source->effectiveAmount()), Money::settle($usedAmount));
         $quantity = $this->decimal($baseQuantity, 8);
         abort_if(Money::compare($remainingAmount, '0') < 0 || bccomp($quantity, '0', 8) <= 0 || bccomp($quantity, $remainingQty, 8) > 0,
             422, '退换货数量或实际金额超过该到货明细剩余可处理范围');
-        $scale = Money::compare($remainingAmount, Money::normalize($remainingAmount, 2)) === 0 ? 2 : 4;
-        $actual = Money::normalize(CuttingDecimal::share($remainingAmount, $remainingQty, $quantity), $scale);
+        $actual = $this->share($remainingAmount, $remainingQty, $quantity, 2);
+        $unreturnedGross = Money::sub((string) ($source->amount_incl_tax ?? 0), $sum($returns, 'return_amount_incl_tax'));
+        $availableGross = Money::sub($unreturnedGross, $sum($exchanges, 'original_contract_amount'));
+        $remainingTax = Money::sub((string) ($source->tax_amount_snapshot ?? 0), $sum($returns, 'return_tax_amount'));
+        $gross = $this->share(Money::maxZero($availableGross), $remainingQty, $quantity, 2);
+        // 换货保留原合同价，不冲税。未退税额按尚未退款的合同金额（含换货）分摊。
+        $tax = Money::compare($unreturnedGross, '0') > 0
+            ? $this->share(Money::maxZero($remainingTax), $unreturnedGross, $gross, 2) : '0.00';
+        $excl = Money::sub($gross, $tax);
+        $unitPrice = Money::normalize(bcdiv($excl, $quantity, 9), 8);
+        $this->assertUnitPrice($unitPrice);
         // 换货成本按来源成交价值分配到四位，末份收尽余数；退货正式出库仍以当前库存余额冲回。
         $returnedValue = bccomp($returnedQty, '0', 8) > 0 ? CuttingDecimal::share($source->effectiveAmount(), $base, $returnedQty) : '0.0000';
-        $exchangedValue = $exchanges->reduce(fn (string $sum, $line) => Money::add($sum, (string) $line->replacement_inventory_cost), '0.0000');
+        $exchangedValue = $sum($exchanges, 'replacement_inventory_cost');
         $remainingValue = Money::sub(Money::sub($source->effectiveAmount(), $returnedValue), $exchangedValue);
         abort_if(Money::compare($remainingValue, '0') < 0, 422, '已退换货来源成本超过实际成交金额，请核对原单');
         $cost = CuttingDecimal::share($remainingValue, $remainingQty, $quantity);
 
-        return [...$this->proportionalFacts($source, $baseQuantity), 'settlement_amount' => $actual, 'inventory_cost_amount' => $cost];
+        return [
+            'original_purchase_line_id' => $source->order_item_id, 'currency_snapshot' => $source->currency_snapshot ?: 'CNY',
+            'tax_mode_snapshot' => $source->tax_mode_snapshot ?: 'tax_included', 'tax_rate_snapshot' => $source->tax_rate,
+            'return_unit_price' => $unitPrice, 'return_amount_incl_tax' => $gross, 'return_amount_excl_tax' => $excl,
+            'return_tax_amount' => $tax, 'settlement_amount' => $actual, 'inventory_cost_amount' => $cost,
+            'finance_fact_status' => $source->finance_fact_status === 'frozen' ? 'frozen' : 'legacy_unknown',
+        ];
+    }
+
+    private function share(string $amount, string $remainingQty, string $quantity, int $scale): string
+    {
+        if (bccomp($quantity, $remainingQty, 8) === 0) return Money::normalize($amount, $scale);
+        return Money::normalize(bcdiv(bcmul($amount, $quantity, 16), $remainingQty, $scale + 1), $scale);
+    }
+
+    private function receivedBaseQuantity(PurchaseReceiptItem $source): string
+    {
+        foreach (['original_received_base_qty', 'actual_base_qty', 'standard_base_qty', 'receipt_qty'] as $field) {
+            if ((float) $source->{$field} > 0) return (string) $source->{$field};
+        }
+        return '0';
     }
 }

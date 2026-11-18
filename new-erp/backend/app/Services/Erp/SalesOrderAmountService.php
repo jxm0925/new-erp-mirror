@@ -18,18 +18,18 @@ class SalesOrderAmountService
             ->selectRaw("COALESCE(SUM(CASE WHEN line_type = 'deduction' THEN 0 ELSE order_qty END), 0) AS qty, COALESCE(SUM(COALESCE(amount_incl_tax, amount)), 0) AS amount")
             ->first();
 
-        $receivable = round((float) $totals->amount + (float) $order->freight_amount, 4);
+        $receivable = Money::settle(Money::add((string) $totals->amount, (string) ($order->freight_amount ?? 0)));
         $updates = [
             'total_qty' => (float) $totals->qty,
             'total_amount' => $receivable,
             'final_receivable_amount' => $receivable,
             // 本币金额 = 应收 × 订单业务汇率（本币订单汇率为 1），供财务汇总和分析按本币口径统计。
-            'base_total_amount' => round($receivable * (float) ($order->business_exchange_rate ?: 1), 4),
+            'base_total_amount' => Money::settle(bcmul($receivable, (string) ($order->business_exchange_rate ?: 1), 12)),
         ];
         foreach (['funding_policy_snapshot', 'payment_terms_snapshot'] as $field) {
             $snapshot = $order->getAttribute($field);
             if (is_array($snapshot) && array_key_exists('receivable_amount', $snapshot)) {
-                $updates[$field] = array_replace($snapshot, ['receivable_amount' => Money::normalize((string) $receivable)]);
+                $updates[$field] = array_replace($snapshot, ['receivable_amount' => $receivable]);
             }
         }
         $order->update($updates);

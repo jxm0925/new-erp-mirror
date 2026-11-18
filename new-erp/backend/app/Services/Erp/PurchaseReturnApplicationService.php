@@ -536,7 +536,7 @@ class PurchaseReturnApplicationService
             if (! $source || (int) $source->supplier_id !== (int) $receipt->supplier_id
                 || (int) $source->purchase_order_id !== (int) $receipt->order_id || $source->currency !== 'CNY'
                 || Money::compare((string) $source->ap_offset_amount, '0') < 0
-                || Money::compare((string) $source->eligible_amount, (string) $receiptLines->get($lineId)->settlement_amount) !== 0
+                || Money::compare(Money::settle((string) $source->eligible_amount), Money::settle((string) $receiptLines->get($lineId)->settlement_amount)) !== 0
                 || Money::compare($amount, Money::sub((string) $source->eligible_amount, (string) $source->ap_offset_amount)) > 0) {
                 throw ValidationException::withMessages(['ap_offset' => '原到货可抵扣应付不足或结算来源不一致，不能部分抵扣本退货。']);
             }

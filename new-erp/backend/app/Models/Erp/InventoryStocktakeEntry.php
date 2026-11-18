@@ -15,4 +15,10 @@ class InventoryStocktakeEntry extends MasterModel
     ];
 
     public function line() { return $this->belongsTo(InventoryStocktakeLine::class, 'line_id'); }
+
+    public function scopeChanged($query)
+    {
+        return $query->where(fn ($q) => $q->where('is_new', true)
+            ->orWhere(fn ($q) => $q->where('book_present', true)->where('is_locked', false)->where('counted_present', false)));
+    }
 }

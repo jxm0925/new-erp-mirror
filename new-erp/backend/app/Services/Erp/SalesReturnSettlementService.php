@@ -34,8 +34,9 @@ class SalesReturnSettlementService
             ->where('erp_sales_return_terms.return_type', self::TYPE_REFUND);
         // 订单锁不会刷新调用方已有的 RR 快照，必须锁读真实明细后按十进制汇总。
         if (DB::transactionLevel() > 0) $query->lockForUpdate();
-        return $query->orderBy('erp_sales_return_terms.id')->get(['erp_sales_return_terms.credit_amount'])
+        $total = $query->orderBy('erp_sales_return_terms.id')->get(['erp_sales_return_terms.credit_amount'])
             ->reduce(fn (string $sum, SalesReturnTerm $row): string => Money::add($sum, (string) $row->credit_amount), '0.0000');
+        return Money::settle($total);
     }
 
     public static function lineUnitPrice(SalesOrderLine $line): string
@@ -61,6 +62,10 @@ class SalesReturnSettlementService
         if (Money::compare($price, '0') < 0 || Money::compare($price, $max) > 0) {
             throw ValidationException::withMessages(['items' => '退货单价不能小于 0 或超过原订单单价。']);
         }
+        $item->update(['fulfillment_snapshot' => [
+            ...($item->fulfillment_snapshot ?? []),
+            'refund_price_basis' => Money::compare($price, $max) === 0 ? $this->originalPriceBasis($line) : null,
+        ]]);
         SalesReturnItemCredit::query()->updateOrCreate(['sales_return_item_id' => $item->id], ['unit_price_snapshot' => $price]);
     }
 
@@ -74,7 +79,8 @@ class SalesReturnSettlementService
         foreach ($return->items as $item) {
             $credit = SalesReturnItemCredit::query()->lockForUpdate()->firstOrCreate(
                 ['sales_return_item_id' => $item->id],
-                ['unit_price_snapshot' => $item->orderLine ? self::lineUnitPrice($item->orderLine) : '0'],
+                ['unit_price_snapshot' => $item->orderLine ? self::lineUnitPrice($item->orderLine) : '0',
+                    'credited_sales_qty' => '0', 'credit_amount' => '0'],
             );
             $factor = data_get($item->fulfillment_snapshot, 'fulfillment_factor_snapshot', '1');
             // 历史 JSON 曾写入浮点因子；先还原原有八位数量精度，后续计算保持十进制。
@@ -83,12 +89,59 @@ class SalesReturnSettlementService
             $acceptedBase = bcsub((string) $item->received_base_qty, (string) $item->rejected_base_qty, 8);
             if (bccomp($acceptedBase, '0', 8) < 0) $acceptedBase = '0';
             $salesQty = $terms->return_type === self::TYPE_REFUND ? bcadd(bcdiv($acceptedBase, $factor, 9), '0.000000005', 8) : '0';
-            $amount = Money::normalize(bcmul($salesQty, (string) $credit->unit_price_snapshot, 12));
-            $credit->update(['credited_sales_qty' => $salesQty, 'credit_amount' => $amount]);
-            $total = Money::add($total, $amount);
+            if (bccomp($salesQty, (string) $credit->credited_sales_qty, 8) !== 0) {
+                $credit->update(['credited_sales_qty' => $salesQty, 'credit_amount' => $this->creditAmount($item, $credit, $salesQty)]);
+            }
+            $total = Money::add($total, (string) $credit->credit_amount);
         }
         $terms->update(['credit_amount' => $total]);
         return $terms->fresh();
+    }
+
+    private function originalPriceBasis(SalesOrderLine $line): array
+    {
+        return ['amount_incl_tax' => Money::normalize((string) ($line->amount_incl_tax ?? $line->amount)),
+            'order_qty' => Money::normalize((string) $line->order_qty, 8)];
+    }
+
+    private function creditAmount(SalesReturnItem $item, SalesReturnItemCredit $credit, string $quantity): string
+    {
+        if (bccomp($quantity, '0', 8) === 0) return '0.00';
+        $snapshot = $item->fulfillment_snapshot ?? [];
+        $basis = $snapshot['refund_price_basis'] ?? null;
+        // 旧申请只存了退货单价；与受保护的原行单价相同时才可按原价分摊。
+        if (!array_key_exists('refund_price_basis', $snapshot) && $item->orderLine
+            && Money::compare($credit->unit_price_snapshot, self::lineUnitPrice($item->orderLine)) === 0) {
+            $basis = $this->originalPriceBasis($item->orderLine);
+        }
+        if (!$basis || bccomp($basis['order_qty'], '0', 8) <= 0) {
+            return Money::settle(bcmul($quantity, (string) $credit->unit_price_snapshot, 12));
+        }
+
+        // 读取同一原价口径已生效的数量和金额；当前行承接累计尾差，其他单据的历史冲减不动。
+        $others = SalesReturnItem::query()
+            ->join('erp_sales_returns as r', 'r.id', '=', 'erp_sales_return_items.sales_return_id')
+            ->join('erp_sales_return_item_credits as c', 'c.sales_return_item_id', '=', 'erp_sales_return_items.id')
+            ->join('erp_sales_return_terms as t', 't.sales_return_id', '=', 'r.id')
+            ->where('erp_sales_return_items.sales_order_line_id', $item->sales_order_line_id)
+            ->where('erp_sales_return_items.id', '<>', $item->id)->whereNotIn('r.return_status', ['draft', 'cancelled'])
+            ->where('t.return_type', self::TYPE_REFUND)->where('c.credited_sales_qty', '>', 0)
+            ->where('c.unit_price_snapshot', $credit->unit_price_snapshot)
+            ->orderBy('c.id')->lockForUpdate()->get(['erp_sales_return_items.fulfillment_snapshot', 'c.credited_sales_qty', 'c.credit_amount']);
+        return $this->originalLineCredit($basis, $quantity, $others);
+    }
+
+    private function originalLineCredit(array $basis, string $cumulativeQty, iterable $others): string
+    {
+        $alreadyCredited = '0.0000';
+        foreach ($others as $other) {
+            $otherSnapshot = $other->fulfillment_snapshot ?? [];
+            if (array_key_exists('refund_price_basis', $otherSnapshot) && $otherSnapshot['refund_price_basis'] != $basis) continue;
+            $cumulativeQty = bcadd($cumulativeQty, (string) $other->credited_sales_qty, 8);
+            $alreadyCredited = Money::add($alreadyCredited, (string) $other->credit_amount);
+        }
+        $target = Money::settle(bcdiv(bcmul($basis['amount_incl_tax'], $cumulativeQty, 12), $basis['order_qty'], 3));
+        return Money::settle(Money::maxZero(Money::sub($target, Money::settle($alreadyCredited))));
     }
 
     /** 退货单详情的结算摘要：本单冲减、订单净应收、净收款与当前应退客户金额。 */
@@ -98,7 +151,7 @@ class SalesReturnSettlementService
         $status = app(SalesFinanceSettlementService::class)->status((int) $return->sales_order_id);
         return [
             'return_type' => $terms->return_type,
-            'credit_amount' => Money::normalize((string) $terms->credit_amount),
+            'credit_amount' => Money::settle((string) $terms->credit_amount),
             'order_contract_amount' => $status['contract_amount'],
             'order_return_credit_amount' => $status['return_credit_amount'],
             'order_net_receivable_amount' => $status['net_receivable_amount'],

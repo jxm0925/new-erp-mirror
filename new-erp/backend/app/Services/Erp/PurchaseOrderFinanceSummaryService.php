@@ -35,8 +35,8 @@ class PurchaseOrderFinanceSummaryService
         $qualityFrozenAmount = $sum('frozen_amount');
         $returnOffsetAmount = $sum('ap_offset_amount');
         $paidAmount = $sum('allocated_amount');
-        $currentPayableAmount = $sources->reduce(fn (string $total, PurchaseSettlementSource $source): string => Money::add($total, Money::maxZero(Money::sub((string) $source->eligible_amount, (string) $source->ap_offset_amount))), '0.0000');
-        $unpaidAmount = $sources->reduce(fn (string $total, PurchaseSettlementSource $source): string => Money::add($total, Money::maxZero(Money::sub(Money::maxZero(Money::sub((string) $source->eligible_amount, (string) $source->ap_offset_amount)), (string) $source->allocated_amount))), '0.0000');
+        $currentPayableAmount = $sources->reduce(fn (string $total, PurchaseSettlementSource $source): string => Money::add($total, Money::maxZero(Money::sub(Money::settle((string) $source->eligible_amount), Money::settle((string) $source->ap_offset_amount)))), '0.0000');
+        $unpaidAmount = $sources->reduce(fn (string $total, PurchaseSettlementSource $source): string => Money::add($total, Money::maxZero(Money::sub(Money::maxZero(Money::sub(Money::settle((string) $source->eligible_amount), Money::settle((string) $source->ap_offset_amount))), Money::settle((string) $source->allocated_amount)))), '0.0000');
         $invoiceMatchedAmount = $sum('invoice_matched_amount');
         $invoiceUnmatchedAmount = $sum('invoice_unmatched_amount');
         $sourceIds = $sources->pluck('id')->map(fn ($id) => (int) $id)->all();
@@ -47,7 +47,7 @@ class PurchaseOrderFinanceSummaryService
 
         return [
             'currency' => $sources->first()?->currency ?: 'CNY',
-            'contract_amount' => Money::normalize((string) ($order->amount_incl_tax ?? $order->total_amount ?? 0)),
+            'contract_amount' => Money::settle((string) ($order->amount_incl_tax ?? $order->total_amount ?? 0)),
             'confirmed_receipt_amount' => $confirmedReceiptAmount,
             'eligible_amount' => $eligibleAmount,
             'quality_frozen_amount' => $qualityFrozenAmount,
@@ -73,7 +73,7 @@ class PurchaseOrderFinanceSummaryService
 
     private function sum(array $amounts): string
     {
-        return array_reduce($amounts, fn (string $total, mixed $amount): string => Money::add($total, (string) $amount), '0.0000');
+        return array_reduce($amounts, fn (string $total, mixed $amount): string => Money::add($total, Money::settle((string) $amount)), '0.0000');
     }
 
     private function fulfillmentStatus(PurchaseOrder $order): string
@@ -111,7 +111,7 @@ class PurchaseOrderFinanceSummaryService
     private function pendingRefundAmount(array $receiptIds): string
     {
         if ($receiptIds === []) return '0.0000';
-        return Money::normalize((string) PurchaseReturn::query()
+        return Money::settle((string) PurchaseReturn::query()
             ->whereIn('source_receipt_id', $receiptIds)
             ->where('settlement_effect_type', FinanceConstants::PURCHASE_EFFECT_SUPPLIER_REFUND)
             ->where('return_status', 'completed')
@@ -121,7 +121,7 @@ class PurchaseOrderFinanceSummaryService
     private function prepaymentAppliedAmount(array $sourceIds): string
     {
         if ($sourceIds === []) return '0.0000';
-        return Money::normalize((string) FinanceAllocation::query()
+        return Money::settle((string) FinanceAllocation::query()
             ->join('erp_finance_cash_documents as documents', 'documents.id', '=', 'erp_finance_allocations.cash_document_id')
             ->join('erp_purchase_settlement_sources as sources', 'sources.id', '=', 'erp_finance_allocations.source_document_id')
             ->where('erp_finance_allocations.source_business_type', FinanceConstants::SOURCE_PURCHASE_SETTLEMENT_SOURCE)

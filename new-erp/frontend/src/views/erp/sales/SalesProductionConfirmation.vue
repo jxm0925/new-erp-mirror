@@ -319,6 +319,7 @@
             </div>
             <ul class="rule-bullets">
               <li>生产工单确认后自动下达并生成唯一产品序列号（SN）</li>
+              <li>实物产品同步下达到发货端备货，实际发出时确定批次</li>
               <li>仓储部门依据工艺工序齐套发料，车间班组核实签收</li>
               <li>生产主管可在工单管理中调整负责人、完工交期与优先级</li>
               <li>尾款未结清，暂不发货</li>
@@ -350,6 +351,7 @@
 </template>
 
 <script>
+import { formatMoney as displayMoney } from '../../../utils/money.js'
 import { erpDateTime } from '../../../utils/dateTime'
 import cachedPageRoute from '@/utils/cachedPageRoute'
 import { confirmProduction, getProductionPreview, getProductionBomMaterials } from '@/api/erp/sales'
@@ -650,7 +652,7 @@ export default {
       if (this.remainingUndetermined(row) > 0) parts.push(`待配置 ${this.number(this.remainingUndetermined(row))}`)
       return parts.length ? '→ ' + parts.join(' · ') : '→ 本次暂不确认'
     },
-    money (value) { return '¥' + Number(value || 0).toLocaleString('zh-CN', { maximumFractionDigits: 2 }) },
+    money (value) { return '¥' + displayMoney(value || 0) },
     validateAll (notify) {
       const valid = this.lines.every(row => this.allocationValid(row) && !this.bomInputProblem(row)) && !this.blocked && (!this.hasManualAdjustment || !!this.adjustmentReason)
       if (notify) this.$message[valid ? 'success' : 'warning'](valid ? '检查通过，可以提交确认' : (this.hasManualAdjustment && !this.adjustmentReason ? '手工修改系统建议后必须填写调整原因' : '存在分配数量不一致或库存不足的订单行'))
@@ -670,8 +672,11 @@ export default {
           if (!this.canSubmit || !this.validateAll(false)) return this.$message.warning('请先完成全部订单行的备货数量配置和资料检查')
           payload = buildSalesProductionConfirmation(this.order, this.lines, this.adjustmentReason,
             `sales-production-${orderId}-${Date.now()}-${Math.random().toString(36).slice(2, 12)}`)
+          const actions = []
+          if (this.summary.production) actions.push(`${payload.lines.some(line => line.bom_replacements?.length) ? '按本单BOM' : '按订单'}生成 ${this.summary.production} 张生产工单`)
+          if (this.summary.production || this.summary.inventory || this.summary.purchase) actions.push('通知发货端按订单备货')
           await this.$confirm(
-            this.summary.production ? `提交后将${payload.lines.some(line => line.bom_replacements?.length) ? '按本单BOM' : '自动'}生成 ${this.summary.production} 张生产工单并下达车间，确认提交？` : '确认保存当前销售订单的备货分配方案？',
+            actions.length ? `提交后将${actions.join('，并')}。确认下达？` : '确认保存当前销售订单的备货分配方案？',
             '提交生产备货确认',
             { type: 'warning', confirmButtonText: '确认提交', cancelButtonText: '取消' }
           )
@@ -679,12 +684,13 @@ export default {
           localStorage.setItem(storageKey, JSON.stringify(payload))
           this.pending = payload
         }
-        await confirmProduction(orderId, payload)
+        const { data } = await confirmProduction(orderId, payload)
         localStorage.removeItem(storageKey)
         localStorage.removeItem(draftKey)
         if (Number(this.pageRoute.params.id) === Number(orderId)) {
           this.lines.forEach(row => { row.bom_draft = null })
-          this.$message.success('订单生产确认已成功提交')
+          const shipmentNo = data.data?.confirmation_command_result?.shipment_no
+          this.$message.success(shipmentNo ? '订单已下达，待发单 ' + shipmentNo : '订单生产确认已成功提交')
           await this.load()
         }
       } catch (error) {

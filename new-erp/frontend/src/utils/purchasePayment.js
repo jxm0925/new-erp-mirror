@@ -1,4 +1,5 @@
 import { amountUnits } from './financeCashAllocation'
+import { settlementAmount } from './money.js'
 
 export const paymentTriggers = [
   { value: 'deposit', label: '订金' },
@@ -34,7 +35,7 @@ export function serializePaymentPlan(items) {
     ...(row.id ? { id: Number(row.id) } : {}),
     title: row.title || null,
     trigger_type: row.trigger_type,
-    amount: String(row.amount ?? ''),
+    amount: settlementAmount(row.amount),
     due_date: row.due_date || null,
     remark: String(row.remark || '').trim(),
   }))
@@ -46,7 +47,7 @@ export function validatePaymentPlan(items, paymentAmount) {
   for (const row of items) {
     const amount = amountUnits(row.amount)
     if (!paymentTriggers.some(trigger => trigger.value === row.trigger_type)) return '请选择付款条件'
-    if (amount === null || amount <= 0) return '每期安排金额必须大于 0，且最多 4 位小数'
+    if (amount === null || amount <= 0) return '每期安排金额舍入后须大于 0'
     total += amount
   }
   const payment = amountUnits(paymentAmount)
@@ -57,12 +58,12 @@ export function serializePurchaseOrderAllocations(rows) {
   return rows.map(row => ({
     purchase_order_id: Number(row.purchase_order_id),
     payment_plan_id: positivePaymentId(row.payment_plan_id),
-    amount: String(row.amount ?? ''),
+    amount: settlementAmount(row.amount),
   }))
 }
 
 export function purchaseAllocationTotal(rows) {
-  return rows.reduce((sum, row) => sum + (amountUnits(row.amount) || 0), 0) / 10000
+  return rows.reduce((sum, row) => sum + (amountUnits(row.amount) || 0), 0) / 100
 }
 
 export function validatePurchaseOrderAllocations(rows, amount, partyType = 'supplier') {
@@ -79,7 +80,7 @@ export function validatePurchaseOrderAllocations(rows, amount, partyType = 'supp
     if (seen.has(purchaseLinkKey(row))) return '同一采购订单的同一期次不能重复关联'
     seen.add(purchaseLinkKey(row))
     const value = amountUnits(row.amount)
-    if (!(value > 0)) return '每条关联金额必须大于 0，且最多 4 位小数'
+    if (!(value > 0)) return '每条关联金额舍入后须大于 0'
     total += value
   }
   return total === cashAmount ? '' : '关联采购订单的金额合计必须等于本笔收付款金额'

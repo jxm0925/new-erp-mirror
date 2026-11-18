@@ -6,6 +6,7 @@
   "usingComponents": {
     "scan-input": "/components/scan-input/index",
     "warehouse-locator": "/components/warehouse-locator/index",
+    "warehouse-select": "/components/warehouse-select/index",
     "warehouse-context": "/components/warehouse-context/index",
     "production-select": "/components/production-select/index",
     "van-icon": "@vant/weapp/icon/index",

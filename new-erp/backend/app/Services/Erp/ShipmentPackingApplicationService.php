@@ -315,8 +315,14 @@ class ShipmentPackingApplicationService
     {
         $shipmentId = (int) ShipmentPackingOperation::query()->whereKey($operationId)->value('shipment_id');
         return $this->command($action, $shipmentId, $payload + ['operation_id' => $operationId], $actor, function (SalesShipment $shipment) use ($operationId, $action, $payload, $actor): array {
-            $this->assertEditable($shipment);
             $op = ShipmentPackingOperation::query()->where('shipment_id', $shipment->id)->lockForUpdate()->findOrFail($operationId);
+            if ($action === 'add_tracking') {
+                if (! $this->outbound->terminalOperation($op, (int) $actor->legacy_id, true)) $this->fail('请由本单作业参与人补录运单号。');
+                $batch = $shipment->dispatches()->whereJsonContains('package_ids', (int) $op->package_id)->lockForUpdate()->findOrFail($payload['dispatch_id']);
+                app(SalesShipmentApplicationService::class)->recordTracking($shipment, $batch, $payload['tracking_no'], $actor->nickname ?: $actor->username);
+                return ['shipment_id' => (int) $shipment->id, 'operation_id' => (int) $op->id];
+            }
+            $this->assertEditable($shipment);
             $preparation = in_array($action, ['claim', 'materials', 'request_products', 'confirm_kitting', 'withdraw_outbound'], true);
             if (! in_array($shipment->shipment_status, $preparation ? ['pending_outbound', 'prepared', 'partially_shipped', 'outbound_posted'] : ['prepared', 'partially_shipped', 'outbound_posted'], true)) $this->fail('设备移至待发区后才能开始发货作业。');
             if ((int) $op->business_version !== (int) ($payload['expected_version'] ?? 0)) $this->fail('包装工序已变化，请刷新后重试。');
@@ -372,7 +378,7 @@ class ShipmentPackingApplicationService
                     }
                     if ($op->status === 'READY') {
                         $this->assertOwner($op, $actorId);
-                        $this->assertProductionReady($shipment);
+                        $this->assertProductionReady($shipment, $op->contents()->current()->pluck('shipment_line_id')->all());
                         $op->fill(['status' => 'IN_PROGRESS', 'started_at' => $op->started_at ?: now()]);
                     }
                     if ($op->status !== 'IN_PROGRESS') $this->fail('工序尚未开工，协同人不能先开始作业。');
@@ -389,8 +395,7 @@ class ShipmentPackingApplicationService
                 $this->assertOwner($op, $actorId);
                 $payload['application_id'] = (int) $this->outbound->requestProducts($shipment, $op, $payload['products'] ?? [], $actor)->id;
             } elseif ($action === 'dispatch_now') {
-                $this->assertOwner($op, $actorId);
-                $this->outbound->dispatchNow($shipment, $op, $payload, $actor);
+                $payload['dispatch_no'] = $this->outbound->dispatchNow($shipment, $op, $payload, $actor);
             } elseif ($action === 'materials') {
                 $this->assertOwner($op, $actorId);
                 $payload['application_id'] = (int) $this->outbound->requestMaterials($shipment, $op, array_values($payload['materials'] ?? []), $actor)->id;
@@ -449,14 +454,15 @@ class ShipmentPackingApplicationService
             }
             $this->log($shipment->id, $op->id, $action, $actor, collect($payload)->except(['client_command_id'])->all());
             return ['shipment_id' => (int) $shipment->id, 'operation_id' => (int) $op->id, 'status' => $op->status,
-                'business_version' => (int) $op->business_version, 'application_id' => $payload['application_id'] ?? null];
+                'business_version' => (int) $op->business_version, 'application_id' => $payload['application_id'] ?? null,
+                'dispatch_no' => $payload['dispatch_no'] ?? null];
         });
     }
 
     public function assertReady(SalesShipment $shipment, ?array $packageIds = null): void
     {
-        $this->assertProductionReady($shipment);
         $contents = $shipment->packingContents()->current()->when($packageIds !== null, fn ($q) => $q->whereIn('package_id', $packageIds))->get();
+        $this->assertProductionReady($shipment, $contents->pluck('shipment_line_id')->all());
         foreach ($contents as $content) {
             $line = $shipment->lines()->findOrFail($content->shipment_line_id);
             if ($line->line_status !== 'prepared' && ! ($line->line_status === 'outbound_posted' && $this->legacyPosted($shipment))) $this->fail('所选设备尚未在待发区就绪。');
@@ -501,15 +507,15 @@ class ShipmentPackingApplicationService
             catch (ValidationException $exception) { $blockers = array_values(array_unique(collect($exception->errors())->flatten()->all())); }
             $contents = $package->packingContents()->current()->with('shipmentLine.orderLine')->get()->map(function ($c) use ($serialNos): string {
                 $order = $c->shipmentLine?->orderLine;
-                $name = $order?->product_name ?: ($order?->item_name ?: '');
+                $name = $order?->item_name ?: ($order?->product_name ?: '');
                 $serials = collect($c->serial_snapshot['inventory_serial_ids'] ?? [])->map(fn ($id) => $serialNos[$id] ?? null)->filter()->implode('、');
-                return trim($name.' × '.rtrim(rtrim(number_format((float) $c->base_qty, 4, '.', ''), '0'), '.').($serials !== '' ? '（'.$serials.'）' : ''));
+                return trim($name.' × '.rtrim(rtrim((string) $c->base_qty, '0'), '.').($serials !== '' ? '（'.$serials.'）' : ''));
             })->implode('；');
             $dispatch = $dispatchOf[(int) $package->id] ?? null;
             return ['id' => (int) $package->id, 'package_no' => $package->package_no, 'package_status' => $package->package_status,
                 'ready' => $blockers === [], 'blockers' => $blockers, 'dispatch_pending' => $dispatchPending, 'contents_text' => $contents,
                 'dispatch_no' => $dispatch?->dispatch_no, 'dispatched_at' => $dispatch?->dispatched_at?->toDateTimeString(),
-                'carrier_name' => $dispatch?->carrier_name ?: $package->carrier_name, 'tracking_no' => $dispatch?->tracking_no ?: $package->tracking_no];
+                'carrier_name' => $dispatch ? $dispatch->carrier_name : $package->carrier_name, 'tracking_no' => $dispatch ? $dispatch->tracking_no : $package->tracking_no];
         })->all();
     }
 
@@ -937,10 +943,10 @@ class ShipmentPackingApplicationService
         return $snapshot;
     }
 
-    private function assertProductionReady(SalesShipment $shipment): void
+    private function assertProductionReady(SalesShipment $shipment, ?array $lineIds = null): void
     {
         if ($this->legacyPosted($shipment)) return;
-        foreach ($shipment->lines()->current()->get() as $line) {
+        foreach ($shipment->lines()->current()->when($lineIds !== null, fn ($query) => $query->whereKey($lineIds))->get() as $line) {
             $blockers = app(ShipmentSourceResolver::class)->contextForShipmentLine($line)['blockers'] ?? [];
             if ($blockers !== []) $this->fail(implode('；', $blockers));
         }

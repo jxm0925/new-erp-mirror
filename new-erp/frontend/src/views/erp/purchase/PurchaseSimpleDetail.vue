@@ -236,10 +236,10 @@
             </template>
           </el-table-column>
           <el-table-column :label="doc.tax_mode === 'tax_excluded' ? '采购单价（未税）' : '采购单价（含税）'" width="135" align="right">
-            <template slot-scope="{row}">¥{{ Number(row.purchase_unit_price ?? row.unit_price ?? 0).toLocaleString('zh-CN', { maximumFractionDigits: 8 }) }}</template>
+            <template slot-scope="{row}">¥{{ purchasePrice(row.purchase_unit_price ?? row.unit_price) }}</template>
           </el-table-column>
           <el-table-column :label="doc.tax_mode === 'tax_excluded' ? '成交总额（未税）' : '成交总额（含税）'" width="135" align="right">
-            <template slot-scope="{row}">¥{{ Number(row.amount || 0).toFixed(2) }}</template>
+            <template slot-scope="{row}">¥{{ $money(row.amount || 0) }}</template>
           </el-table-column>
           <el-table-column label="优惠分摊" width="95" align="right"><template slot-scope="{row}">¥{{ money(row.discount_allocated_amount) }}</template></el-table-column>
           <el-table-column label="含税应付" width="105" align="right"><template slot-scope="{row}">¥{{ money(row.amount_incl_tax ?? row.amount) }}</template></el-table-column>
@@ -287,6 +287,8 @@
 </template>
 
 <script>
+import { formatPurchasePrice } from '@/utils/purchaseLineAmount'
+import { formatMoney as displayMoney } from '../../../utils/money.js'
 import { purchaseScopeLabel, purchaseScopeIssue } from '@/utils/purchaseManagementScope.mjs'
 import { getPurchase, getOrderPriceCheck, submitRequest } from '@/api/erp/purchase'
 import PurchasePriceCheckPanel from '@/components/purchase/PurchasePriceCheckPanel.vue'
@@ -334,7 +336,7 @@ export default {
       const paid = Number(finance.paid_amount || 0)
       const approved = doc.audit_status === 'approved'
       const received = doc.receipt_status === 'received'
-      const money = value => Number(value || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+      const money = value => displayMoney(value || 0)
       const canFinance = this.$can(['finance.payable.view', 'finance.payable'])
       return [
         { title: '采购需求', status: requests.length ? 'finish' : 'skip', desc: requests.length ? `${requests.length} 张需求` : '直接下单，无需求',
@@ -393,7 +395,8 @@ export default {
   },
   beforeDestroy() { window.removeEventListener('resize', this.updateViewportWidth) },
   methods: {
-    money(value) { return Number(value || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) },
+    purchasePrice: formatPurchasePrice,
+    money(value) { return displayMoney(value || 0) },
     updateViewportWidth() { this.viewportWidth = window.innerWidth },
     async loadDetail() {
       try {

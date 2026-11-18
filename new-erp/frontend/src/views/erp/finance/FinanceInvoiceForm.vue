@@ -94,13 +94,13 @@
           <h2>金额与税额</h2>
 
           <el-form-item label="未税金额" prop="amount_excl_tax" required>
-            <el-input :value="form.amount_excl_tax" disabled placeholder="由税率明细自动汇总">
+            <el-input :value="settlementAmount(form.amount_excl_tax)" disabled placeholder="由税率明细自动汇总">
               <template slot="append">CNY</template>
             </el-input>
           </el-form-item>
 
           <el-form-item label="税额" prop="tax_amount" required>
-            <el-input :value="form.tax_amount" disabled placeholder="由税率明细自动计算">
+            <el-input :value="settlementAmount(form.tax_amount)" disabled placeholder="由税率明细自动计算">
               <template slot="append">CNY</template>
             </el-input>
           </el-form-item>
@@ -112,12 +112,14 @@
           </el-form-item>
 
           <el-form-item label="税率/明细" class="tax-detail-item" required>
+            <p v-if="editable" class="tax-input-hint">按票面逐行填含税金额或未税金额，另一项和税额自动计算。</p>
             <div class="tax-table-wrapper">
               <table class="tax-table">
                 <thead>
                   <tr>
                     <th class="th-index">序号</th>
                     <th class="th-rate">税率(%)</th>
+                    <th class="th-amount">含税金额（CNY）</th>
                     <th class="th-amount">未税金额（CNY）</th>
                     <th class="th-tax">税额（CNY）</th>
                     <th class="th-op">操作</th>
@@ -137,10 +139,13 @@
                       </el-select>
                     </td>
                     <td class="col-center">
-                      <el-input v-model.trim="row.amount_excl_tax" :disabled="!editable" size="small" placeholder="请输入未税金额" class="cell-input-excl" @input="syncTaxRow(row)" @blur="normalizeTaxRow(row)" />
+                      <el-input :value="row.amount_incl_tax" :disabled="!editable" size="small" placeholder="按含税金额反算" @input="editTaxAmount(row, 'gross', $event)" @blur="normalizeTaxRow(row)" />
                     </td>
                     <td class="col-center">
-                      <el-input :value="row.tax_amount" disabled size="small" placeholder="按税率自动计算" class="cell-input-tax" />
+                      <el-input :value="editable ? row.amount_excl_tax : settlementAmount(row.amount_excl_tax)" :disabled="!editable" size="small" placeholder="按未税金额计算" @input="editTaxAmount(row, 'net', $event)" @blur="normalizeTaxRow(row)" />
+                    </td>
+                    <td class="col-center">
+                      <el-input :value="settlementAmount(row.tax_amount)" disabled size="small" placeholder="按税率自动计算" class="cell-input-tax" />
                     </td>
                     <td class="col-center">
                       <el-button v-if="editable" type="text" class="btn-action-blue" @click="removeTaxRow(index)">
@@ -150,7 +155,7 @@
                   </tr>
                 </tbody>
               </table>
-              <button v-if="editable" type="button" class="btn-add-tax" @click="taxRows.push({ tax_rate: '', amount_excl_tax: '', tax_amount: '' })">
+              <button v-if="editable" type="button" class="btn-add-tax" @click="addTaxRow">
                 <i class="el-icon-plus" /> 添加税率明细
               </button>
             </div>
@@ -428,9 +433,10 @@
 </template>
 
 <script>
+import { formatMoney as displayMoney, settlementAmount } from '../../../utils/money.js'
 import { listEntity } from '../../../api/erp/master'
 import { reserveForCreatePage, clearCreatePageReservation } from '../../../utils/documentNumberReservation'
-import { roundInvoiceAmount, invoiceTaxAmount } from '../../../utils/financeInvoiceAmount'
+import { roundInvoiceAmount, invoiceTaxAmount, splitGrossInvoiceAmount, sumInvoiceAmounts } from '../../../utils/financeInvoiceAmount'
 import {
   getFinanceInvoice,
   createFinanceInvoice,
@@ -439,6 +445,8 @@ import {
   deleteFinanceInvoiceAttachment,
   previewFinanceAttachment
 } from '../../../api/erp/finance'
+
+const emptyTaxRow = () => ({ tax_rate: '', amount_basis: 'net', amount_excl_tax: '', tax_amount: '', amount_incl_tax: '' })
 
 const empty = () => ({
   id: null,
@@ -466,7 +474,7 @@ export default {
     saving: false,
     reservation: null,
     form: empty(),
-    taxRows: [{ tax_rate: '', amount_excl_tax: '', tax_amount: '' }],
+    taxRows: [emptyTaxRow()],
     pickerVisible: false,
     supplierLoading: false,
     supplierRows: [],
@@ -494,11 +502,8 @@ export default {
       return this.$route.query.mode !== 'view' && (!this.id || this.form.status === 'draft')
     },
     amountValid() {
-      const excl = Number(this.form.amount_excl_tax || 0)
-      const tax = Number(this.form.tax_amount || 0)
-      const incl = Number(this.form.amount_incl_tax || 0)
-      if (incl <= 0 || this.form.amount_excl_tax === '' || this.form.tax_amount === '') return false
-      return Math.abs(excl + tax - incl) < 0.0001
+      const form = this.form
+      return Number(form.amount_incl_tax) > 0 && sumInvoiceAmounts([form.amount_excl_tax, form.tax_amount]) === roundInvoiceAmount(form.amount_incl_tax)
     },
     amountUnderLimit() {
       const incl = Number(this.form.amount_incl_tax || 0)
@@ -506,10 +511,8 @@ export default {
     },
     taxDetailValid() {
       const rows = this.taxRows || []
-      if (!rows.length || rows.some(row => row.tax_rate === '' || row.amount_excl_tax === '' || row.tax_amount === '')) return false
-      const excl = rows.reduce((sum, row) => sum + Number(roundInvoiceAmount(row.amount_excl_tax || 0)), 0)
-      const tax = rows.reduce((sum, row) => sum + Number(row.tax_amount || 0), 0)
-      return Math.abs(excl - Number(this.form.amount_excl_tax || 0)) < 0.0001 && Math.abs(tax - Number(this.form.tax_amount || 0)) < 0.0001
+      return rows.length > 0 && rows.every(row => row.tax_rate !== '' && roundInvoiceAmount(row.amount_excl_tax) &&
+        roundInvoiceAmount(row.tax_amount) && roundInvoiceAmount(row.amount_incl_tax) === sumInvoiceAmounts([row.amount_excl_tax, row.tax_amount]))
     }
   },
   created() {
@@ -521,6 +524,7 @@ export default {
     }
   },
   methods: {
+    settlementAmount,
     async init() {
       this.loading = true
       try {
@@ -531,7 +535,7 @@ export default {
           if (this.editable) this.taxRows.forEach(row => this.normalizeTaxRow(row))
         } else {
           this.form = empty()
-          this.taxRows = [{ tax_rate: '', amount_excl_tax: '', tax_amount: '' }]
+          this.taxRows = [emptyTaxRow()]
           this.reservation = await reserveForCreatePage('finance_invoice', '/finance/invoices/create')
           this.form.document_no = this.reservation.document_no
         }
@@ -543,10 +547,12 @@ export default {
       }
     },
     money(v) {
-      return Number(v || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+      return displayMoney(v || 0)
     },
     hydrateTaxRows(rows) {
-      const normalized = Array.isArray(rows) ? rows.map(x => ({ ...x })) : []
+      const normalized = Array.isArray(rows) ? rows.map(x => ({
+        ...emptyTaxRow(), ...x, amount_incl_tax: x.amount_incl_tax || sumInvoiceAmounts([x.amount_excl_tax, x.tax_amount])
+      })) : []
       const detailExcl = normalized.reduce((sum, row) => sum + Number(row.amount_excl_tax || 0), 0)
       const detailTax = normalized.reduce((sum, row) => sum + Number(row.tax_amount || 0), 0)
       const formExcl = Number(this.form.amount_excl_tax || 0)
@@ -558,7 +564,7 @@ export default {
       // recover a single derived line from their stored header amounts, then
       // require the user to verify it before saving.
       const rate = formExcl > 0 ? Number((formTax * 100 / formExcl).toFixed(4)) : 0
-      return [{ tax_rate: rate, amount_excl_tax: formExcl ? roundInvoiceAmount(this.form.amount_excl_tax) : '', tax_amount: roundInvoiceAmount(this.form.tax_amount) }]
+      return [{ ...emptyTaxRow(), tax_rate: rate, amount_excl_tax: formExcl ? roundInvoiceAmount(this.form.amount_excl_tax) : '', tax_amount: roundInvoiceAmount(this.form.tax_amount), amount_incl_tax: roundInvoiceAmount(this.form.amount_incl_tax) }]
     },
     formatSize(bytes) {
       if (!bytes) return ''
@@ -570,18 +576,33 @@ export default {
       return (num / (1024 * 1024)).toFixed(2) + ' MB'
     },
     syncTaxRows() {
-      const excl = this.taxRows.reduce((s, x) => s + Math.round(Number(roundInvoiceAmount(x.amount_excl_tax || 0)) * 100), 0)
-      const tax = this.taxRows.reduce((s, x) => s + Math.round(Number(x.tax_amount || 0) * 100), 0)
-      this.form.amount_excl_tax = (excl / 100).toFixed(2)
-      this.form.tax_amount = (tax / 100).toFixed(2)
-      this.form.amount_incl_tax = ((excl + tax) / 100).toFixed(2)
+      this.form.amount_excl_tax = sumInvoiceAmounts(this.taxRows.map(row => row.amount_excl_tax))
+      this.form.tax_amount = sumInvoiceAmounts(this.taxRows.map(row => row.tax_amount))
+      this.form.amount_incl_tax = sumInvoiceAmounts([this.form.amount_excl_tax, this.form.tax_amount])
+    },
+    addTaxRow() {
+      this.taxRows.push(emptyTaxRow())
+    },
+    editTaxAmount(row, basis, value) {
+      row.amount_basis = basis
+      row[basis === 'gross' ? 'amount_incl_tax' : 'amount_excl_tax'] = value.trim()
+      this.syncTaxRow(row)
     },
     syncTaxRow(row) {
-      row.tax_amount = invoiceTaxAmount(row.amount_excl_tax || 0, row.tax_rate || 0)
+      if (row.amount_basis === 'gross') {
+        const gross = roundInvoiceAmount(row.amount_incl_tax)
+        const split = gross ? splitGrossInvoiceAmount(gross, row.tax_rate || 0) : { net: '', tax: '' }
+        row.amount_excl_tax = split.net
+        row.tax_amount = split.tax
+      } else {
+        row.tax_amount = invoiceTaxAmount(row.amount_excl_tax, row.tax_rate || 0)
+        row.amount_incl_tax = row.tax_amount ? sumInvoiceAmounts([row.amount_excl_tax, row.tax_amount]) : ''
+      }
       this.syncTaxRows()
     },
     normalizeTaxRow(row) {
-      if (row.amount_excl_tax !== '') row.amount_excl_tax = roundInvoiceAmount(row.amount_excl_tax)
+      const field = row.amount_basis === 'gross' ? 'amount_incl_tax' : 'amount_excl_tax'
+      row[field] = roundInvoiceAmount(row[field])
       this.syncTaxRow(row)
     },
     removeTaxRow(i) {
@@ -631,6 +652,8 @@ export default {
         currency: 'CNY',
         tax_detail: this.taxRows.map(x => ({
           tax_rate: Number(x.tax_rate || 0),
+          amount_basis: x.amount_basis,
+          amount_incl_tax: roundInvoiceAmount(x.amount_incl_tax),
           amount_excl_tax: roundInvoiceAmount(x.amount_excl_tax || 0),
           tax_amount: roundInvoiceAmount(x.tax_amount || 0)
         }))
@@ -949,6 +972,12 @@ export default {
   overflow-x: auto;
   max-width: 100%;
   background: #ffffff;
+}
+.tax-input-hint {
+  margin: 0 0 6px;
+  color: #4b5563;
+  font-size: 12px;
+  line-height: 18px;
 }
 .tax-table {
   width: 100%;

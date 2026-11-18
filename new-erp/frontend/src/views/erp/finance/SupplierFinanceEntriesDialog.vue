@@ -25,6 +25,7 @@
 </template>
 
 <script>
+import { formatMoney as displayMoney } from '../../../utils/money.js'
 import { listSupplierFinanceEntries } from '../../../api/erp/supplierFinance'
 
 export default {
@@ -36,7 +37,7 @@ export default {
   },
   beforeDestroy() { this.invalidate() },
   methods: {
-    money(value) { return Number(value || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 4 }) },
+    money(value) { return displayMoney(value || 0) },
     invalidate() { this.requestId += 1; this.loading = false },
     open() {
       this.invalidate(); this.rows = []; this.total = 0; this.page = 1

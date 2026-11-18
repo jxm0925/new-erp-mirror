@@ -57,10 +57,10 @@ class PurchasePaymentBalanceQueryService
                     ->on('settled.purchase_order_id', '=', 'purposes.purchase_order_id');
             })
             ->selectRaw('purposes.purchase_order_id, purposes.currency,
-                SUM(CASE WHEN purposes.direction = ? THEN purposes.amount ELSE 0 END) AS paid_amount,
-                SUM(CASE WHEN purposes.direction = ? THEN purposes.amount ELSE 0 END) AS refund_amount,
-                SUM(CASE WHEN purposes.direction = ? THEN COALESCE(settled.amount, 0) ELSE 0 END) AS allocated_payment_amount,
-                SUM(CASE WHEN purposes.direction = ? THEN COALESCE(settled.amount, 0) ELSE 0 END) AS allocated_refund_amount',
+                ROUND(SUM(CASE WHEN purposes.direction = ? THEN purposes.amount ELSE 0 END), 2) AS paid_amount,
+                ROUND(SUM(CASE WHEN purposes.direction = ? THEN purposes.amount ELSE 0 END), 2) AS refund_amount,
+                ROUND(SUM(CASE WHEN purposes.direction = ? THEN COALESCE(settled.amount, 0) ELSE 0 END), 2) AS allocated_payment_amount,
+                ROUND(SUM(CASE WHEN purposes.direction = ? THEN COALESCE(settled.amount, 0) ELSE 0 END), 2) AS allocated_refund_amount',
                 ['payment', 'receipt', 'payment', 'receipt'])
             ->groupBy('purposes.purchase_order_id', 'purposes.currency');
         return DB::query()->fromSub($totals, 'cash_totals')->select('cash_totals.*')
@@ -134,6 +134,7 @@ class PurchasePaymentBalanceQueryService
 
     public function derive(array $row): array
     {
+        foreach (['paid_amount', 'refund_amount', 'allocated_payment_amount', 'allocated_refund_amount'] as $field) $row[$field] = Money::settle((string) $row[$field]);
         $row['net_paid_amount'] = Money::sub($row['paid_amount'], $row['refund_amount']);
         $row['unallocated_payment_amount'] = Money::sub($row['paid_amount'], $row['allocated_payment_amount']);
         $row['unallocated_refund_amount'] = Money::sub($row['refund_amount'], $row['allocated_refund_amount']);

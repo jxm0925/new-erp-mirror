@@ -48,7 +48,10 @@ class FinanceAccountLedgerService
             ]);
         }
 
-        return bcdiv(bcmul($balance['base_balance'], $amount, 8), $balance['original_balance'], 4);
+        // 清空历史余额时冲尽原账面价值；分次转出按结算精度舍入。
+        if (Money::compare($amount, $balance['original_balance']) === 0) return $balance['base_balance'];
+        $share = Money::settle(bcdiv(bcmul($balance['base_balance'], $amount, 8), $balance['original_balance'], Money::CALC_SCALE));
+        return Money::compare($share, $balance['base_balance']) > 0 ? $balance['base_balance'] : $share;
     }
 
     public function append(array $data): FinanceAccountMovement

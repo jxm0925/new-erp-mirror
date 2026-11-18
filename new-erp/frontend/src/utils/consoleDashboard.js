@@ -1,3 +1,4 @@
+import { formatMoney as displayMoney } from './money.js'
 export function consoleTime(value, timezone = 'Asia/Shanghai') {
   if (!value) return '--'
   const date = new Date(value)
@@ -19,7 +20,7 @@ export function consoleTrend(rows) {
 
 export function consoleAmounts(rows) {
   if (rows === null || rows === undefined) return null
-  return rows.length ? rows.map(r => `${r.currency || '未指定币种'} ${Number(r.amount).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 4 })}`).join('；') : '0'
+  return rows.length ? rows.map(r => `${r.currency || '未指定币种'} ${displayMoney(r.amount)}`).join('；') : '0.00'
 }
 
 export function consoleQuantities(rows) {

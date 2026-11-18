@@ -27,7 +27,7 @@
                         center
                         title="{{item.name}}" 
                         value="x{{item.product_uom_qty}}"
-                        label="￥{{item.price_unit}}"
+                        label="{{item.priceText ? '￥' + item.priceText : ''}}"
                         title-class="detail-title" 
                         value-class="detail-value" 
                         label-class="detail-label"
@@ -84,13 +84,14 @@
                     </van-button>
                 </van-field>
                 <van-field
-                    value="{{send.cost}}"
+                    value="{{send_cost}}"
                     clearable
                     label="运费"
                     type="digit"
                     placeholder="请输入快递费用"
                     border="{{ false }}"
                     bind:input="inputCost"
+                    bind:blur="formatCost"
                 />
                 <view style="padding-left:32rpx;background-color: #fff;">
                 <van-uploader

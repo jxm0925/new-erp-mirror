@@ -40,7 +40,8 @@
             <el-radio-group v-model="form.production_threshold_type"><el-radio label="ratio">按比例</el-radio><el-radio label="amount">按金额</el-radio></el-radio-group>
           </el-form-item>
           <el-form-item :label="form.production_threshold_type === 'ratio' ? '定金比例' : '定金金额'" required>
-            <el-input-number v-model="form.threshold" :min="0" :max="form.production_threshold_type === 'ratio' ? 100 : 999999999" :precision="2" controls-position="right" />
+            <el-input-number v-if="form.production_threshold_type === 'ratio'" v-model="form.threshold" :min="0" :max="100" :precision="2" controls-position="right" />
+            <el-input v-else v-model.trim="form.threshold" inputmode="decimal" placeholder="0.00" @blur="form.threshold = settlementAmount(form.threshold) || form.threshold" />
             <span class="unit">{{ form.production_threshold_type === 'ratio' ? '% 合同额' : '元' }}</span>
           </el-form-item>
         </template>
@@ -54,6 +55,7 @@
 </template>
 
 <script>
+import { formatMoney as displayMoney, settlementAmount } from '../../../utils/money.js'
 import { listFundingPolicies, createFundingPolicy, updateFundingPolicy, setFundingPolicyStatus } from '../../../api/erp/finance'
 
 const TYPES = [
@@ -70,12 +72,13 @@ export default {
   },
   created() { this.load() },
   methods: {
+    settlementAmount,
     typeLabel(v) { return (TYPES.find(t => t.value === v) || {}).label || v },
     depositText(row) {
       if (row.policy_type === 'full_prepay') return '—'
       const v = Number(row.production_threshold_value || 0)
       if (row.production_threshold_type === 'ratio') return `合同额 ${Number((v * 100).toFixed(2))}%`
-      return `¥${v.toLocaleString('zh-CN')}`
+      return `¥${displayMoney(v)}`
     },
     async load() {
       this.loading = true
@@ -97,7 +100,7 @@ export default {
     openEdit(row) {
       const v = Number(row.production_threshold_value || 0)
       this.form = { id: row.id, policy_code: row.policy_code, policy_name: row.policy_name, policy_type: row.policy_type,
-        production_threshold_type: row.production_threshold_type || 'ratio', threshold: row.production_threshold_type === 'ratio' ? Number((v * 100).toFixed(2)) : v,
+        production_threshold_type: row.production_threshold_type || 'ratio', threshold: row.production_threshold_type === 'ratio' ? Number((v * 100).toFixed(2)) : settlementAmount(row.production_threshold_value),
         remark: row.remark || '', business_version: row.business_version || 1 }
       this.dialog = true
     },
@@ -106,10 +109,12 @@ export default {
       if (!f.id && !/^[A-Za-z0-9_-]+$/.test(f.policy_code)) return this.$message.warning('编码只能用字母、数字、下划线或短横线')
       if (!f.policy_name) return this.$message.warning('请填写名称')
       const full = f.policy_type === 'full_prepay'
+      const deposit = settlementAmount(f.threshold)
+      if (!full && f.production_threshold_type === 'amount' && (!deposit || Number(deposit) < 0 || Number(deposit) > 999999999)) return this.$message.warning('请填写有效的定金金额（0 至 999999999 元）')
       const payload = {
         policy_name: f.policy_name, policy_type: f.policy_type,
         production_threshold_type: full ? 'ratio' : f.production_threshold_type,
-        production_threshold_value: full ? 1 : (f.production_threshold_type === 'ratio' ? Number((f.threshold / 100).toFixed(6)) : f.threshold),
+        production_threshold_value: full ? 1 : (f.production_threshold_type === 'ratio' ? Number((f.threshold / 100).toFixed(6)) : deposit),
         shipment_requires_full_payment: true, remark: f.remark || null
       }
       this.saving = true

@@ -46,7 +46,7 @@ class PurchasePaymentPlanApplicationService
             $total = '0.0000';
             $kept = [];
             foreach ($data['items'] as $index => $input) {
-                $amount = Money::normalize((string) $input['amount']);
+                $amount = Money::settle((string) $input['amount']);
                 if (Money::compare($amount, '0') <= 0) throw ValidationException::withMessages(['items' => '每期安排金额必须大于 0。']);
                 $item = isset($input['id']) ? $existing->get((int) $input['id']) : null;
                 if (isset($input['id']) && ! $item) throw ValidationException::withMessages(['items' => '付款期次已变化或不属于该订单，请刷新后重试。']);

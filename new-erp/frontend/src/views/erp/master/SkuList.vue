@@ -168,7 +168,7 @@
           <el-table-column label="销售单位 / 默认销售价" min-width="170">
             <template slot-scope="{ row }">
               <div v-if="row.sale_price !== null && row.sale_price !== ''" class="price-cell">
-                <span class="price-val code-mono">¥ {{ Number(row.sale_price).toFixed(2) }}</span>
+                <span class="price-val code-mono">¥ {{ $money(row.sale_price) }}</span>
                 <span class="unit-tag">{{ unitName(row) }}</span>
               </div>
               <div v-else class="price-incomplete">

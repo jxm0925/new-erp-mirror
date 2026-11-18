@@ -65,7 +65,7 @@ class FinanceBusinessSourceResolver
             ->lockForUpdate()
             ->get(['settlement_amount'])
             ->reduce(fn (string $sum, PurchaseReturn $row): string => Money::add($sum, (string) $row->settlement_amount), '0.0000');
-        $amount = Money::maxZero(Money::sub((string) $receipt->settlement_amount, $offset));
+        $amount = Money::maxZero(Money::sub(Money::settle((string) $receipt->settlement_amount), Money::settle($offset)));
         return $this->fact(FinanceConstants::SOURCE_PURCHASE_RECEIPT, $receipt->id, $receipt->receipt_no,
             FinanceConstants::PARTY_SUPPLIER, (int) $receipt->supplier_id, (string) $receipt->supplier?->supplier_name,
             (string) ($receipt->currency_snapshot ?: 'CNY'), $amount);
@@ -97,7 +97,7 @@ class FinanceBusinessSourceResolver
         if ($purpose === 'payment' && ! in_array($source->status, ['open', 'partially_paid'], true)) {
             throw ValidationException::withMessages(['source_document_id' => '该采购结算来源当前不可付款：'.$source->status]);
         }
-        $amount = Money::maxZero(Money::sub((string) $source->eligible_amount, (string) $source->ap_offset_amount));
+        $amount = Money::maxZero(Money::sub(Money::settle((string) $source->eligible_amount), Money::settle((string) $source->ap_offset_amount)));
         if (Money::compare($amount, '0') <= 0) {
             throw ValidationException::withMessages(['source_document_id' => '该采购结算来源没有可付款金额。']);
         }
@@ -119,6 +119,7 @@ class FinanceBusinessSourceResolver
 
     private function fact(string $type, int $id, string $no, string $partyType, int $partyId, string $partyName, string $currency, string $amount): array
     {
+        $amount = Money::settle($amount);
         return compact('type', 'id', 'no', 'partyType', 'partyId', 'partyName', 'currency', 'amount');
     }
 }

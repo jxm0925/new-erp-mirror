@@ -34,7 +34,7 @@
         </div>
         <div class="stat-pill" title="今日当前分类新建工单所关联订单的整单应收金额（按订单去重）">
           <span>关联销售额</span>
-          <strong class="code-mono">{{ stats ? money(stats.sales_amount, 0) : '—' }}</strong>
+          <strong class="code-mono">{{ stats ? money(stats.sales_amount) : '—' }}</strong>
         </div>
         <button
           v-if="pendingChanges.length"
@@ -76,7 +76,8 @@
           <b v-if="order.sales_order_no" class="code-mono">{{ order.sales_order_no }}</b>
           <span class="code-mono">{{ order.work_order_no }}</span>
           <span v-if="order.product_name">({{ order.product_name }})</span>
-          <span>已等待 <b>{{ waitMinutes(order) }}</b> 分钟</span>
+          <span v-if="order.wait_seconds != null">已等待 <b>{{ waitMinutes(order) }}</b> 分钟</span>
+          <span v-else>待接单</span>
         </button>
       </div>
       <span class="connection-hint">{{ connectionLabel }}</span>
@@ -239,7 +240,7 @@
             <span class="wo-summary-pill">
               主工单 {{ row.main_work_order_count != null ? row.main_work_order_count : 1 }} 张
               <template v-if="row.sub_work_order_count"> · 子工单 {{ row.sub_work_order_count }} 张</template>
-              · 图纸 {{ (row.order_drawings || []).length }} 份
+              · 公开图纸 {{ (row.order_drawings || []).length }} 份
             </span>
             <button
               type="button"
@@ -337,7 +338,7 @@
               </button>
             </template>
             <div v-else class="no-drawing-pill">
-              <i class="el-icon-picture-outline" /> 暂无图纸附件
+              <i class="el-icon-picture-outline" /> 暂无公开图纸
             </div>
           </div>
         </div>
@@ -492,7 +493,7 @@
             <!-- 弹窗左栏：设计图纸高清预览区 -->
             <div class="modal-drawing-col">
               <div class="modal-section-head">
-                <h4><i class="el-icon-picture-outline" /> 设计图纸与技术附件 ({{ modalDrawings.length }})</h4>
+                <h4><i class="el-icon-picture-outline" /> 公开图纸与技术附件 ({{ modalDrawings.length }})</h4>
                 <a
                   v-if="activeDrawing && safeFileUrl(activeDrawing)"
                   class="el-button el-button--mini el-button--success is-plain"
@@ -570,7 +571,7 @@
 
               <div v-else class="empty-drawing-stage">
                 <i class="el-icon-picture-outline" />
-                <p>当前订单与工单暂未上传设计图纸</p>
+                <p>暂无可公开展示的图纸，请在已登录的工单资料中查看。</p>
               </div>
 
               <!-- 兼容展示整单商品与附件表 -->
@@ -841,6 +842,7 @@
 </template>
 
 <script>
+import { formatMoney as displayMoney } from '../../../utils/money.js'
 import {
   getAssemblyChange,
   getAssemblyHistory,
@@ -1063,11 +1065,8 @@ export default {
     text(value) {
       return value === null || value === undefined || value === '' ? '—' : value
     },
-    money(value, decimals = 2) {
-      const number = Number(value)
-      return Number.isFinite(number)
-        ? `¥${number.toLocaleString('zh-CN', { minimumFractionDigits: decimals, maximumFractionDigits: decimals })}`
-        : '—'
+    money(value) {
+      return value == null ? '—' : `¥${displayMoney(value)}`
     },
     formatDateTime(value) {
       if (!value) return '—'

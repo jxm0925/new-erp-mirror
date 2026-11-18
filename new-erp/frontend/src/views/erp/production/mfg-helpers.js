@@ -1,3 +1,4 @@
+import { formatMoney as displayMoney } from '../../../utils/money.js'
 // 生产 v2 页面共用的小工具：状态颜色、数量显示、负责人目录。
 import { listUsers } from '../../../api/erp/rbac'
 
@@ -16,7 +17,7 @@ export function qty(value) {
 
 export function money(value) {
   if (value === null || value === undefined || value === '') return '-'
-  return '¥' + Number(value).toLocaleString('zh-CN', { minimumFractionDigits: 0, maximumFractionDigits: 2 })
+  return '¥' + displayMoney(value)
 }
 
 export function shortDate(value) {

@@ -62,17 +62,20 @@ class PurchaseActualAmountApplicationService
         if ($data['reason'] === '' || $data['idempotency_key'] === '') {
             throw ValidationException::withMessages(['reason' => '请填写实际金额修正原因和有效请求编号。']);
         }
-        $data['actual_amount'] = Money::normalize((string) $data['actual_amount']);
-        $requestHash = hash('sha256', json_encode(['source_id' => $sourceId, ...$data], JSON_THROW_ON_ERROR));
+        $inputAmount = Money::normalize((string) $data['actual_amount']);
+        $data['actual_amount'] = Money::settle((string) $data['actual_amount']);
+        $hashFor = fn ($amount) => hash('sha256', json_encode(['source_id' => $sourceId, ...$data, 'actual_amount' => $amount], JSON_THROW_ON_ERROR));
+        $requestHash = $hashFor(Money::normalize($data['actual_amount']));
+        $previousPrecisionHash = $hashFor($inputAmount);
 
-        return DB::transaction(function () use ($sourceId, $data, $actor, $requestHash): array {
+        return DB::transaction(function () use ($sourceId, $data, $actor, $requestHash, $previousPrecisionHash): array {
             [$source, $receipt, $line] = $this->lockContext($sourceId);
             // The receipt lock serializes this key and every affected line; a lost response must not post cost twice.
             $previous = PurchaseLog::query()->where('target_type', 'purchase_receipt')->where('target_id', $receipt->id)
                 ->where('action', self::ACTION)->where('evidence->idempotency_key', $data['idempotency_key'])
                 ->orderBy('id')->lockForUpdate()->first();
             if ($previous) {
-                if (! hash_equals((string) ($previous->evidence['request_hash'] ?? ''), $requestHash)) {
+                if (! in_array($previous->evidence['request_hash'] ?? null, [$requestHash, $previousPrecisionHash], true)) {
                     throw ValidationException::withMessages(['idempotency_key' => '该请求编号已用于其他实际金额修正内容。']);
                 }
                 return [...$previous->evidence['result'], 'replayed' => true];
@@ -183,7 +186,7 @@ class PurchaseActualAmountApplicationService
     private function previewLocked(PurchaseSettlementSource $source, PurchaseReceipt $receipt, PurchaseReceiptItem $line, ?string $amount, object $actor,
         ?PurchaseCostInventoryRecalculator $recalculator = null, ?array &$costPlan = null): array
     {
-        $target = $amount === null ? $line->effectiveAmount() : Money::normalize($amount);
+        $target = $amount === null ? $line->effectiveAmount() : Money::settle($amount);
         $current = $line->effectiveAmount();
         $reasons = [];
         if (! $this->can($actor, 'finance.payment.confirm')) $this->reason($reasons, 'permission_denied', '当前账号没有确认财务实际金额的权限。');

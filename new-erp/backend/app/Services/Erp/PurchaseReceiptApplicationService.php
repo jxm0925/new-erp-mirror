@@ -107,7 +107,7 @@ class PurchaseReceiptApplicationService
                 'operator' => $operatorName ?: '系统任务',
             ]);
 
-            return $receipt->fresh(['items.item.unit', 'order', 'supplier']);
+            return $receipt->fresh(['items.item.unit', 'items.orderItem', 'items.receipt:id,settlement_mode', 'order', 'supplier']);
         }, 5);
     }
 

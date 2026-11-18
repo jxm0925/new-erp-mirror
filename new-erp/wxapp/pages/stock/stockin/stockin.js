@@ -1,7 +1,19 @@
 import Notify from '@vant/weapp/notify/notify';
 var util = require('../../../utils/util.js');
 var api = require('../../../config/api.js');
+function unitPriceText(value) {
+  const match = /^(\d+)(?:\.(\d*))?$/.exec(String(value == null ? '' : value).trim());
+  if (!match) return '';
+  const fraction = (match[2] || '').replace(/0+$/, '');
+  return fraction ? match[1] + '.' + fraction : match[1];
+}
 var app = getApp();
+
+function withPrices(groups) {
+  return groups.map(group => Object.assign({}, group, {
+    sku: (group.sku || []).map(item => Object.assign({}, item, { priceText: unitPriceText(item.univalence || 0) }))
+  }));
+}
 
 Page({
 
@@ -48,10 +60,11 @@ Page({
   async getOptions() {
     const res = await util.request(api.AccessoryFirst, { type: this.data.value1 });
     if (res.code) {
+      const groups = withPrices(res.data);
       this.setData({
-        accessoryArray: res.data,
-        children: res.data[0].sku,
-        allArray: res.data
+        accessoryArray: groups,
+        children: groups.length ? groups[0].sku : [],
+        allArray: groups
       })
     }
     this.processBadge()
@@ -71,7 +84,7 @@ Page({
     const res = await util.request(api.AccessoryCart)
     if (res.code) {
       this.setData({
-        shippingCarInfo: res.data
+        shippingCarInfo: Object.assign({}, res.data, { items: (res.data.items || []).map(item => Object.assign({}, item, { priceText: unitPriceText(item.univalence) })) })
       })
     } else {
       this.setData({
@@ -322,15 +335,12 @@ Page({
   },
 
   async searchChange(e) {
-    let children = [];
     var that = this;
     const res = await util.request(api.SearchFields, { value: e.detail, type: that.data.value1 })
-    if (res.data.length) {
-      children = res.data[0].sku
-    }
+    const groups = withPrices(res.data);
     that.setData({
-      accessoryArray: res.data,
-      children: children,
+      accessoryArray: groups,
+      children: groups.length ? groups[0].sku : [],
       value: e.detail
     })
   },
@@ -343,15 +353,12 @@ Page({
   },
 
   async searchField(e) {
-    let children = [];
     var that = this;
     const res = await util.request(api.SearchFields, { value: that.data.value, type: that.data.value1 })
-    if (res.data.length) {
-      children = res.data[0].sku
-    }
+    const groups = withPrices(res.data);
     that.setData({
-      accessoryArray: res.data,
-      children: children
+      accessoryArray: groups,
+      children: groups.length ? groups[0].sku : []
     })
   },
 
@@ -395,14 +402,22 @@ Page({
     var that = this;
     const items = that.data.shippingCarInfo.items;
     const index = e.currentTarget.dataset.idx;
-    const res = await util.request(api.ChangePrice, { id: items[index].id, univalence: e.detail.value })
+    const value = String(e.detail.value).trim();
+    if (value === items[index].priceText) return;
+    const priceText = unitPriceText(value);
+    if (!priceText || !/^\d+(?:\.\d*)?$/.test(value)) {
+      Notify({ type: 'warning', message: '请填写有效的非负价格' });
+      return this.cartList();
+    }
+    const res = await util.request(api.ChangePrice, { id: items[index].id, univalence: value })
 
     if (!res.code) {
       Notify({ type: 'danger', message: res.msg });
       return;
     }
 
-    items[index].univalence = e.detail.value
+    items[index].univalence = value;
+    items[index].priceText = priceText;
     that.setData({
       "shippingCarInfo.items": items
     })

@@ -5,15 +5,16 @@
     <el-table-column label="业务金额" min-width="105" align="right"><template slot-scope="{ row }">{{ row.source_amount == null ? '—' : money(row.source_amount) }}</template></el-table-column>
     <el-table-column label="已结算" min-width="100" align="right"><template slot-scope="{ row }">{{ row.source_allocated_amount == null ? '—' : money(row.source_allocated_amount) }}</template></el-table-column>
     <el-table-column label="待结算" min-width="100" align="right"><template slot-scope="{ row }">{{ row.source_remaining_amount == null ? '—' : money(row.source_remaining_amount) }}</template></el-table-column>
-    <el-table-column label="本次核销" min-width="130"><template slot-scope="{ row }"><el-input v-model.trim="row.allocated_amount" :disabled="!editable" size="small" /></template></el-table-column>
+    <el-table-column label="本次核销" min-width="130"><template slot-scope="{ row }"><el-input v-model.trim="row.allocated_amount" @blur="row.allocated_amount = settlementAmount(row.allocated_amount)" :disabled="!editable" size="small" /></template></el-table-column>
     <el-table-column v-if="editable" label="操作" width="68"><template slot-scope="{ $index }"><el-button type="text" class="danger" @click="$emit('remove', $index)">移除</el-button></template></el-table-column>
   </el-table>
 </template>
 <script>
+import { settlementAmount } from '../../utils/money.js'
 import { money, sourceLabel } from '../../utils/financeCashAllocation'
 export default {
   props: { rows: { type: Array, default: () => [] }, editable: Boolean },
-  methods: { money, sourceLabel },
+  methods: { money, sourceLabel, settlementAmount },
 }
 </script>
 <style scoped>

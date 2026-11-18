@@ -492,6 +492,7 @@
 </template>
 
 <script>
+import { formatMoney as displayMoney } from '../../../utils/money.js'
 import {
   getCrmWorkbench,
   listCrmWorkbenchTasks,
@@ -671,7 +672,7 @@ export default {
     formatMoney(value, currency) {
       if (value === null || value === undefined || value === '') return '待核实'
       const prefix = currency === 'CNY' || !currency ? '¥' : `${currency} `
-      return `${prefix}${Number(value).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+      return `${prefix}${displayMoney(value)}`
     },
     targetTypeLabel(type) {
       return ({ lead: '线索', opportunity: '商机', customer: '客户' })[type] || '事项'

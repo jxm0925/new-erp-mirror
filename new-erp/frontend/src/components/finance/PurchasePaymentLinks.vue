@@ -11,7 +11,7 @@
         <span v-else>{{ row.payment_plan_id ? `第${row.sequence_no || '—'}期 · ${triggerLabel(row.trigger_type)}` : '未指定期次' }}</span>
       </template></el-table-column>
       <el-table-column label="付款条件 / 日期" min-width="165"><template slot-scope="{ row }">{{ conditionText(row) }}</template></el-table-column>
-      <el-table-column :label="direction === 'receipt' ? '关联退款金额' : '关联付款金额'" min-width="145" align="right"><template slot-scope="{ row, $index }"><el-input v-if="!readonly" :value="row.amount" :disabled="disabled" @input="amount => patchRow($index, { amount })" /><span v-else>{{ money(row.amount) }}</span></template></el-table-column>
+      <el-table-column :label="direction === 'receipt' ? '关联退款金额' : '关联付款金额'" min-width="145" align="right"><template slot-scope="{ row, $index }"><el-input v-if="!readonly" :value="row.amount" :disabled="disabled" @input="amount => patchRow($index, { amount })" @blur="patchRow($index, { amount: settlementAmount(row.amount) })" /><span v-else>{{ money(row.amount) }}</span></template></el-table-column>
       <el-table-column v-if="!readonly" label="操作" width="145"><template slot-scope="{ $index }"><el-button type="text" :disabled="disabled || loadingFacts" @click="addInstallment($index)">添加期次</el-button><el-button type="text" class="danger" :disabled="disabled" @click="removeRow($index)">移除</el-button></template></el-table-column>
     </el-table>
     <div class="purchase-links-total"><span>关联合计：<b>{{ money(total) }} {{ currency }}</b></span><span>资金金额：<b>{{ money(amount) }} {{ currency }}</b></span></div>
@@ -21,6 +21,7 @@
   </div>
 </template>
 <script>
+import { settlementAmount } from '../../utils/money.js'
 import { getPurchasePaymentPlan } from '../../api/erp/purchasePayments'
 import { amountUnits, money } from '../../utils/financeCashAllocation'
 import { paymentTriggerLabel, purchaseAllocationTotal, validatePurchaseOrderAllocations, purchaseOrderCanPay, paymentErrorMessage } from '../../utils/purchasePayment'
@@ -48,6 +49,7 @@ export default {
   watch: { contextKey: { immediate: true, handler() { this.pickerVisible = false; this.loadFacts() } } },
   beforeDestroy() { this.requestRevision += 1 },
   methods: {
+    settlementAmount,
     money,
     triggerLabel: paymentTriggerLabel,
     validate() { return this.readonly ? '' : this.validationError },
@@ -109,14 +111,14 @@ export default {
     addOrders(orders) {
       if (this.readonly || this.disabled) return
       const rows = this.value.map(row => ({ ...row }))
-      let remaining = (amountUnits(this.amount) || 0) - Math.round(purchaseAllocationTotal(rows) * 10000)
+      let remaining = (amountUnits(this.amount) || 0) - Math.round(purchaseAllocationTotal(rows) * 100)
       for (const order of orders) {
         const id = Number(order.purchase_order_id || order.id)
         if (Number(order.supplier_id) !== this.supplierId || order.currency !== this.currency) { this.$message.warning('只能关联同一供应商、同一币种的采购订单'); continue }
         if (rows.some(row => Number(row.purchase_order_id) === id)) continue
         const suggested = amountUnits(this.direction === 'receipt' ? order.net_paid_amount : order.contract_unpaid_amount) || 0
         const value = Math.max(0, Math.min(remaining, suggested > 0 ? suggested : remaining))
-        rows.push({ purchase_order_id: id, purchase_order_no: order.purchase_order_no, payment_plan_id: null, amount: (value / 10000).toFixed(4) })
+        rows.push({ purchase_order_id: id, purchase_order_no: order.purchase_order_no, payment_plan_id: null, amount: (value / 100).toFixed(2) })
         remaining -= value
       }
       this.emitRows(rows)
@@ -127,7 +129,7 @@ export default {
       const row = this.value[index]
       const plan = this.plansFor(row).find(item => !this.value.some(link => Number(link.purchase_order_id) === Number(row.purchase_order_id) && Number(link.payment_plan_id) === Number(item.id)))
       if (!plan) return this.$message.warning('该订单没有可添加的其他付款期次，请先维护付款安排')
-      this.emitRows([...this.value, { purchase_order_id: row.purchase_order_id, purchase_order_no: this.orderName(row), payment_plan_id: plan.id, sequence_no: plan.sequence_no, trigger_type: plan.trigger_type, due_date: plan.due_date || null, amount: '0.0000' }])
+      this.emitRows([...this.value, { purchase_order_id: row.purchase_order_id, purchase_order_no: this.orderName(row), payment_plan_id: plan.id, sequence_no: plan.sequence_no, trigger_type: plan.trigger_type, due_date: plan.due_date || null, amount: '0.00' }])
     },
     removeRow(index) { if (!this.readonly && !this.disabled) this.emitRows(this.value.filter((row, i) => i !== index)) },
   },

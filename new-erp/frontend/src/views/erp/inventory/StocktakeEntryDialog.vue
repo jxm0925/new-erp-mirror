@@ -12,8 +12,8 @@
           <el-option label="未确认" value="undecided" /><el-option label="不在" value="missing" /><el-option label="补录" value="new" /><el-option label="业务占用" value="locked" />
         </el-select>
         <template v-if="editable">
-          <el-button size="small" @click="markAll(true)">全部在</el-button>
-          <el-button size="small" @click="markAll(false)">全部不在</el-button>
+          <el-button size="small" :disabled="loading || saving || !editableRows.length" @click="markPage(true)">本页 {{ editableRows.length }} 件在库</el-button>
+          <el-button size="small" :disabled="loading || saving || !editableRows.length" @click="markPage(false)">本页 {{ editableRows.length }} 件不在</el-button>
         </template>
       </div>
       <el-table :data="rows" border size="small" max-height="360">
@@ -25,7 +25,7 @@
           </template>
         </el-table-column>
         <el-table-column v-if="!isSerial && $can('inventory.amount.view')" label="成本" width="110">
-          <template slot-scope="{ row }">{{ row.total_cost == null ? '—' : num(row.total_cost) }}</template>
+          <template slot-scope="{ row }">{{ formatMoney(row.total_cost) }}</template>
         </el-table-column>
         <el-table-column label="盘点结果" width="190">
           <template slot-scope="{ row }">
@@ -34,7 +34,7 @@
               <span>在</span>
               <el-button v-if="editable" type="text" size="mini" @click="removeNew(row)">删除</el-button>
             </template>
-            <el-radio-group v-else-if="editable" :value="presentOf(row)" size="mini" @input="setPresent(row, $event)">
+            <el-radio-group v-else-if="editable" :value="presentOf(row)" :disabled="saving" size="mini" @input="setPresent([row], $event)">
               <el-radio-button :label="true">在</el-radio-button>
               <el-radio-button :label="false">不在</el-radio-button>
             </el-radio-group>
@@ -52,9 +52,9 @@
         </div>
         <div v-else-if="$can('inventory.amount.view')" class="entry-add">
           <el-input v-model.trim="physical.length_mm" size="small" placeholder="长 mm" />
-          <el-input v-model.trim="physical.width_mm" size="small" placeholder="宽 mm" />
-          <el-input v-model.trim="physical.thickness_mm" size="small" placeholder="厚 mm" />
-          <el-input v-model.trim="physical.total_cost" size="small" placeholder="成本（元）" />
+          <el-input v-if="!isLength" v-model.trim="physical.width_mm" size="small" placeholder="宽 mm" />
+          <el-input v-if="!isLength" v-model.trim="physical.thickness_mm" size="small" placeholder="厚 mm" />
+          <el-input v-model.trim="physical.total_cost" size="small" placeholder="成本（元）" @blur="formatPhysicalCost" />
           <el-button size="small" @click="addPhysical">补录实物</el-button>
         </div>
         <div v-if="pendingNew.length" class="entry-pending">
@@ -77,6 +77,7 @@
 
 <script>
 import { listStocktakeEntries, saveStocktakeCounts } from '@/api/erp/inventory'
+import { formatMoney, settlementAmount } from '@/utils/money'
 
 // 序列号/实物逐件盘点：勾选在/不在、补录账外新件，保存后由后端重算该行实盘数。
 export default {
@@ -90,52 +91,65 @@ export default {
   data() {
     return {
       loading: false, saving: false, rows: [], total: 0, page: 1, keyword: '', filter: '',
-      changes: {}, markAllValue: null, pendingNew: [], deleteIds: [], unnumbered: undefined, unnumberedChanged: false, serialNo: '',
+      changes: {}, pendingNew: [], deleteIds: [], unnumbered: undefined, unnumberedChanged: false, serialNo: '', loadSequence: 0,
       physical: { length_mm: '', width_mm: '', thickness_mm: '', total_cost: '' },
       width: window.innerWidth < 768 ? '96%' : '760px'
     }
   },
   computed: {
     isSerial() { return this.line && this.line.count_mode === 'serial' },
+    isLength() { return this.line && this.line.item && this.line.item.cutting_mode === 'length' },
+    editableRows() { return this.rows.filter(row => !row.is_new && !row.is_locked) },
     stats() { return this.line && this.line.entry_stats },
     title() { return this.line ? `逐件盘点 ${this.line.item ? this.line.item.item_code + ' ' + this.line.item.item_name : ''}（批次 ${this.line.batch_no}）` : '逐件盘点' },
-    dirty() { return Object.keys(this.changes).length > 0 || this.markAllValue !== null || this.pendingNew.length > 0 || this.deleteIds.length > 0 || this.unnumberedChanged }
+    dirty() { return Object.keys(this.changes).length > 0 || this.pendingNew.length > 0 || this.deleteIds.length > 0 || this.unnumberedChanged }
   },
   watch: {
-    visible(value) { if (value) this.reset() }
+    visible(value) { if (value) this.reset(); else this.loadSequence++ }
   },
   methods: {
+    formatMoney,
+    formatPhysicalCost() {
+      if (/^\d+(\.\d*)?$/.test(this.physical.total_cost)) this.physical.total_cost = settlementAmount(this.physical.total_cost)
+    },
     num(value) { const n = Number(value || 0); return Number.isInteger(n) ? String(n) : String(Number(n.toFixed(4))) },
     reset() {
-      Object.assign(this, { rows: [], total: 0, page: 1, keyword: '', filter: '', changes: {}, markAllValue: null, pendingNew: [], deleteIds: [], serialNo: '' })
+      Object.assign(this, { rows: [], total: 0, page: 1, keyword: '', filter: '', changes: {}, pendingNew: [], deleteIds: [], serialNo: '' })
       this.physical = { length_mm: '', width_mm: '', thickness_mm: '', total_cost: '' }
       this.unnumbered = this.line && this.line.unnumbered_counted_qty !== null && this.line.unnumbered_counted_qty !== undefined ? Number(this.line.unnumbered_counted_qty) : undefined
       this.unnumberedChanged = false
       this.reload(1)
     },
     async reload(page = 1) {
+      const sequence = ++this.loadSequence
       this.loading = true
+      this.rows = []
       try {
         const { data } = await listStocktakeEntries(this.stocktake.id, this.line.id, { page, per_page: 10, keyword: this.keyword || undefined, filter: this.filter || undefined })
+        if (sequence !== this.loadSequence) return
         this.rows = data.data.filter(row => !this.deleteIds.includes(row.id))
         this.total = data.total
         this.page = data.current_page
       } catch (e) {
-        this.$message.error((e && e.userMessage) || '逐件明细加载失败')
+        if (sequence === this.loadSequence) this.$message.error((e && e.userMessage) || '逐件明细加载失败')
       } finally {
-        this.loading = false
+        if (sequence === this.loadSequence) this.loading = false
       }
     },
     presentOf(row) {
       if (Object.prototype.hasOwnProperty.call(this.changes, row.id)) return this.changes[row.id]
-      if (this.markAllValue !== null) return this.markAllValue
       return row.counted_present
     },
     presentText(value) { return value === true ? '在' : value === false ? '不在' : '未确认' },
-    setPresent(row, value) { this.$set(this.changes, row.id, value) },
-    markAll(value) {
-      this.markAllValue = value
-      this.changes = {}
+    setPresent(rows, value) {
+      const changes = { ...this.changes }
+      rows.forEach(row => { if (value === row.counted_present) delete changes[row.id]; else changes[row.id] = value })
+      if (Object.keys(changes).length > 500) return this.$message.warning('一次可保存 500 件，请先保存已录结果，再继续盘点')
+      this.changes = changes
+    },
+    markPage(value) {
+      if (this.loading || this.saving) return
+      this.setPresent(this.editableRows, value)
     },
     removeNew(row) {
       this.deleteIds.push(row.id)
@@ -153,12 +167,14 @@ export default {
       if (!this.$can('inventory.amount.view')) return
       const p = this.physical
       const size = /^\d{1,10}(\.\d{1,2})?$/
-      if (![p.length_mm, p.width_mm, p.thickness_mm].every(v => size.test(v) && Number(v) > 0)) return this.$message.warning('请填写大于 0 的长、宽、厚（最多两位小数）')
-      if (!/^\d{1,14}(\.\d{1,4})?$/.test(p.total_cost)) return this.$message.warning('请填写成本，不能为负数，最多四位小数')
-      this.pendingNew.push({ dimensions: { length_mm: p.length_mm, width_mm: p.width_mm, thickness_mm: p.thickness_mm }, total_cost: p.total_cost })
+      const dimensions = this.isLength ? { length_mm: p.length_mm } : { length_mm: p.length_mm, width_mm: p.width_mm, thickness_mm: p.thickness_mm }
+      if (!Object.values(dimensions).every(v => size.test(v) && Number(v) > 0)) return this.$message.warning(this.isLength ? '请填写大于 0 的长度（最多两位小数）' : '请填写大于 0 的长、宽、厚（最多两位小数）')
+      const cost = settlementAmount(p.total_cost)
+      if (!/^\d+(\.\d*)?$/.test(p.total_cost) || !/^\d{1,14}\.\d{2}$/.test(cost)) return this.$message.warning('请填写有效的非负成本金额')
+      this.pendingNew.push({ dimensions, total_cost: cost })
       this.physical = { length_mm: '', width_mm: '', thickness_mm: '', total_cost: '' }
     },
-    entryLabel(entry) { return `${entry.dimensions.length_mm}×${entry.dimensions.width_mm}×${entry.dimensions.thickness_mm}mm${this.$can('inventory.amount.view') ? ` / ${entry.total_cost} 元` : ''}` },
+    entryLabel(entry) { return `${Object.values(entry.dimensions).join('×')} mm${this.$can('inventory.amount.view') ? ` / ${formatMoney(entry.total_cost)} 元` : ''}` },
     async close(done) {
       if (this.saving) return
       if (this.dirty) {
@@ -170,7 +186,6 @@ export default {
     async save() {
       const payload = {
         id: this.line.id,
-        mark_all_present: this.markAllValue,
         entries: Object.entries(this.changes).map(([id, present]) => ({ id: Number(id), counted_present: present })),
         new_entries: this.pendingNew,
         delete_entry_ids: this.deleteIds
@@ -181,7 +196,6 @@ export default {
         const { data } = await saveStocktakeCounts(this.stocktake.id, [payload], this.stocktake.business_version)
         this.$message.success('逐件结果已保存')
         this.changes = {}
-        this.markAllValue = null
         this.pendingNew = []
         this.deleteIds = []
         this.unnumberedChanged = false

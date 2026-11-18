@@ -28,10 +28,10 @@ class PurchaseReceiptSettlementService
             'amount_excl_tax' => round((float) $receipt->items()->sum('amount_excl_tax'), 4),
             'tax_amount_snapshot' => round((float) $receipt->items()->sum('tax_amount_snapshot'), 4),
             'amount_incl_tax' => round((float) $receipt->items()->sum('amount_incl_tax'), 4),
-            'qualified_payable_amount' => round((float) $receipt->items()->sum('qualified_payable_amount'), 4),
-            'quality_hold_amount' => round((float) $receipt->items()->sum('quality_hold_amount'), 4),
-            'rejected_claim_amount' => round((float) $receipt->items()->sum('rejected_claim_amount'), 4),
-            'settlement_amount' => round((float) $receipt->items()->sum('settlement_amount'), 4),
+            'qualified_payable_amount' => Money::settle((string) $receipt->items()->sum('qualified_payable_amount')),
+            'quality_hold_amount' => Money::settle((string) $receipt->items()->sum('quality_hold_amount')),
+            'rejected_claim_amount' => Money::settle((string) $receipt->items()->sum('rejected_claim_amount')),
+            'settlement_amount' => Money::settle((string) $receipt->items()->sum('settlement_amount')),
             'inventory_cost_amount' => round((float) $receipt->items()->sum('inventory_cost_amount'), 4),
             ...$state,
         ]);
@@ -126,14 +126,13 @@ class PurchaseReceiptSettlementService
             $payable = $hold = $claim = '0.0000';
             $status = $holdBase > 0.00000001 ? 'quality_hold' : 'replacement_no_charge';
         } else {
-            $scale = Money::compare($amountIncl, Money::normalize($amountIncl, 2)) === 0 ? 2 : 4;
             $payableQty = number_format($payableBase, 8, '.', '');
             $payable = $base > 0 && $payableBase > 0
-                ? Money::normalize(CuttingDecimal::share($amountIncl, $baseDecimal, $payableQty), $scale) : '0.0000';
-            $remaining = Money::sub($amountIncl, $payable);
+                ? Money::settle(bcdiv(bcmul($amountIncl, $payableQty, 16), $baseDecimal, Money::CALC_SCALE)) : '0.00';
+            $remaining = Money::sub(Money::settle($amountIncl), $payable);
             $remainingQty = bcsub($baseDecimal, $payableQty, 8);
             $hold = $holdBase > 0 && bccomp($remainingQty, '0', 8) > 0
-                ? Money::normalize(CuttingDecimal::share($remaining, $remainingQty, number_format($holdBase, 8, '.', '')), $scale) : '0.0000';
+                ? Money::settle(bcdiv(bcmul($remaining, number_format($holdBase, 8, '.', ''), 16), $remainingQty, Money::CALC_SCALE)) : '0.00';
             $claim = Money::sub($remaining, $hold);
             $status = $holdBase > 0.00000001 ? 'quality_hold'
                 : ($rejectedBase >= $base - 0.00000001 ? 'rejected'

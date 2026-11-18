@@ -2,11 +2,14 @@
 
 namespace App\Services\Erp;
 
+use App\Domain\Finance\Money;
 use App\Models\Erp\{Item, ItemSupplierPrice, PurchasePriceHistory, Unit};
 use Illuminate\Support\Collection;
 
 class PurchasePriceComparisonService
 {
+    private array $canonicalUnits = [];
+
     public function __construct(private readonly UnitConversionDomainService $conversions) {}
 
     public function comparableQuote(
@@ -28,15 +31,15 @@ class PurchasePriceComparisonService
         if (!in_array($quote->tax_mode, ['tax_included', 'tax_excluded'], true)) {
             return $this->notComparable('税价口径不明确');
         }
-        $price = (float) $quote->base_unit_price;
-        if ($price < 0 || (float) $quote->final_conversion_factor <= 0) {
+        $price = (string) ($quote->base_unit_price ?? '0');
+        if (bccomp($price, '0', 8) < 0 || (float) $quote->final_conversion_factor <= 0) {
             return $this->notComparable('报价缺少有效采购换算');
         }
-        $comparable = $this->normalizeTax($price, (string) $quote->tax_mode, (float) $quote->tax_rate, $targetTaxMode);
+        $comparable = $this->normalizeTax($price, (string) $quote->tax_mode, (string) ($quote->tax_rate ?? 0), $targetTaxMode);
         if ($comparable === null) return $this->notComparable('税率不可换算');
         return [
             'comparable' => true,
-            'comparable_price' => round($comparable, 8),
+            'comparable_price' => $comparable,
             'price_source' => 'valid_quote_base_unit',
             'price_date' => optional($quote->valid_from)->toDateString() ?: optional($quote->updated_at)->toDateString(),
             'reason' => null,
@@ -55,7 +58,7 @@ class PurchasePriceComparisonService
         if (!$targetUnit || !$itemUnit || (int) $targetUnit->id !== (int) $itemUnit->id) return collect();
 
         return PurchasePriceHistory::query()
-            ->with(['supplier', 'item.unit', 'unit'])
+            ->with(['supplier', 'item.unit', 'unit', 'baseUnit.standardUnit'])
             ->where('item_id', $item->id)
             ->where('effective_date', '>=', now()->subDays($days)->toDateString())
             ->latest('effective_date')
@@ -65,15 +68,15 @@ class PurchasePriceComparisonService
                 foreach ($records as $record) {
                     if (strtoupper((string) ($record->currency ?? 'CNY')) !== strtoupper($targetCurrency)) continue;
                     if (!in_array($record->tax_mode, ['tax_included', 'tax_excluded'], true)) continue;
-                    $recordBaseUnit = $this->canonicalUnitById((int) ($record->base_unit_id ?: 0));
+                    $recordBaseUnit = $this->conversions->canonicalUnit($record->baseUnit);
                     if (!$recordBaseUnit || (int) $recordBaseUnit->id !== (int) $targetUnit->id) continue;
-                    $price = (float) $record->base_unit_price;
-                    $comparable = $this->normalizeTax($price, (string) $record->tax_mode, (float) $record->tax_rate, $targetTaxMode);
+                    $price = (string) ($record->base_unit_price ?? '0');
+                    $comparable = $this->normalizeTax($price, (string) $record->tax_mode, (string) ($record->tax_rate ?? 0), $targetTaxMode);
                     if ($comparable === null) continue;
                     return [
                         'supplier_id' => (int) $record->supplier_id,
                         'comparable' => true,
-                        'comparable_price' => round($comparable, 8),
+                        'comparable_price' => $comparable,
                         'price_source' => 'purchase_history_base_unit',
                         'price_date' => optional($record->effective_date)->toDateString(),
                         'record' => $record,
@@ -83,17 +86,24 @@ class PurchasePriceComparisonService
             })->filter();
     }
 
-    private function normalizeTax(float $price, string $sourceMode, float $taxRate, string $targetMode): ?float
+    private function normalizeTax(string $price, string $sourceMode, string $taxRate, string $targetMode): ?string
     {
-        if ($taxRate <= -100) return null;
-        $included = $sourceMode === 'tax_included' ? $price : $price * (1 + $taxRate / 100);
-        return $targetMode === 'tax_excluded' ? $included / (1 + $taxRate / 100) : $included;
+        $factor = bcadd('100', $taxRate, 4);
+        if (bccomp($factor, '0', 4) <= 0) return null;
+        if ($sourceMode === $targetMode) return Money::normalize($price, 8);
+        $converted = $targetMode === 'tax_excluded'
+            ? bcdiv(bcmul($price, '100', 8), $factor, 9)
+            : bcdiv(bcmul($price, $factor, 12), '100', 9);
+        return Money::normalize($converted, 8);
     }
 
     private function canonicalUnitById(int $id): ?Unit
     {
         if ($id <= 0) return null;
-        return $this->conversions->canonicalUnit(Unit::with('standardUnit')->find($id));
+        if (!array_key_exists($id, $this->canonicalUnits)) {
+            $this->canonicalUnits[$id] = $this->conversions->canonicalUnit(Unit::with('standardUnit')->find($id));
+        }
+        return $this->canonicalUnits[$id];
     }
 
     private function notComparable(string $reason): array
