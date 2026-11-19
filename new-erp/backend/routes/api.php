@@ -787,6 +787,13 @@ Route::prefix('v1/erp/rbac')->group(function () {
     Route::post('role-users', [RbacController::class, 'saveRoleUsers']);
 });
 
+Route::prefix('v1/erp/system/third-party-services')->group(function () {
+    Route::get('aliyun-oss', [\App\Http\Controllers\Api\V1\Erp\ThirdPartyServiceController::class, 'showAliyunOss']);
+    Route::put('aliyun-oss', [\App\Http\Controllers\Api\V1\Erp\ThirdPartyServiceController::class, 'saveAliyunOss']);
+    Route::post('aliyun-oss/rotate-secret', [\App\Http\Controllers\Api\V1\Erp\ThirdPartyServiceController::class, 'rotateAliyunOssSecret']);
+    Route::post('aliyun-oss/check-connection', [\App\Http\Controllers\Api\V1\Erp\ThirdPartyServiceController::class, 'checkAliyunOssConnection']);
+});
+
 Route::prefix('v1/erp/business-staff')->group(function () {
     Route::get('', [BusinessStaffController::class, 'index']);
     Route::get('options', [BusinessStaffController::class, 'options']);

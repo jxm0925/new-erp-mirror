@@ -66,7 +66,7 @@ export const SECTION_GROUPS = {
   ],
   system: [
     { name: '组织与账号权限', paths: ['/system/departments', '/system/business-staff', '/system/admins', '/system/roles'] },
-    { name: '系统与菜单配置', paths: ['/system/menus', '/system/document-number-rules'] }
+    { name: '系统与菜单配置', paths: ['/system/menus', '/system/document-number-rules', '/system/third-party-services'] }
   ]
 }
 

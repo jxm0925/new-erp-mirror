@@ -687,6 +687,7 @@ class RbacBootstrapService
             ['system.role', '角色权限', 'menu', 'system', '/system/roles', 'SystemRolePermission', 'el-icon-user-solid', 904],
             ['system.menu', '菜单管理', 'menu', 'system', '/system/menus', 'SystemMenuManagement', 'el-icon-menu', 905],
             ['system.document_number_rule', '编号规则', 'menu', 'system', '/system/document-number-rules', 'DocumentNumberRuleList', 'el-icon-postcard', 906],
+            ['system.third_party_service', '第三方服务配置', 'menu', 'system', '/system/third-party-services', 'SystemThirdPartyServices', 'el-icon-connection', 907],
 
             // 系统管理 按钮
             ['system.admin.view', '查看管理员列表', 'button', 'system.admin', null, null, 'el-icon-mouse', 1],
@@ -716,6 +717,9 @@ class RbacBootstrapService
             ['document_number_rule.view', '查看编号规则', 'button', 'system.document_number_rule', null, null, 'el-icon-mouse', 1],
             ['document_number_rule.edit', '编辑编号规则', 'button', 'system.document_number_rule', null, null, 'el-icon-mouse', 2],
             ['document_number_rule.delete', '删除未使用编号规则', 'button', 'system.document_number_rule', null, null, 'el-icon-delete', 3],
+
+            ['system.third_party_service.view', '查看第三方服务配置', 'button', 'system.third_party_service', null, null, 'el-icon-view', 1],
+            ['system.third_party_service.manage', '编辑与检测第三方服务配置', 'button', 'system.third_party_service', null, null, 'el-icon-setting', 2],
         ];
     }
 
@@ -788,6 +792,7 @@ class RbacBootstrapService
         'system.role' => '组织与账号权限',
         'system.menu' => '系统与菜单配置',
         'system.document_number_rule' => '系统与菜单配置',
+        'system.third_party_service' => '系统与菜单配置',
     ];
 
     /**
