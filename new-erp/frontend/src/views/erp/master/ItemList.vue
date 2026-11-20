@@ -196,6 +196,25 @@
           @selection-change="selectedLabelRows = $event"
         >
           <el-table-column type="selection" width="45" :reserve-selection="true" />
+          <el-table-column label="图片" width="80" align="center">
+            <template slot-scope="{ row }">
+              <el-image
+                v-if="row.image_url"
+                class="item-thumbnail"
+                :src="row.image_url"
+                :alt="row.item_name"
+                fit="contain"
+                :preview-src-list="[row.image_url]"
+                title="点击查看大图"
+                tabindex="0"
+                @keydown.enter.native="$event.target.click()"
+              >
+                <span slot="placeholder" class="item-image-state"><i class="el-icon-loading" aria-label="图片加载中" /></span>
+                <span slot="error" class="item-image-state">加载失败</span>
+              </el-image>
+              <span v-else class="text-muted">暂无图片</span>
+            </template>
+          </el-table-column>
           <el-table-column prop="item_code" label="物料编码" min-width="200">
             <template slot-scope="{ row }">
               <span class="item-code-link" :title="row.item_code" @click="openDetail(row)">
@@ -335,7 +354,10 @@
       <div v-if="selected.id" class="modal-detail-content">
         <!-- 弹窗顶栏摘要 -->
         <div class="modal-summary-banner">
-          <el-image v-if="selected.image_url" class="banner-icon" :src="selected.image_url" :alt="selected.item_name" fit="contain" :preview-src-list="[selected.image_url]" />
+          <el-image v-if="selected.image_url" class="banner-icon" :src="selected.image_url" :alt="selected.item_name" fit="contain" :preview-src-list="[selected.image_url]" title="点击查看大图" tabindex="0" @keydown.enter.native="$event.target.click()">
+            <span slot="placeholder" class="item-image-state"><i class="el-icon-loading" aria-label="图片加载中" /></span>
+            <span slot="error" class="item-image-state">加载失败</span>
+          </el-image>
           <div v-else class="banner-icon"><i class="el-icon-coin" /></div>
           <div class="banner-main">
             <div class="banner-title-line">
@@ -1568,6 +1590,29 @@ export default {
 
 .custom-item-table {
   width: 100%;
+}
+
+.item-thumbnail {
+  display: block;
+  width: 48px;
+  height: 48px;
+  margin: 0 auto;
+  box-sizing: border-box;
+  border: 1px solid #e2e8f0;
+  border-radius: 4px;
+  background: #f8fafc;
+}
+
+.item-image-state {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  line-height: 16px;
+  color: #64748b;
+  background: #f8fafc;
 }
 
 .font-mono {

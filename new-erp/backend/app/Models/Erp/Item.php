@@ -70,6 +70,7 @@ class Item extends MasterModel
             ->orderByDesc('effective_at')->orderByDesc('id');
     }
     public function defaultWarehouse() { return $this->belongsTo(Warehouse::class, 'default_warehouse_id'); }
+    public function storageLocations() { return $this->belongsToMany(Location::class, 'erp_item_storage_locations', 'item_id', 'location_id')->withTimestamps(); }
     public function skuRelations() { return $this->hasMany(SkuItemRelation::class); }
     public function purchaseConversions() { return $this->hasMany(ItemPurchaseConversion::class); }
     public function defaultPurchaseConversion() { return $this->hasOne(ItemPurchaseConversion::class)->where('status', 'active')->where('is_default', true); }

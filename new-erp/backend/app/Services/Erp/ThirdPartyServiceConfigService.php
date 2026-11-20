@@ -24,6 +24,14 @@ class ThirdPartyServiceConfigService
     public const CODE_ALIYUN_OSS = 'aliyun_oss';
     private const RUNTIME_CACHE_KEY = 'erp:third_party_service:aliyun_oss_runtime_v1';
 
+    private readonly array $environmentOssConfig;
+
+    public function __construct()
+    {
+        // 保留启动时配置，停用数据库接管后恢复，避免继续使用本次请求中已覆盖的密钥与端点。
+        $this->environmentOssConfig = config('filesystems.disks.oss', []);
+    }
+
     /** @var array<int, array<string, string>> */
     public const ALIYUN_OSS_REGIONS = [
         ['region' => 'cn-qingdao', 'label' => '华北 1（青岛）', 'endpoint' => 'oss-cn-qingdao.aliyuncs.com', 'internal_endpoint' => 'oss-cn-qingdao-internal.aliyuncs.com'],
@@ -48,7 +56,7 @@ class ThirdPartyServiceConfigService
             ->where('service_code', self::CODE_ALIYUN_OSS)
             ->first();
 
-        $envConfig = config('filesystems.disks.oss', []);
+        $envConfig = $this->environmentOssConfig;
         $envFallbackConfigured = ! empty($envConfig['access_key_id'])
             && ! empty($envConfig['access_key_secret'])
             && ! empty($envConfig['bucket'])
@@ -70,11 +78,9 @@ class ThirdPartyServiceConfigService
             'signature_version' => in_array($envConfig['signatureVersion'] ?? 'v4', ['v1', 'v4'], true)
                 ? (string) ($envConfig['signatureVersion'] ?? 'v4')
                 : 'v4',
-            'visibility' => 'private',
-            'signed_url_ttl' => 1800,
-            'timeout' => $envConfig['timeout'] !== null ? (int) $envConfig['timeout'] : 60,
-            'connect_timeout' => $envConfig['connect_timeout'] !== null ? (int) $envConfig['connect_timeout'] : 10,
-            'max_retries' => $envConfig['max_retries'] !== null ? (int) $envConfig['max_retries'] : 3,
+            'timeout' => isset($envConfig['timeout']) ? (int) $envConfig['timeout'] : 60,
+            'connect_timeout' => isset($envConfig['connect_timeout']) ? (int) $envConfig['connect_timeout'] : 10,
+            'max_retries' => isset($envConfig['max_retries']) ? (int) $envConfig['max_retries'] : 3,
         ];
 
         $merged = array_merge($defaults, $savedConfig);
@@ -99,8 +105,6 @@ class ThirdPartyServiceConfigService
                 'use_ssl' => (bool) ($merged['use_ssl'] ?? true),
                 'domain' => (string) ($merged['domain'] ?? ''),
                 'signature_version' => (string) ($merged['signature_version'] ?? 'v4'),
-                'visibility' => (string) ($merged['visibility'] ?? 'private'),
-                'signed_url_ttl' => (int) ($merged['signed_url_ttl'] ?? 1800),
                 'timeout' => (int) ($merged['timeout'] ?? 60),
                 'connect_timeout' => (int) ($merged['connect_timeout'] ?? 10),
                 'max_retries' => (int) ($merged['max_retries'] ?? 3),
@@ -308,6 +312,7 @@ class ThirdPartyServiceConfigService
      */
     public function applyRuntimeOssConfig(): void
     {
+        $runtime = null;
         try {
             $runtime = Cache::remember(self::RUNTIME_CACHE_KEY, 300, function (): ?array {
                 if (! Schema::hasTable('erp_third_party_services')) {
@@ -328,15 +333,12 @@ class ThirdPartyServiceConfigService
 
                 return $this->buildDiskConfig($cfg, $creds['access_key_id'], $creds['access_key_secret']);
             });
-
-            if (is_array($runtime)) {
-                $existing = config('filesystems.disks.oss', []);
-                config(['filesystems.disks.oss' => array_merge($existing, $runtime)]);
-                Storage::forgetDisk('oss');
-            }
         } catch (Throwable) {
             // 数据库尚未初始化或迁移阶段静默回退至 .env 配置
         }
+
+        config(['filesystems.disks.oss' => array_merge($this->environmentOssConfig, is_array($runtime) ? $runtime : [])]);
+        Storage::forgetDisk('oss');
     }
 
     public function refreshRuntimeOssConfig(): void
@@ -361,8 +363,6 @@ class ThirdPartyServiceConfigService
             'use_ssl' => 'nullable|boolean',
             'domain' => 'nullable|string|max:200',
             'signature_version' => 'nullable|in:v1,v4',
-            'visibility' => 'nullable|in:private,public',
-            'signed_url_ttl' => 'nullable|integer|min:60|max:86400',
             'timeout' => 'nullable|integer|min:1|max:300',
             'connect_timeout' => 'nullable|integer|min:1|max:120',
             'max_retries' => 'nullable|integer|min:0|max:10',
@@ -398,8 +398,6 @@ class ThirdPartyServiceConfigService
             'use_ssl' => array_key_exists('use_ssl', $data) ? (bool) $data['use_ssl'] : true,
             'domain' => self::normalizeHost((string) ($data['domain'] ?? '')),
             'signature_version' => (string) ($data['signature_version'] ?? 'v4'),
-            'visibility' => (string) ($data['visibility'] ?? 'private'),
-            'signed_url_ttl' => (int) ($data['signed_url_ttl'] ?? 1800),
             'timeout' => (int) ($data['timeout'] ?? 60),
             'connect_timeout' => (int) ($data['connect_timeout'] ?? 10),
             'max_retries' => (int) ($data['max_retries'] ?? 3),

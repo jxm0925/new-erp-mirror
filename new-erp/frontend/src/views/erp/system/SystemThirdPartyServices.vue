@@ -7,17 +7,12 @@
         <div class="head-title-wrap">
           <div class="title-row">
             <h1 class="page-title">第三方服务配置</h1>
-            <el-tag
-              size="small"
-              :type="serviceTagType"
-              effect="plain"
-              class="head-tag"
-            >
-              阿里云 OSS · {{ serviceStatusText }}
+            <el-tag size="small" :type="enabledServiceCount > 0 ? 'success' : 'info'" effect="plain">
+              已启用 {{ enabledServiceCount }} 项
             </el-tag>
           </div>
           <div class="head-sub-row">
-            <span class="sub-meta-text">当前已接入对象存储服务（阿里云 OSS），参数严格遵循阿里云 OSS 官方 SDK 规范</span>
+            <span>统一管理 ERP 外部云服务凭据与连接参数；密钥经 AES-256 加密存储，保存后不回显明文</span>
           </div>
         </div>
       </div>
@@ -32,352 +27,356 @@
         >
           刷新
         </el-button>
-        <el-button
-          v-if="canManage"
-          size="small"
-          icon="el-icon-link"
-          class="btn-check"
-          :loading="checking"
-          :disabled="saving"
-          @click="handleCheckConnection"
-        >
-          连通性检测
-        </el-button>
-        <el-button
-          v-if="canManage"
-          size="small"
-          type="success"
-          icon="el-icon-check"
-          class="btn-theme-save"
-          :loading="saving"
-          :disabled="checking"
-          @click="handleSave"
-        >
-          保存配置
-        </el-button>
       </div>
     </header>
 
-    <!-- 规则提示条 -->
-    <div class="erp-page-tip">
-      <i class="el-icon-info" />
-      <span>AccessKey 密钥经后端 AES-256 加密存储，保存后永不回显明文。启用数据库配置后将即时接管系统 <code>oss</code> 存储磁盘；停用时自动回退至服务器环境变量配置。</span>
-    </div>
+    <!-- 主体双栏：左侧服务目录 + 右侧配置工作区 -->
+    <div class="service-layout">
+      <!-- 左侧服务目录 -->
+      <aside class="service-nav-card">
+        <div class="nav-card-title">服务目录</div>
 
-    <!-- 顶部三卡运行状态概览 -->
-    <section class="status-overview-grid">
-      <div class="status-card">
-        <div class="status-card-top">
-          <span class="status-card-label">服务启用状态</span>
-          <el-switch
-            v-model="form.enabled"
-            :disabled="!canManage"
-            active-color="#008b4b"
-            inactive-color="#cbd5e1"
+        <div
+          v-for="group in serviceGroups"
+          :key="group.key"
+          class="nav-group"
+        >
+          <div class="nav-group-label">
+            <i :class="group.icon" />
+            <span>{{ group.label }}</span>
+          </div>
+
+          <div
+            v-for="svc in group.items"
+            :key="svc.code"
+            class="nav-service-item"
+            :class="{ active: activeService === svc.code }"
+            @click="activeService = svc.code"
+          >
+            <div class="nav-item-main">
+              <span class="status-dot" :class="svc.dotClass" />
+              <span class="nav-item-name">{{ svc.name }}</span>
+            </div>
+            <span class="nav-item-badge" :class="svc.badgeClass">{{ svc.statusText }}</span>
+          </div>
+        </div>
+
+        <div class="nav-card-foot">
+          后续接入短信、AI 等第三方服务时，将按能力分类自动归入此目录。
+        </div>
+      </aside>
+
+      <!-- 右侧配置工作区 -->
+      <main class="service-workspace">
+        <section v-if="activeService === 'aliyun_oss'" class="workspace-card">
+          <!-- 服务顶部状态与操作栏 -->
+          <div class="workspace-head">
+            <div class="workspace-head-left">
+              <div class="workspace-title-row">
+                <h2 class="workspace-title">阿里云对象存储 (OSS)</h2>
+                <el-tag size="small" :type="serviceTagType" effect="plain">
+                  {{ serviceHeaderBadge }}
+                </el-tag>
+              </div>
+              <div class="workspace-meta-row">
+                <span>生效来源：<b>{{ effectiveSourceLabel }}</b></span>
+                <span class="meta-sep">·</span>
+                <span>最近检测：{{ meta.last_checked_at || '尚未检测' }}</span>
+                <template v-if="meta.updated_by_name">
+                  <span class="meta-sep">·</span>
+                  <span>更新人：{{ meta.updated_by_name }}</span>
+                </template>
+              </div>
+            </div>
+
+            <div class="workspace-head-actions">
+              <div class="enable-switch-wrap">
+                <span class="enable-label">{{ form.enabled ? '已启用' : '未启用' }}</span>
+                <el-switch
+                  v-model="form.enabled"
+                  :disabled="!canManage"
+                  active-color="#008b4b"
+                  inactive-color="#cbd5e1"
+                />
+              </div>
+              <el-button
+                v-if="canManage"
+                size="small"
+                icon="el-icon-link"
+                class="btn-check"
+                :loading="checking"
+                :disabled="saving"
+                @click="handleCheckConnection"
+              >
+                连通性检测
+              </el-button>
+              <el-button
+                v-if="canManage"
+                size="small"
+                type="success"
+                icon="el-icon-check"
+                class="btn-theme-save"
+                :loading="saving"
+                :disabled="checking"
+                @click="handleSave"
+              >
+                保存配置
+              </el-button>
+            </div>
+          </div>
+
+          <!-- 实时检测结果或最近检测摘要 -->
+          <el-alert
+            v-if="liveCheck"
+            :title="liveCheck.ok ? '连通性检测通过' : '连通性检测失败'"
+            :description="liveCheck.message"
+            :type="liveCheck.ok ? 'success' : 'error'"
+            show-icon
+            closable
+            class="check-alert"
+            @close="liveCheck = null"
           />
-        </div>
-        <div class="status-card-value">
-          <strong :class="form.enabled ? 'text-success' : 'text-muted'">
-            {{ form.enabled ? '已启用（使用本页配置）' : '未启用' }}
-          </strong>
-        </div>
-        <div class="status-card-desc">
-          当前实际生效来源：
-          <span class="font-medium">{{ effectiveSourceLabel }}</span>
-        </div>
-      </div>
-
-      <div class="status-card">
-        <div class="status-card-top">
-          <span class="status-card-label">最近连通性检测</span>
-          <el-tag
-            size="mini"
-            :type="meta.last_check_status === 'ok' ? 'success' : (meta.last_check_status === 'failed' ? 'danger' : 'info')"
-            effect="plain"
+          <div
+            v-else-if="meta.last_check_status === 'failed' && meta.last_check_message"
+            class="last-check-warn"
           >
-            {{ meta.last_check_status === 'ok' ? '连接正常' : (meta.last_check_status === 'failed' ? '连接异常' : '尚未检测') }}
-          </el-tag>
-        </div>
-        <div class="status-card-value status-msg" :title="meta.last_check_message || ''">
-          {{ meta.last_check_message || '保存配置后可点击右上角「连通性检测」核验 Bucket 可达性' }}
-        </div>
-        <div class="status-card-desc">
-          检测时间：{{ meta.last_checked_at || '—' }}
-        </div>
-      </div>
+            <i class="el-icon-warning-outline" />
+            <span>上次检测异常（{{ meta.last_checked_at }}）：{{ meta.last_check_message }}</span>
+          </div>
 
-      <div class="status-card">
-        <div class="status-card-top">
-          <span class="status-card-label">访问凭证状态</span>
-          <el-button
-            v-if="canManage && meta.has_credentials"
-            type="text"
-            size="mini"
-            icon="el-icon-key"
-            class="action-link-theme"
-            @click="openRotateDialog"
+          <!-- 主配置表单 -->
+          <el-form
+            ref="ossForm"
+            :model="form"
+            :rules="rules"
+            label-position="top"
+            size="small"
+            :disabled="!canManage"
+            class="oss-config-form"
           >
-            更换密钥
-          </el-button>
-        </div>
-        <div class="status-card-value code-mono">
-          {{ meta.has_credentials ? meta.access_key_id_masked : '尚未配置 AccessKey' }}
-        </div>
-        <div class="status-card-desc">
-          最近更新：{{ meta.updated_by_name ? `${meta.updated_by_name} · ${meta.updated_at || ''}` : '暂无保存记录' }}
-        </div>
-      </div>
-    </section>
+            <!-- 分块 1：基础连接信息 -->
+            <div class="form-section">
+              <div class="section-head">
+                <div class="section-title-group">
+                  <span class="section-bar" />
+                  <h3>基础连接信息</h3>
+                  <span class="section-sub">配置存储空间与外网连接地址</span>
+                </div>
+              </div>
 
-    <!-- 实时检测结果提示 -->
-    <el-alert
-      v-if="liveCheck"
-      :title="liveCheck.ok ? '连通性检测通过' : '连通性检测失败'"
-      :description="liveCheck.message"
-      :type="liveCheck.ok ? 'success' : 'error'"
-      show-icon
-      closable
-      class="check-alert"
-      @close="liveCheck = null"
-    />
+              <div class="form-grid-2">
+                <el-form-item label="地域 Region" prop="region">
+                  <el-select
+                    v-model="form.region"
+                    filterable
+                    allow-create
+                    default-first-option
+                    placeholder="选择或输入官方地域 ID，如 cn-qingdao"
+                    style="width: 100%"
+                    @change="onRegionChange"
+                  >
+                    <el-option
+                      v-for="item in regions"
+                      :key="item.region"
+                      :label="`${item.label} · ${item.region}`"
+                      :value="item.region"
+                    />
+                  </el-select>
+                  <div class="field-hint">切换预设地域将自动填充对应的外网 Endpoint；内网连接需在高级配置中手动开启。</div>
+                </el-form-item>
 
-    <!-- 主配置表单 -->
-    <el-form
-      ref="ossForm"
-      :model="form"
-      :rules="rules"
-      label-position="top"
-      size="small"
-      :disabled="!canManage"
-      class="oss-config-form"
-    >
-      <!-- 分块 1：基础连接参数 -->
-      <section class="config-card">
-        <div class="card-section-head">
-          <div class="section-title-group">
-            <span class="section-bar" />
-            <h2>基础连接参数</h2>
-            <span class="section-sub">对应阿里云 OSS 官方 Region、Endpoint、Bucket 与签名版本配置</span>
-          </div>
-        </div>
+                <el-form-item label="访问端点 Endpoint（外网）" prop="endpoint">
+                  <el-input
+                    v-model.trim="form.endpoint"
+                    placeholder="例如：oss-cn-qingdao.aliyuncs.com"
+                  />
+                  <div class="field-hint">填写不含协议头的 OSS 地域域名，HTTPS 由高级配置中的开关统一控制。</div>
+                </el-form-item>
 
-        <div class="form-grid-2">
-          <el-form-item label="地域 Region" prop="region">
-            <el-select
-              v-model="form.region"
-              filterable
-              allow-create
-              default-first-option
-              placeholder="选择或输入官方地域 ID，如 cn-qingdao"
-              style="width: 100%"
-              @change="onRegionChange"
-            >
-              <el-option
-                v-for="item in regions"
-                :key="item.region"
-                :label="`${item.label} · ${item.region}`"
-                :value="item.region"
-              />
-            </el-select>
-            <div class="field-hint">使用 V4 签名时必填；切换预设地域会自动联动填充默认外网与内网 Endpoint。</div>
-          </el-form-item>
-
-          <el-form-item label="访问端点 Endpoint（外网）" prop="endpoint">
-            <el-input
-              v-model.trim="form.endpoint"
-              placeholder="例如：oss-cn-qingdao.aliyuncs.com"
-            />
-            <div class="field-hint">填写不含协议头的 OSS 地域访问域名（协议由下方 HTTPS 开关统一控制）。</div>
-          </el-form-item>
-
-          <el-form-item label="存储空间 Bucket" prop="bucket">
-            <el-input
-              v-model.trim="form.bucket"
-              placeholder="例如：sdjiantan-erp-prod"
-            />
-            <div class="field-hint">3~63 位小写字母、数字或短横线，且须以小写字母或数字开头和结尾。</div>
-          </el-form-item>
-
-          <el-form-item label="对象目录前缀 Prefix（选填）" prop="prefix">
-            <el-input
-              v-model.trim="form.prefix"
-              placeholder="例如：erp/prod（留空表示写入 Bucket 根目录）"
-            />
-            <div class="field-hint">用于在同一 Bucket 下隔离不同环境或业务系统的存储目录，无需填写前导斜杠。</div>
-          </el-form-item>
-
-          <el-form-item label="内网端点 Internal Endpoint（选填）" prop="internal_endpoint">
-            <el-input
-              v-model.trim="form.internal_endpoint"
-              placeholder="例如：oss-cn-qingdao-internal.aliyuncs.com"
-            />
-            <div class="field-hint">当 ERP 部署在同地域阿里云 ECS 时可填内网域名，降低上传与读取流量成本。</div>
-          </el-form-item>
-
-          <el-form-item label="签名版本 Signature Version" prop="signature_version">
-            <el-radio-group v-model="form.signature_version" class="theme-radio-group">
-              <el-radio label="v4">V4 签名（官方推荐）</el-radio>
-              <el-radio label="v1">V1 签名（兼容旧环境）</el-radio>
-            </el-radio-group>
-            <div class="field-hint">阿里云 OSS 官方 SDK 默认推荐使用 V4 签名算法并配合 Region 校验。</div>
-          </el-form-item>
-        </div>
-      </section>
-
-      <!-- 分块 2：访问凭证 -->
-      <section class="config-card">
-        <div class="card-section-head">
-          <div class="section-title-group">
-            <span class="section-bar" />
-            <h2>访问凭证（AccessKey）</h2>
-            <span class="section-sub">建议使用具备最小 Bucket 读写权限的 RAM 子账号 AccessKey</span>
-          </div>
-          <el-button
-            v-if="canManage && meta.has_credentials"
-            size="mini"
-            icon="el-icon-key"
-            class="btn-rotate-inline"
-            @click="openRotateDialog"
-          >
-            更换访问密钥
-          </el-button>
-        </div>
-
-        <div v-if="meta.has_credentials" class="form-grid-2">
-          <el-form-item label="AccessKey ID">
-            <el-input
-              :value="meta.access_key_id_masked"
-              readonly
-              class="readonly-secret-input"
-            />
-            <div class="field-hint">已脱敏展示；如需变更请点击右上角「更换访问密钥」。</div>
-          </el-form-item>
-
-          <el-form-item label="AccessKey Secret">
-            <div class="secret-locked-box">
-              <i class="el-icon-lock text-success" />
-              <span>已使用 AES-256 加密保存（系统永不回显明文）</span>
+                <el-form-item label="存储空间 Bucket" prop="bucket">
+                  <el-input
+                    v-model.trim="form.bucket"
+                    placeholder="例如：sdjiantan-erp-prod"
+                  />
+                  <div class="field-hint">3~63 位小写字母、数字或短横线，且须以字母或数字开头结尾。</div>
+                </el-form-item>
+              </div>
             </div>
-            <div class="field-hint">更换密钥支持先执行连通性校验再落库，避免误填导致业务附件中断。</div>
-          </el-form-item>
-        </div>
 
-        <div v-else class="form-grid-2">
-          <el-form-item label="AccessKey ID" prop="access_key_id">
-            <el-input
-              v-model.trim="form.access_key_id"
-              placeholder="输入阿里云 RAM 用户的 AccessKey ID"
-              autocomplete="off"
-            />
-          </el-form-item>
+            <!-- 分块 2：访问凭证 -->
+            <div class="form-section">
+              <div class="section-head">
+                <div class="section-title-group">
+                  <span class="section-bar" />
+                  <h3>访问凭证（AccessKey）</h3>
+                  <span class="section-sub">建议使用具备最小 Bucket 读写权限的 RAM 子账号密钥</span>
+                </div>
+                <el-button
+                  v-if="canManage && meta.has_credentials"
+                  size="mini"
+                  icon="el-icon-key"
+                  class="btn-rotate-inline"
+                  @click="openRotateDialog"
+                >
+                  更换密钥
+                </el-button>
+              </div>
 
-          <el-form-item label="AccessKey Secret" prop="access_key_secret">
-            <el-input
-              v-model.trim="form.access_key_secret"
-              type="password"
-              show-password
-              placeholder="输入对应的 AccessKey Secret"
-              autocomplete="new-password"
-            />
-          </el-form-item>
-        </div>
-      </section>
+              <div v-if="meta.has_credentials" class="form-grid-2">
+                <el-form-item label="AccessKey ID">
+                  <el-input
+                    :value="meta.access_key_id_masked"
+                    readonly
+                    class="readonly-secret-input"
+                  />
+                  <div class="field-hint">已脱敏显示；如需更新请点击右侧「更换密钥」。</div>
+                </el-form-item>
 
-      <!-- 分块 3：域名、安全访问与连接超时 -->
-      <section class="config-card">
-        <div class="card-section-head">
-          <div class="section-title-group">
-            <span class="section-bar" />
-            <h2>域名、安全访问与连接超时</h2>
-            <span class="section-sub">控制 HTTPS 协议、CNAME 自定义域名绑定、私有签名有效期及 SDK 网络超时</span>
-          </div>
-        </div>
+                <el-form-item label="AccessKey Secret">
+                  <div class="secret-locked-box">
+                    <i class="el-icon-lock text-success" />
+                    <span>已加密保存（系统永不回显明文）</span>
+                  </div>
+                  <div class="field-hint">支持在更换密钥弹窗中先检测连通性再保存覆盖。</div>
+                </el-form-item>
+              </div>
 
-        <div class="form-grid-2">
-          <el-form-item label="启用 HTTPS (SSL)">
-            <div class="switch-row">
-              <el-switch
-                v-model="form.use_ssl"
-                active-color="#008b4b"
-                inactive-color="#cbd5e1"
-              />
-              <span class="switch-desc">{{ form.use_ssl ? '强制通过 https:// 通信与生成访问链接（推荐）' : '使用 http:// 通信' }}</span>
+              <div v-else class="form-grid-2">
+                <el-form-item label="AccessKey ID" prop="access_key_id">
+                  <el-input
+                    v-model.trim="form.access_key_id"
+                    placeholder="输入阿里云 RAM 用户的 AccessKey ID"
+                    autocomplete="off"
+                  />
+                </el-form-item>
+
+                <el-form-item label="AccessKey Secret" prop="access_key_secret">
+                  <el-input
+                    v-model.trim="form.access_key_secret"
+                    type="password"
+                    show-password
+                    placeholder="输入对应的 AccessKey Secret"
+                    autocomplete="new-password"
+                  />
+                </el-form-item>
+              </div>
             </div>
-          </el-form-item>
 
-          <el-form-item label="启用 CNAME 自定义域名">
-            <div class="switch-row">
-              <el-switch
-                v-model="form.is_cname"
-                active-color="#008b4b"
-                inactive-color="#cbd5e1"
-              />
-              <span class="switch-desc">{{ form.is_cname ? '已开启：将通过下方自定义域名直接访问 OSS' : '未开启：使用默认 Endpoint 访问 OSS' }}</span>
-            </div>
-          </el-form-item>
+            <!-- 分块 3：高级配置 -->
+            <el-collapse ref="advancedConfig" v-model="advancedPanels" class="advanced-config">
+              <el-collapse-item name="advanced">
+                <div slot="title" class="section-title-group">
+                  <span class="section-bar" />
+                  <h3>高级配置</h3>
+                  <span class="section-sub">目录前缀、内网连接、签名、域名与连接超时</span>
+                </div>
 
-          <el-form-item label="自定义访问域名 Domain" prop="domain">
-            <el-input
-              v-model.trim="form.domain"
-              placeholder="例如：media.sdjiantan.com（开启 CNAME 时必填）"
-            />
-            <div class="field-hint">对应 Bucket 绑定的自定义域名或 CDN 加速域名，无需填写协议头。</div>
-          </el-form-item>
+                <div class="form-grid-2">
+                  <el-form-item label="对象目录前缀 Prefix（选填）" prop="prefix">
+                    <el-input
+                      v-model.trim="form.prefix"
+                      placeholder="例如：erp/prod（留空写入根目录）"
+                    />
+                    <div class="field-hint">用于同 Bucket 下隔离不同业务或环境目录，无需前导斜杠。</div>
+                  </el-form-item>
 
-          <el-form-item label="默认访问策略与签名有效期">
-            <div class="visibility-row">
-              <el-select v-model="form.visibility" style="flex: 1">
-                <el-option label="私有读写（签名 URL 访问，推荐）" value="private" />
-                <el-option label="公共读" value="public" />
-              </el-select>
-              <el-input-number
-                v-if="form.visibility === 'private'"
-                v-model="form.signed_url_ttl"
-                :min="60"
-                :max="86400"
-                :step="300"
-                controls-position="right"
-                class="ttl-input"
-              />
-              <span v-if="form.visibility === 'private'" class="unit-suffix">秒</span>
-            </div>
-            <div class="field-hint">私有模式下临时签名链接默认有效 1800 秒（范围 60~86400 秒）。</div>
-          </el-form-item>
-        </div>
+                  <el-form-item label="启用内网连接">
+                    <div class="switch-row">
+                      <el-switch
+                        v-model="useInternalEndpoint"
+                        active-color="#008b4b"
+                        inactive-color="#cbd5e1"
+                        @change="onInternalEndpointChange"
+                      />
+                      <span class="switch-desc">{{ useInternalEndpoint ? '使用内网端点连接 OSS' : '使用外网端点连接 OSS' }}</span>
+                    </div>
+                    <div class="field-hint">仅当服务器位于同地域阿里云内网时开启。</div>
+                  </el-form-item>
 
-        <div class="form-grid-3 timeout-grid">
-          <el-form-item label="请求超时 Timeout（秒）" prop="timeout">
-            <el-input-number
-              v-model="form.timeout"
-              :min="1"
-              :max="300"
-              controls-position="right"
-              style="width: 100%"
-            />
-          </el-form-item>
+                  <el-form-item label="内网端点 Internal Endpoint" prop="internal_endpoint">
+                    <el-input
+                      v-model.trim="form.internal_endpoint"
+                      :disabled="!useInternalEndpoint"
+                      placeholder="例如：oss-cn-qingdao-internal.aliyuncs.com"
+                    />
+                  </el-form-item>
 
-          <el-form-item label="连接超时 Connect Timeout（秒）" prop="connect_timeout">
-            <el-input-number
-              v-model="form.connect_timeout"
-              :min="1"
-              :max="120"
-              controls-position="right"
-              style="width: 100%"
-            />
-          </el-form-item>
+                  <el-form-item label="签名版本 Signature Version" prop="signature_version">
+                    <el-radio-group v-model="form.signature_version" class="theme-radio-group">
+                      <el-radio label="v4">V4 签名（官方推荐）</el-radio>
+                      <el-radio label="v1">V1 签名（兼容旧环境）</el-radio>
+                    </el-radio-group>
+                    <div class="field-hint">阿里云 OSS 官方 SDK 默认推荐使用 V4 签名算法并校验 Region。</div>
+                  </el-form-item>
 
-          <el-form-item label="最大重试次数 Max Retries" prop="max_retries">
-            <el-input-number
-              v-model="form.max_retries"
-              :min="0"
-              :max="10"
-              controls-position="right"
-              style="width: 100%"
-            />
-          </el-form-item>
-        </div>
-      </section>
-    </el-form>
+                  <el-form-item label="启用 HTTPS (SSL)">
+                    <div class="switch-row">
+                      <el-switch
+                        v-model="form.use_ssl"
+                        active-color="#008b4b"
+                        inactive-color="#cbd5e1"
+                      />
+                      <span class="switch-desc">{{ form.use_ssl ? '强制使用 https:// 通信与访问链接（推荐）' : '使用 http:// 通信' }}</span>
+                    </div>
+                  </el-form-item>
+
+                  <el-form-item label="启用 CNAME 自定义域名">
+                    <div class="switch-row">
+                      <el-switch
+                        v-model="form.is_cname"
+                        active-color="#008b4b"
+                        inactive-color="#cbd5e1"
+                      />
+                      <span class="switch-desc">{{ form.is_cname ? '通过下方自定义域名直接访问 OSS' : '使用默认 Endpoint 访问 OSS' }}</span>
+                    </div>
+                  </el-form-item>
+
+                  <el-form-item label="自定义访问域名 Domain" prop="domain">
+                    <el-input
+                      v-model.trim="form.domain"
+                      placeholder="例如：media.sdjiantan.com（开启 CNAME 时必填）"
+                    />
+                    <div class="field-hint">对应 Bucket 绑定的自定义域名或 CDN 域名，无需填写协议头。</div>
+                  </el-form-item>
+                </div>
+
+                <div class="form-grid-3 timeout-grid">
+                  <el-form-item label="请求超时 Timeout（秒）" prop="timeout">
+                    <el-input-number
+                      v-model="form.timeout"
+                      :min="1"
+                      :max="300"
+                      controls-position="right"
+                      style="width: 100%"
+                    />
+                  </el-form-item>
+
+                  <el-form-item label="连接超时 Connect Timeout（秒）" prop="connect_timeout">
+                    <el-input-number
+                      v-model="form.connect_timeout"
+                      :min="1"
+                      :max="120"
+                      controls-position="right"
+                      style="width: 100%"
+                    />
+                  </el-form-item>
+
+                  <el-form-item label="最大重试次数 Max Retries" prop="max_retries">
+                    <el-input-number
+                      v-model="form.max_retries"
+                      :min="0"
+                      :max="10"
+                      controls-position="right"
+                      style="width: 100%"
+                    />
+                  </el-form-item>
+                </div>
+              </el-collapse-item>
+            </el-collapse>
+          </el-form>
+        </section>
+      </main>
+    </div>
 
     <!-- 居中遮罩弹窗：更换访问密钥 -->
     <el-dialog
@@ -391,7 +390,7 @@
     >
       <div class="dialog-warn-banner">
         <i class="el-icon-warning-outline" />
-        <span>新密钥将以 AES-256 加密存储，保存后不再回显明文。建议点击「校验连通并更换」，确认新密钥可访问当前 Bucket 后再覆盖生效。</span>
+        <span>新密钥将以 AES-256 加密存储，保存后不再回显明文。建议点击「校验连通并更换」，确认新密钥可正常访问当前 Bucket 后再覆盖生效。</span>
       </div>
 
       <el-form
@@ -473,7 +472,16 @@ export default {
       }
       callback()
     }
+    const validateInternalEndpoint = (rule, value, callback) => {
+      if (this.useInternalEndpoint && !String(value || '').trim()) {
+        return callback(new Error('启用内网连接时必须填写内网端点'))
+      }
+      callback()
+    }
     return {
+      activeService: 'aliyun_oss',
+      advancedPanels: [],
+      useInternalEndpoint: false,
       loading: false,
       saving: false,
       checking: false,
@@ -503,8 +511,6 @@ export default {
         use_ssl: true,
         domain: '',
         signature_version: 'v4',
-        visibility: 'private',
-        signed_url_ttl: 1800,
         timeout: 60,
         connect_timeout: 10,
         max_retries: 3,
@@ -515,6 +521,7 @@ export default {
         region: [{ required: true, message: '请选择或输入地域 Region', trigger: 'change' }],
         endpoint: [{ required: true, message: '请填写访问端点 Endpoint', trigger: 'blur' }],
         bucket: [{ required: true, validator: validateBucket, trigger: 'blur' }],
+        internal_endpoint: [{ validator: validateInternalEndpoint, trigger: 'blur' }],
         domain: [{ validator: validateDomain, trigger: 'blur' }],
         access_key_id: [{ required: true, message: '首次配置请填写 AccessKey ID', trigger: 'blur' }],
         access_key_secret: [{ required: true, message: '首次配置请填写 AccessKey Secret', trigger: 'blur' }]
@@ -542,13 +549,41 @@ export default {
     canManage() {
       return this.$can('system.third_party_service.manage')
     },
-    serviceStatusText() {
+    enabledServiceCount() {
+      return this.meta.configured && this.form.enabled ? 1 : 0
+    },
+    serviceGroups() {
+      const ossEnabled = this.meta.configured && this.form.enabled
+      const ossStatusText = !this.meta.configured ? '未配置' : (ossEnabled ? '已启用' : '未启用')
+      return [
+        {
+          key: 'storage',
+          label: '对象存储',
+          icon: 'el-icon-cloudy',
+          items: [
+            {
+              code: 'aliyun_oss',
+              name: '阿里云 OSS',
+              statusText: ossStatusText,
+              dotClass: ossEnabled ? 'dot-active' : (this.meta.configured ? 'dot-paused' : 'dot-idle'),
+              badgeClass: ossEnabled ? 'badge-active' : (this.meta.configured ? 'badge-paused' : 'badge-idle')
+            }
+          ]
+        }
+      ]
+    },
+    serviceHeaderBadge() {
       if (!this.meta.configured) return '尚未配置'
-      return this.form.enabled ? '已启用' : '已保存（未启用）'
+      if (!this.form.enabled) return '已保存 · 未启用'
+      if (this.meta.last_check_status === 'ok') return '已启用 · 连接正常'
+      if (this.meta.last_check_status === 'failed') return '已启用 · 连接异常'
+      return '已启用'
     },
     serviceTagType() {
       if (!this.meta.configured) return 'info'
-      return this.form.enabled ? 'success' : 'warning'
+      if (!this.form.enabled) return 'warning'
+      if (this.meta.last_check_status === 'failed') return 'danger'
+      return 'success'
     },
     effectiveSourceLabel() {
       if (this.meta.effective_source === 'database') return '本页数据库配置'
@@ -599,14 +634,13 @@ export default {
         use_ssl: cfg.use_ssl !== false,
         domain: cfg.domain || '',
         signature_version: cfg.signature_version || 'v4',
-        visibility: cfg.visibility || 'private',
-        signed_url_ttl: Number(cfg.signed_url_ttl || 1800),
         timeout: Number(cfg.timeout || 60),
         connect_timeout: Number(cfg.connect_timeout || 10),
         max_retries: Number(cfg.max_retries != null ? cfg.max_retries : 3),
         access_key_id: '',
         access_key_secret: ''
       }
+      this.useInternalEndpoint = !!this.form.internal_endpoint.trim()
       this.$nextTick(() => {
         if (this.$refs.ossForm) this.$refs.ossForm.clearValidate()
       })
@@ -626,24 +660,39 @@ export default {
       const matched = this.regions.find(item => item.region === regionCode)
       if (!matched) return
       this.form.endpoint = matched.endpoint
-      if (!this.form.internal_endpoint || this.regions.some(r => r.internal_endpoint === this.form.internal_endpoint)) {
+      if (this.useInternalEndpoint && (!this.form.internal_endpoint || this.regions.some(r => r.internal_endpoint === this.form.internal_endpoint))) {
         this.form.internal_endpoint = matched.internal_endpoint
       }
+    },
+    onInternalEndpointChange(enabled) {
+      if (enabled && (!this.form.internal_endpoint || this.regions.some(r => r.internal_endpoint === this.form.internal_endpoint))) {
+        const matched = this.regions.find(item => item.region === this.form.region)
+        if (matched) this.form.internal_endpoint = matched.internal_endpoint
+      }
+      this.$refs.ossForm.clearValidate('internal_endpoint')
+    },
+    revealAdvancedErrors(errors) {
+      const advancedFields = ['prefix', 'internal_endpoint', 'signature_version', 'use_ssl', 'is_cname', 'domain', 'timeout', 'connect_timeout', 'max_retries']
+      if (!Object.keys(errors || {}).some(field => advancedFields.includes(field))) return
+      this.advancedPanels = ['advanced']
+      this.$nextTick(() => {
+        const section = this.$refs.advancedConfig.$el
+        const target = section.querySelector('.el-form-item.is-error') || section
+        target.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      })
     },
     buildSubmitPayload() {
       const payload = {
         enabled: !!this.form.enabled,
         region: this.form.region,
         endpoint: this.form.endpoint,
-        internal_endpoint: this.form.internal_endpoint,
+        internal_endpoint: this.useInternalEndpoint ? this.form.internal_endpoint : '',
         bucket: this.form.bucket,
         prefix: this.form.prefix,
         is_cname: !!this.form.is_cname,
         use_ssl: !!this.form.use_ssl,
         domain: this.form.domain,
         signature_version: this.form.signature_version,
-        visibility: this.form.visibility,
-        signed_url_ttl: this.form.signed_url_ttl,
         timeout: this.form.timeout,
         connect_timeout: this.form.connect_timeout,
         max_retries: this.form.max_retries
@@ -658,14 +707,18 @@ export default {
       return payload
     },
     handleSave() {
-      this.$refs.ossForm.validate(async valid => {
-        if (!valid) return
+      this.$refs.ossForm.validate(async (valid, errors) => {
+        if (!valid) {
+          this.revealAdvancedErrors(errors)
+          return
+        }
         this.saving = true
         try {
           const { data } = await saveAliyunOssConfig(this.buildSubmitPayload())
           this.applyPayload(data.data)
           this.$message.success(data.message || '阿里云 OSS 配置已保存')
         } catch (e) {
+          this.revealAdvancedErrors(e && e.response && e.response.data && e.response.data.errors)
           this.$message.error(this.extractError(e, '保存配置失败'))
           if (e && e.response && e.response.status === 409) this.load()
         } finally {
@@ -674,20 +727,29 @@ export default {
       })
     },
     handleCheckConnection() {
-      this.$refs.ossForm.validate(async valid => {
-        if (!valid) return
+      this.$refs.ossForm.validate(async (valid, errors) => {
+        if (!valid) {
+          this.revealAdvancedErrors(errors)
+          return
+        }
         this.checking = true
         this.liveCheck = null
         try {
           const { data } = await checkAliyunOssConnection(this.buildSubmitPayload())
           this.liveCheck = data.check || { ok: !!data.ok, message: data.message }
-          if (data.data) this.applyPayload(data.data)
+          // 检测不保存配置，不能用响应中的已保存值覆盖当前编辑。
+          if (data.data) {
+            this.meta.last_check_status = data.data.last_check_status || null
+            this.meta.last_check_message = data.data.last_check_message || ''
+            this.meta.last_checked_at = data.data.last_checked_at || ''
+          }
           if (this.liveCheck.ok) {
             this.$message.success(this.liveCheck.message)
           } else {
             this.$message.error(this.liveCheck.message)
           }
         } catch (e) {
+          this.revealAdvancedErrors(e && e.response && e.response.data && e.response.data.errors)
           const msg = this.extractError(e, '连通性检测失败')
           this.liveCheck = { ok: false, message: msg }
           this.$message.error(msg)
@@ -752,10 +814,11 @@ export default {
   overflow-x: clip;
 }
 
+/* 顶部标准白底页头 */
 .page-head {
   display: flex;
   justify-content: space-between;
-  align-items: flex-start;
+  align-items: center;
   flex-wrap: wrap;
   gap: 14px;
   background: #ffffff;
@@ -763,14 +826,14 @@ export default {
   border-radius: 8px;
   border: 1px solid #e2e8f0;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
-  margin-bottom: 12px;
+  margin-bottom: 14px;
 }
 
 .head-left {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 12px;
-  flex: 1 1 380px;
+  flex: 1 1 360px;
   min-width: 0;
 }
 
@@ -790,7 +853,7 @@ export default {
 .head-title-wrap {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 3px;
   flex: 1;
   min-width: 0;
 }
@@ -820,9 +883,232 @@ export default {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-shrink: 0;
+}
+
+/* 主体左右布局：左侧服务目录 + 右侧配置工作区 */
+.service-layout {
+  display: grid;
+  grid-template-columns: 232px minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+/* 左侧服务目录卡片 */
+.service-nav-card {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 14px 12px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02);
+  box-sizing: border-box;
+  min-width: 0;
+}
+
+.nav-card-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: #1e293b;
+  padding: 0 6px 10px;
+  margin-bottom: 10px;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.nav-group {
+  margin-bottom: 12px;
+}
+
+.nav-group-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #64748b;
+  padding: 4px 8px;
+  margin-bottom: 4px;
+}
+
+.nav-service-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 9px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.nav-service-item:hover {
+  background: #f8fafc;
+}
+
+.nav-service-item.active {
+  background: #f0fdf4;
+  border-color: #bbf7d0;
+}
+
+.nav-item-main {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.status-dot.dot-active {
+  background: #008b4b;
+}
+
+.status-dot.dot-paused {
+  background: #f59e0b;
+}
+
+.status-dot.dot-idle {
+  background: #cbd5e1;
+}
+
+.nav-item-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: #1e293b;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nav-service-item.active .nav-item-name {
+  color: #00763f;
+}
+
+.nav-item-badge {
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  flex-shrink: 0;
+}
+
+.nav-item-badge.badge-active {
+  background: #dcfce7;
+  color: #00763f;
+  font-weight: 600;
+}
+
+.nav-item-badge.badge-paused {
+  background: #fef3c7;
+  color: #b45309;
+}
+
+.nav-item-badge.badge-idle {
+  background: #f1f5f9;
+  color: #64748b;
+}
+
+.nav-card-foot {
+  margin-top: 10px;
+  padding: 10px 8px 2px;
+  border-top: 1px dashed #e2e8f0;
+  font-size: 12px;
+  color: #94a3b8;
+  line-height: 1.5;
+}
+
+/* 右侧工作区 */
+.service-workspace {
+  min-width: 0;
+}
+
+.workspace-card {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 18px 22px 12px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02);
+  box-sizing: border-box;
+}
+
+.workspace-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
   flex-wrap: wrap;
+  gap: 14px;
+  padding-bottom: 16px;
+  margin-bottom: 18px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.workspace-head-left {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  flex: 1 1 320px;
+}
+
+.workspace-title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.workspace-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.workspace-meta-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 12px;
+  color: #64748b;
+}
+
+.workspace-meta-row b {
+  color: #334155;
+  font-weight: 600;
+}
+
+.meta-sep {
+  color: #cbd5e1;
+}
+
+.workspace-head-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
   flex: 0 1 auto;
   max-width: 100%;
+}
+
+.enable-switch-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+}
+
+.enable-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #475569;
 }
 
 .btn-refresh {
@@ -862,113 +1148,38 @@ export default {
   border-color: #00763f !important;
 }
 
-.erp-page-tip {
+.check-alert {
+  margin-bottom: 16px;
+}
+
+.last-check-warn {
   display: flex;
   align-items: center;
   gap: 8px;
-  background: #f0fdf4;
-  border: 1px solid #bbf7d0;
+  padding: 9px 12px;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
   border-radius: 6px;
-  padding: 9px 14px;
+  color: #b91c1c;
   font-size: 12px;
-  color: #166534;
-  margin-bottom: 14px;
+  margin-bottom: 16px;
   line-height: 1.5;
 }
 
-.erp-page-tip code {
-  background: #dcfce7;
-  color: #006334;
-  padding: 1px 5px;
-  border-radius: 3px;
-  font-size: 12px;
+/* 表单分块 */
+.form-section {
+  padding-bottom: 10px;
+  margin-bottom: 18px;
+  border-bottom: 1px solid #f1f5f9;
 }
 
-/* 三卡状态概览 */
-.status-overview-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 14px;
-  margin-bottom: 14px;
-}
-
-.status-card {
-  background: #ffffff;
-  border: 1px solid #e2e8f0;
-  border-radius: 8px;
-  padding: 14px 16px;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.02);
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  min-width: 0;
-  box-sizing: border-box;
-}
-
-.status-card-top {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 8px;
-}
-
-.status-card-label {
-  font-size: 12px;
-  font-weight: 600;
-  color: #64748b;
-}
-
-.status-card-value {
-  font-size: 14px;
-  font-weight: 600;
-  color: #1e293b;
-  line-height: 1.4;
-}
-
-.status-card-value.status-msg {
-  font-size: 13px;
-  font-weight: 500;
-  color: #334155;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.status-card-desc {
-  font-size: 12px;
-  color: #94a3b8;
-  line-height: 1.4;
-}
-
-.check-alert {
-  margin-bottom: 14px;
-}
-
-/* 配置卡片 */
-.oss-config-form {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-}
-
-.config-card {
-  background: #ffffff;
-  border: 1px solid #e2e8f0;
-  border-radius: 8px;
-  padding: 16px 20px 8px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02);
-  box-sizing: border-box;
-}
-
-.card-section-head {
+.section-head {
   display: flex;
   justify-content: space-between;
   align-items: center;
   flex-wrap: wrap;
-  gap: 10px;
-  padding-bottom: 12px;
-  margin-bottom: 16px;
-  border-bottom: 1px solid #f1f5f9;
+  gap: 8px;
+  margin-bottom: 14px;
 }
 
 .section-title-group {
@@ -981,15 +1192,15 @@ export default {
 
 .section-bar {
   width: 3px;
-  height: 15px;
+  height: 14px;
   border-radius: 2px;
   background: #008b4b;
   flex-shrink: 0;
 }
 
-.section-title-group h2 {
+.section-title-group h3 {
   margin: 0;
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 700;
   color: #1e293b;
 }
@@ -1012,7 +1223,7 @@ export default {
 }
 
 .timeout-grid {
-  padding-top: 6px;
+  padding-top: 8px;
   border-top: 1px dashed #eef2f6;
 }
 
@@ -1061,23 +1272,6 @@ export default {
   color: #475569;
 }
 
-.visibility-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.ttl-input {
-  width: 120px;
-  flex-shrink: 0;
-}
-
-.unit-suffix {
-  font-size: 12px;
-  color: #64748b;
-  flex-shrink: 0;
-}
-
 .dialog-warn-banner {
   display: flex;
   align-items: flex-start;
@@ -1102,31 +1296,26 @@ export default {
   color: #008b4b;
 }
 
-.text-muted {
-  color: #94a3b8;
-}
-
-.font-medium {
-  font-weight: 600;
-  color: #334155;
-}
-
-.code-mono {
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif;
-  font-variant-numeric: tabular-nums;
-}
-
-.action-link-theme {
-  color: #008b4b !important;
-  padding: 0 !important;
-  font-weight: 500;
-}
-
-.action-link-theme:hover {
-  color: #006334 !important;
-}
-
 /* 品牌森林绿覆盖，清除 Element UI 原生蓝 */
+.advanced-config {
+  border: 0;
+}
+
+.advanced-config ::v-deep .el-collapse-item__header {
+  min-height: 44px;
+  height: auto;
+  line-height: 1.4;
+  border-bottom: 0;
+}
+
+.advanced-config ::v-deep .el-collapse-item__wrap {
+  border-bottom: 0;
+}
+
+.advanced-config ::v-deep .el-collapse-item__content {
+  padding-bottom: 0;
+}
+
 .third-party-page ::v-deep .el-input__inner:focus,
 .third-party-page ::v-deep .el-textarea__inner:focus,
 .third-party-page ::v-deep .el-select .el-input.is-focus .el-input__inner {
@@ -1155,8 +1344,8 @@ export default {
   line-height: 1.4;
 }
 
-@media (max-width: 1180px) {
-  .status-overview-grid {
+@media (max-width: 1024px) {
+  .service-layout {
     grid-template-columns: 1fr;
   }
 }
@@ -1164,6 +1353,9 @@ export default {
 @media (max-width: 780px) {
   .third-party-page {
     padding: 12px 10px 20px;
+  }
+  .workspace-card {
+    padding: 14px 14px 10px;
   }
   .form-grid-2,
   .form-grid-3 {

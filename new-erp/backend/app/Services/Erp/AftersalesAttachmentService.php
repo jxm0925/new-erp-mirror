@@ -32,7 +32,7 @@ final class AftersalesAttachmentService
         if ($disk === 'public') $disk = 'local';
         $directory = trim((string) config('erp.aftersales_attachment_prefix', 'erp/aftersales'), '/').'/'.date('Ymd');
         $storedName = Str::uuid().'.'.($ext ?: $file->extension() ?: 'bin');
-        $path = Storage::disk($disk)->putFileAs($directory, $file, $storedName, ['visibility' => 'private']);
+        $path = Storage::disk($disk)->putFileAs($directory, $file, $storedName, ['visibility' => $disk === 'oss' ? 'public' : 'private']);
         abort_if(!$path, 500, '售后附件上传失败');
 
         return AftersalesAttachment::create($attributes + [
