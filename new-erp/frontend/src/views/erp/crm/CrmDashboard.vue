@@ -1,6 +1,15 @@
 <template>
   <div v-loading="viewLoading" class="crm-page dashboard-page">
-    <header class="crm-head dashboard-head"><span class="crm-head-icon"><i class="el-icon-data-analysis" /></span><h1>{{ tab === 'income' ? '收入统计' : '经营看板' }}</h1><div class="dashboard-head-actions"><span v-if="currentView" class="dashboard-view-name">{{ currentView.name }}</span><el-button type="success" size="small" icon="el-icon-setting" :disabled="!metadataReady || viewLoading" @click="openConfiguration">配置看板</el-button><el-button size="small" icon="el-icon-document" :disabled="!metadataReady || viewLoading" @click="openConfiguration">保存视图</el-button></div></header>
+    <header class="crm-head dashboard-head">
+      <span class="crm-head-icon"><i class="el-icon-data-analysis" /></span>
+      <h1>{{ tab === 'income' ? '收入统计' : '经营看板' }}</h1>
+      <div class="dashboard-head-actions">
+        <span v-if="currentView" class="dashboard-view-name">{{ currentView.name }}</span>
+        <crm-daily-reports mode="team" @project="viewRecord" />
+        <el-button type="success" size="small" icon="el-icon-setting" :disabled="!metadataReady || viewLoading" @click="openConfiguration">配置看板</el-button>
+        <el-button size="small" icon="el-icon-document" :disabled="!metadataReady || viewLoading" @click="openConfiguration">保存视图</el-button>
+      </div>
+    </header>
     <el-tabs v-model="tab" class="dashboard-tabs" @tab-click="changeTab"><el-tab-pane v-for="item in tabs" :key="item.key" :label="item.label" :name="item.key" /></el-tabs>
     <el-alert v-if="metadataError" :title="metadataError" type="error" :closable="false" show-icon />
     <form class="dashboard-filters" @submit.prevent="applyFilters">
@@ -65,6 +74,7 @@ import DashboardRecords from '@/components/crm/dashboard/DashboardRecords.vue'
 import DashboardSalesTable from '@/components/crm/dashboard/DashboardSalesTable.vue'
 import DashboardPersonalDialog from '@/components/crm/dashboard/DashboardPersonalDialog.vue'
 import DashboardActions from '@/components/crm/dashboard/DashboardActions.vue'
+import CrmDailyReports from '@/components/crm/CrmDailyReports.vue'
 import DashboardWidget from '@/components/crm/dashboard/DashboardWidget.vue'
 import DashboardConfigurationDialog from '@/components/crm/dashboard/DashboardConfigurationDialog.vue'
 import DashboardConfigurationPreview from '@/components/crm/dashboard/DashboardConfigurationPreview.vue'
@@ -88,7 +98,7 @@ const defaultDraft = () => ({range:[today().slice(0,7) + '-01',today()],departme
 
 export default {
   name: 'CrmDashboard',
-  components: { PagedRecordSelect, DashboardMetrics, DashboardChart, DashboardRecords, DashboardSalesTable, DashboardPersonalDialog, DashboardActions, DashboardWidget, DashboardConfigurationDialog, DashboardConfigurationPreview },
+  components: { CrmDailyReports, PagedRecordSelect, DashboardMetrics, DashboardChart, DashboardRecords, DashboardSalesTable, DashboardPersonalDialog, DashboardActions, DashboardWidget, DashboardConfigurationDialog, DashboardConfigurationPreview },
   data: () => ({ viewCatalog:[], viewComponents:[], currentView:null, viewLoading:false, viewError:'', viewWarnings:[], viewSequence:0, tabs, dimensionOptions:dimensions, sourceOptions, riskTabs, taskTabs, tab:'overview', metadata:{}, metadataReady:false, metadataError:'', draft:defaultDraft(), scope:{}, selectedSales:[], salesColumns:[{prop:'name',label:'姓名'}], session:0, overview:pageState(), sales:pageState(), dimensions:pageState(), industry:pageState(), purchase:pageState(), cross:pageState(), pipeline:pageState(), followups:pageState(), sources:pageState(), income:pageState(), orders:pageState(), risk:pageState(), tasks:pageState(), drillState:pageState(), drill:{visible:false,title:'',params:{},baseParams:{},baseTitle:'',session:0}, conversionBucket:'', conversionOptions:[{value:'total',label:'累计成交'},{value:'within_30',label:'30天内成交'},{value:'over_30',label:'超过30天成交'},{value:'new',label:'新咨询成交'},{value:'old',label:'老咨询成交'},{value:'source_unknown',label:'咨询分类未填写'}], dimension:'industry', source:'first_source', crossDimensionPage:1, stageMode:'count', riskKind:'pipeline_overdue_followup', taskKind:'contact_overdue', stalledDays:30, cohort:{range:[today().slice(0,7) + '-01',today()],observed_on:today()}, orderSalesId:null, orderUnassigned:false, orderSelectedSales:[], outstandingStatus:'', lostVisible:false, salesChartSeries:[{key:'deal',label:'成交金额（万）'},{key:'expected',label:'待成交金额（万）'}], followupSeries:[{key:'due_count',label:'应跟进'},{key:'completed_count',label:'已完成'}], incomeSeries:[{key:'deal',label:'成交金额（万）'},{key:'received',label:'已收金额（万）'},{key:'outstanding',label:'尾款金额（万）'}] }),
   computed: {
     metricDefinitions() { return dashboardComponentCatalog.filter(item => item.metric) },

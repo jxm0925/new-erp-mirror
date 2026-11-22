@@ -19,7 +19,7 @@ final class ProductMatrixApplicationService
                 'rows' => 'required|array|min:1|max:500',
                 'rows.*.sku_code' => ['required', 'string', 'max:80', 'distinct', Rule::unique('erp_skus', 'sku_code')],
                 'rows.*.sku_name' => 'required|string|max:160', 'rows.*.spec_text' => 'required|string|max:255',
-                'rows.*.sale_price' => 'required|numeric|min:0',
+                'rows.*.sale_price' => 'nullable|numeric|min:0',
                 'rows.*.reservation_token' => 'nullable|uuid', 'rows.*.creation_session_id' => 'nullable|uuid',
             ])->validate()['rows'];
 

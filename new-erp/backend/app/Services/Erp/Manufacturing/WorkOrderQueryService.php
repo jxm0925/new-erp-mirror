@@ -290,6 +290,7 @@ final class WorkOrderQueryService
                 'is_purchase_item' => $item->isPurchaseFulfilledItem(), 'default_warehouse_id' => $item->default_warehouse_id,
                 'stock_qty' => round((float) $stock, 4)] + self::itemSpecInfo($item),
             'bom' => $plan['bom'] ? collect($plan['bom'])->except('items')->all() : null,
+            'bom_selection_error' => $plan['bom_selection_error'],
             'routing' => $plan['routing'] ? ['id' => $plan['routing']['routing_id'], 'routing_no' => $plan['routing']['routing_no'],
                 'routing_name' => $plan['routing']['routing_name'], 'version' => $plan['routing']['version'], 'is_default' => $plan['routing']['is_default'] ?? false] : null,
             'operations' => $operations, 'kitting' => $kitting, 'block_reasons' => $plan['block_reasons'],
@@ -349,7 +350,7 @@ final class WorkOrderQueryService
 
     public function bomOptions(int $itemId): array
     {
-        return $this->bomMatcher->eligibleQuery()->where('output_item_id', $itemId)->orderByDesc('is_default')->orderByDesc('id')->limit(30)
+        return $this->bomMatcher->eligibleQuery()->where('output_item_id', $itemId)->whereHas('items')->orderByDesc('is_default')->orderByDesc('id')->limit(30)
             ->get(['id', 'bom_no', 'bom_name', 'version', 'is_default', 'product_id', 'sku_id'])->map(fn (Bom $bom) => [
                 'id' => $bom->id, 'bom_no' => $bom->bom_no, 'bom_name' => $bom->bom_name, 'version' => $bom->version, 'is_default' => (bool) $bom->is_default,
                 'scope' => $bom->sku_id ? 'SKU 专用' : ($bom->product_id ? '产品专用' : '通用')])->all();

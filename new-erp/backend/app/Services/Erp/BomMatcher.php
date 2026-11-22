@@ -18,7 +18,7 @@ class BomMatcher
             ->where(fn ($q) => $q->whereNull('expire_date')->orWhere('expire_date', '>=', $date));
     }
 
-    public function match(?int $productId, ?int $skuId, ?int $itemId, ?array $configuration = null, ?int $pinnedBomId = null, bool $lock = false): array
+    public function match(?int $productId, ?int $skuId, ?int $itemId, ?array $configuration = null, ?int $pinnedBomId = null, bool $lock = false, bool $requireMaterials = false): array
     {
         if (!$itemId) {
             return $this->blocked('not_checked', 'Item 未匹配，不能匹配 BOM');
@@ -44,11 +44,17 @@ class BomMatcher
                     });
                 });
             });
-        $matches = $matches->orderByDesc('is_default')->orderByDesc('id')->get();
+        $matches = $matches->when($requireMaterials, fn ($q) => $q->withExists('items'))
+            ->orderByDesc('is_default')->orderByDesc('id')->get();
 
         if ($matches->isEmpty()) return $this->blocked('missing', $pinnedBomId !== null
             ? '已确认的 BOM 版本已失效或不适用于该产出，请先修订生产资料'
             : '未找到已审核且有效的 BOM');
+        if ($requireMaterials) {
+            $first = $matches->first();
+            $matches = $matches->where('items_exists', true);
+            if ($matches->isEmpty()) return $this->blocked('empty_materials', self::emptyMaterialsMessage($first->bom_no));
+        }
         if ($matches->count() > 1 && $matches->where('is_default', true)->count() !== 1) {
             return [
                 'status' => 'conflict',
@@ -63,6 +69,7 @@ class BomMatcher
 
         $bom = $matches->where('is_default', true)->first() ?: $matches->first();
         if ($lock) $this->loadLockedLines($bom);
+        if ($requireMaterials && $bom->items->isEmpty()) return $this->blocked('empty_materials', self::emptyMaterialsMessage($bom->bom_no));
         $resolvedItems = $this->lengthCutRequirements->resolveBomLines($bom, $configuration);
         return [
             'status' => 'matched',
@@ -83,6 +90,11 @@ class BomMatcher
             ],
             'candidates' => [$this->candidate($bom)],
         ];
+    }
+
+    public static function emptyMaterialsMessage(string $bomNo): string
+    {
+        return "「{$bomNo}」没有有效用料，请选择其他 BOM 版本，或在 BOM 管理中补齐用料。";
     }
 
     public function loadLockedLines(Bom $bom): void

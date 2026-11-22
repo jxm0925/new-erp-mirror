@@ -668,7 +668,6 @@ class MasterDataController extends Controller
 
         abort_unless(!empty($data['sku_code']) && !empty($data['sku_name']) && !empty($data['product_id']) && !blank($data['spec_text'] ?? null), 422, 'SKU 编码、名称、所属 Product 与规格型号必须完整后才能启用。');
         abort_unless(!empty($data['sales_unit_id']), 422, '请先维护销售单位后再启用 SKU。');
-        abort_unless(array_key_exists('sale_price', $data) && $data['sale_price'] !== null && $data['sale_price'] !== '', 422, '请先维护默认销售价格后再启用 SKU。');
         abort_unless(in_array($data['order_line_type'] ?? '', ['physical', 'service', 'no_delivery', 'deduction'], true), 422, '订单行类型无效，不能启用 SKU。');
         abort_unless(in_array($data['electric_mode'] ?? 'hidden', ['hidden', 'optional', 'required'], true), 422, '电压属性模式无效。');
         abort_unless(in_array($data['need_pump_mode'] ?? 'hidden', ['hidden', 'optional', 'required'], true), 422, '原水泵控制属性模式无效。');

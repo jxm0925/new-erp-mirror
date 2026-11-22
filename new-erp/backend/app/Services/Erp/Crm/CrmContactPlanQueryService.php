@@ -11,8 +11,9 @@ final class CrmContactPlanQueryService
     {
         $query->whereNotNull($column);
         if ($type === 'today') $query->where($column, '>=', today()->toDateTimeString())->where($column, '<', today()->addDay()->toDateTimeString());
+        elseif ($type === 'tomorrow') $query->where($column, '>=', today()->addDay())->where($column, '<', today()->addDays(2));
         elseif ($type === 'overdue') $query->where($column, '<', now());
-        elseif ($type === 'all') $query->where($column, '<', today()->addDay()->toDateTimeString());
+        elseif ($type === 'all') $query->where($column, '<', today()->addDays(2)->toDateTimeString());
         elseif ($type !== 'pending') $query->whereRaw('1 = 0');
     }
 }

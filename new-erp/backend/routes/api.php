@@ -787,11 +787,34 @@ Route::prefix('v1/erp/rbac')->group(function () {
     Route::post('role-users', [RbacController::class, 'saveRoleUsers']);
 });
 
+Route::prefix('v1/erp/crm/daily-reports')->controller(\App\Http\Controllers\Api\V1\Erp\CrmDailyReportController::class)->group(function () {
+    Route::get('access', 'access');
+    Route::get('candidates', 'candidates');
+    Route::get('sales', 'sales');
+    Route::put('sales/coordination/{id}', 'resubmit')->whereNumber('id');
+    Route::put('sales/supervisor-note', 'saveSupervisorNote');
+    Route::put('sales', 'saveSales');
+    Route::post('sales/analyze', 'analyzeSales')->middleware('throttle:12,1');
+    Route::get('team/{dept}', 'team')->whereNumber('dept');
+    Route::put('team/{dept}', 'saveTeam')->whereNumber('dept');
+    Route::post('team/{dept}/analyze', 'analyzeTeam')->whereNumber('dept')->middleware('throttle:12,1');
+    Route::post('team/{dept}/coordination', 'startCoordination')->whereNumber('dept');
+    Route::put('team/{dept}/coordination/{id}', 'coordinate')->whereNumber(['dept','id']);
+});
+
 Route::prefix('v1/erp/system/third-party-services')->group(function () {
+    Route::get('crm-ai', [\App\Http\Controllers\Api\V1\Erp\ThirdPartyServiceController::class, 'showAi']);
+    Route::put('crm-ai', [\App\Http\Controllers\Api\V1\Erp\ThirdPartyServiceController::class, 'saveAi']);
+    Route::post('crm-ai/check', [\App\Http\Controllers\Api\V1\Erp\ThirdPartyServiceController::class, 'checkAi'])->middleware('throttle:6,1');
+    Route::post('crm-ai/models', [\App\Http\Controllers\Api\V1\Erp\ThirdPartyServiceController::class, 'listAiModels'])->middleware('throttle:12,1');
+    Route::post('crm-ai/decrypt-secret', [\App\Http\Controllers\Api\V1\Erp\ThirdPartyServiceController::class, 'decryptAiSecret'])->middleware('throttle:15,1');
+    Route::post('crm-ai/{serviceCode}/default', [\App\Http\Controllers\Api\V1\Erp\ThirdPartyServiceController::class, 'setDefaultAi'])->where('serviceCode', '[a-z0-9_]+');
+    Route::delete('crm-ai/{serviceCode}', [\App\Http\Controllers\Api\V1\Erp\ThirdPartyServiceController::class, 'deleteAi'])->where('serviceCode', '[a-z0-9_]+');
     Route::get('aliyun-oss', [\App\Http\Controllers\Api\V1\Erp\ThirdPartyServiceController::class, 'showAliyunOss']);
     Route::put('aliyun-oss', [\App\Http\Controllers\Api\V1\Erp\ThirdPartyServiceController::class, 'saveAliyunOss']);
     Route::post('aliyun-oss/rotate-secret', [\App\Http\Controllers\Api\V1\Erp\ThirdPartyServiceController::class, 'rotateAliyunOssSecret']);
     Route::post('aliyun-oss/check-connection', [\App\Http\Controllers\Api\V1\Erp\ThirdPartyServiceController::class, 'checkAliyunOssConnection']);
+    Route::post('aliyun-oss/decrypt-secret', [\App\Http\Controllers\Api\V1\Erp\ThirdPartyServiceController::class, 'decryptAliyunOssSecret'])->middleware('throttle:15,1');
 });
 
 Route::prefix('v1/erp/business-staff')->group(function () {

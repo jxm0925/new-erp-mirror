@@ -890,6 +890,7 @@ final class WorkOrderService
         }
         // 同次销售确认沿用锁内生成的路线和用料，不能在建工单时再次匹配主档。
         $plan = $confirmedPlan ?? $this->plans->build($item, $wo->product_id, $wo->sku_id, $wo->configuration_snapshot, (float) $wo->planned_qty, $bomId, $routingId, $bomSnapshot);
+        if (! empty($plan['bom_selection_error'])) $this->fail('bom_unavailable', $plan['bom_selection_error']);
         if ($replace) {
             MfgWorkOrderMaterial::query()->where('work_order_id', $wo->id)->delete();
             MfgWorkOrderOperation::query()->where('work_order_id', $wo->id)->delete();

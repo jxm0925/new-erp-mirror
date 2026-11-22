@@ -15,7 +15,7 @@ use Illuminate\Support\Facades\DB;
 /** 工作台只投影原对象的当前计划，办理仍走线索、商机和跟进正式服务。 */
 final class CrmWorkbenchQueryService
 {
-    public const TASKS = ['all' => '全部待办', 'today' => '今日联系', 'overdue' => '逾期跟进', 'pending_receive' => '待接收',
+    public const TASKS = ['all' => '全部待办', 'today' => '今日联系', 'tomorrow' => '明日联系', 'overdue' => '逾期跟进', 'pending_receive' => '待接收',
         'pending_confirm' => '待确认有效线索', 'pending_assign' => '待分配', 'pending_verify' => '待核实'];
     public const PRIORITIES = ['closing' => '预计成交', 'confirmation' => '待客户确认', 'stalled' => '停滞商机'];
 
@@ -53,7 +53,7 @@ final class CrmWorkbenchQueryService
             'current_user' => ['id' => (int) $actor->legacy_id, 'name' => ($actor->nickname ?? null) ?: $actor->username,
                 'department_legacy_id' => $department, 'department_name' => $this->access->departmentName($department)],
             'summary' => $summary,
-            'task_abilities' => ['all' => true, 'today' => $canContact, 'overdue' => $canContact,
+            'task_abilities' => ['all' => true, 'today' => $canContact, 'tomorrow' => $canContact, 'overdue' => $canContact,
                 'pending_receive' => $canLead, 'pending_confirm' => $canLead,
                 'pending_assign' => $manager('assign'), 'pending_verify' => $manager('verify')],
             'customer_pools' => array_map(fn ($pool) => ['name' => $pool, 'count' => (int) ($pools[$pool] ?? 0), 'query' => ['tab' => 'all', 'customer_pool' => $pool]], CrmLeadApplicationService::POOLS),
@@ -78,10 +78,26 @@ final class CrmWorkbenchQueryService
             $targets[$kind] = $subjects[$kind] ? $query->whereKey($subjects[$kind])->get()->keyBy('id') : collect();
         }
         $latest = $this->latestFollowups($subjects);
-        return $page->through(function ($task) use ($actor, $type, $targets, $latest) {
+        $daily = collect();
+        if ($this->includeDaily($actor, $type) && ($subjects['lead'] || $subjects['opportunity'])) {
+            $daily = app(CrmDailyFacts::class)->pendingActions($actor, $type)
+                ->where(fn ($q) => $q->where(fn ($lead) => $lead->where('a.subject_type','lead')->whereIn('a.subject_id',$subjects['lead']))
+                    ->orWhere(fn ($opp) => $opp->where('a.subject_type','opportunity')->whereIn('a.subject_id',$subjects['opportunity'])))
+                ->orderBy('a.planned_at')->get(['a.*'])->groupBy(fn ($r) => $r->subject_type.':'.$r->subject_id);
+        }
+        return $page->through(function ($task) use ($actor, $type, $targets, $latest, $daily) {
             $target = $targets[$task->target_type]->get($task->target_id);
             abort_unless($target, 404, '待办对象已变化，请刷新后重试。');
-            return $this->present($task, $actor, $type, $target, $latest->get($task->target_type.':'.$task->target_id));
+            $key = $task->target_type.':'.$task->target_id;
+            $actions = $daily->get($key);
+            $row = $this->present($task, $actor, $type, $target, $latest->get($key), $actions?->first()?->planned_at);
+            if ($actions) {
+                $notes = $actions->map(fn ($a) => ($a->priority === 'primary' ? '主攻' : '补位').' · '.$a->action
+                    .($a->expected_result ? '（'.$a->expected_result.'）' : ''))->implode(' / ');
+                $row['next_plan'] = $row['next_plan'] ? $notes.' / 原计划：'.$row['next_plan'] : $notes;
+                $row['task_labels'][] = ['key'=>'daily','label'=>'作战表已确认','type'=>'success'];
+            }
+            return $row;
         });
     }
 
@@ -147,7 +163,7 @@ final class CrmWorkbenchQueryService
         // 一个线索可能同时待确认有效线索和到期；全部待办按对象只列一次，各卡片保留自己的办理范围。
         $lead->where(function ($matches) use ($actor, $types, $handlingOwners) {
             foreach ($types as $kind) $matches->orWhere(function ($q) use ($actor, $kind, $handlingOwners) {
-                if (in_array($kind, ['today', 'overdue'], true)) {
+                if (in_array($kind, ['today', 'tomorrow', 'overdue'], true)) {
                     $q->where('status', 'active')->whereIn('owner_legacy_id', $handlingOwners);
                     CrmContactPlanQueryService::applyDue($q, 'next_contact_at', $kind);
                 } elseif ($kind === 'pending_receive') {
@@ -187,7 +203,18 @@ final class CrmWorkbenchQueryService
         if (!$this->access->can($actor, 'sales.customer')) $customer->whereRaw('1 = 0');
         CrmContactPlanQueryService::applyDue($customer, 'direct.next_contact_at', $type);
         $customer->selectRaw("'customer' AS target_type, erp_sales_customers.id AS target_id, direct.next_contact_at AS planned_at");
-        return DB::query()->fromSub($lead->toBase()->unionAll($opportunity->toBase())->unionAll($customer->toBase()), 'workbench_tasks');
+        $tasks = $lead->toBase()->unionAll($opportunity->toBase())->unionAll($customer->toBase());
+        if (!$this->includeDaily($actor, $type)) return DB::query()->fromSub($tasks, 'workbench_tasks');
+        $daily = app(CrmDailyFacts::class)->pendingActions($actor, $type)
+            ->selectRaw('a.subject_type as target_type, a.subject_id as target_id, a.planned_at');
+        return DB::query()->fromSub(DB::query()->fromSub($tasks->unionAll($daily), 'combined_tasks')
+            ->selectRaw('target_type,target_id,MIN(planned_at) as planned_at')->groupBy('target_type','target_id'), 'workbench_tasks');
+    }
+
+    private function includeDaily(object $actor, string $type): bool
+    {
+        return in_array($type, ['today','tomorrow','overdue','all'], true)
+            && ($this->access->can($actor, 'crm.lead.view') || $this->access->can($actor, 'crm.opportunity.view'));
     }
 
     private function managementRange(Builder|QueryBuilder $query, object $actor, string $action, string $department, string $channel): void
@@ -219,7 +246,7 @@ final class CrmWorkbenchQueryService
         return $rows;
     }
 
-    private function present(object $task, object $actor, string $type, CrmLead|CrmOpportunity|SalesCustomer $target, ?CrmFollowup $latest): array
+    private function present(object $task, object $actor, string $type, CrmLead|CrmOpportunity|SalesCustomer $target, ?CrmFollowup $latest, ?string $dailyPlan): array
     {
         $kind = $type;
         $customerId = null;
@@ -276,9 +303,15 @@ final class CrmWorkbenchQueryService
             $nextContact = $latest?->next_contact_at;
             $nextPlan = $latest?->next_plan;
         }
+        if ($dailyPlan) {
+            $dailyTime = \Illuminate\Support\Carbon::parse($dailyPlan);
+            if ($type !== 'all') $nextContact = \Illuminate\Support\Carbon::parse($task->planned_at);
+            elseif (!$nextContact || $dailyTime->lt($nextContact)) $nextContact = $dailyTime;
+        }
         $isOverdue = $canContact && $nextContact && $nextContact->lt(now());
         if ($isOverdue) $taskKinds[] = 'overdue';
         elseif ($canContact && $nextContact && $nextContact->gte(today()) && $nextContact->lt(today()->addDay())) $taskKinds[] = 'today';
+        elseif ($canContact && $nextContact && $nextContact->gte(today()->addDay()) && $nextContact->lt(today()->addDays(2))) $taskKinds[] = 'tomorrow';
         if ($task->target_type === 'lead' && $target->status === 'active' && !$target->confirmed_at) $taskKinds[] = 'pending_confirm';
         if ($kind === 'all') $kind = $taskKinds[0] ?? 'today';
         $action = match ($kind) {

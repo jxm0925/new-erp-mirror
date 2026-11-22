@@ -82,6 +82,7 @@
       </div>
 
       <div class="crm-actions">
+        <crm-daily-reports mode="sales" @project="viewTask" @confirmed="refresh" />
         <el-button size="small" icon="el-icon-refresh" :loading="loading" @click="refresh">刷新</el-button>
         <el-button v-if="workbench.can_self_delegate" size="small" icon="el-icon-date" @click="salesDelegationsVisible = true">我的销售代班</el-button>
         <el-button v-if="canCreateOpportunity" size="small" icon="el-icon-aim" @click="$refs.opportunityForm.open()">新建商机</el-button>
@@ -120,7 +121,7 @@
       <section class="crm-card panel-card tasks-panel">
         <div class="panel-head">
           <div class="panel-title-wrap">
-            <h2 class="crm-section-title">今日工作清单</h2>
+            <h2 class="crm-section-title">跟进与待办</h2>
             <span class="panel-sub-pill">{{ currentTaskLabel }}</span>
           </div>
           <div class="panel-head-actions">
@@ -506,6 +507,7 @@ import {
 } from '@/api/erp/crm'
 import { erpDateTime } from '@/utils/dateTime'
 import CrmLeadFormDialog from '@/components/crm/CrmLeadFormDialog.vue'
+import CrmDailyReports from '@/components/crm/CrmDailyReports.vue'
 import CrmLeadDetailDialog from '@/components/crm/CrmLeadDetailDialog.vue'
 import CrmLeadActionDialog from '@/components/crm/CrmLeadActionDialog.vue'
 import CrmFollowupDialog from '@/components/crm/CrmFollowupDialog.vue'
@@ -519,6 +521,7 @@ import '@/styles/crm.css'
 const QUEUE_META = [
   { key: 'all', label: '全部待办', icon: 'el-icon-s-order', desc: '去重汇总当前待办', tone: 'is-green', valCls: '' },
   { key: 'today', label: '今日联系', icon: 'el-icon-phone-outline', desc: '今日计划跟进事项', tone: 'is-green', valCls: '' },
+  { key: 'tomorrow', label: '明日联系', icon: 'el-icon-date', desc: '明日联系和已确认的重点客户', tone: 'is-green', valCls: '' },
   { key: 'overdue', label: '逾期跟进', icon: 'el-icon-warning-outline', desc: '超计划时间未跟进', tone: 'is-red', valCls: 'is-danger' },
   { key: 'pending_receive', label: '待接收', icon: 'el-icon-bell', desc: '分配给我待确认接收', tone: 'is-amber', valCls: 'is-warn' },
   { key: 'pending_confirm', label: '待确认有效', icon: 'el-icon-circle-check', desc: '待确认为有效线索', tone: 'is-amber', valCls: '' },
@@ -543,6 +546,7 @@ const ACTION_LABELS = {
 export default {
   name: 'CrmWorkbench',
   components: {
+    CrmDailyReports,
     CrmLeadFormDialog,
     CrmLeadDetailDialog,
     CrmLeadActionDialog,

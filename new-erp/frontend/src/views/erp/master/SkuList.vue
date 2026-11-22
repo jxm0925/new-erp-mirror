@@ -172,7 +172,7 @@
                 <span class="unit-tag">{{ unitName(row) }}</span>
               </div>
               <div v-else class="price-incomplete">
-                <el-tag type="warning" size="mini" effect="plain">待设置价格</el-tag>
+                <span>录单时填写</span>
                 <span class="unit-tag">{{ unitName(row) }}</span>
               </div>
             </template>

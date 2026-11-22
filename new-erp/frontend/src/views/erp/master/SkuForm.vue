@@ -42,7 +42,7 @@
     <!-- 顶部统一提示条 -->
     <div v-if="completionMode" class="erp-page-tip tip-warning">
       <i class="el-icon-warning-outline" />
-      <span>当前 SKU 的新系统资料尚未完整维护。补全销售单位、价格并配置默认物料后启用，才能投入后续订单履约与生产。</span>
+      <span>请补全销售单位。实物 SKU 还需绑定有效的默认物料。默认售价可留空，录销售订单时填写成交单价。</span>
     </div>
     <div v-else class="erp-page-tip">
       <i class="el-icon-info" />
@@ -89,9 +89,9 @@
                 </div>
               </div>
               <div class="form-row">
-                <label>销售单价</label>
+                <label>默认售价</label>
                 <div class="price-input-wrap">
-                  <el-input-number v-model="form.sale_price" size="small" :min="0" :precision="2" controls-position="right" class="price-input" />
+                  <el-input-number v-model="form.sale_price" size="small" :min="0" :precision="2" controls-position="right" class="price-input" placeholder="选填" />
                   <span class="unit-suffix">CNY</span>
                 </div>
               </div>
@@ -272,7 +272,7 @@
           </div>
           <div class="preview-field">
             <span class="preview-lbl">单价 (CNY)</span>
-            <div class="preview-val">{{ form.sale_price === null || form.sale_price === '' ? '—' : $money(form.sale_price) }} <b>¥</b></div>
+            <div class="preview-val">{{ form.sale_price == null ? '录单时填写' : '¥ ' + $money(form.sale_price) }}</div>
           </div>
           <div v-if="form.electric_mode !== 'hidden'" class="preview-field">
             <span class="preview-lbl">电压 <i v-if="form.electric_mode === 'required'">*</i></span>
@@ -394,7 +394,7 @@ const empty = () => ({
   spec_model: '',
   image: '',
   sales_unit_id: null,
-  sale_price: null,
+  sale_price: undefined,
   line_type: 'physical',
   is_sellable: true,
   allow_customized: false,
@@ -456,7 +456,7 @@ export default {
       return this.$route.path.endsWith('/complete') || (this.editing && this.form.status === 'draft' && !this.isOrderReady)
     },
     isOrderReady () {
-      return !!(this.form.sales_unit_id && this.form.sale_price !== null && this.form.sale_price !== '' && (this.form.line_type !== 'physical' || this.defaultRelation))
+      return !!(this.form.sales_unit_id && (this.form.line_type !== 'physical' || this.defaultRelation))
     }
   },
   created () { this.init() },
@@ -478,6 +478,7 @@ export default {
           this.form = {
             ...empty(),
             ...r.data,
+            sale_price: r.data.sale_price ?? undefined,
             spec_model: r.data.spec_model || r.data.spec_text || '',
             line_type: r.data.line_type || r.data.order_line_type,
             is_sellable: r.data.is_sellable
@@ -571,7 +572,6 @@ export default {
       const selectedItemId = this.defaultRelation && this.defaultRelation.item && this.defaultRelation.item.id
       if (status === 'enabled') {
         if (!this.form.sales_unit_id) return this.$message.error('请先维护销售单位后再启用 SKU。')
-        if (this.form.sale_price == null || this.form.sale_price === '') return this.$message.error('请先维护默认销售价格后再启用 SKU。')
         const product = this.products.find(item => Number(item.id) === Number(this.form.product_id))
         if (!product || product.status !== 'enabled') return this.$message.error('所属 Product 必须处于启用状态。')
         if (!this.currentSalesUnit || this.currentSalesUnit.status !== 'enabled') return this.$message.error('销售单位必须处于启用状态。')
@@ -584,7 +584,7 @@ export default {
         const relationChanged = this.form.line_type === 'physical' && !!(selectedItemId && Number(selectedItemId) !== Number(this.currentPrimaryItemId()))
         const stageBeforeEnable = status === 'enabled' && (!this.editing || relationChanged)
         const firstStatus = stageBeforeEnable ? 'draft' : status
-        const payload = { ...this.form, status: firstStatus }
+        const payload = { ...this.form, sale_price: this.form.sale_price ?? null, status: firstStatus }
         if (!this.$can('inventory.amount.view')) delete payload.reference_cost
         if (!this.editing && this.reservation) {
           payload.reservation_token = this.reservation.reservation_token

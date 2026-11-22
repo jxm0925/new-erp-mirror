@@ -154,7 +154,7 @@
                   </el-table-column>
                   <el-table-column label="默认售价" width="115" align="right">
                     <template slot-scope="{ row: sku }">
-                      <span class="price-val">¥{{ $money(sku.sale_price || 0) }}</span>
+                      <span class="price-val">{{ sku.sale_price == null ? '录单时填写' : '¥' + $money(sku.sale_price) }}</span>
                     </template>
                   </el-table-column>
                   <el-table-column label="关联物料" width="125" align="center">
@@ -348,7 +348,7 @@
                   <template slot-scope="{ row }">{{ row.spec_text || row.sku_name || '-' }}</template>
                 </el-table-column>
                 <el-table-column label="售价" width="90" align="right">
-                  <template slot-scope="{ row }">¥{{ $money(row.sale_price || 0) }}</template>
+                  <template slot-scope="{ row }">{{ row.sale_price == null ? '录单时填写' : '¥' + $money(row.sale_price) }}</template>
                 </el-table-column>
                 <el-table-column label="状态" width="75" align="center">
                   <template slot-scope="{ row }">
@@ -410,7 +410,7 @@
               <el-input value="按编号规则生成" disabled class="erp-system-number" style="width: 160px;" />
             </el-form-item>
             <el-form-item label="默认售价">
-              <el-input-number v-model="skuMatrix.sale_price" :min="0" :precision="2" controls-position="right" style="width: 140px;" />
+              <el-input-number v-model="skuMatrix.sale_price" :min="0" :precision="2" controls-position="right" placeholder="选填" style="width: 140px;" />
             </el-form-item>
           </el-form>
         </section>
@@ -422,7 +422,7 @@
             <el-table-column prop="sku_name" label="SKU名称" min-width="160" show-overflow-tooltip />
             <el-table-column prop="spec_model" label="规格组合" min-width="140" show-overflow-tooltip />
             <el-table-column prop="sale_price" label="销售价" width="90" align="right">
-              <template slot-scope="{ row }">¥{{ $money(row.sale_price || 0) }}</template>
+              <template slot-scope="{ row }">{{ row.sale_price == null ? '录单时填写' : '¥' + $money(row.sale_price) }}</template>
             </el-table-column>
             <el-table-column label="状态" width="90" align="center">
               <template slot-scope="{ row }">
@@ -469,7 +469,7 @@ export default {
       filters: { keyword: '', category_id: '', status: '', page: 1, per_page: 10 },
       total: 0,
       stats: {},
-      skuMatrix: { sale_price: 0, status: 'enabled', dimensions: [] }
+      skuMatrix: { sale_price: undefined, status: 'enabled', dimensions: [] }
     }
   },
   computed: {
@@ -629,7 +629,7 @@ export default {
     openSkuMatrix(product) {
       this.selectedProduct = { ...product }
       this.skuMatrix = {
-        sale_price: null,
+        sale_price: undefined,
         status: 'draft',
         dimensions: [
           { name: '规格', valuesText: '' }
@@ -656,7 +656,6 @@ export default {
       const rows = this.skuMatrixRows
       if (!rows.length) return this.$message.error('请先维护规格维度和值')
       if (!this.selectedProduct.unit_id) return this.$message.error('请先在商品档案维护计量单位，SKU矩阵将统一继承该单位')
-      if (this.skuMatrix.sale_price === null || this.skuMatrix.sale_price === '') return this.$message.error('请维护默认销售价格')
       const creatableRows = rows.filter(row => row.can_generate)
       if (!creatableRows.length) return this.$message.warning('没有可生成的 SKU，预览中的组合均已存在或重复')
       this.saving = true

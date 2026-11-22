@@ -6,7 +6,6 @@ namespace App\Services\Erp;
 
 use AlphaSnow\Flysystem\Aliyun\AliyunFactory;
 use Illuminate\Support\Facades\Cache;
-use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
@@ -16,7 +15,8 @@ use Throwable;
 
 /**
  * 系统第三方服务配置服务（当前接入阿里云 OSS，结构可扩展至短信等其他第三方服务）。
- * 密钥使用 Laravel Crypt (AES-256) 密文存储，接口绝不回显明文 Secret；
+ * 密钥使用用户密码经 PBKDF2-SHA256 派生密钥 + AES-256-GCM 加密存储（并保留系统运行时加密副本），
+ * 接口正常仅返回脱敏掩码，输入保存时的加密密码后可解密查看与复制原密钥；
  * 启用后在运行时动态覆盖 filesystems.disks.oss，使业务附件与图纸无缝生效。
  */
 class ThirdPartyServiceConfigService
@@ -25,11 +25,13 @@ class ThirdPartyServiceConfigService
     private const RUNTIME_CACHE_KEY = 'erp:third_party_service:aliyun_oss_runtime_v1';
 
     private readonly array $environmentOssConfig;
+    private readonly ThirdPartySecretVaultService $vault;
 
-    public function __construct()
+    public function __construct(?ThirdPartySecretVaultService $vault = null)
     {
         // 保留启动时配置，停用数据库接管后恢复，避免继续使用本次请求中已覆盖的密钥与端点。
         $this->environmentOssConfig = config('filesystems.disks.oss', []);
+        $this->vault = $vault ?? new ThirdPartySecretVaultService();
     }
 
     /** @var array<int, array<string, string>> */
@@ -84,6 +86,11 @@ class ThirdPartyServiceConfigService
         ];
 
         $merged = array_merge($defaults, $savedConfig);
+        $unpacked = $row ? $this->vault->unpack($row->encrypted_credentials) : null;
+        $hasCredentials = $unpacked !== null
+            && ! empty($unpacked['runtime']['access_key_id'])
+            && ! empty($unpacked['runtime']['access_key_secret']);
+        $hasSecretPassword = (bool) ($unpacked['has_password'] ?? false);
 
         return [
             'configured' => $row !== null,
@@ -110,8 +117,11 @@ class ThirdPartyServiceConfigService
                 'max_retries' => (int) ($merged['max_retries'] ?? 3),
             ],
             'credentials' => [
-                'has_credentials' => $row !== null && ! empty($row->encrypted_credentials),
-                'access_key_id_masked' => $row ? (string) ($row->credential_mask ?? '') : '',
+                'has_credentials' => $hasCredentials,
+                'has_secret_password' => $hasSecretPassword,
+                'access_key_id_masked' => (string) ($unpacked['masks']['access_key_id'] ?? ($row ? ($row->credential_mask ?? '') : '')),
+                'access_key_secret_masked' => (string) ($unpacked['masks']['access_key_secret'] ?? ''),
+                'encryption_algorithm' => $hasSecretPassword ? 'SHA-256 + AES-256-GCM' : 'AES-256',
             ],
             'last_check_status' => $row ? $row->last_check_status : null,
             'last_check_message' => $row ? $row->last_check_message : null,
@@ -143,24 +153,29 @@ class ThirdPartyServiceConfigService
             $storedCreds = $existing ? $this->decryptCredentials($existing->encrypted_credentials) : null;
             $newKeyId = trim((string) ($data['access_key_id'] ?? ''));
             $newKeySecret = trim((string) ($data['access_key_secret'] ?? ''));
+            $encryptionPassword = (string) ($data['encryption_password'] ?? '');
 
             if ($newKeyId !== '' || $newKeySecret !== '') {
                 if ($newKeyId === '' || $newKeySecret === '') {
                     abort(422, '首次配置或更换凭证时，AccessKey ID 与 AccessKey Secret 必须同时填写。');
                 }
+                if ($encryptionPassword === '') {
+                    abort(422, '保存新密钥时请设置加密密码（至少 4 位），用于后续解密复制。');
+                }
                 $creds = [
                     'access_key_id' => $newKeyId,
                     'access_key_secret' => $newKeySecret,
                 ];
-            } elseif ($storedCreds !== null) {
-                $creds = $storedCreds;
+                $encrypted = $this->vault->encrypt(self::CODE_ALIYUN_OSS, $creds, $encryptionPassword);
+                $mask = ThirdPartySecretVaultService::maskSecret($creds['access_key_id']);
+            } elseif ($existing && $storedCreds !== null) {
+                $encrypted = (string) $existing->encrypted_credentials;
+                $mask = (string) ($existing->credential_mask ?: ThirdPartySecretVaultService::maskSecret($storedCreds['access_key_id']));
             } else {
                 abort(422, '首次配置阿里云 OSS 时必须填写 AccessKey ID 与 AccessKey Secret。');
             }
 
             $configJson = $this->extractPublicConfig($data);
-            $encrypted = Crypt::encryptString(json_encode($creds, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR));
-            $mask = self::maskAccessKeyId($creds['access_key_id']);
             $now = now();
             $actorId = (int) ($actor->legacy_id ?? $actor->id ?? 0) ?: null;
             $actorName = (string) ($actor->nickname ?? $actor->username ?? '系统管理员');
@@ -206,11 +221,14 @@ class ThirdPartyServiceConfigService
         $data = Validator::make($payload, [
             'access_key_id' => 'required|string|min:8|max:128',
             'access_key_secret' => 'required|string|min:8|max:256',
+            'encryption_password' => 'required|string|min:4|max:128',
             'verify_before_save' => 'nullable|boolean',
             'expected_version' => 'nullable|integer|min:1',
         ], [
             'access_key_id.required' => '请填写新的 AccessKey ID。',
             'access_key_secret.required' => '请填写新的 AccessKey Secret。',
+            'encryption_password.required' => '请设置密钥加密密码（至少 4 位），用于后续解密复制。',
+            'encryption_password.min' => '密钥加密密码长度不能少于 4 位。',
         ])->validate();
 
         $existing = DB::table('erp_third_party_services')
@@ -221,6 +239,7 @@ class ThirdPartyServiceConfigService
         $savedConfig = json_decode((string) $existing->config_json, true) ?: [];
         $newKeyId = trim((string) $data['access_key_id']);
         $newKeySecret = trim((string) $data['access_key_secret']);
+        $encryptionPassword = (string) $data['encryption_password'];
 
         $checkResult = null;
         if (! empty($data['verify_before_save'])) {
@@ -230,7 +249,7 @@ class ThirdPartyServiceConfigService
             }
         }
 
-        DB::transaction(function () use ($data, $newKeyId, $newKeySecret, $checkResult, $actor): void {
+        DB::transaction(function () use ($data, $newKeyId, $newKeySecret, $encryptionPassword, $checkResult, $actor): void {
             $locked = DB::table('erp_third_party_services')
                 ->where('service_code', self::CODE_ALIYUN_OSS)
                 ->lockForUpdate()
@@ -248,8 +267,8 @@ class ThirdPartyServiceConfigService
             ];
             $now = now();
             $update = [
-                'encrypted_credentials' => Crypt::encryptString(json_encode($creds, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR)),
-                'credential_mask' => self::maskAccessKeyId($newKeyId),
+                'encrypted_credentials' => $this->vault->encrypt(self::CODE_ALIYUN_OSS, $creds, $encryptionPassword),
+                'credential_mask' => ThirdPartySecretVaultService::maskSecret($newKeyId),
                 'business_version' => (int) $locked->business_version + 1,
                 'updated_by_legacy_id' => (int) ($actor->legacy_id ?? $actor->id ?? 0) ?: null,
                 'updated_by_name' => (string) ($actor->nickname ?? $actor->username ?? '系统管理员'),
@@ -269,6 +288,30 @@ class ThirdPartyServiceConfigService
         return [
             'service' => $this->getAliyunOssConfig(),
             'check' => $checkResult,
+        ];
+    }
+
+    public function decryptAliyunOssSecret(array $payload): array
+    {
+        $data = Validator::make($payload, [
+            'password' => 'required|string|min:1|max:128',
+        ], [
+            'password.required' => '请输入保存密钥时设置的加密密码。',
+        ])->validate();
+
+        $row = DB::table('erp_third_party_services')
+            ->where('service_code', self::CODE_ALIYUN_OSS)
+            ->first();
+
+        $secrets = $this->vault->decryptWithPassword(
+            self::CODE_ALIYUN_OSS,
+            $row ? (string) $row->encrypted_credentials : null,
+            (string) $data['password']
+        );
+
+        return [
+            'access_key_id' => (string) ($secrets['access_key_id'] ?? ''),
+            'access_key_secret' => (string) ($secrets['access_key_secret'] ?? ''),
         ];
     }
 
@@ -368,6 +411,7 @@ class ThirdPartyServiceConfigService
             'max_retries' => 'nullable|integer|min:0|max:10',
             'access_key_id' => 'nullable|string|max:128',
             'access_key_secret' => 'nullable|string|max:256',
+            'encryption_password' => 'nullable|string|min:4|max:128',
             'expected_version' => 'nullable|integer|min:1',
         ], [
             'region.required' => '请选择或填写地域 Region（例如 cn-qingdao）。',
@@ -375,6 +419,7 @@ class ThirdPartyServiceConfigService
             'endpoint.required' => '请填写访问端点 Endpoint。',
             'bucket.required' => '请填写存储空间 Bucket 名称。',
             'bucket.regex' => 'Bucket 名称须符合阿里云官方规范：3~63 位小写字母、数字或短横线，且以字母或数字开头结尾。',
+            'encryption_password.min' => '密钥加密密码长度不能少于 4 位。',
         ]);
 
         $validator->after(function ($v) use ($payload): void {
@@ -480,21 +525,20 @@ class ThirdPartyServiceConfigService
 
     private function decryptCredentials(?string $encrypted): ?array
     {
-        if (! $encrypted) {
+        $unpacked = $this->vault->unpack($encrypted);
+        if ($unpacked === null) {
             return null;
         }
-        try {
-            $decoded = json_decode(Crypt::decryptString($encrypted), true);
-            if (is_array($decoded) && ! empty($decoded['access_key_id']) && ! empty($decoded['access_key_secret'])) {
-                return [
-                    'access_key_id' => (string) $decoded['access_key_id'],
-                    'access_key_secret' => (string) $decoded['access_key_secret'],
-                ];
-            }
-        } catch (Throwable) {
+        $keyId = trim((string) ($unpacked['runtime']['access_key_id'] ?? ''));
+        $keySecret = trim((string) ($unpacked['runtime']['access_key_secret'] ?? ''));
+        if ($keyId === '' || $keySecret === '') {
+            return null;
         }
 
-        return null;
+        return [
+            'access_key_id' => $keyId,
+            'access_key_secret' => $keySecret,
+        ];
     }
 
     private static function normalizeHost(string $value): string
@@ -506,18 +550,5 @@ class ThirdPartyServiceConfigService
         $trimmed = preg_replace('#^https?://#i', '', $trimmed) ?? $trimmed;
 
         return rtrim($trimmed, '/');
-    }
-
-    private static function maskAccessKeyId(string $keyId): string
-    {
-        $len = strlen($keyId);
-        if ($len <= 6) {
-            return str_repeat('*', $len);
-        }
-        if ($len <= 10) {
-            return substr($keyId, 0, 3).'****'.substr($keyId, -2);
-        }
-
-        return substr($keyId, 0, 6).'••••••'.substr($keyId, -4);
     }
 }

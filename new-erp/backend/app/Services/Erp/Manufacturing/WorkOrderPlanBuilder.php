@@ -26,7 +26,7 @@ final class WorkOrderPlanBuilder
     ) {}
 
     /**
-     * @return array{bom: ?array, routing: ?array, operations: array, materials: array, block_reasons: array}
+     * @return array{bom: ?array, routing: ?array, operations: array, materials: array, block_reasons: array, bom_selection_error: ?string}
      */
     public function build(Item $item, ?int $productId, ?int $skuId, ?array $configuration, float $qty, ?int $bomId = null, ?int $routingId = null, ?array $bomSnapshot = null): array
     {
@@ -39,6 +39,9 @@ final class WorkOrderPlanBuilder
         }
         if (($bom['phantom_expansion_complete'] ?? null) === false) {
             $blocks = array_merge($blocks, $bom['phantom_expansion_block_reasons'] ?? ['虚拟件用料尚未完整展开，请调整工单重新选择 BOM 后保存。']);
+        } elseif ($bom && empty($bom['items'])) {
+            $blocks['bom_selection'] = BomMatcher::emptyMaterialsMessage((string) ($bom['bom_no'] ?? $bom['id']));
+            $bom = null;
         }
         // 未指定路线时优先用 BOM 选用的路线（仍须有效且适用于本物料），否则按原默认路线规则匹配。
         $bomId = isset($bom['id']) ? (int) $bom['id'] : $bomId;
@@ -53,7 +56,8 @@ final class WorkOrderPlanBuilder
         if ($routing && ! $production) $blocks[] = '工艺路线里没有车间工序，请在路线里补上生产工序';
         $materials = $bom && ($bom['phantom_expansion_complete'] ?? null) !== false ? $this->materials($bom['items'], $operations, $qty, $blocks) : [];
 
-        return ['bom' => $bom, 'routing' => $routing, 'operations' => $operations, 'materials' => $materials, 'block_reasons' => $blocks];
+        return ['bom' => $bom, 'routing' => $routing, 'operations' => $operations, 'materials' => $materials,
+            'block_reasons' => array_values($blocks), 'bom_selection_error' => $blocks['bom_selection'] ?? null];
     }
 
     public function freezeBom(array $bom, int $itemId, bool $lock = false): array
@@ -158,10 +162,18 @@ final class WorkOrderPlanBuilder
         if ($bomId) {
             $bom = $this->bomMatcher->eligibleQuery()->with(['items.componentItem.unit.standardUnit', 'items.unit.standardUnit'])
                 ->whereKey($bomId)->where('output_item_id', $item->id)->first();
-            if (! $bom) { $blocks[] = '所选 BOM 已失效或不是这个产品的 BOM'; return null; }
+            if (! $bom) { $blocks['bom_selection'] = '所选 BOM 已失效或不适用于这个产品，请重新选择。'; return null; }
+            if ($bom->items->isEmpty()) {
+                $blocks['bom_selection'] = BomMatcher::emptyMaterialsMessage($bom->bom_no);
+                return null;
+            }
             return $this->bomArray($bom, $this->lengthCut->resolveBomLines($bom, $configuration)->all());
         }
-        $match = $this->bomMatcher->match($productId, $skuId, $item->id, $configuration);
+        $match = $this->bomMatcher->match($productId, $skuId, $item->id, $configuration, requireMaterials: true);
+        if ($match['status'] === 'empty_materials') {
+            $blocks['bom_selection'] = $match['block_reason'];
+            return null;
+        }
         if (($match['status'] ?? null) !== 'matched') {
             $blocks[] = ($match['status'] ?? null) === 'conflict' ? '有多个可用 BOM 且没有唯一默认版本，请指定 BOM' : '没有已审核的 BOM，请先建 BOM';
             return null;
@@ -238,9 +250,10 @@ final class WorkOrderPlanBuilder
                     ->when($lock, fn ($q) => $q->lockForUpdate())->first();
                 if (! $childBom) { $blocks[] = '虚拟件 '.$name.' 指定的子 BOM 不可用，无法展开用料'; continue; }
                 if ($lock) $this->bomMatcher->loadLockedLines($childBom);
+                if ($childBom->items->isEmpty()) { $blocks[] = BomMatcher::emptyMaterialsMessage($childBom->bom_no); continue; }
                 $childItems = $this->lengthCut->resolveBomLines($childBom, null)->all();
             } else {
-                $match = $this->bomMatcher->match(null, null, (int) $phantom->id, null, null, $lock);
+                $match = $this->bomMatcher->match(null, null, (int) $phantom->id, lock: $lock, requireMaterials: true);
                 if (($match['status'] ?? null) !== 'matched') { $blocks[] = '虚拟件 '.$name.' 没有唯一可用的已审核 BOM（物料级），无法展开用料'; continue; }
                 $childItems = $match['bom_snapshot']['items'];
             }

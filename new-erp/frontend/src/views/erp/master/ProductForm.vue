@@ -235,7 +235,7 @@
                 :min="0"
                 :precision="2"
                 controls-position="right"
-                placeholder="0.00"
+                placeholder="选填"
                 class="batch-number"
               />
             </div>
@@ -268,7 +268,7 @@
               border
               max-height="340"
               class="matrix-preview-table"
-              empty-text="请在上方配置规格维度（名称与值）及统一销售价，系统将实时计算生成 SKU 列表"
+              empty-text="填写规格维度和规格值后，可预览 SKU 列表"
             >
               <el-table-column type="index" label="序号" width="60" align="center" />
               <el-table-column prop="spec_text" label="规格组合" min-width="180">
@@ -288,7 +288,7 @@
               </el-table-column>
               <el-table-column prop="sale_price" label="销售单价" width="130" align="right">
                 <template slot-scope="{ row }">
-                  <span class="price-val">¥{{ $money(row.sale_price || 0) }}</span>
+                  <span class="price-val">{{ row.sale_price == null ? '录单时填写' : '¥' + $money(row.sale_price) }}</span>
                 </template>
               </el-table-column>
               <el-table-column label="生成状态" width="110" align="center">
@@ -359,7 +359,7 @@ export default {
       categories: [],
       units: [],
       matrix: {
-        sale_price: null,
+        sale_price: undefined,
         dimensions: [
           { name: '规格', valuesText: '' }
         ]
@@ -387,7 +387,7 @@ export default {
           values: (d.valuesText || '').split(/[,，]/).map(v => v.trim()).filter(Boolean)
         }))
         .filter(d => d.name && d.values.length)
-      if (!dims.length || this.matrix.sale_price === null || this.matrix.sale_price === '') return []
+      if (!dims.length) return []
       const group = (i, picked) => i >= dims.length ? [picked] : dims[i].values.flatMap(value => group(i + 1, [...picked, { name: dims[i].name, value }]))
       return group(0, []).map(combo => {
         const spec = combo.map(x => x.value).join(' / ')
@@ -457,7 +457,7 @@ export default {
       this.$refs.form.validate(async ok => {
         if (!ok) return
         if (mode === 'save' && !this.isEdit && this.matrix.dimensions.some(d => d.name || d.valuesText) && !this.matrixRows.length) {
-          return this.$message.error('请补齐规格维度、规格值与统一销售价格以生成矩阵')
+          return this.$message.error('请填写规格维度和规格值以生成 SKU')
         }
         this.saving = true
         try {

@@ -55,6 +55,7 @@
                   <el-select v-model="form.bom_id" clearable placeholder="没有可用 BOM" @change="schedulePreview">
                     <el-option v-for="b in preview.bom_options" :key="b.id" :label="`${bomLabel(b.bom_name, b.bom_no, b.version)}${b.is_default ? '（默认）' : ''}`" :value="b.id" />
                   </el-select>
+                  <div v-if="preview.bom_selection_error" class="note warn-note" role="alert">{{ preview.bom_selection_error }}</div>
                 </label>
                 <label class="span2"><span>工艺路线</span>
                   <el-select v-model="form.routing_id" clearable placeholder="没有生效的工艺路线" @change="schedulePreview">
@@ -70,13 +71,14 @@
                   <template v-if="shipOps.length"><span class="sub ship-label">发货时再做：</span><span v-for="(op, i) in shipOps" :key="'s' + i" class="chip c-g">{{ op.operation_name }}{{ op.packaging_scheme_name ? `（${op.packaging_scheme_name}）` : '' }}</span></template>
                 </div>
               </div>
-              <div v-for="(b, i) in preview.block_reasons" :key="i" class="note warn-note">{{ b }}。可以先保存为计划，补齐后再下达。</div>
+              <div v-for="(b, i) in planWarnings" :key="i" class="note warn-note">{{ b }}。可以先保存为计划，补齐后再下达。</div>
             </template>
           </div>
 
           <div class="card" v-if="preview">
             <h2>料够不够 <small>按 {{ form.planned_qty }} 台、分工序算；不够只提醒，可以照样下达</small></h2>
-            <div v-if="!preview.kitting.length" class="empty">没有车间工序或 BOM，算不了齐套</div>
+            <div v-if="preview.bom_selection_error" class="empty">请先选择包含用料的 BOM，再核对齐套情况</div>
+            <div v-else-if="!preview.kitting.length" class="empty">没有车间工序或 BOM，算不了齐套</div>
             <div v-else class="kit-grid">
               <div v-for="k in preview.kitting" :key="k.operation_key" :class="['kit', { short: k.status === 'short' }]">
                 <h3>{{ k.operation_name }} <span :class="k.status === 'short' ? 'warn' : (k.status === 'ready' ? 'ok' : 'sub')">{{ k.status === 'short' ? `缺 ${k.shortage_count} 项` : (k.status === 'ready' ? '齐套' : '不领料') }}</span></h3>
@@ -129,6 +131,7 @@ export default {
     items: [], itemLoading: false, owners: [], preview: null, previewLoading: false, saving: '', timer: null, previewSeq: 0
   }),
   computed: {
+    planWarnings() { return this.preview && !this.preview.bom_selection_error ? this.preview.block_reasons : [] },
     prodOps() { return this.preview ? this.preview.operations.filter(o => o.execution_context === 'production') : [] },
     shipOps() { return this.preview ? this.preview.operations.filter(o => o.execution_context !== 'production') : [] },
     shortText() {
@@ -155,6 +158,9 @@ export default {
     },
     async searchOwners(keyword) { try { this.owners = await searchProductionUsers(keyword) } catch (e) { this.owners = [] } },
     onItem() {
+      clearTimeout(this.timer)
+      this.previewSeq++
+      this.previewLoading = false
       this.form.bom_id = null
       this.form.routing_id = null
       this.preview = null
@@ -174,6 +180,7 @@ export default {
         const { data } = await previewWorkOrder(params)
         if (seq !== this.previewSeq) return
         this.preview = data.data
+        if (this.preview.bom_selection_error && this.form.bom_id === params.bom_id) this.form.bom_id = null
         if (pickDefaults) {
           this.form.bom_id = this.preview.bom ? (this.preview.bom.bom_id || this.preview.bom.id) : null
           this.form.routing_id = this.preview.routing ? this.preview.routing.id : null
@@ -188,6 +195,7 @@ export default {
     async submit(release) {
       const f = this.form
       if (!f.item_id) return this.$message.warning('请选择产品')
+      if (this.preview && this.preview.bom_selection_error && !f.bom_id) return this.$message.warning(this.preview.bom_selection_error)
       if (!f.planned_qty || f.planned_qty <= 0) return this.$message.warning('请填写数量')
       if (!f.planned_start_date || !f.planned_finish_date) return this.$message.warning('请填写计划开工和要求完工')
       if (f.planned_finish_date < f.planned_start_date) return this.$message.warning('要求完工不能早于计划开工')

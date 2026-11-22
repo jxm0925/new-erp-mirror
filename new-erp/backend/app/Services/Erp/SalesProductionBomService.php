@@ -141,7 +141,7 @@ final class SalesProductionBomService
 
     private function resolve(SalesOrderLine $line, float $baseQty, bool $lock = false): array
     {
-        $match = $this->matcher->match($line->product_id, $line->sku_id, $line->item_id, $line->configuration_snapshot, null, $lock);
+        $match = $this->matcher->match($line->product_id, $line->sku_id, $line->item_id, $line->configuration_snapshot, lock: $lock, requireMaterials: true);
         if (! $line->item || $match['status'] !== 'matched') return ['snapshot' => null, 'plan' => null, 'block_reason' => $match['block_reason']];
 
         $snapshot = $this->plans->freezeBom($match['bom_snapshot'], (int) $line->item_id, $lock);
