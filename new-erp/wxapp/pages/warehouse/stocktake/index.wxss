@@ -93,6 +93,21 @@
 
 .stocktake-note input {
   flex: 1;
+  min-width: 0;
+}
+
+.stocktake-cost {
+  flex-wrap: wrap;
+  margin-bottom: 16rpx;
+}
+
+.stocktake-cost input {
+  flex-basis: 220rpx;
+}
+
+.stk-create-location {
+  white-space: normal;
+  word-break: break-all;
 }
 
 .stocktake-progress {

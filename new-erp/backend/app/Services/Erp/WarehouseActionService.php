@@ -45,13 +45,18 @@ final class WarehouseActionService
         'material_return.approve' => 'inventory.inbound.confirm', 'material_return.reject' => 'inventory.inbound.confirm',
         'material_return.dispose' => 'production.material_return.approve',
         'material_return.cancel' => ['production.material_return.request', 'production.material_return.approve', 'inventory.inbound.confirm'],
-        'stocktake.counts' => 'inventory.stocktake.create', 'stocktake.add_line' => 'inventory.stocktake.create', 'stocktake.complete' => 'inventory.stocktake.complete',
+        'stocktake.create' => 'inventory.stocktake.create', 'stocktake.counts' => 'inventory.stocktake.create', 'stocktake.add_line' => 'inventory.stocktake.create', 'stocktake.complete' => 'inventory.stocktake.complete',
     ];
 
     public function authorize(string $action, int $id, array $payload, object $user, array $permissions, bool $super): void
     {
         $permission = self::PERMISSIONS[$action] ?? null;
         if (! $permission || ! array_intersect((array) $permission, $permissions)) $this->fail('permission_denied', '没有执行当前仓库操作的权限。', 403);
+        if ($action === 'stocktake.create') {
+            if ($id !== 0) $this->fail('warehouse_target_invalid', '新建盘点单不能指定已有单据。', 422);
+            InventoryTransferService::assertWarehouseScope((int) ($payload['warehouse_id'] ?? 0), $user);
+            return;
+        }
         if ($id < 1) $this->fail('warehouse_target_invalid', '业务单据不存在。', 404);
         if ($action === 'cutting_batch.request') { app(CuttingRemnantReceiptService::class)->assertRequestActor(MfgCuttingBatch::findOrFail($id), $user); return; }
         if ($action === 'cutting_run.finish') { MfgCuttingRun::findOrFail($id); return; }
@@ -113,7 +118,10 @@ final class WarehouseActionService
             }
             return;
         }
-        if (str_starts_with($action, 'stocktake.')) { InventoryStocktake::findOrFail($id); return; }
+        if (str_starts_with($action, 'stocktake.')) {
+            InventoryTransferService::assertWarehouseScope((int) InventoryStocktake::findOrFail($id)->warehouse_id, $user);
+            return;
+        }
         if (str_starts_with($action, 'sales_')) {
             $orders = SalesOrder::query()->select('id'); app(SalesOrderVisibilityService::class)->apply($orders, $user);
             if (str_starts_with($action, 'sales_shipment.')) SalesShipment::whereIn('sales_order_id', $orders)->findOrFail($id);
@@ -197,6 +205,7 @@ final class WarehouseActionService
             'material_return.dispose' => ['expected_version' => 'required|integer|min:1', 'lines' => 'required|array|min:1|max:200', 'lines.*.line_id' => 'required|integer|min:1',
                 'lines.*.action' => 'required|in:release,scrap,supplier_return', 'lines.*.qty' => 'nullable|numeric|min:0|max:1000000',
                 'remark' => 'nullable|string|max:500'],
+            'stocktake.create' => InventoryStocktakeService::CREATE_RULES,
             'stocktake.counts' => InventoryStocktakeService::COUNT_RULES,
             'stocktake.add_line' => InventoryStocktakeService::ADD_LINE_RULES,
             default => throw new WorkOrderDomainException('warehouse_action_invalid', '不支持的仓库操作。', 422),
@@ -293,6 +302,8 @@ final class WarehouseActionService
         }
         if (str_starts_with($action, 'stocktake.')) {
             $stocktakes = app(InventoryStocktakeService::class);
+            if ($action === 'stocktake.create') return $stocktakes->create($payload, $actor)
+                ->only(['id', 'stocktake_no', 'stocktake_status', 'business_version', 'line_count']);
             if ($action === 'stocktake.add_line') return $stocktakes->addLine($id, $payload, $user);
             $stocktake = $action === 'stocktake.counts' ? $stocktakes->saveCounts($id, $payload['lines'], $actor, (int) $payload['expected_version'])
                 : $stocktakes->complete($id, $actor);

@@ -12,6 +12,7 @@ class InventoryStocktakeLine extends MasterModel
     {
         $this->item?->setAttribute('cutting_mode', $this->item->cuttingMode());
         $this->setAttribute('entry_stats', $entryStats);
+        $this->setAttribute('unit_cost_editable', app(\App\Services\Erp\Inventory\InventoryStocktakeService::class)->canEditUnitCost($this));
     }
 
     public function scopeWithDifferences($query)

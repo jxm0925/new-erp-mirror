@@ -57,7 +57,7 @@ final class WarehouseWorkspaceController extends Controller
 
     public function command(Request $request, \App\Services\Erp\WarehouseCommandService $service)
     {
-        $data = $request->validate(['action' => 'required|string|max:60', 'aggregate_id' => 'required|integer|min:1',
+        $data = $request->validate(['action' => 'required|string|max:60', 'aggregate_id' => 'required|integer|min:0',
             'client_command_id' => 'required|string|max:120', 'payload' => 'present|array']);
         return response()->json(['data' => $this->project($service->run($data['action'], $data['aggregate_id'], $data['client_command_id'], $data['payload'], ...$this->context($request)), $request)]);
     }
@@ -74,13 +74,13 @@ final class WarehouseWorkspaceController extends Controller
         // production.task.execute：车间开料登记余料回库位置，只能选工厂仓。
         $allowed = ['inventory.post.repair', 'sales_return.receive', 'sales_order.shipment.post', 'sales_order.shipment.packing.execute',
             'sales_order.shipment.packing.quality', 'production.task.execute', 'inventory.balance.view', 'inventory.stocktake.view',
-            'production.material_delivery.manage', 'production.material_return.approve', 'inventory.inbound.confirm', 'production.receipt.execute'];
+            'production.material_delivery.manage', 'production.material_return.approve', 'inventory.inbound.confirm', 'production.receipt.execute', 'inventory.stocktake.create'];
         $allowed = array_merge($allowed, ['inventory.transfer.view', 'inventory.transfer.create', 'inventory.transfer.post', 'inventory.physical.manage', 'production.work_order.edit']);
         if (! array_intersect($allowed, $permissions)) throw new WorkOrderDomainException('permission_denied', '没有选择入出库位置的权限。', 403);
         $filters = $request->validate(['mode' => 'required|in:warehouse,location', 'warehouse_id' => 'required_if:mode,location|integer|min:1',
             'keyword' => 'nullable|string|max:100', 'page' => 'nullable|integer|min:1', 'per_page' => 'nullable|integer|min:1|max:100',
             'id' => 'nullable|integer|min:1',
-            'kind' => 'nullable|in:inventory_transfer,material_physical_transfer',
+            'kind' => 'nullable|in:inventory_transfer,material_physical_transfer,stocktake',
             'location_purpose' => 'nullable|in:general,finished,shipping_staging,repair',
             'location_purposes' => 'nullable|array|max:4',
             'location_purposes.*' => 'required|in:general,finished,shipping_staging,repair|distinct']);
@@ -95,7 +95,7 @@ final class WarehouseWorkspaceController extends Controller
             if ($ids !== null) $query->whereIn($mode === 'warehouse' ? 'id' : 'warehouse_id', $ids);
         }
         if (array_intersect(['sales_order.shipment.post', 'sales_order.shipment.packing.execute', 'sales_order.shipment.packing.quality', 'production.task.execute', 'production.receipt.execute'], $permissions)
-            && ! array_intersect(['inventory.post.repair', 'sales_return.receive', 'inventory.balance.view', 'inventory.stocktake.view',
+            && ! array_intersect(['inventory.post.repair', 'sales_return.receive', 'inventory.balance.view', 'inventory.stocktake.view', 'inventory.stocktake.create',
                 'production.material_return.approve', 'inventory.inbound.confirm'], $permissions)) {
             if ($mode === 'warehouse') $query->where('management_scope', 'factory');
             else $query->whereIn('warehouse_id', DB::table('erp_warehouses')->where('management_scope', 'factory')->where('status', 'enabled')->select('id'));

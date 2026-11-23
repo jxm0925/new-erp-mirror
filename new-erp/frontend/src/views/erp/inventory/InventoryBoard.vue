@@ -157,17 +157,12 @@
         <div class="head-actions">
           <el-button size="small" icon="el-icon-refresh" class="btn-refresh" @click="loadBalances()">刷新</el-button>
           <el-button v-if="!showingTransit" size="small" icon="el-icon-download" @click="exportBalances">导出余额</el-button>
-          <el-button size="small" type="success" class="btn-theme-create" icon="el-icon-plus" @click="openAdjustmentDrawer()">新建手工调整</el-button>
         </div>
       </div>
 
-      <div v-if="activeView === 'posting'" class="erp-page-tip">
-        <i class="el-icon-info" />
-        <span>承接采购到货的待库存过账，按到货确认的库存管理要求核对库位、批次及设备编号后写入正常库存；未完成库位分配的单据可直接点击“补充分配”在当前页弹窗补齐。</span>
-      </div>
       <div v-if="activeView === 'balances'" class="erp-page-tip">
         <i class="el-icon-info" />
-        <span>库存余额按物料汇总展示，不合格与待处理数量不计入可用库存；点击下方统计卡片可快速筛选对应状态，点击物料行可查看批次、库位分布、设备编号与质量处理。</span>
+        <span>库存余额按物料汇总展示，不合格与待处理数量不计入可用库存；点击下方统计卡片可快速筛选对应状态，点击物料编码或“查看详情”可查看基础信息、批次、库位分布、设备编号、质量处理与最新流水。</span>
       </div>
       <div v-if="!showingTransit" class="metric-grid four">
         <article class="clickable-card" :class="{ 'active-metric': !balanceQuery.status }" @click="filterBalanceByStatus('')"><i class="el-icon-box green" /><span>物料总数 <i class="el-icon-info" /></span><strong>{{ quantityNumber(balanceStats.item_count) }} <small class="unit-text">个</small></strong></article>
@@ -200,27 +195,8 @@
         <el-button size="small" type="text" class="btn-expand-text">展开 <i class="el-icon-arrow-down" /></el-button>
       </section>
 
-      <div v-if="false" class="balance-instruction-banner">
-        <i class="el-icon-info info-icon-blue" />
-        <span>说明：库存余额按物料汇总；不合格和待处理数量不计入可用库存。点击物料可查看批次、库位、编号与质量处理。</span>
-      </div>
-
-      <!-- Actions Toolbar above Table -->
-      <div v-if="!showingTransit" class="balance-table-toolbar">
-        <div class="toolbar-left">
-          <span class="total-badge">共 {{ balancePagination.total }} 条</span>
-          <el-button size="small" :disabled="!selectedBalance" @click="openBatchDialog(selectedBalance)"><i class="el-icon-box" /> 查看批次</el-button>
-          <el-button size="small" :disabled="!selectedBalance" @click="viewItemTransactions(selectedBalance)"><i class="el-icon-view" /> 查看流水</el-button>
-          <el-button size="small" :disabled="!selectedBalance" @click="openAdjustmentForBalance(selectedBalance)">调整库存</el-button>
-          <el-button size="small" class="btn-green-plain" :disabled="!selectedBalance" @click="openAlertConfig">配置库存预警</el-button>
-        </div>
-        <div class="toolbar-right">
-          <el-button size="small" icon="el-icon-download" @click="exportBalances">导出</el-button>
-        </div>
-      </div>
-
-      <!-- Main Balance Layout (Table + Side Detail Drawer) -->
-      <div v-if="!showingTransit" class="balance-main-layout" :class="{ 'with-drawer': balanceDetailVisible && selectedBalance }">
+      <!-- Main Balance Table -->
+      <div v-if="!showingTransit" class="balance-main-layout">
         <div class="table-card balance-item-table">
           <el-table
             ref="balanceTable"
@@ -229,11 +205,12 @@
             border
             highlight-current-row
             :row-class-name="balanceRowClass"
-            @row-click="handleBalanceRowClick"
-            @selection-change="handleBalanceSelectionChange"
           >
-            <el-table-column type="selection" width="45" align="center" />
-            <el-table-column prop="item_code" label="物料编码" min-width="120" />
+            <el-table-column prop="item_code" label="物料编码" min-width="126">
+              <template slot-scope="{ row }">
+                <el-button size="mini" type="text" class="link-btn-green item-code-link" @click.stop="openBatchDialog(row)">{{ row.item_code }}</el-button>
+              </template>
+            </el-table-column>
             <el-table-column prop="item_name" label="物料名称" min-width="120" />
             <!-- 同名物料（如不同口径的管材）只能靠规格区分，必须在列表直接展示。 -->
             <el-table-column label="规格型号" min-width="120"><template slot-scope="{ row }">{{ row.spec || '--' }}</template></el-table-column>
@@ -263,11 +240,11 @@
             <el-table-column label="最近变动时间" min-width="135">
               <template slot-scope="{ row }">{{ dateTime(row.last_transaction_at) }}</template>
             </el-table-column>
-            <el-table-column label="操作" width="225" fixed="right">
+            <el-table-column label="操作" width="256" fixed="right">
               <template slot-scope="{ row }">
                 <div class="row-actions">
-                  <el-button size="mini" type="text" class="link-btn-green" @click.stop="openBatchDialog(row)">查看批次</el-button>
-                  <el-button size="mini" type="text" class="link-btn-green" @click.stop="viewItemTransactions(row)">查看流水</el-button>
+                  <el-button size="mini" type="text" class="link-btn-green" @click.stop="openBatchDialog(row)">查看详情</el-button>
+                  <el-button size="mini" type="text" class="link-btn-green" @click.stop="openItemTransactionsDialog(row)">查看流水</el-button>
                   <el-button size="mini" type="text" class="link-btn-green" @click.stop="openAdjustmentForBalance(row)">调整库存</el-button>
                   <el-button size="mini" type="text" class="link-btn-green" @click.stop="openAlertConfigForRow(row)">预警配置</el-button>
                 </div>
@@ -288,112 +265,6 @@
             />
           </div>
         </div>
-
-        <!-- Right Side Detail Drawer (物料详情) -->
-        <aside v-if="balanceDetailVisible && selectedBalance" class="side-card balance-detail-side">
-          <div class="side-head">
-            <h3>物料详情</h3>
-            <button type="button" class="btn-close-side" @click="closeBalanceDetail"><i class="el-icon-close" /></button>
-          </div>
-
-          <div class="side-scroll-body">
-            <!-- 1. 物料基础信息 -->
-            <div class="detail-sec-title"><span>物料基础信息</span></div>
-            <div class="sec-kv-grid">
-              <div class="kv-item"><span class="kv-lbl">物料编码</span><strong class="kv-val">{{ selectedBalance.item_code }}</strong></div>
-              <div class="kv-item"><span class="kv-lbl">物料名称</span><strong class="kv-val">{{ selectedBalance.item_name }}</strong></div>
-              <div class="kv-item"><span class="kv-lbl">管理范围</span><strong class="kv-val">{{ scopeLabel(selectedBalance.management_scope) }}</strong></div>
-              <div class="kv-item"><span class="kv-lbl">单位</span><strong class="kv-val">{{ selectedBalance.unit || '-' }}</strong></div>
-              <div v-if="selectedBalance.measure" class="kv-item span-two"><span class="kv-lbl">{{ selectedBalance.measure.mode === 'length' ? '可用总长度' : '可用总面积' }}</span><strong class="kv-val measure-strong">{{ measureMain(selectedBalance.measure) }}</strong><small v-if="measureSub(selectedBalance.measure)" class="measure-sub">{{ measureSub(selectedBalance.measure) }}</small></div>
-              <div class="kv-item"><span class="kv-lbl">物料类别</span><strong class="kv-val">{{ selectedBalance.category || '-' }}</strong></div>
-              <div class="kv-item"><span class="kv-lbl">批次数</span><strong class="kv-val">{{ quantityNumber(selectedBalance.batch_count) }}</strong></div>
-              <div class="kv-item"><span class="kv-lbl">库位余额数</span><strong class="kv-val">{{ quantityNumber(selectedBalance.balance_count) }}</strong></div>
-              <div class="kv-item"><span class="kv-lbl">安全库存</span><strong class="kv-val">{{ selectedBalance.safety_stock === null || selectedBalance.safety_stock === undefined ? '-' : quantityNumber(selectedBalance.safety_stock) }}</strong></div>
-              <div class="kv-item span-two"><span class="kv-lbl">最近变动</span><strong class="kv-val">{{ dateTime(selectedBalance.last_transaction_at) }}</strong></div>
-            </div>
-
-            <!-- 2. Product/SKU 参考 -->
-            <div class="detail-sec-title"><span>Product/SKU 参考（非记账维度）</span></div>
-            <div class="sec-kv-grid">
-              <div class="kv-item span-two"><span class="kv-lbl">关联产品</span><strong class="kv-val">{{ selectedBalance.product_code || '-' }}</strong></div>
-              <div class="kv-item span-two"><span class="kv-lbl">SKU</span><strong class="kv-val">{{ selectedBalance.sku_code || '-' }}</strong></div>
-            </div>
-            <div class="sku-note-box">说明：库存按物料记账，关联的产品/SKU 仅作参考。</div>
-
-            <!-- 3. 库存分布（按仓库/库位/批次） -->
-            <div class="detail-sec-title"><span>库存分布（按仓库/库位/批次）</span></div>
-            <div class="dist-table-wrap">
-              <table class="dist-table">
-                <thead>
-                  <tr>
-                    <th>仓库</th>
-                    <th>库位</th>
-                    <th>批次号</th>
-                    <th>账面库存</th>
-                    <th>可用库存</th>
-                    <th v-if="selectedBalance.measure">长度 / 面积</th>
-                    <th>锁定库存</th>
-                    <th>不合格</th>
-                    <th>待处理</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr v-for="(dist, idx) in balanceDetailDistributions" :key="idx">
-                    <td>{{ dist.warehouse_name || '-' }}</td>
-                    <td>{{ dist.location_name || '-' }}</td>
-                    <td>{{ dist.batch_no || '-' }}</td>
-                    <td>{{ quantityNumber(dist.quantity_on_hand) }}</td>
-                    <td class="text-green font-bold">{{ quantityNumber(dist.quantity_available) }}</td>
-                    <td v-if="selectedBalance.measure"><span v-if="dist.measure" class="measure-strong">{{ measureMain(dist.measure) }}</span><div v-if="dist.measure && dist.measure.per_unit_m" class="measure-sub">每{{ selectedBalance.unit || '根' }} {{ meters(dist.measure.per_unit_m) }}</div></td>
-                    <td>{{ quantityNumber(dist.quantity_locked) }}</td>
-                    <td>{{ quantityNumber(dist.quantity_defective) }}</td>
-                    <td>{{ quantityNumber(dist.quantity_pending) }}</td>
-                  </tr>
-                  <tr class="sum-row">
-                    <td>合计</td>
-                    <td>-</td>
-                    <td>-</td>
-                    <td>{{ quantityNumber(balanceDistTotals.quantity_on_hand) }}</td>
-                    <td class="text-green font-bold">{{ quantityNumber(balanceDistTotals.quantity_available) }}</td>
-                    <td v-if="selectedBalance.measure" class="measure-strong">{{ measureMain(selectedBalance.measure) }}</td>
-                    <td>{{ quantityNumber(balanceDistTotals.quantity_locked) }}</td>
-                    <td>{{ quantityNumber(balanceDistTotals.quantity_defective) }}</td>
-                    <td>{{ quantityNumber(balanceDistTotals.quantity_pending) }}</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-
-            <!-- 4. 最新流水 -->
-            <div class="detail-sec-title"><span>最新流水（近 10 条）</span></div>
-            <div v-if="balanceRecentTransactions.length" class="tx-timeline-list">
-              <div v-for="tx in balanceRecentTransactions" :key="tx.id" class="tx-timeline-item">
-                <div class="tx-type-icon" :class="tx.change_qty >= 0 ? 'bg-green' : 'bg-blue'">
-                  {{ tx.change_qty >= 0 ? '+' : '-' }}
-                </div>
-                <div class="tx-info-block">
-                  <div class="tx-row-1">
-                    <span class="tx-name">{{ tx.transaction_type_text || (tx.change_qty >= 0 ? '采购入库' : '库存锁定') }}</span>
-                    <strong class="tx-qty" :class="tx.change_qty >= 0 ? 'text-green' : 'text-blue'">
-                      {{ tx.change_qty >= 0 ? '+' : '' }}{{ quantityNumber(tx.change_qty) }} {{ tx.unit || '-' }}
-                      <span v-if="tx.change_length_m !== null" class="measure-strong">（{{ signedMeters(tx.change_length_m) }}）</span>
-                    </strong>
-                    <span class="tx-time">{{ dateTime(tx.posted_at) }}</span>
-                  </div>
-                  <div class="tx-row-2">
-                    <span class="tx-batch">批次: {{ tx.batch_no || '-' }}</span>
-                    <span class="tx-wh">仓库: {{ tx.warehouse_name || '-' }}/{{ tx.location_name || '-' }}</span>
-                    <span class="tx-source">来源: {{ tx.source_no || '-' }}</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-            <el-empty v-else description="暂无库存流水" :image-size="52" />
-            <div class="tx-more-link">
-              <a @click="viewItemTransactions(selectedBalance)">查看全部流水</a>
-            </div>
-          </div>
-        </aside>
       </div>
       <div v-else class="table-card">
         <el-table :data="transitRows" size="mini" border empty-text="暂无在途调拨">
@@ -554,8 +425,9 @@
     <el-dialog
       title=""
       :visible.sync="batchDialogVisible"
-      width="82%"
-      top="5vh"
+      width="min(1360px, 94vw)"
+      top="4vh"
+      append-to-body
       custom-class="item-batch-dialog"
       :close-on-click-modal="false"
       @closed="resetBatchDialog"
@@ -563,127 +435,259 @@
       <div v-if="selectedBalance" class="batch-dialog-page" v-loading="batchDialogLoading">
         <header class="batch-dialog-head">
           <div>
-            <h2>物料批次与质量处理</h2>
-            <p><strong>{{ selectedBalance.item_code }}</strong><span>{{ selectedBalance.item_name }}</span></p>
+            <h2>物料详情</h2>
+            <p><strong>{{ selectedBalance.item_code }}</strong><span>{{ selectedBalance.item_name }}</span><el-tag v-if="selectedBalance.spec" size="mini" type="info" effect="plain">{{ selectedBalance.spec }}</el-tag></p>
           </div>
-          <el-button size="small" type="success" plain @click="viewItemTransactions(selectedBalance)">查看物料流水</el-button>
+          <el-button size="small" type="success" plain icon="el-icon-tickets" @click="openItemTransactionsDialog(selectedBalance)">查看全部流水</el-button>
         </header>
 
         <div class="batch-item-summary">
-          <div><span>物料编码</span><strong>{{ selectedBalance.item_code }}</strong></div>
-          <div><span>物料名称</span><strong>{{ selectedBalance.item_name }}{{ selectedBalance.spec ? '（' + selectedBalance.spec + '）' : '' }}</strong></div>
-          <div><span>单位</span><strong>{{ selectedBalance.unit }}</strong></div>
-          <div><span>账面库存</span><strong>{{ quantityNumber(selectedBalance.quantity_on_hand) }}</strong></div>
-          <div><span>可用库存</span><strong>{{ quantityNumber(selectedBalance.quantity_available) }}</strong></div>
-          <div><span>锁定数量</span><strong>{{ quantityNumber(selectedBalance.quantity_locked) }}</strong></div>
-          <div><span>待处理数量</span><strong>{{ quantityNumber(selectedBalance.quantity_pending) }}</strong></div>
+          <div><span>账面库存</span><strong>{{ quantityNumber(selectedBalance.quantity_on_hand) }} <small class="unit-text">{{ selectedBalance.unit || '-' }}</small></strong></div>
+          <div><span>可用库存</span><strong class="text-green">{{ quantityNumber(selectedBalance.quantity_available) }} <small class="unit-text">{{ selectedBalance.unit || '-' }}</small></strong></div>
+          <div><span>锁定 / 预留</span><strong>{{ quantityNumber(selectedBalance.quantity_locked) }}</strong></div>
+          <div><span>不合格</span><strong :class="{ 'orange-text': Number(selectedBalance.quantity_defective || 0) > 0 }">{{ quantityNumber(selectedBalance.quantity_defective) }}</strong></div>
+          <div><span>待处理</span><strong :class="{ 'orange-text': Number(selectedBalance.quantity_pending || 0) > 0 }">{{ quantityNumber(selectedBalance.quantity_pending) }}</strong></div>
           <div v-if="$can('inventory.amount.view')"><span>库存价值</span><strong>¥{{ money(selectedBalance.inventory_value) }}</strong></div>
+          <div v-if="selectedBalance.measure">
+            <span>{{ selectedBalance.measure.mode === 'length' ? '可用总长度' : '可用总面积' }}</span>
+            <strong class="measure-strong">{{ measureMain(selectedBalance.measure) }}</strong>
+            <small v-if="measureSub(selectedBalance.measure)" class="measure-sub">{{ measureSub(selectedBalance.measure) }}</small>
+          </div>
         </div>
 
-        <div class="batch-dialog-grid">
-          <section class="batch-list-panel">
-            <h3>批次列表</h3>
-            <el-table :data="batchRows" size="mini" border highlight-current-row :row-class-name="batchRowClass" @current-change="selectBatch">
-              <el-table-column prop="batch_no" label="批次号" min-width="112" />
-              <el-table-column prop="warehouse_count" label="仓库数" width="72" align="right" />
-              <el-table-column prop="location_count" label="库位数" width="72" align="right" />
-              <el-table-column prop="quantity_on_hand" label="账面" width="66" align="right" />
-              <el-table-column prop="quantity_available" label="可用" width="66" align="right" />
-              <el-table-column v-if="batchProfile" :label="batchProfile.mode === 'length' ? '长度' : '面积'" min-width="120" align="right">
-                <template slot-scope="{row}">
-                  <template v-if="row.measure">
-                    <span class="measure-strong">{{ measureMain(row.measure) }}</span>
-                    <div v-if="row.measure.per_unit_m" class="measure-sub">{{ row.measure.material_form === 'REMNANT' ? '余料 · ' : '' }}每{{ selectedBalance.unit || '根' }} {{ meters(row.measure.per_unit_m) }}</div>
-                    <el-button v-if="row.measure.length_editable && $can('inventory.physical.manage')" size="mini" type="text" @click.stop="openLotLengthEdit(row)">改长度</el-button>
-                  </template>
-                </template>
-              </el-table-column>
-              <el-table-column prop="quantity_locked" label="锁定" width="58" align="right" />
-              <el-table-column prop="quantity_pending" label="待处理" width="64" align="right" />
-              <el-table-column label="最近变动" width="112"><template slot-scope="{row}">{{ dateTime(row.last_transaction_at) }}</template></el-table-column>
-              <el-table-column label="操作" width="88"><template slot-scope="{row}"><el-button size="mini" type="text" @click.stop="selectBatch(row)">查看处理</el-button></template></el-table-column>
-            </el-table>
-            <div class="batch-list-footer">
-              <span>共 {{ batchPagination.total }} 条</span>
-              <el-pagination small layout="sizes, prev, pager, next, jumper" :page-sizes="[10,20,50]" :current-page.sync="batchPagination.page" :page-size.sync="batchPagination.per_page" :total="batchPagination.total" @current-change="loadBatchRows" @size-change="handleBatchSizeChange" />
+        <div class="detail-overview-panel">
+          <div class="overview-card">
+            <div class="detail-sec-title"><span>物料基础信息</span></div>
+            <div class="overview-kv-grid">
+              <div class="kv-item"><span class="kv-lbl">管理范围</span><strong class="kv-val">{{ scopeLabel(selectedBalance.management_scope) }}</strong></div>
+              <div class="kv-item"><span class="kv-lbl">单位</span><strong class="kv-val">{{ selectedBalance.unit || '-' }}</strong></div>
+              <div class="kv-item"><span class="kv-lbl">物料类别</span><strong class="kv-val">{{ itemTypeLabel(selectedBalance.category) }}</strong></div>
+              <div class="kv-item"><span class="kv-lbl">批次数</span><strong class="kv-val">{{ quantityNumber(selectedBalance.batch_count) }}</strong></div>
+              <div class="kv-item"><span class="kv-lbl">库位余额数</span><strong class="kv-val">{{ quantityNumber(selectedBalance.balance_count) }}</strong></div>
+              <div class="kv-item"><span class="kv-lbl">安全库存</span><strong class="kv-val">{{ selectedBalance.safety_stock === null || selectedBalance.safety_stock === undefined ? '-' : quantityNumber(selectedBalance.safety_stock) }}</strong></div>
+              <div class="kv-item span-two"><span class="kv-lbl">最近变动</span><strong class="kv-val">{{ dateTime(selectedBalance.last_transaction_at) }}</strong></div>
             </div>
-          </section>
-
-          <section class="batch-context-panel" v-loading="batchContextLoading">
-            <h3>批次处理</h3>
-            <p class="current-batch">当前批次：<strong>{{ selectedBatch ? selectedBatch.batch_no : '-' }}</strong></p>
-
-            <div class="batch-context-section">
-              <h4>采购来源追溯</h4>
-              <dl class="source-grid">
-                <div><dt>采购到货单</dt><dd>{{ batchContext.source.receipt_no || '-' }}</dd></div>
-                <div><dt>采购订单</dt><dd>{{ batchContext.source.purchase_order_no || '-' }}</dd></div>
-                <div><dt>供应商</dt><dd>{{ batchContext.source.supplier_name || '-' }}</dd></div>
-                <div><dt>到货日期</dt><dd>{{ batchContext.source.receipt_date || '-' }}</dd></div>
-              </dl>
+          </div>
+          <div class="overview-card">
+            <div class="detail-sec-title"><span>Product/SKU 参考（非记账维度）</span></div>
+            <div class="overview-kv-grid">
+              <div class="kv-item span-two"><span class="kv-lbl">关联产品</span><strong class="kv-val">{{ selectedBalance.product_code || '-' }}</strong></div>
+              <div class="kv-item span-two"><span class="kv-lbl">SKU</span><strong class="kv-val">{{ selectedBalance.sku_code || '-' }}</strong></div>
             </div>
-
-            <div class="batch-context-section">
-              <h4>库存分布（当前批次）</h4>
-              <el-table :data="batchContext.balances" size="mini" border>
-                <el-table-column prop="warehouse.warehouse_name" label="仓库" min-width="95" />
-                <el-table-column prop="location.location_name" label="库位" min-width="95" />
-                <el-table-column label="可用编号 / 编号档案" width="132" align="right"><template slot-scope="{row}">{{ Number(row.available_serials_count || 0) }} / {{ Number(row.serials_count || 0) }}</template></el-table-column>
-                <el-table-column prop="quantity_on_hand" label="账面" width="72" align="right" />
-                <el-table-column prop="quantity_available" label="可用" width="72" align="right" />
-                <el-table-column prop="quantity_pending" label="待处理" width="76" align="right" />
-                <el-table-column label="操作" width="195">
-                  <template slot-scope="{row}">
-                    <el-button v-if="Number(row.serials_count || 0) > 0" size="mini" type="text" @click="openBalanceSerials(row)">查看编号</el-button>
-                    <el-button size="mini" type="text" :disabled="Number(row.quantity_on_hand || 0) <= 0" @click="openAdjustmentFromBalance(row)">库存调整</el-button>
-                    <el-button size="mini" type="text" :disabled="Number(row.quantity_available || 0) <= 0" @click="openBatchBalanceQuality(row)">质量处理</el-button>
-                  </template>
-                </el-table-column>
-              </el-table>
-            </div>
-
-            <div v-if="batchProfile && batchProfile.mode === 'sheet'" class="batch-context-section" v-loading="physicalLoading">
-              <div class="inventory-label-toolbar"><h4>板材实物（当前批次，逐张）</h4><el-button size="small" icon="el-icon-printer" :disabled="!selectedLabelPhysicals.length" @click="openInventoryLabelPrint('physical')">打印标签</el-button></div>
-              <el-table ref="physicalLabelTable" :data="batchPhysicals" row-key="id" size="mini" border class="warehouse-label-source" empty-text="当前批次没有在库的板材实物" @selection-change="selectedLabelPhysicals = $event">
-                <el-table-column type="selection" width="45" :reserve-selection="true" />
-                <el-table-column prop="physical_no" label="实物编号" min-width="130" />
-                <el-table-column label="长 × 宽 × 厚（mm）" min-width="150"><template slot-scope="{row}"><span class="measure-strong">{{ physicalSize(row) }}</span><div v-if="row.material_form === 'REMNANT'" class="measure-sub">余料</div></template></el-table-column>
-                <el-table-column label="面积" width="96" align="right"><template slot-scope="{row}">{{ quantityNumber(row.area_m2) }} m²</template></el-table-column>
-                <el-table-column label="位置" min-width="120"><template slot-scope="{row}">{{ row.warehouse_name }} / {{ row.location_name }}</template></el-table-column>
-                <el-table-column label="操作" width="80"><template slot-scope="{row}"><el-button v-if="row.editable && $can('inventory.physical.manage')" size="mini" type="text" @click="openPhysicalEdit(row)">改尺寸</el-button></template></el-table-column>
-              </el-table>
-              <el-pagination class="serial-pagination" small layout="total, sizes, prev, pager, next" :page-sizes="[10,20,50,100]" :current-page.sync="physicalPagination.page" :page-size.sync="physicalPagination.per_page" :total="physicalPagination.total" @current-change="loadBatchPhysicals" @size-change="handlePhysicalSizeChange" />
-            </div>
-
-            <div class="batch-context-section quality-history-section">
-              <h4>质量处理记录（当前批次）</h4>
-              <el-table :data="batchContext.quality_events" size="mini" border empty-text="当前批次暂无质量处理记录">
-                <el-table-column prop="event_no" label="处理单号" min-width="135" />
-                <el-table-column label="方式" width="82"><template slot-scope="{row}">{{ qualityHandlingText(row.handling_method) }}</template></el-table-column>
-                <el-table-column prop="issue_qty" label="数量" width="68" align="right" />
-                <el-table-column label="状态" width="98"><template slot-scope="{row}">{{ qualityStatusText(row.event_status) }}</template></el-table-column>
-                <el-table-column label="时间" width="140"><template slot-scope="{row}">{{ dateTime(row.created_at) }}</template></el-table-column>
-                <el-table-column label="处理单据" min-width="142">
-                  <template slot-scope="{row}">
-                    <el-button v-if="row.business_doc_id" size="mini" type="text" @click="viewQualityBusinessDocument(row)">{{ row.business_doc_no || '查看处理单' }}</el-button>
-                    <span v-else>-</span>
-                  </template>
-                </el-table-column>
-              </el-table>
-            </div>
-
-            <div class="batch-quality-actions">
-              <h4>质量处理</h4>
-              <div>
-                <el-button size="small" type="success" plain :disabled="!hasQualityActionBalance" @click="openBatchQuality('return_supplier')">退供应商</el-button>
-                <el-button size="small" type="success" plain :disabled="!hasQualityActionBalance" @click="openBatchQuality('exchange')">换货</el-button>
-              </div>
-              <p>已入库库存不适用让步接收；返修、报废待正式单据接入后开放。</p>
-            </div>
-          </section>
+            <div class="sku-note-box">说明：库存按物料记账，关联的产品/SKU 仅作参考。</div>
+          </div>
         </div>
+
+        <el-tabs v-model="detailActiveTab" class="detail-dialog-tabs">
+          <el-tab-pane label="批次与质量处理" name="batches">
+            <div class="batch-dialog-grid">
+              <section class="batch-list-panel">
+                <h3>批次列表</h3>
+                <el-table :data="batchRows" size="mini" border highlight-current-row :row-class-name="batchRowClass" @current-change="selectBatch">
+                  <el-table-column prop="batch_no" label="批次号" min-width="112" />
+                  <el-table-column prop="warehouse_count" label="仓库数" width="66" align="right" />
+                  <el-table-column prop="location_count" label="库位数" width="66" align="right" />
+                  <el-table-column prop="quantity_on_hand" label="账面" width="64" align="right" />
+                  <el-table-column prop="quantity_available" label="可用" width="64" align="right" />
+                  <el-table-column v-if="batchProfile" :label="batchProfile.mode === 'length' ? '长度' : '面积'" min-width="120" align="right">
+                    <template slot-scope="{row}">
+                      <template v-if="row.measure">
+                        <span class="measure-strong">{{ measureMain(row.measure) }}</span>
+                        <div v-if="row.measure.per_unit_m" class="measure-sub">{{ row.measure.material_form === 'REMNANT' ? '余料 · ' : '' }}每{{ selectedBalance.unit || '根' }} {{ meters(row.measure.per_unit_m) }}</div>
+                        <el-button v-if="row.measure.length_editable && $can('inventory.physical.manage')" size="mini" type="text" @click.stop="openLotLengthEdit(row)">改长度</el-button>
+                      </template>
+                    </template>
+                  </el-table-column>
+                  <el-table-column prop="quantity_locked" label="锁定" width="56" align="right" />
+                  <el-table-column prop="quantity_pending" label="待处理" width="62" align="right" />
+                  <el-table-column label="最近变动" width="112"><template slot-scope="{row}">{{ dateTime(row.last_transaction_at) }}</template></el-table-column>
+                  <el-table-column label="操作" width="82"><template slot-scope="{row}"><el-button size="mini" type="text" @click.stop="selectBatch(row)">查看处理</el-button></template></el-table-column>
+                </el-table>
+                <div class="batch-list-footer">
+                  <span>共 {{ batchPagination.total }} 条</span>
+                  <el-pagination small layout="sizes, prev, pager, next, jumper" :page-sizes="[10,20,50]" :current-page.sync="batchPagination.page" :page-size.sync="batchPagination.per_page" :total="batchPagination.total" @current-change="loadBatchRows" @size-change="handleBatchSizeChange" />
+                </div>
+              </section>
+
+              <section class="batch-context-panel" v-loading="batchContextLoading">
+                <h3>批次处理</h3>
+                <p class="current-batch">当前批次：<strong>{{ selectedBatch ? selectedBatch.batch_no : '-' }}</strong></p>
+
+                <div class="batch-context-section">
+                  <h4>采购来源追溯</h4>
+                  <dl class="source-grid">
+                    <div><dt>采购到货单</dt><dd>{{ batchContext.source.receipt_no || '-' }}</dd></div>
+                    <div><dt>采购订单</dt><dd>{{ batchContext.source.purchase_order_no || '-' }}</dd></div>
+                    <div><dt>供应商</dt><dd>{{ batchContext.source.supplier_name || '-' }}</dd></div>
+                    <div><dt>到货日期</dt><dd>{{ batchContext.source.receipt_date || '-' }}</dd></div>
+                  </dl>
+                </div>
+
+                <div class="batch-context-section">
+                  <h4>库存分布（当前批次）</h4>
+                  <el-table :data="batchContext.balances" size="mini" border>
+                    <el-table-column prop="warehouse.warehouse_name" label="仓库" min-width="90" />
+                    <el-table-column prop="location.location_name" label="库位" min-width="90" />
+                    <el-table-column label="可用编号 / 编号档案" width="124" align="right"><template slot-scope="{row}">{{ Number(row.available_serials_count || 0) }} / {{ Number(row.serials_count || 0) }}</template></el-table-column>
+                    <el-table-column prop="quantity_on_hand" label="账面" width="66" align="right" />
+                    <el-table-column prop="quantity_available" label="可用" width="66" align="right" />
+                    <el-table-column prop="quantity_locked" label="锁定" width="60" align="right" />
+                    <el-table-column prop="quantity_pending" label="待处理" width="68" align="right" />
+                    <el-table-column label="操作" width="188">
+                      <template slot-scope="{row}">
+                        <el-button v-if="Number(row.serials_count || 0) > 0" size="mini" type="text" @click="openBalanceSerials(row)">查看编号</el-button>
+                        <el-button size="mini" type="text" :disabled="Number(row.quantity_on_hand || 0) <= 0" @click="openAdjustmentFromBalance(row)">库存调整</el-button>
+                        <el-button size="mini" type="text" :disabled="Number(row.quantity_available || 0) <= 0" @click="openBatchBalanceQuality(row)">质量处理</el-button>
+                      </template>
+                    </el-table-column>
+                  </el-table>
+                </div>
+
+                <div v-if="batchProfile && batchProfile.mode === 'sheet'" class="batch-context-section" v-loading="physicalLoading">
+                  <div class="inventory-label-toolbar"><h4>板材实物（当前批次，逐张）</h4><el-button size="small" icon="el-icon-printer" :disabled="!selectedLabelPhysicals.length" @click="openInventoryLabelPrint('physical')">打印标签</el-button></div>
+                  <el-table ref="physicalLabelTable" :data="batchPhysicals" row-key="id" size="mini" border class="warehouse-label-source" empty-text="当前批次没有在库的板材实物" @selection-change="selectedLabelPhysicals = $event">
+                    <el-table-column type="selection" width="45" :reserve-selection="true" />
+                    <el-table-column prop="physical_no" label="实物编号" min-width="130" />
+                    <el-table-column label="长 × 宽 × 厚（mm）" min-width="150"><template slot-scope="{row}"><span class="measure-strong">{{ physicalSize(row) }}</span><div v-if="row.material_form === 'REMNANT'" class="measure-sub">余料</div></template></el-table-column>
+                    <el-table-column label="面积" width="96" align="right"><template slot-scope="{row}">{{ quantityNumber(row.area_m2) }} m²</template></el-table-column>
+                    <el-table-column label="位置" min-width="120"><template slot-scope="{row}">{{ row.warehouse_name }} / {{ row.location_name }}</template></el-table-column>
+                    <el-table-column label="操作" width="80"><template slot-scope="{row}"><el-button v-if="row.editable && $can('inventory.physical.manage')" size="mini" type="text" @click="openPhysicalEdit(row)">改尺寸</el-button></template></el-table-column>
+                  </el-table>
+                  <el-pagination class="serial-pagination" small layout="total, sizes, prev, pager, next" :page-sizes="[10,20,50,100]" :current-page.sync="physicalPagination.page" :page-size.sync="physicalPagination.per_page" :total="physicalPagination.total" @current-change="loadBatchPhysicals" @size-change="handlePhysicalSizeChange" />
+                </div>
+
+                <div class="batch-context-section quality-history-section">
+                  <h4>质量处理记录（当前批次）</h4>
+                  <el-table :data="batchContext.quality_events" size="mini" border empty-text="当前批次暂无质量处理记录">
+                    <el-table-column prop="event_no" label="处理单号" min-width="135" />
+                    <el-table-column label="方式" width="82"><template slot-scope="{row}">{{ qualityHandlingText(row.handling_method) }}</template></el-table-column>
+                    <el-table-column prop="issue_qty" label="数量" width="68" align="right" />
+                    <el-table-column label="状态" width="98"><template slot-scope="{row}">{{ qualityStatusText(row.event_status) }}</template></el-table-column>
+                    <el-table-column label="时间" width="140"><template slot-scope="{row}">{{ dateTime(row.created_at) }}</template></el-table-column>
+                    <el-table-column label="处理单据" min-width="142">
+                      <template slot-scope="{row}">
+                        <el-button v-if="row.business_doc_id" size="mini" type="text" @click="viewQualityBusinessDocument(row)">{{ row.business_doc_no || '查看处理单' }}</el-button>
+                        <span v-else>-</span>
+                      </template>
+                    </el-table-column>
+                  </el-table>
+                </div>
+
+                <div class="batch-quality-actions">
+                  <h4>质量处理</h4>
+                  <div>
+                    <el-button size="small" type="success" plain :disabled="!hasQualityActionBalance" @click="openBatchQuality('return_supplier')">退供应商</el-button>
+                    <el-button size="small" type="success" plain :disabled="!hasQualityActionBalance" @click="openBatchQuality('exchange')">换货</el-button>
+                  </div>
+                  <p>已入库库存不适用让步接收；返修、报废待正式单据接入后开放。</p>
+                </div>
+              </section>
+            </div>
+          </el-tab-pane>
+
+          <el-tab-pane label="最新流水（近 10 条）" name="recent_tx">
+            <div v-loading="recentTxLoading" class="recent-tx-tab-body">
+              <el-alert v-if="!$can('inventory.transaction.view')" title="当前账号暂无查看库存流水的权限，请联系管理员授权“库存流水查看”后再试。" type="info" :closable="false" show-icon />
+              <template v-else>
+                <div v-if="balanceRecentTransactions.length" class="tx-timeline-list">
+                  <div v-for="tx in balanceRecentTransactions" :key="tx.id" class="tx-timeline-item">
+                    <div class="tx-type-icon" :class="tx.change_qty >= 0 ? 'bg-green' : 'bg-blue'">
+                      {{ tx.change_qty >= 0 ? '+' : '-' }}
+                    </div>
+                    <div class="tx-info-block">
+                      <div class="tx-row-1">
+                        <span class="tx-name">{{ tx.transaction_type_text || (tx.change_qty >= 0 ? '采购入库' : '库存锁定') }}</span>
+                        <strong class="tx-qty" :class="tx.change_qty >= 0 ? 'text-green' : 'text-blue'">
+                          {{ tx.change_qty >= 0 ? '+' : '' }}{{ quantityNumber(tx.change_qty) }} {{ tx.unit || '-' }}
+                          <span v-if="tx.change_length_m !== null" class="measure-strong">（{{ signedMeters(tx.change_length_m) }}）</span>
+                        </strong>
+                        <span class="tx-time">{{ dateTime(tx.posted_at) }}</span>
+                      </div>
+                      <div class="tx-row-2">
+                        <span class="tx-batch">流水号: {{ tx.tx_no || '-' }}</span>
+                        <span class="tx-batch">批次: {{ tx.batch_no || '-' }}</span>
+                        <span class="tx-wh">仓库: {{ tx.warehouse_name || '-' }} / {{ tx.location_name || '-' }}</span>
+                        <span class="tx-source">来源: {{ tx.source_no || '-' }}</span>
+                        <span class="tx-source">经办人: {{ tx.posted_by_name || '未记录' }}</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <el-empty v-else description="暂无库存流水" :image-size="56" />
+                <div class="tx-more-link">
+                  <el-button size="small" type="success" plain @click="openItemTransactionsDialog(selectedBalance)">查看全部流水</el-button>
+                </div>
+              </template>
+            </div>
+          </el-tab-pane>
+        </el-tabs>
       </div>
       <span slot="footer"><el-button size="small" @click="batchDialogVisible = false">关闭</el-button></span>
+    </el-dialog>
+
+    <el-dialog
+      title="物料库存流水"
+      :visible.sync="itemTxDialogVisible"
+      width="min(1240px, 94vw)"
+      top="5vh"
+      append-to-body
+      custom-class="item-tx-dialog"
+      :close-on-click-modal="false"
+      @closed="resetItemTxDialog"
+    >
+      <div v-if="itemTxTarget" class="item-tx-dialog-body">
+        <div class="item-tx-summary">
+          <div><span>物料编码</span><strong>{{ itemTxTarget.item_code }}</strong></div>
+          <div><span>物料名称</span><strong>{{ itemTxTarget.item_name }}{{ itemTxTarget.spec ? '（' + itemTxTarget.spec + '）' : '' }}</strong></div>
+          <div><span>单位</span><strong>{{ itemTxTarget.unit || '-' }}</strong></div>
+          <div><span>当前账面</span><strong>{{ quantityNumber(itemTxTarget.quantity_on_hand) }}</strong></div>
+          <div><span>当前可用</span><strong class="text-green">{{ quantityNumber(itemTxTarget.quantity_available) }}</strong></div>
+        </div>
+
+        <section class="filter-panel item-tx-filter">
+          <label>事务类型
+            <el-select v-model="itemTxQuery.type" size="small" clearable placeholder="全部">
+              <el-option label="采购到货入库" value="purchase_receipt_posting" />
+              <el-option label="不合格品转合格补入库" value="purchase_receipt_quality_release" />
+              <el-option label="采购成本补差" value="purchase_receipt_cost_adjustment" />
+              <el-option label="手工库存调整" value="manual_adjustment" />
+              <el-option label="库存调拨" value="inventory_transfer" />
+            </el-select>
+          </label>
+          <label>来源单号<el-input v-model="itemTxQuery.sourceNo" size="small" clearable placeholder="请输入来源单号" /></label>
+          <label>仓库<paged-record-select v-model="itemTxQuery.warehouse" entity="warehouses" title="选择仓库" placeholder="全部" @change="itemTxQuery.location = ''" /></label>
+          <label>库位<paged-record-select v-model="itemTxQuery.location" entity="locations" :params="{ warehouse_id: itemTxQuery.warehouse || undefined }" title="选择库位" placeholder="全部" /></label>
+          <label>批次号<el-input v-model="itemTxQuery.batch" size="small" clearable placeholder="请输入批次号" /></label>
+          <label>过账日期<el-date-picker v-model="itemTxQuery.dateRange" type="daterange" size="small" range-separator="至" start-placeholder="开始日期" end-placeholder="结束日期" value-format="yyyy-MM-dd" /></label>
+          <el-button size="small" type="success" class="btn-green-search" @click="searchItemTransactions">查询</el-button>
+          <el-button size="small" @click="resetItemTxQuery">重置</el-button>
+        </section>
+
+        <el-table v-loading="itemTxLoading" :data="itemTxRows" size="mini" border max-height="440" empty-text="当前物料暂无匹配的库存流水">
+          <el-table-column prop="tx_no" label="流水号" min-width="132" show-overflow-tooltip />
+          <el-table-column prop="transaction_type_text" label="事务类型" min-width="116" show-overflow-tooltip />
+          <el-table-column prop="source_no" label="来源单号" min-width="124" show-overflow-tooltip />
+          <el-table-column prop="warehouse_name" label="仓库" min-width="96" show-overflow-tooltip />
+          <el-table-column prop="location_name" label="库位" min-width="88" show-overflow-tooltip />
+          <el-table-column prop="batch_no" label="批次号" min-width="112" show-overflow-tooltip />
+          <el-table-column prop="change_qty" label="变动" width="108" align="right">
+            <template slot-scope="{ row }"><span :class="row.change_qty >= 0 ? 'green-text' : 'red-text'">{{ row.change_qty > 0 ? '+' : '' }}{{ row.change_qty }}</span><div v-if="row.change_length_m !== null" class="measure-strong">{{ signedMeters(row.change_length_m) }}</div></template>
+          </el-table-column>
+          <el-table-column label="库位结存" width="108" align="right">
+            <template slot-scope="{ row }">{{ row.balance_qty }}<div v-if="row.balance_after_length_m !== null" class="measure-strong">{{ meters(row.balance_after_length_m) }}</div></template>
+          </el-table-column>
+          <el-table-column prop="unit" label="单位" width="60" align="center" />
+          <el-table-column v-if="$can('inventory.amount.view')" label="金额" min-width="96" align="right"><template slot-scope="{ row }">¥{{ money(row.cost_amount) }}</template></el-table-column>
+          <el-table-column prop="posted_by_name" label="经办人" width="90" show-overflow-tooltip />
+          <el-table-column label="状态" width="82"><template slot-scope="{ row }"><el-tag size="mini" type="success">{{ row.posting_status_text }}</el-tag></template></el-table-column>
+          <el-table-column prop="posted_at" label="过账时间" min-width="136" show-overflow-tooltip />
+        </el-table>
+        <div class="table-footer">
+          <span class="footer-count">共 {{ itemTxPagination.total }} 条</span>
+          <el-pagination small layout="sizes, prev, pager, next, jumper" :page-sizes="[10, 20, 50, 100]" :current-page.sync="itemTxPagination.page" :page-size.sync="itemTxPagination.per_page" :total="itemTxPagination.total" @current-change="loadItemTransactions" @size-change="handleItemTxSizeChange" />
+        </div>
+      </div>
+      <span slot="footer"><el-button size="small" @click="itemTxDialogVisible = false">关闭</el-button></span>
     </el-dialog>
 
     <el-dialog
@@ -931,189 +935,189 @@
       </span>
     </el-dialog>
 
-    <transition name="el-fade-in">
-      <aside v-if="adjustmentDrawerVisible && !balancePickerVisible" class="adjustment-panel" :style="{ zIndex: panelZIndex }">
-        <header>
-          <h3>手工库存调整单</h3>
-          <button type="button" @click="adjustmentDrawerVisible = false"><i class="el-icon-close" /></button>
-        </header>
-        <div class="adjustment-panel-body">
-          <el-alert title="调整单过账后才会改变库存余额；调整后不允许出现负库存。" type="info" :closable="false" show-icon />
-          <el-form :model="adjustmentForm" label-position="top" size="small">
-            <el-form-item label="调整原因">
-              <el-select v-model="adjustmentForm.reason" placeholder="请选择调整原因" popper-class="adjustment-reason-popper" :popper-append-to-body="false">
-                <el-option v-for="reason in adjustmentReasons" :key="reason.value" :label="reason.label" :value="reason.value" />
-              </el-select>
-            </el-form-item>
-            <el-form-item label="库存对象（物料 / 仓库 / 库位 / 批次）">
-              <div class="balance-picker-card">
-                <div>
-                  <strong>{{ adjustmentForm.item_code ? `${adjustmentForm.item_code} / ${adjustmentForm.item_name}${adjustmentForm.item_spec ? '（' + adjustmentForm.item_spec + '）' : ''}` : '未选择库存对象' }}</strong>
-                  <span>{{ adjustmentForm.warehouse_name || '-' }} / {{ adjustmentForm.location_name || '-' }} / {{ adjustmentForm.batch_no || '-' }}</span>
-                  <small v-if="adjustmentForm.balance_id">
-                    账面库存：{{ adjustmentForm.current_on_hand }}　可用库存：{{ adjustmentForm.current_available }}　锁定库存：{{ adjustmentForm.current_locked }}　不合格数量：{{ adjustmentForm.current_defective }}　待处理数量：{{ adjustmentForm.current_pending }}
-                  </small>
-                </div>
-                <el-button size="mini" type="success" plain @click="openBalancePicker">选择库存对象</el-button>
+    <el-dialog
+      title="手工库存调整单"
+      :visible.sync="adjustmentDrawerVisible"
+      width="min(580px, calc(100vw - 32px))"
+      top="5vh"
+      append-to-body
+      custom-class="adjustment-dialog"
+      :close-on-click-modal="false"
+    >
+      <div class="adjustment-dialog-body">
+        <el-alert title="调整单过账后才会改变库存余额；调整后不允许出现负库存。" type="info" :closable="false" show-icon />
+        <el-form :model="adjustmentForm" label-position="top" size="small">
+          <el-form-item label="调整原因">
+            <el-select v-model="adjustmentForm.reason" placeholder="请选择调整原因">
+              <el-option v-for="reason in adjustmentReasons" :key="reason.value" :label="reason.label" :value="reason.value" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="库存对象（物料 / 仓库 / 库位 / 批次）">
+            <div class="balance-picker-card">
+              <div>
+                <strong>{{ adjustmentForm.item_code ? `${adjustmentForm.item_code} / ${adjustmentForm.item_name}${adjustmentForm.item_spec ? '（' + adjustmentForm.item_spec + '）' : ''}` : '未选择库存对象' }}</strong>
+                <span>{{ adjustmentForm.warehouse_name || '-' }} / {{ adjustmentForm.location_name || '-' }} / {{ adjustmentForm.batch_no || '-' }}</span>
+                <small v-if="adjustmentForm.balance_id">
+                  账面库存：{{ adjustmentForm.current_on_hand }}　可用库存：{{ adjustmentForm.current_available }}　锁定库存：{{ adjustmentForm.current_locked }}　不合格数量：{{ adjustmentForm.current_defective }}　待处理数量：{{ adjustmentForm.current_pending }}
+                </small>
               </div>
-            </el-form-item>
-            <div class="adjustment-readonly-grid">
-              <span><b>物料</b>{{ adjustmentForm.item_code || '-' }} / {{ adjustmentForm.item_name || '-' }}{{ adjustmentForm.item_spec ? '（' + adjustmentForm.item_spec + '）' : '' }}</span>
-              <span><b>单位</b>{{ adjustmentForm.unit_name || '-' }}</span>
-              <span><b>仓库</b>{{ adjustmentForm.warehouse_name || '-' }}</span>
-              <span><b>库位</b>{{ adjustmentForm.location_name || '-' }}</span>
-              <span><b>批次</b>{{ adjustmentForm.batch_no || '-' }}</span>
+              <el-button size="mini" type="success" plain @click="openBalancePicker">选择库存对象</el-button>
             </div>
-            <div class="adjustment-stock-preview">
-              <article><span>账面</span><strong>{{ adjustmentForm.current_on_hand }}</strong></article>
-              <article><span>可用</span><strong>{{ adjustmentForm.current_available }}</strong></article>
-              <article><span>锁定</span><strong>{{ adjustmentForm.current_locked }}</strong></article>
-              <article :class="{ danger: adjustmentWillBeNegative }"><span>调整后账面</span><strong>{{ adjustmentAfterOnHand }}</strong></article>
-              <article :class="{ danger: adjustmentWillBeNegative }"><span>调整后可用</span><strong>{{ adjustmentAfterAvailable }}</strong></article>
-            </div>
-            <el-form-item label="调整数量"><el-input-number ref="adjustmentQtyInput" v-model="adjustmentForm.change_qty" :min="0" :max="999999" controls-position="right" @input="syncAdjustmentQty" @change="syncAdjustmentQty" @input.native="syncAdjustmentQtyFromNative" /></el-form-item>
-            <el-radio-group v-model="adjustmentForm.direction" @change="handleAdjustmentDirectionChange">
-              <el-radio label="increase">增加（正数）</el-radio>
-              <el-radio label="decrease">减少（负数）</el-radio>
-            </el-radio-group>
-            <section v-if="adjustmentForm.serial_tracking_mode !== 'none'" class="adjustment-serial-card">
-              <div class="adjustment-serial-head">
-                <div>
-                  <strong>设备编号 / 序列号</strong>
-                  <small>{{ adjustmentSerialPolicyText }}</small>
-                </div>
-                <el-tag size="mini" :type="adjustmentForm.serial_tracking_mode === 'required' ? 'warning' : 'info'">
-                  {{ adjustmentForm.serial_tracking_mode === 'required' ? '必须逐件编号' : '按需编号' }}
-                </el-tag>
-              </div>
-
-              <template v-if="adjustmentForm.direction === 'increase'">
-                <div class="adjustment-serial-actions">
-                  <el-button size="mini" type="success" plain :loading="adjustmentSerialGenerating" @click="generateAdjustmentSerials">一次生成 {{ adjustmentIntegerQty }} 个</el-button>
-                  <el-button size="mini" @click="adjustmentForm.serial_text = ''">清空</el-button>
-                </div>
-                <el-input v-model="adjustmentForm.serial_text" type="textarea" :rows="5" resize="vertical" placeholder="支持扫码枪连续扫描或手工输入；每行一个编号，扫描后回车自动进入下一行" @input="adjustmentForm.serial_number_source = 'manual'" />
-              </template>
-
-              <template v-else>
-                <el-select
-                  v-model="adjustmentForm.selected_serial_numbers"
-                  multiple filterable remote reserve-keyword collapse-tags
-                  :remote-method="searchAdjustmentSerials"
-                  :loading="adjustmentSerialLoading"
-                  :popper-append-to-body="false"
-                  popper-class="adjustment-serial-popper"
-                  placeholder="搜索并选择当前库位、当前批次的可用编号">
-                  <el-option v-for="serial in adjustmentSerialOptions" :key="serial.id" :label="serial.serial_no" :value="serial.serial_no" />
-                </el-select>
-                <small class="adjustment-serial-stock">当前库存对象共有 {{ adjustmentSerialTotal }} 个可用编号；只允许选择本物料 / 仓库 / 库位 / 批次中的编号。</small>
-              </template>
-
-              <div class="adjustment-serial-count" :class="{ danger: !adjustmentSerialCountValid }">
-                已{{ adjustmentForm.direction === 'increase' ? '录入' : '选择' }} {{ adjustmentSerialEntries.length }} 个，调整数量 {{ adjustmentIntegerQty }}
-              </div>
-            </section>
-            <el-alert v-if="adjustmentWillBeNegative" class="rule-alert" title="调整后会出现负库存，系统不允许保存、提交或过账。" type="error" :closable="false" show-icon />
-            <el-form-item label="备注"><el-input v-model="adjustmentForm.remark" type="textarea" :rows="4" maxlength="200" show-word-limit placeholder="请输入备注" /></el-form-item>
-          </el-form>
-        </div>
-        <footer>
-          <el-button size="small" @click="adjustmentDrawerVisible = false">取消</el-button>
-          <el-button size="small" @click="saveAdjustmentDraft">保存草稿</el-button>
-          <el-button size="small" type="success" @click="submitAdjustment">提交调整</el-button>
-        </footer>
-      </aside>
-    </transition>
-
-    <transition name="el-fade-in">
-      <aside v-if="qualityDrawerVisible" class="adjustment-panel quality-panel" :style="{ zIndex: panelZIndex }">
-        <header>
-          <div>
-            <h3>库存质量处理</h3>
-            <small>定位实物、冻结库存并生成正式处理单</small>
+          </el-form-item>
+          <div class="adjustment-readonly-grid">
+            <span><b>物料</b>{{ adjustmentForm.item_code || '-' }} / {{ adjustmentForm.item_name || '-' }}{{ adjustmentForm.item_spec ? '（' + adjustmentForm.item_spec + '）' : '' }}</span>
+            <span><b>单位</b>{{ adjustmentForm.unit_name || '-' }}</span>
+            <span><b>仓库</b>{{ adjustmentForm.warehouse_name || '-' }}</span>
+            <span><b>库位</b>{{ adjustmentForm.location_name || '-' }}</span>
+            <span><b>批次</b>{{ adjustmentForm.batch_no || '-' }}</span>
           </div>
-          <button type="button" @click="qualityDrawerVisible = false"><i class="el-icon-close" /></button>
-        </header>
-        <div class="adjustment-panel-body quality-panel-body">
-          <el-alert title="入库后发现的质量问题从这里发起。创建后对应数量立即转为待处理，不再参与销售履约或领料。" type="warning" :closable="false" show-icon />
-
-          <section class="quality-card">
-            <h4><b>1</b> 实物定位</h4>
-            <dl class="quality-locator">
-              <dt>物料</dt><dd>{{ qualityForm.item_code }} / {{ qualityForm.item_name }}</dd>
-              <dt>仓库 / 库位</dt><dd>{{ qualityForm.warehouse_name }} / {{ qualityForm.location_name }}</dd>
-              <dt>批次号</dt><dd>{{ qualityForm.batch_no || '-' }}</dd>
-              <dt>当前可用</dt><dd class="green-text">{{ qualityForm.current_available }} {{ qualityForm.unit_name }}</dd>
-            </dl>
-            <label class="quality-field">设备编号 / 序列号（优先定位单件实物）
-              <el-select v-model="qualityForm.serial_no" class="full-control" size="small" clearable filterable
-                :disabled="qualitySerials.length === 0"
-                :placeholder="qualitySerialPlaceholder"
-                :popper-append-to-body="false"
-                popper-class="quality-select-popper">
-                <el-option v-for="serial in qualitySerials" :key="serial.id" :label="serial.serial_no" :value="serial.serial_no" />
-              </el-select>
-              <small :class="{ 'orange-text': qualityForm.serial_tracking_mode !== 'none' && qualitySerials.length === 0 }">{{ qualitySerialHint }}</small>
-            </label>
-          </section>
-
-          <section class="quality-card">
-            <h4><b>2</b> 来源追溯</h4>
-            <dl class="quality-locator">
-              <dt>采购到货单</dt><dd>{{ qualitySource.receipt_no || '未找到采购来源' }}</dd>
-              <dt>采购订单</dt><dd>{{ qualitySource.purchase_order_no || '-' }}</dd>
-              <dt>供应商</dt><dd>{{ qualitySource.supplier_name || '-' }}</dd>
-            </dl>
-            <el-alert v-if="!qualitySource.receipt_no" title="当前批次没有可追溯采购入库来源；仍可冻结处理，但不能发起退供应商或换货。" type="info" :closable="false" show-icon />
-          </section>
-
-          <section v-if="qualityEvents.length" class="quality-card active-quality-card">
-            <h4><b>!</b> 当前处理中质量事件</h4>
-            <article v-for="event in qualityEvents" :key="event.id" class="quality-event-row">
-              <div><strong>{{ event.event_no }}</strong><span>{{ qualityHandlingText(event.handling_method) }} · {{ qualityStatusText(event.event_status) }}</span><small>处理单：{{ event.business_doc_no }}　数量：{{ Number(event.issue_qty) }} {{ event.unit_name_snapshot }}</small></div>
-              <div class="quality-event-actions">
-                <span class="readonly-text">请在对应采购退回/换货单中继续处理</span>
+          <div class="adjustment-stock-preview">
+            <article><span>账面</span><strong>{{ adjustmentForm.current_on_hand }}</strong></article>
+            <article><span>可用</span><strong>{{ adjustmentForm.current_available }}</strong></article>
+            <article><span>锁定</span><strong>{{ adjustmentForm.current_locked }}</strong></article>
+            <article :class="{ danger: adjustmentWillBeNegative }"><span>调整后账面</span><strong>{{ adjustmentAfterOnHand }}</strong></article>
+            <article :class="{ danger: adjustmentWillBeNegative }"><span>调整后可用</span><strong>{{ adjustmentAfterAvailable }}</strong></article>
+          </div>
+          <el-form-item label="调整数量"><el-input-number ref="adjustmentQtyInput" v-model="adjustmentForm.change_qty" :min="0" :max="999999" controls-position="right" @input="syncAdjustmentQty" @change="syncAdjustmentQty" @input.native="syncAdjustmentQtyFromNative" /></el-form-item>
+          <el-radio-group v-model="adjustmentForm.direction" @change="handleAdjustmentDirectionChange">
+            <el-radio label="increase">增加（正数）</el-radio>
+            <el-radio label="decrease">减少（负数）</el-radio>
+          </el-radio-group>
+          <section v-if="adjustmentForm.serial_tracking_mode !== 'none'" class="adjustment-serial-card">
+            <div class="adjustment-serial-head">
+              <div>
+                <strong>设备编号 / 序列号</strong>
+                <small>{{ adjustmentSerialPolicyText }}</small>
               </div>
-            </article>
-          </section>
+              <el-tag size="mini" :type="adjustmentForm.serial_tracking_mode === 'required' ? 'warning' : 'info'">
+                {{ adjustmentForm.serial_tracking_mode === 'required' ? '必须逐件编号' : '按需编号' }}
+              </el-tag>
+            </div>
 
-          <section class="quality-card">
-            <h4><b>3</b> 问题与处理</h4>
-            <div class="quality-form-grid">
-              <label>问题数量 <em>*</em>
-                <el-input-number v-model="qualityForm.issue_qty" class="full-control" size="small" :min="0.00000001" :max="qualityForm.serial_no ? 1 : qualityForm.current_available" :precision="4" controls-position="right" />
-              </label>
-              <label>问题类别 <em>*</em>
-                <el-select v-model="qualityForm.issue_category" class="full-control" size="small" placeholder="请选择问题类别" :popper-append-to-body="false" popper-class="quality-select-popper">
-                  <el-option label="功能故障" value="function_failure" /><el-option label="外观损伤" value="appearance_damage" /><el-option label="性能异常" value="performance_abnormal" /><el-option label="缺少配件" value="missing_parts" /><el-option label="其他" value="other" />
-                </el-select>
-              </label>
-              <label class="span-two">问题描述 <em>*</em>
-                <el-input v-model.trim="qualityForm.issue_description" class="full-control" type="textarea" :rows="3" maxlength="1000" show-word-limit placeholder="请描述故障现象、发现时间和检查结果" />
-              </label>
-              <label>处理方式 <em>*</em>
-                <el-select v-model="qualityForm.handling_method" class="full-control" size="small" placeholder="请选择实际处理方式" :popper-append-to-body="false" popper-class="quality-select-popper">
-                  <el-option label="退供应商" value="return_supplier" /><el-option label="换货" value="exchange" />
-                </el-select>
-              </label>
-              <label>责任方 <em>*</em>
-                <el-select v-model="qualityForm.responsible_party" class="full-control" size="small" placeholder="请选择责任方" :popper-append-to-body="false" popper-class="quality-select-popper">
-                  <el-option label="供应商" value="supplier" /><el-option label="仓库" value="warehouse" /><el-option label="物流" value="logistics" /><el-option label="内部使用" value="internal" /><el-option label="待判定" value="undetermined" />
-                </el-select>
-              </label>
-            </div>
-            <div class="quality-action-note">
-              <strong>{{ qualityMethodTitle }}</strong>
-              <span>{{ qualityMethodDescription }}</span>
+            <template v-if="adjustmentForm.direction === 'increase'">
+              <div class="adjustment-serial-actions">
+                <el-button size="mini" type="success" plain :loading="adjustmentSerialGenerating" @click="generateAdjustmentSerials">一次生成 {{ adjustmentIntegerQty }} 个</el-button>
+                <el-button size="mini" @click="adjustmentForm.serial_text = ''">清空</el-button>
+              </div>
+              <el-input v-model="adjustmentForm.serial_text" type="textarea" :rows="5" resize="vertical" placeholder="支持扫码枪连续扫描或手工输入；每行一个编号，扫描后回车自动进入下一行" @input="adjustmentForm.serial_number_source = 'manual'" />
+            </template>
+
+            <template v-else>
+              <el-select
+                v-model="adjustmentForm.selected_serial_numbers"
+                multiple filterable remote reserve-keyword collapse-tags
+                :remote-method="searchAdjustmentSerials"
+                :loading="adjustmentSerialLoading"
+                placeholder="搜索并选择当前库位、当前批次的可用编号">
+                <el-option v-for="serial in adjustmentSerialOptions" :key="serial.id" :label="serial.serial_no" :value="serial.serial_no" />
+              </el-select>
+              <small class="adjustment-serial-stock">当前库存对象共有 {{ adjustmentSerialTotal }} 个可用编号；只允许选择本物料 / 仓库 / 库位 / 批次中的编号。</small>
+            </template>
+
+            <div class="adjustment-serial-count" :class="{ danger: !adjustmentSerialCountValid }">
+              已{{ adjustmentForm.direction === 'increase' ? '录入' : '选择' }} {{ adjustmentSerialEntries.length }} 个，调整数量 {{ adjustmentIntegerQty }}
             </div>
           </section>
-        </div>
-        <footer>
-          <el-button size="small" @click="qualityDrawerVisible = false">取消</el-button>
-          <el-button size="small" type="success" :loading="qualitySaving" @click="submitQualityEvent">创建质量事件</el-button>
-        </footer>
-      </aside>
-    </transition>
+          <el-alert v-if="adjustmentWillBeNegative" class="rule-alert" title="调整后会出现负库存，系统不允许保存、提交或过账。" type="error" :closable="false" show-icon />
+          <el-form-item label="备注"><el-input v-model="adjustmentForm.remark" type="textarea" :rows="4" maxlength="200" show-word-limit placeholder="请输入备注" /></el-form-item>
+        </el-form>
+      </div>
+      <span slot="footer">
+        <el-button size="small" @click="adjustmentDrawerVisible = false">取消</el-button>
+        <el-button size="small" @click="saveAdjustmentDraft">保存草稿</el-button>
+        <el-button size="small" type="success" @click="submitAdjustment">提交调整</el-button>
+      </span>
+    </el-dialog>
+
+    <el-dialog
+      :visible.sync="qualityDrawerVisible"
+      width="min(620px, calc(100vw - 32px))"
+      top="5vh"
+      append-to-body
+      custom-class="quality-dialog"
+      :close-on-click-modal="false"
+    >
+      <div slot="title" class="quality-dialog-title">
+        <h3>库存质量处理</h3>
+        <small>定位实物、冻结库存并生成正式处理单</small>
+      </div>
+      <div class="quality-dialog-body">
+        <el-alert title="入库后发现的质量问题从这里发起。创建后对应数量立即转为待处理，不再参与销售履约或领料。" type="warning" :closable="false" show-icon />
+
+        <section class="quality-card">
+          <h4><b>1</b> 实物定位</h4>
+          <dl class="quality-locator">
+            <dt>物料</dt><dd>{{ qualityForm.item_code }} / {{ qualityForm.item_name }}</dd>
+            <dt>仓库 / 库位</dt><dd>{{ qualityForm.warehouse_name }} / {{ qualityForm.location_name }}</dd>
+            <dt>批次号</dt><dd>{{ qualityForm.batch_no || '-' }}</dd>
+            <dt>当前可用</dt><dd class="green-text">{{ qualityForm.current_available }} {{ qualityForm.unit_name }}</dd>
+          </dl>
+          <label class="quality-field">设备编号 / 序列号（优先定位单件实物）
+            <el-select v-model="qualityForm.serial_no" class="full-control" size="small" clearable filterable
+              :disabled="qualitySerials.length === 0"
+              :placeholder="qualitySerialPlaceholder">
+              <el-option v-for="serial in qualitySerials" :key="serial.id" :label="serial.serial_no" :value="serial.serial_no" />
+            </el-select>
+            <small :class="{ 'orange-text': qualityForm.serial_tracking_mode !== 'none' && qualitySerials.length === 0 }">{{ qualitySerialHint }}</small>
+          </label>
+        </section>
+
+        <section class="quality-card">
+          <h4><b>2</b> 来源追溯</h4>
+          <dl class="quality-locator">
+            <dt>采购到货单</dt><dd>{{ qualitySource.receipt_no || '未找到采购来源' }}</dd>
+            <dt>采购订单</dt><dd>{{ qualitySource.purchase_order_no || '-' }}</dd>
+            <dt>供应商</dt><dd>{{ qualitySource.supplier_name || '-' }}</dd>
+          </dl>
+          <el-alert v-if="!qualitySource.receipt_no" title="当前批次没有可追溯采购入库来源；仍可冻结处理，但不能发起退供应商或换货。" type="info" :closable="false" show-icon />
+        </section>
+
+        <section v-if="qualityEvents.length" class="quality-card active-quality-card">
+          <h4><b>!</b> 当前处理中质量事件</h4>
+          <article v-for="event in qualityEvents" :key="event.id" class="quality-event-row">
+            <div><strong>{{ event.event_no }}</strong><span>{{ qualityHandlingText(event.handling_method) }} · {{ qualityStatusText(event.event_status) }}</span><small>处理单：{{ event.business_doc_no }}　数量：{{ Number(event.issue_qty) }} {{ event.unit_name_snapshot }}</small></div>
+            <div class="quality-event-actions">
+              <span class="readonly-text">请在对应采购退回/换货单中继续处理</span>
+            </div>
+          </article>
+        </section>
+
+        <section class="quality-card">
+          <h4><b>3</b> 问题与处理</h4>
+          <div class="quality-form-grid">
+            <label>问题数量 <em>*</em>
+              <el-input-number v-model="qualityForm.issue_qty" class="full-control" size="small" :min="0.00000001" :max="qualityForm.serial_no ? 1 : qualityForm.current_available" :precision="4" controls-position="right" />
+            </label>
+            <label>问题类别 <em>*</em>
+              <el-select v-model="qualityForm.issue_category" class="full-control" size="small" placeholder="请选择问题类别">
+                <el-option label="功能故障" value="function_failure" /><el-option label="外观损伤" value="appearance_damage" /><el-option label="性能异常" value="performance_abnormal" /><el-option label="缺少配件" value="missing_parts" /><el-option label="其他" value="other" />
+              </el-select>
+            </label>
+            <label class="span-two">问题描述 <em>*</em>
+              <el-input v-model.trim="qualityForm.issue_description" class="full-control" type="textarea" :rows="3" maxlength="1000" show-word-limit placeholder="请描述故障现象、发现时间和检查结果" />
+            </label>
+            <label>处理方式 <em>*</em>
+              <el-select v-model="qualityForm.handling_method" class="full-control" size="small" placeholder="请选择实际处理方式">
+                <el-option label="退供应商" value="return_supplier" /><el-option label="换货" value="exchange" />
+              </el-select>
+            </label>
+            <label>责任方 <em>*</em>
+              <el-select v-model="qualityForm.responsible_party" class="full-control" size="small" placeholder="请选择责任方">
+                <el-option label="供应商" value="supplier" /><el-option label="仓库" value="warehouse" /><el-option label="物流" value="logistics" /><el-option label="内部使用" value="internal" /><el-option label="待判定" value="undetermined" />
+              </el-select>
+            </label>
+          </div>
+          <div class="quality-action-note">
+            <strong>{{ qualityMethodTitle }}</strong>
+            <span>{{ qualityMethodDescription }}</span>
+          </div>
+        </section>
+      </div>
+      <span slot="footer">
+        <el-button size="small" @click="qualityDrawerVisible = false">取消</el-button>
+        <el-button size="small" type="success" :loading="qualitySaving" @click="submitQualityEvent">创建质量事件</el-button>
+      </span>
+    </el-dialog>
 
     <transition name="el-fade-in">
       <aside v-if="adjustmentDetailVisible" class="adjustment-panel adjustment-detail-panel" :style="{ zIndex: panelZIndex }">
@@ -1150,7 +1154,7 @@
       </aside>
     </transition>
 
-    <el-dialog title="选择库存对象" :visible.sync="balancePickerVisible" width="820px" class="balance-picker-dialog">
+    <el-dialog title="选择库存对象" :visible.sync="balancePickerVisible" width="820px" append-to-body class="balance-picker-dialog">
       <section class="filter-panel picker-filter">
         <label>物料编码/名称<el-input v-model="balancePickerQuery.keyword" size="small" placeholder="支持编码、名称模糊查询" /></label>
         <label>仓库<paged-record-select v-model="balancePickerQuery.warehouse" entity="warehouses" title="选择仓库" placeholder="全部" @change="balancePickerQuery.location = ''" /></label>
@@ -1218,10 +1222,17 @@ export default {
       balanceRequestSeq: 0,
       balancePagination: { page: 1, per_page: 10, total: 0 },
       selectedBalance: null,
-      balanceDetailVisible: false,
-      balanceDetailBatches: [],
+      detailActiveTab: 'batches',
+      recentTxLoading: false,
+      recentTxRequestVersion: 0,
       balanceRecentTransactions: [],
-      balanceSelectedRows: [],
+      itemTxDialogVisible: false,
+      itemTxLoading: false,
+      itemTxTarget: null,
+      itemTxRows: [],
+      itemTxRequestSeq: 0,
+      itemTxQuery: { type: '', sourceNo: '', warehouse: '', location: '', batch: '', dateRange: [] },
+      itemTxPagination: { page: 1, per_page: 10, total: 0 },
       alertConfigVisible: false,
       alertConfigLoading: false,
       alertConfigSaving: false,
@@ -1305,32 +1316,6 @@ export default {
     },
     alertStockTime() {
       return this.selectedBalance ? this.dateTime(this.selectedBalance.last_transaction_at) : '-'
-    },
-    balanceDetailDistributions() {
-      if (this.balanceDetailBatches && this.balanceDetailBatches.length) {
-        return this.balanceDetailBatches.map(b => ({
-          warehouse_name: b.warehouse_name || '',
-          location_name: b.location_name || '',
-          batch_no: b.batch_no || '',
-          quantity_on_hand: Number(b.quantity_on_hand || 0),
-          quantity_available: Number(b.quantity_available || 0),
-          quantity_locked: Number(b.quantity_locked || 0),
-          quantity_defective: Number(b.quantity_defective || 0),
-          quantity_pending: Number(b.quantity_pending || 0),
-          measure: b.measure || null
-        }))
-      }
-      return []
-    },
-    balanceDistTotals() {
-      const dist = this.balanceDetailDistributions
-      return {
-        quantity_on_hand: dist.reduce((sum, r) => sum + (r.quantity_on_hand || 0), 0),
-        quantity_available: dist.reduce((sum, r) => sum + (r.quantity_available || 0), 0),
-        quantity_locked: dist.reduce((sum, r) => sum + (r.quantity_locked || 0), 0),
-        quantity_defective: dist.reduce((sum, r) => sum + (r.quantity_defective || 0), 0),
-        quantity_pending: dist.reduce((sum, r) => sum + (r.quantity_pending || 0), 0)
-      }
     },
     filteredTransactions() {
       return this.transactions
@@ -1416,8 +1401,6 @@ export default {
     }
   },
   watch: {
-    adjustmentDrawerVisible(visible) { if (visible) this.panelZIndex = PopupManager.nextZIndex() },
-    qualityDrawerVisible(visible) { if (visible) this.panelZIndex = PopupManager.nextZIndex() },
     adjustmentDetailVisible(visible) { if (visible) this.panelZIndex = PopupManager.nextZIndex() },
     'pageRoute.fullPath': { immediate: true, handler() { this.syncActiveView(); this.applyConsoleTarget(); this.loadCurrentView() } },
     balancePickerQuery: { deep: true, handler() { this.balancePickerPagination.page = 1 } }
@@ -1429,6 +1412,8 @@ export default {
   beforeDestroy() {
     ++this.physicalRequestVersion
     ++this.serialRequestVersion
+    ++this.recentTxRequestVersion
+    ++this.itemTxRequestSeq
   },
   methods: {
     applyConsoleTarget() {
@@ -1490,7 +1475,11 @@ export default {
       this.balanceStats = res.data.stats || this.balanceStats
       this.stocktakeFreezes = res.data.stocktake_freezes || { data: [], total: 0, current_page: 1, overdue: false }
       this.applyPagination(this.balancePagination, res.data)
-      this.selectedBalance = this.selectedBalance ? this.balanceRows.find(r => Number(r.item_id) === Number(this.selectedBalance.item_id)) || null : null
+      if (this.selectedBalance) {
+        const matched = this.balanceRows.find(r => Number(r.item_id) === Number(this.selectedBalance.item_id))
+        if (matched) this.selectedBalance = matched
+        else if (!this.batchDialogVisible) this.selectedBalance = null
+      }
     },
     async loadBatchRows() {
       if (!this.selectedBalance) return
@@ -1542,12 +1531,16 @@ export default {
             item_code: balance.item_code,
             item_name: balance.item_name,
             spec: balance.spec || '',
+            unit_id: balance.unit_id,
             unit: balance.unit,
+            serial_tracking_mode: balance.serial_tracking_mode || 'none',
+            is_serial_managed: Boolean(balance.is_serial_managed),
             warehouse_name: row.warehouse?.warehouse_name || '',
             location_name: row.location?.location_name || '',
             quantity_on_hand: Number(row.quantity_on_hand || 0),
             quantity_available: Number(row.quantity_available || 0),
             quantity_locked: Number(row.quantity_locked || 0),
+            quantity_defective: Number(row.quantity_defective || 0),
             quantity_pending: Number(row.quantity_pending || 0)
           }))
         }
@@ -1646,14 +1639,30 @@ export default {
       this.loadBalances()
     },
     scopeLabel(scope) { return scope === 'office' ? '办公用品' : '工厂物料' },
+    itemTypeLabel(type) {
+      return ({
+        finished_product: '成品',
+        semi_finished: '半成品',
+        raw_material: '原材料',
+        packaging: '包材',
+        service: '服务',
+        office_consumable: '办公消耗品',
+        inventory_material: '库存物料',
+        low_value_custody: '低值易耗品',
+        fixed_asset_pending: '固定资产备库',
+        direct_non_stock: '采购直用',
+        inventory_goods: '库存商品',
+        inventory_expense: '费用物资'
+      })[type] || type || '-'
+    },
     filterBalanceByStatus(status) {
       this.balanceQuery.status = this.balanceQuery.status === status ? '' : status
       this.changeBalanceStatus()
     },
     changeBalanceStatus() {
       if (!this.showingTransit) this.balanceQuery.has_exception = ''
-      this.selectedBalance = null; this.balanceDetailVisible = false; this.balanceSelectedRows = []
-      this.batchDialogVisible = false; this.$refs.balanceTable?.clearSelection()
+      this.selectedBalance = null
+      this.batchDialogVisible = false
       this.searchBalances()
     },
     filterTransitException() { this.balanceQuery.status = 'in_transit'; this.changeBalanceStatus() },
@@ -1678,12 +1687,8 @@ export default {
       this.balanceQuery.warehouse = ''
       this.balanceQuery.location = ''
       this.selectedBalance = null
-      this.balanceSelectedRows = []
-      this.balanceDetailVisible = false
       this.batchDialogVisible = false
-      this.balanceDetailBatches = []
       this.balanceRecentTransactions = []
-      this.$refs.balanceTable?.clearSelection()
       this.searchBalances()
     },
     resetBalanceQuery() {
@@ -1820,11 +1825,11 @@ export default {
         unit_id: row.unit_id || row.item?.unit_id || null,
         unit: row.unit?.unit_name || row.item?.unit?.unit_name || '',
         category: row.item?.item_type || '',
-        warehouse_id: null,
-        warehouse_name: '',
-        location_id: null,
-        location_name: '',
-        batch_no: '',
+        warehouse_id: row.warehouse_id || null,
+        warehouse_name: row.warehouse?.warehouse_name || '',
+        location_id: row.location_id || null,
+        location_name: row.location?.location_name || '',
+        batch_no: row.batch_no || '',
         quantity_on_hand: Number(row.quantity_on_hand || 0),
         quantity_available: Number(row.quantity_available || 0),
         quantity_locked: Number(row.quantity_locked || 0),
@@ -1840,62 +1845,25 @@ export default {
         sku_code: rel.sku?.sku_code || ''
       }
     },
-    handleBalanceRowClick(row) {
-      this.selectBalance(row)
-      this.balanceDetailVisible = true
-      if (this.$refs.balanceTable) {
-        this.$refs.balanceTable.clearSelection()
-        this.$refs.balanceTable.toggleRowSelection(row, true)
-      }
-    },
-    handleBalanceSelectionChange(selection) {
-      this.balanceSelectedRows = selection
-      if (selection.length === 1) {
-        this.selectBalance(selection[0])
-        this.balanceDetailVisible = true
-      } else if (selection.length === 0) {
-        this.selectedBalance = null
-        this.balanceDetailVisible = false
-      } else {
-        this.selectBalance(selection[selection.length - 1])
-        this.balanceDetailVisible = true
-      }
-    },
-    closeBalanceDetail() {
-      this.balanceDetailVisible = false
-      if (this.$refs.balanceTable) {
-        this.$refs.balanceTable.clearSelection()
-      }
-    },
     exportBalances() {
       this.$message.success('已导出当前库存余额列表')
     },
-    async selectBalance(row) {
-      if (!row) {
-        this.selectedBalance = null
+    async loadBalanceRecentTransactions(row) {
+      const version = ++this.recentTxRequestVersion
+      if (!row || !row.item_id || !this.$can('inventory.transaction.view')) {
+        this.balanceRecentTransactions = []
+        this.recentTxLoading = false
         return
       }
-      this.selectedBalance = row
-      await this.loadBalanceDetailContext(row)
-    },
-    async loadBalanceDetailContext(row) {
-      if (!row || !row.item_id) return
+      this.recentTxLoading = true
       try {
-        const [batchesRes, txRes] = await Promise.all([
-          listInventoryItemBatches(row.item_id, {}),
-          listInventoryTransactions({ item_id: row.item_id, per_page: 10, view: 'lines' })
-        ])
-        this.balanceDetailBatches = (batchesRes.data.data || []).map(b => ({
-          ...b,
-          quantity_on_hand: Number(b.quantity_on_hand || 0),
-          quantity_available: Number(b.quantity_available || 0),
-          quantity_locked: Number(b.quantity_locked || 0),
-          quantity_defective: Number(b.quantity_defective || 0),
-          quantity_pending: Number(b.quantity_pending || 0)
-        }))
-        this.balanceRecentTransactions = (txRes.data.data || []).map(this.mapTransactionLine)
+        const res = await listInventoryTransactions({ item_id: row.item_id, per_page: 10, view: 'lines' })
+        if (version !== this.recentTxRequestVersion) return
+        this.balanceRecentTransactions = (res.data.data || []).map(this.mapTransactionLine)
       } catch (e) {
-        // keep fallback
+        if (version === this.recentTxRequestVersion) this.balanceRecentTransactions = []
+      } finally {
+        if (version === this.recentTxRequestVersion) this.recentTxLoading = false
       }
     },
     balanceRowClass({ row }) {
@@ -1957,12 +1925,14 @@ export default {
     async openBatchDialog(row) {
       if (!row) return
       this.selectedBalance = row
+      this.detailActiveTab = 'batches'
       this.batchPagination.page = 1
       await this.selectBatch(null)
       this.batchRows = []
       this.batchContext = { balances: [], source: {}, quality_events: [] }
+      this.balanceRecentTransactions = []
       this.batchDialogVisible = true
-      await this.loadBatchRows()
+      await Promise.all([this.loadBatchRows(), this.loadBalanceRecentTransactions(row)])
     },
     async openAdjustmentForBalance(row) {
       if (!row || !row.item_id) return
@@ -2078,7 +2048,10 @@ export default {
     },
     resetBatchDialog() {
       ++this.physicalRequestVersion
+      ++this.recentTxRequestVersion
       this.physicalLoading = false
+      this.recentTxLoading = false
+      this.detailActiveTab = 'batches'
       this.physicalPagination.page = 1
       this.physicalPagination.total = 0
       this.selectedLabelPhysicals = []
@@ -2088,14 +2061,71 @@ export default {
       this.batchContext = { balances: [], source: {}, quality_events: [] }
       this.batchProfile = null
       this.batchPhysicals = []
+      this.balanceRecentTransactions = []
     },
     batchRowClass({ row }) {
       return this.selectedBatch && row.batch_no === this.selectedBatch.batch_no ? 'current-batch-row' : ''
     },
     viewItemTransactions(row) {
+      this.openItemTransactionsDialog(row)
+    },
+    async openItemTransactionsDialog(row) {
       if (!row || !row.item_id) return
-      this.batchDialogVisible = false
-      this.$router.push({ path: '/inventory/transactions', query: { item_id: row.item_id, item_code: row.item_code } })
+      if (!this.$can('inventory.transaction.view')) return this.$message.warning('当前账号暂无查看库存流水的权限。')
+      this.itemTxTarget = row
+      this.itemTxQuery = { type: '', sourceNo: '', warehouse: '', location: '', batch: '', dateRange: [] }
+      this.itemTxPagination = { page: 1, per_page: 10, total: 0 }
+      this.itemTxRows = []
+      this.itemTxDialogVisible = true
+      await this.loadItemTransactions()
+    },
+    async loadItemTransactions() {
+      if (!this.itemTxTarget || !this.itemTxTarget.item_id) return
+      const seq = ++this.itemTxRequestSeq
+      this.itemTxLoading = true
+      try {
+        const res = await listInventoryTransactions({
+          view: 'lines',
+          page: this.itemTxPagination.page,
+          per_page: this.itemTxPagination.per_page,
+          item_id: this.itemTxTarget.item_id,
+          transaction_type: this.itemTxQuery.type,
+          source_no: this.itemTxQuery.sourceNo,
+          warehouse_id: this.itemTxQuery.warehouse,
+          location_id: this.itemTxQuery.location,
+          batch_no: this.itemTxQuery.batch,
+          date_from: this.itemTxQuery.dateRange?.[0] || '',
+          date_to: this.itemTxQuery.dateRange?.[1] || ''
+        })
+        if (seq !== this.itemTxRequestSeq) return
+        this.itemTxRows = (res.data.data || []).map(this.mapTransactionLine)
+        this.applyPagination(this.itemTxPagination, res.data)
+      } catch (error) {
+        if (seq === this.itemTxRequestSeq) this.$message.error(error.userMessage || '物料库存流水加载失败')
+      } finally {
+        if (seq === this.itemTxRequestSeq) this.itemTxLoading = false
+      }
+    },
+    searchItemTransactions() {
+      this.itemTxPagination.page = 1
+      this.loadItemTransactions()
+    },
+    resetItemTxQuery() {
+      this.itemTxQuery = { type: '', sourceNo: '', warehouse: '', location: '', batch: '', dateRange: [] }
+      this.searchItemTransactions()
+    },
+    handleItemTxSizeChange(size) {
+      this.itemTxPagination.per_page = size
+      this.itemTxPagination.page = 1
+      this.loadItemTransactions()
+    },
+    resetItemTxDialog() {
+      ++this.itemTxRequestSeq
+      this.itemTxLoading = false
+      this.itemTxTarget = null
+      this.itemTxRows = []
+      this.itemTxQuery = { type: '', sourceNo: '', warehouse: '', location: '', batch: '', dateRange: [] }
+      this.itemTxPagination = { page: 1, per_page: 10, total: 0 }
     },
     async openBalanceSerials(row) {
       this.clearSerialLabelContext()
@@ -2301,6 +2331,9 @@ export default {
         this.$message.success(`质量事件 ${event.event_no} 已创建，处理单 ${event.business_doc_no}，问题库存已冻结。`)
         this.qualityDrawerVisible = false
         await this.loadBalances()
+        if (this.batchDialogVisible && this.selectedBalance) {
+          await Promise.all([this.loadBatchRows(), this.loadBalanceRecentTransactions(this.selectedBalance)])
+        }
       } catch (error) {
         this.$message.error(error.userMessage || '库存质量事件创建失败')
       } finally {
@@ -2509,10 +2542,10 @@ export default {
     async openAdjustmentFromBalance(row) {
       if (!this.adjustmentReasons.length) await this.loadAdjustmentReasons()
       if (!this.balanceRows.length) await this.loadBalances()
-      this.selectBalance(row || this.selectedBalance)
+      const target = row || this.selectedBalance
       this.adjustmentForm = this.defaultAdjustmentForm()
       this.selectedAdjustmentBalance = null
-      if (this.selectedBalance) this.applyAdjustmentBalance(this.selectedBalance)
+      if (target) this.applyAdjustmentBalance(target)
       this.adjustmentDrawerVisible = true
     },
     async openAdjustmentDrawer() {
@@ -2618,6 +2651,9 @@ export default {
         this.$message.success('已保存草稿')
         this.adjustmentDrawerVisible = false
         await Promise.all([this.loadAdjustments(), this.loadBalances(), this.loadTransactions()])
+        if (this.batchDialogVisible && this.selectedBalance) {
+          await Promise.all([this.loadBatchRows(), this.loadBalanceRecentTransactions(this.selectedBalance)])
+        }
       } catch (error) {
         this.$message.error(error.userMessage || '保存调整单失败')
       }
@@ -2632,6 +2668,9 @@ export default {
         this.$message.success('已提交调整，待确认调整过账。')
         this.adjustmentDrawerVisible = false
         await Promise.all([this.loadAdjustments(), this.loadBalances(), this.loadTransactions()])
+        if (this.batchDialogVisible && this.selectedBalance) {
+          await Promise.all([this.loadBatchRows(), this.loadBalanceRecentTransactions(this.selectedBalance)])
+        }
       } catch (error) {
         if (error !== 'cancel' && error !== 'close') this.$message.error(error.userMessage || '提交调整单失败')
       }
@@ -2844,14 +2883,11 @@ export default {
 .info-icon-blue { color: #1890ff; font-size: 15px; }
 .btn-green-search { background-color: #008b4b !important; border-color: #008b4b !important; color: #fff !important; }
 .btn-expand-text { color: #008b4b; font-size: 13px; margin-left: 4px; }
-.balance-table-toolbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
-.toolbar-left { display: flex; align-items: center; gap: 8px; }
-.total-badge { color: #6b7280; font-size: 13px; margin-right: 6px; }
 .btn-green-plain { border-color: #008b4b !important; color: #008b4b !important; }
-.balance-main-layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; transition: all .2s; }
-.balance-main-layout.with-drawer { grid-template-columns: minmax(0, 1fr) 390px; }
+.balance-main-layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; }
 .balance-item-table { width: 100%; }
 .link-btn-green { color: #008b4b !important; font-size: 12px; margin: 0 4px; }
+.item-code-link { font-weight: 700; margin: 0; padding: 0; }
 .trend-arrow { color: #008b4b; font-size: 12px; font-weight: bold; }
 .unit-text { font-size: 12px; color: #6b7280; font-weight: normal; margin-left: 2px; }
 .font-bold { font-weight: 700; }
@@ -2860,37 +2896,21 @@ export default {
 .muted-text { color: #b0b4bb; }
 .text-green { color: #008b4b !important; }
 .text-blue { color: #2563eb !important; }
-.balance-detail-side { background: #fff; border: 1px solid #e5e7eb; border-radius: 4px; padding: 14px 16px; max-height: calc(100vh - 170px); overflow-y: auto; }
-.side-head { display: flex; justify-content: space-between; align-items: center; padding-bottom: 10px; border-bottom: 1px solid #e5e7eb; margin-bottom: 12px; }
-.side-head h3 { font-size: 15px; font-weight: 700; color: #111827; margin: 0; }
-.btn-close-side { background: none; border: none; font-size: 16px; color: #9ca3af; cursor: pointer; padding: 4px; }
-.btn-close-side:hover { color: #111827; }
-.detail-sec-title { font-size: 13px; font-weight: 700; color: #111827; margin: 14px 0 8px; display: flex; align-items: center; }
+.detail-sec-title { font-size: 13px; font-weight: 700; color: #111827; margin: 0 0 8px; display: flex; align-items: center; }
 .detail-sec-title::before { content: ''; display: inline-block; width: 3px; height: 13px; background: #008b4b; margin-right: 6px; border-radius: 2px; }
-.sec-kv-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 12px; font-size: 12px; }
-.sec-kv-grid .kv-item { display: flex; align-items: baseline; gap: 6px; }
-.sec-kv-grid .span-two { grid-column: 1 / -1; }
-.sec-kv-grid .kv-lbl { color: #6b7280; flex-shrink: 0; min-width: 56px; }
-.sec-kv-grid .kv-val { color: #111827; font-weight: 500; overflow-wrap: anywhere; }
-.sku-note-box { font-size: 11px; color: #9ca3af; margin-top: 4px; }
-.dist-table-wrap { overflow-x: auto; margin-top: 6px; }
-.dist-table { width: 100%; border-collapse: collapse; font-size: 11px; text-align: left; }
-.dist-table th { background: #f8fafc; color: #4b5563; padding: 6px 4px; border: 1px solid #e5e7eb; font-weight: 600; white-space: nowrap; }
-.dist-table td { padding: 6px 4px; border: 1px solid #e5e7eb; color: #111827; white-space: nowrap; }
-.dist-table .sum-row td { background: #f9fafb; font-weight: 700; color: #111827; }
-.tx-timeline-list { display: flex; flex-direction: column; gap: 8px; margin-top: 6px; }
-.tx-timeline-item { display: flex; gap: 8px; align-items: flex-start; padding: 8px; background: #fbfcfd; border: 1px solid #edf0f2; border-radius: 4px; }
-.tx-type-icon { width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; color: #fff; font-size: 12px; font-weight: bold; flex-shrink: 0; }
+.sku-note-box { font-size: 11px; color: #64748b; margin-top: 8px; }
+.tx-timeline-list { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }
+.tx-timeline-item { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; background: #fbfcfd; border: 1px solid #e2e8f0; border-radius: 6px; }
+.tx-type-icon { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; color: #fff; font-size: 12px; font-weight: bold; flex-shrink: 0; }
 .tx-type-icon.bg-green { background: #008b4b; }
 .tx-type-icon.bg-blue { background: #2563eb; }
 .tx-info-block { flex: 1; min-width: 0; }
-.tx-row-1 { display: flex; justify-content: space-between; align-items: center; font-size: 12px; margin-bottom: 3px; }
+.tx-row-1 { display: flex; justify-content: space-between; align-items: center; gap: 10px; font-size: 12px; margin-bottom: 4px; flex-wrap: wrap; }
 .tx-name { font-weight: 600; color: #111827; }
 .tx-qty { font-weight: 700; margin-left: 6px; }
 .tx-time { font-size: 11px; color: #9ca3af; margin-left: auto; }
-.tx-row-2 { display: flex; flex-wrap: wrap; gap: 6px; font-size: 11px; color: #6b7280; }
-.tx-more-link { text-align: center; margin-top: 10px; padding-top: 8px; border-top: 1px solid #f3f4f6; }
-.tx-more-link a { color: #008b4b; font-size: 12px; cursor: pointer; text-decoration: underline; }
+.tx-row-2 { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 11px; color: #64748b; }
+.tx-more-link { text-align: center; margin-top: 12px; padding-top: 10px; border-top: 1px solid #f1f5f9; }
 
 /* Alert Config Dialog V2 */
 .balance-alert-config-dialog-v2 { border-radius: 8px; overflow: hidden; }
@@ -2937,43 +2957,6 @@ export default {
 .dialog-footer-v2 { display: flex; justify-content: flex-end; gap: 10px; }
 .btn-green-submit { background: #008b4b !important; border-color: #008b4b !important; color: #fff !important; }
 
-.item-batch-dialog { min-width: 1080px; max-width: 1500px; border-radius: 7px; }
-.item-batch-dialog .el-dialog__header { padding: 0; }
-.item-batch-dialog .el-dialog__headerbtn { top: 18px; right: 22px; z-index: 2; }
-.item-batch-dialog .el-dialog__body { padding: 0 24px 12px; }
-.item-batch-dialog .el-dialog__footer { padding: 12px 24px 14px; border-top: 1px solid #e5e9ef; }
-.batch-dialog-page { color: #202833; }
-.batch-dialog-head { display: flex; align-items: center; justify-content: space-between; min-height: 82px; padding-right: 14px; }
-.batch-dialog-head h2 { margin: 0 0 9px; font-size: 22px; line-height: 1; }
-.batch-dialog-head p { display: flex; gap: 14px; margin: 0; font-size: 14px; }
-.batch-dialog-head p span { font-weight: 600; }
-.batch-item-summary { display: grid; grid-template-columns: 1.05fr 1.8fr repeat(6, minmax(0, 1fr)); border: 1px solid #dfe4ea; border-radius: 4px; margin-bottom: 13px; }
-.batch-item-summary div { min-width: 0; padding: 14px 16px; border-right: 1px solid #edf0f3; }
-.batch-item-summary div:last-child { border-right: 0; }
-.batch-item-summary span { display: block; margin-bottom: 9px; color: #758091; font-size: 12px; }
-.batch-item-summary strong { display: block; overflow-wrap: anywhere; font-size: 14px; line-height: 1.45; }
-.batch-dialog-grid { display: grid; grid-template-columns: minmax(560px, 1.04fr) minmax(520px, .96fr); border: 1px solid #dfe4ea; border-radius: 4px; overflow: hidden; }
-.batch-list-panel, .batch-context-panel { min-width: 0; padding: 14px; }
-.batch-context-panel { border-left: 1px solid #dfe4ea; }
-.batch-list-panel h3, .batch-context-panel h3 { margin: 0 0 12px; font-size: 16px; }
-.batch-list-footer { display: flex; align-items: center; justify-content: space-between; min-height: 52px; gap: 8px; }
-.batch-list-footer > span { white-space: nowrap; color: #5f6977; }
-.batch-list-panel >>> .el-table__body-wrapper, .batch-context-panel >>> .el-table__body-wrapper { overflow-x: hidden; }
-.batch-list-panel >>> .cell, .batch-context-panel >>> .cell { padding-left: 7px; padding-right: 7px; overflow-wrap: anywhere; }
-.item-batch-dialog .current-batch-row > td { background: #f1fbf5 !important; }
-.current-batch { margin: -2px 0 12px; color: #5e6875; }
-.current-batch strong { margin-left: 8px; color: #202833; font-size: 15px; }
-.batch-context-section { margin-bottom: 14px; }
-.batch-context-section h4, .batch-quality-actions h4 { position: relative; margin: 0 0 8px; padding-left: 12px; font-size: 14px; }
-.batch-context-section h4::before, .batch-quality-actions h4::before { position: absolute; left: 0; top: 2px; width: 3px; height: 15px; content: ''; background: #0ca45c; }
-.source-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0; margin: 0; padding: 11px 12px; border: 1px solid #e4e8ed; background: #fbfcfd; }
-.source-grid div { min-width: 0; }
-.source-grid dt { margin-bottom: 6px; color: #7b8491; font-size: 11px; }
-.source-grid dd { margin: 0; overflow-wrap: anywhere; font-size: 12px; }
-.quality-history-section { min-height: 150px; }
-.batch-quality-actions { padding: 2px 12px 10px; border: 1px solid #e4e8ed; background: #fbfcfd; }
-.batch-quality-actions h4 { margin-top: 10px; }
-.batch-quality-actions p { margin: 10px 0 0; color: #7b8491; font-size: 12px; }
 .timeline-list { list-style: none; padding: 0; margin: 0; }
 .timeline-list li { display: grid; grid-template-columns: 16px 1fr auto; gap: 8px; padding: 8px 0; border-bottom: 1px solid #edf0f2; }
 .timeline-list small { grid-column: 2 / 4; color: #6b7280; }
@@ -3037,8 +3020,6 @@ export default {
 .adjustment-detail-panel { width: 430px; }
 .adjustment-detail-dl { grid-template-columns: 86px 1fr; }
 .adjustment-detail-dl dt, .adjustment-detail-dl dd { grid-column: auto; }
-.adjustment-panel >>> .adjustment-reason-popper { z-index: 2601 !important; }
-.adjustment-panel >>> .el-select-dropdown { position: absolute !important; }
 .balance-picker-card { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 54px; padding: 9px 10px; border: 1px solid #dfe7ee; border-radius: 4px; background: #fbfdff; }
 .balance-picker-card div { display: grid; gap: 4px; min-width: 0; }
 .balance-picker-card strong { color: #111827; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -3056,7 +3037,6 @@ export default {
 .adjustment-serial-count { margin-top: 8px; padding: 7px 9px; color: #047857; background: #ecfdf5; border-radius: 3px; }
 .adjustment-serial-count.danger { color: #b45309; background: #fff7ed; }
 .adjustment-detail-serials { display: flex; flex-wrap: wrap; gap: 5px; }
-.adjustment-panel >>> .adjustment-serial-popper { z-index: 2601 !important; }
 .adjustment-stock-preview { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; margin: 10px 0 12px; }
 .adjustment-stock-preview article { padding: 8px 6px; text-align: center; border: 1px solid #dfe7ee; border-radius: 4px; background: #fff; }
 .adjustment-stock-preview span { display: block; margin-bottom: 3px; color: #6b7280; font-size: 12px; }
@@ -3064,11 +3044,6 @@ export default {
 .adjustment-stock-preview article.danger { border-color: #fecaca; background: #fef2f2; }
 .adjustment-stock-preview article.danger strong { color: #dc2626; }
 .adjustment-panel footer { position: absolute; left: 0; right: 0; bottom: 0; display: flex; justify-content: flex-end; gap: 8px; padding: 12px 18px; background: #fff; border-top: 1px solid #e5e7eb; }
-.quality-panel { width: 438px; }
-.quality-panel header { height: 66px; }
-.quality-panel header div { min-width: 0; }
-.quality-panel header small { display: block; margin-top: 4px; color: #6b7280; font-size: 11px; font-weight: 400; }
-.quality-panel-body { padding: 12px 14px 82px; }
 .quality-card { margin-top: 10px; padding: 12px; border: 1px solid #e1e7eb; border-radius: 5px; background: #fff; min-width: 0; }
 .quality-card h4 { display: flex; align-items: center; gap: 7px; margin: 0 0 12px; color: #1f2937; font-size: 13px; }
 .quality-card h4 b { display: inline-grid; place-items: center; width: 19px; height: 19px; border-radius: 4px; color: #fff; background: #059669; font-size: 11px; }
@@ -3079,12 +3054,7 @@ export default {
 .quality-form-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; min-width: 0; }
 .quality-form-grid .span-two { grid-column: 1 / -1; }
 .quality-form-grid em { color: #dc2626; font-style: normal; }
-.quality-panel .full-control, .quality-panel .el-input, .quality-panel .el-select, .quality-panel .el-input-number { width: 100%; max-width: 100%; min-width: 0; }
-.quality-panel >>> .el-input__inner { width: 100%; padding-right: 30px; text-overflow: clip; }
-.quality-panel >>> .el-input-number .el-input__inner { padding-left: 10px; padding-right: 42px; text-align: left; }
-.quality-panel >>> .quality-select-popper { z-index: 2601 !important; }
 .quality-field small { display: block; line-height: 1.55; color: #6b7280; }
-.quality-panel >>> textarea { width: 100%; box-sizing: border-box; resize: vertical; }
 .quality-action-note { display: grid; gap: 4px; margin-top: 12px; padding: 10px; border: 1px solid #bfdbfe; border-radius: 4px; color: #3b5f88; background: #eff6ff; line-height: 1.55; }
 .quality-action-note strong { color: #1d4ed8; }
 .quality-action-note span { overflow-wrap: anywhere; }
@@ -3097,15 +3067,11 @@ export default {
 .quality-event-actions { display: flex; gap: 6px; }
 .table-card >>> .el-table__body-wrapper { overflow-x: auto; }
 .table-card >>> .cell { overflow-wrap: anywhere; }
-.side-slide-enter-active, .side-slide-leave-active { transition: transform .18s ease, opacity .18s ease; }
-.side-slide-enter, .side-slide-leave-to { transform: translateX(100%); opacity: .6; }
-.balance-picker-dialog .el-dialog__body { padding: 12px 16px 14px; }
 .inventory-serial-dialog-body { display:grid; gap:12px; }
 .serial-locator-summary { display:grid; grid-template-columns:1.5fr 1fr 1fr 1fr; gap:10px; padding:11px 12px; border:1px solid #dfe8e2; border-radius:4px; background:#f7faf8; }
 .serial-locator-summary>div { display:grid; gap:4px; min-width:0; }
 .serial-locator-summary span { color:#78847d; font-size:11px; }
 .serial-locator-summary strong { color:#24352c; font-size:12px; overflow-wrap:anywhere; }
-.inventory-serial-dialog .el-table .cell { white-space:normal; word-break:break-word; }
 .picker-filter { margin-bottom: 10px; }
 .picker-footer { display: flex; align-items: center; justify-content: space-between; padding-top: 10px; color: #4b5563; }
 
@@ -3117,23 +3083,13 @@ export default {
 .metric-grid.four { width: 100%; min-width: 0; }
 .metric-grid.four article { min-width: 0; overflow: hidden; }
 .metric-grid.four article span, .metric-grid.four article strong { min-width: 0; overflow-wrap: anywhere; }
-.balance-table-toolbar, .toolbar-left, .toolbar-right { min-width: 0; flex-wrap: wrap; }
 .balance-item-table { overflow: hidden; }
 .balance-item-table >>> .el-table__body-wrapper { max-width: 100%; overflow-x: auto; }
 @media (max-width: 1200px) {
   .posting-layout, .balance-layout, .tx-layout { grid-template-columns: 1fr; }
-  .balance-main-layout.with-drawer { grid-template-columns: 1fr; }
   .posting-repair-allocation { grid-template-columns:repeat(2,minmax(0,1fr)); }
   .posting-repair-serials { grid-column:1/-1; }
   .metric-grid.four { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .item-batch-dialog { width: 94% !important; min-width: 0; }
-  .batch-item-summary { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-  .batch-item-summary div:nth-child(4) { border-right: 0; }
-  .batch-item-summary div:nth-child(-n+4) { border-bottom: 1px solid #edf0f3; }
-  .batch-dialog-grid { grid-template-columns: 1fr; max-height: 72vh; overflow-y: auto; }
-  .batch-context-panel { border-left: 0; border-top: 1px solid #dfe4ea; }
-  .alert-config-main { grid-template-columns:1fr; }
-  .alert-config-check { border-top:1px solid #e0e7ed; border-left:0; }
 }
 @media (max-width: 760px) {
   .balance-filter label { flex-direction: column; align-items: stretch; width: 100%; min-width: 0; }
@@ -3141,12 +3097,6 @@ export default {
   .inventory-view >>> .el-pagination { display: flex; flex-wrap: wrap; max-width: 100%; white-space: normal; }
   .inventory-view >>> .el-pagination__sizes, .inventory-view >>> .el-pagination__jump { margin: 0; }
   .serial-locator-summary { grid-template-columns:1fr 1fr; }
-  .item-batch-dialog .el-dialog__body { padding: 0 12px 10px; }
-  .batch-item-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .batch-item-summary div { border-bottom: 1px solid #edf0f3; }
-  .batch-item-summary div:nth-child(even) { border-right: 0; }
-  .batch-dialog-head { align-items: flex-start; flex-direction: column; justify-content: center; gap: 10px; }
-  .source-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
   .page-head { flex-direction:column; gap:10px; }
   .balance-head-actions { width:100%; justify-content:flex-start; }
   .balance-alert-config-dialog-v2 { width:calc(100vw - 20px) !important; margin-top:4vh !important; }
@@ -3154,210 +3104,6 @@ export default {
   .alert-stock-grid { grid-template-columns: 1fr 1fr; }
   .alert-inputs-row { grid-template-columns: 1fr; }
   .alert-rules-bullets { grid-template-columns: 1fr; }
-}
-.balance-item-table { width: 100%; }
-.item-batch-dialog { min-width: 1080px; max-width: 1500px; border-radius: 7px; }
-.item-batch-dialog .el-dialog__header { padding: 0; }
-.item-batch-dialog .el-dialog__headerbtn { top: 18px; right: 22px; z-index: 2; }
-.item-batch-dialog .el-dialog__body { padding: 0 24px 12px; }
-.item-batch-dialog .el-dialog__footer { padding: 12px 24px 14px; border-top: 1px solid #e5e9ef; }
-.batch-dialog-page { color: #202833; }
-.batch-dialog-head { display: flex; align-items: center; justify-content: space-between; min-height: 82px; padding-right: 14px; }
-.batch-dialog-head h2 { margin: 0 0 9px; font-size: 22px; line-height: 1; }
-.batch-dialog-head p { display: flex; gap: 14px; margin: 0; font-size: 14px; }
-.batch-dialog-head p span { font-weight: 600; }
-.batch-item-summary { display: grid; grid-template-columns: 1.05fr 1.8fr repeat(6, minmax(0, 1fr)); border: 1px solid #dfe4ea; border-radius: 4px; margin-bottom: 13px; }
-.batch-item-summary div { min-width: 0; padding: 14px 16px; border-right: 1px solid #edf0f3; }
-.batch-item-summary div:last-child { border-right: 0; }
-.batch-item-summary span { display: block; margin-bottom: 9px; color: #758091; font-size: 12px; }
-.batch-item-summary strong { display: block; overflow-wrap: anywhere; font-size: 14px; line-height: 1.45; }
-.batch-dialog-grid { display: grid; grid-template-columns: minmax(560px, 1.04fr) minmax(520px, .96fr); border: 1px solid #dfe4ea; border-radius: 4px; overflow: hidden; }
-.batch-list-panel, .batch-context-panel { min-width: 0; padding: 14px; }
-.batch-context-panel { border-left: 1px solid #dfe4ea; }
-.batch-list-panel h3, .batch-context-panel h3 { margin: 0 0 12px; font-size: 16px; }
-.batch-list-footer { display: flex; align-items: center; justify-content: space-between; min-height: 52px; gap: 8px; }
-.batch-list-footer > span { white-space: nowrap; color: #5f6977; }
-.batch-list-panel >>> .el-table__body-wrapper, .batch-context-panel >>> .el-table__body-wrapper { overflow-x: hidden; }
-.batch-list-panel >>> .cell, .batch-context-panel >>> .cell { padding-left: 7px; padding-right: 7px; overflow-wrap: anywhere; }
-.item-batch-dialog .current-batch-row > td { background: #f1fbf5 !important; }
-.current-batch { margin: -2px 0 12px; color: #5e6875; }
-.current-batch strong { margin-left: 8px; color: #202833; font-size: 15px; }
-.batch-context-section { margin-bottom: 14px; }
-.batch-context-section h4, .batch-quality-actions h4 { position: relative; margin: 0 0 8px; padding-left: 12px; font-size: 14px; }
-.batch-context-section h4::before, .batch-quality-actions h4::before { position: absolute; left: 0; top: 2px; width: 3px; height: 15px; content: ''; background: #0ca45c; }
-.source-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0; margin: 0; padding: 11px 12px; border: 1px solid #e4e8ed; background: #fbfcfd; }
-.source-grid div { min-width: 0; }
-.source-grid dt { margin-bottom: 6px; color: #7b8491; font-size: 11px; }
-.source-grid dd { margin: 0; overflow-wrap: anywhere; font-size: 12px; }
-.quality-history-section { min-height: 150px; }
-.batch-quality-actions { padding: 2px 12px 10px; border: 1px solid #e4e8ed; background: #fbfcfd; }
-.batch-quality-actions h4 { margin-top: 10px; }
-.batch-quality-actions p { margin: 10px 0 0; color: #7b8491; font-size: 12px; }
-.timeline-list { list-style: none; padding: 0; margin: 0; }
-.timeline-list li { display: grid; grid-template-columns: 16px 1fr auto; gap: 8px; padding: 8px 0; border-bottom: 1px solid #edf0f2; }
-.timeline-list small { grid-column: 2 / 4; color: #6b7280; }
-.green-dot, .orange-dot { width: 9px; height: 9px; border-radius: 50%; margin-top: 4px; background: #059669; }
-.orange-dot { background: #f59e0b; }
-.disabled-legend { margin: 8px 0 12px; padding: 10px 12px; border-top: 1px solid #e5e7eb; border-bottom: 1px solid #e5e7eb; color: #4b5563; background: #fff; }
-.disabled-legend b, .disabled-legend span { margin-left: 14px; }
-.adjustment-list { padding: 12px; }
-.adjustment-card { border: 1px solid #e5e7eb; border-radius: 4px; padding: 10px; margin-bottom: 10px; }
-.adjustment-card div, .adjustment-card footer { display: flex; justify-content: space-between; align-items: center; }
-.adjustment-card p { margin: 8px 0; color: #4b5563; }
-.adjustment-summary { display: grid; grid-template-columns: 68px 1fr; gap: 5px 8px; margin: 8px 0; font-size: 12px; }
-.adjustment-summary dt { color: #6b7280; }
-.adjustment-summary dd { margin: 0; color: #111827; }
-.confirm-grid { display: grid; grid-template-columns: 140px 1fr 140px 1fr; gap: 0; margin: 14px 0 0; border: 1px solid #e5e7eb; border-bottom: none; border-right: none; }
-.confirm-grid dt, .confirm-grid dd { margin: 0; padding: 9px 10px; border-right: 1px solid #e5e7eb; border-bottom: 1px solid #e5e7eb; }
-.confirm-grid dt { background: #f9fafb; color: #6b7280; }
-.confirm-grid dd { font-weight: 600; }
-.posting-assignment-list { display: grid; gap: 10px; margin-top: 14px; }
-.posting-assignment-line { display: grid; grid-template-columns: minmax(150px, 1.2fr) repeat(3, minmax(140px, 1fr)); gap: 10px; align-items: end; padding: 12px; border: 1px solid #e5e7eb; border-radius: 4px; background: #f9fafb; }
-.posting-assignment-line strong { align-self: center; color: #111827; }
-.posting-assignment-line label { display: grid; gap: 5px; color: #6b7280; font-size: 12px; }
-.posting-assignment-line .el-select, .posting-assignment-line .el-input { width: 100%; }
-.posting-assignment-line .posting-serial-field { grid-column: 1 / -1; display:grid; gap:6px; color:#6b7280; font-size:12px; }
-.posting-serial-tags { display:flex; flex-wrap:wrap; gap:6px; min-height:28px; padding:6px; border:1px solid #dcdfe6; border-radius:4px; background:#fff; }
-.posting-serial-field small { color: #9a6700; line-height: 1.5; white-space: normal; }
-.posting-allocation-review { grid-column:1/-1; display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:7px; padding:8px; border:1px solid #cfe5d7; border-radius:4px; background:#f4fbf6; }
-.posting-allocation-review>div { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:7px 9px; border:1px solid #dfe9e2; border-radius:3px; background:#fff; }
-.posting-allocation-review strong { color:#24583a; font-size:12px; }
-.posting-allocation-review span { flex:0 0 auto; color:#67756d; font-size:11px; }
-.posting-allocation-missing { grid-column:1/-1; padding:8px 10px; border:1px solid #f3c6c6; border-radius:4px; background:#fff5f5; color:#c0392b; font-size:12px; }
-.posting-check { display:flex; flex-direction:column; align-items:flex-start; gap:4px; line-height:1.35; white-space:normal; }
-.posting-check span { font-size:11px; }
-.posting-check-blocked span { color:#c0392b; }
-.posting-check-passed span { color:#5b7564; }
-.posting-blocked-alert { margin:8px 0 10px; }
-.posting-blocked-alert .el-alert__content { width:100%; }
-.posting-blocked-alert .el-alert__description { margin-top:7px; }
-.posting-notice-alert { margin-top:8px; }
-.posting-repair-summary { display:grid; grid-template-columns:minmax(0,220px) minmax(0,1fr); gap:12px; margin:12px 0; padding:10px 12px; border:1px solid #e4e9e6; border-radius:4px; background:#fafcfb; }
-.posting-repair-summary span { display:flex; flex-direction:column; gap:4px; color:#7b8580; font-size:12px; }
-.posting-repair-summary strong { color:#25342c; font-size:13px; }
-.posting-repair-line { margin-top:12px; border:1px solid #dfe7e2; border-radius:5px; overflow:hidden; }
-.posting-repair-line>header { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 12px; background:#f5faf7; }
-.posting-repair-line>header div { display:flex; flex-direction:column; gap:3px; }
-.posting-repair-line>header span { color:#6f7d75; font-size:12px; }
-.posting-repair-allocation { display:grid; grid-template-columns:minmax(150px,1fr) minmax(150px,1fr) 155px minmax(180px,1.2fr) 44px; gap:10px; align-items:end; padding:10px 12px; border-top:1px solid #edf1ee; }
-.posting-repair-allocation label { display:flex; flex-direction:column; gap:5px; color:#53615a; font-size:12px; min-width:0; }
-.posting-repair-allocation .el-select, .posting-repair-allocation .el-input-number { width:100%; }
-.posting-repair-serials { min-width:0; }
-.posting-repair-remove { margin-bottom:6px; }
-.posting-repair-progress { padding:8px 12px; border-top:1px solid #edf1ee; background:#f6fbf8; color:#19935a; font-size:12px; }
-.posting-repair-progress.danger { background:#fff8f3; color:#d46b21; }
-.red-text { color:#c0392b!important; }
-.adjustment-panel { position: fixed; top: 58px; right: 0; bottom: 0; width: 372px; z-index: 3001; background: #fff; border-left: 1px solid #e5e7eb; box-shadow: -10px 0 26px rgba(15, 23, 42, .12); display: flex; flex-direction: column; }
-.adjustment-panel header { height: 56px; display: flex; align-items: center; justify-content: space-between; padding: 0 18px; border-bottom: 1px solid #e5e7eb; }
-.adjustment-panel h3 { margin: 0; font-size: 16px; color: #111827; }
-.adjustment-panel header button { border: 0; background: transparent; cursor: pointer; color: #6b7280; font-size: 16px; }
-.adjustment-panel-body { flex: 1; overflow: auto; padding: 14px 18px 74px; }
-.adjustment-panel .el-form { margin-top: 14px; }
-.adjustment-panel .el-select, .adjustment-panel .el-input, .adjustment-panel .el-input-number { width: 100%; }
-.adjustment-detail-panel { width: 430px; }
-.adjustment-detail-dl { grid-template-columns: 86px 1fr; }
-.adjustment-detail-dl dt, .adjustment-detail-dl dd { grid-column: auto; }
-.adjustment-panel >>> .adjustment-reason-popper { z-index: 3002 !important; }
-.adjustment-panel >>> .el-select-dropdown { position: absolute !important; }
-.balance-picker-card { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 54px; padding: 9px 10px; border: 1px solid #dfe7ee; border-radius: 4px; background: #fbfdff; }
-.balance-picker-card div { display: grid; gap: 4px; min-width: 0; }
-.balance-picker-card strong { color: #111827; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.balance-picker-card span { color: #6b7280; font-size: 12px; }
-.balance-picker-card small { color: #4b5563; font-size: 12px; line-height: 1.65; }
-.adjustment-readonly-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 8px 0 12px; padding: 10px; background: #f8fafc; border: 1px solid #e5e7eb; border-radius: 4px; color: #374151; }
-.adjustment-readonly-grid span:first-child { grid-column: 1 / 3; }
-.adjustment-readonly-grid b { display: block; margin-bottom: 3px; color: #6b7280; font-weight: 500; }
-.adjustment-serial-card { margin-top: 12px; padding: 12px; border: 1px solid #dfe6ee; border-radius: 4px; background: #f8fafc; }
-.adjustment-serial-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
-.adjustment-serial-head strong { display: block; margin-bottom: 4px; color: #111827; }
-.adjustment-serial-head small, .adjustment-serial-stock { display: block; color: #6b7280; line-height: 1.55; }
-.adjustment-serial-actions { display: flex; gap: 8px; margin-bottom: 8px; }
-.adjustment-serial-actions .el-button + .el-button { margin-left: 0; }
-.adjustment-serial-count { margin-top: 8px; padding: 7px 9px; color: #047857; background: #ecfdf5; border-radius: 3px; }
-.adjustment-serial-count.danger { color: #b45309; background: #fff7ed; }
-.adjustment-detail-serials { display: flex; flex-wrap: wrap; gap: 5px; }
-.adjustment-panel >>> .adjustment-serial-popper { z-index: 3002 !important; }
-.adjustment-stock-preview { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; margin: 10px 0 12px; }
-.adjustment-stock-preview article { padding: 8px 6px; text-align: center; border: 1px solid #dfe7ee; border-radius: 4px; background: #fff; }
-.adjustment-stock-preview span { display: block; margin-bottom: 3px; color: #6b7280; font-size: 12px; }
-.adjustment-stock-preview strong { color: #111827; }
-.adjustment-stock-preview article.danger { border-color: #fecaca; background: #fef2f2; }
-.adjustment-stock-preview article.danger strong { color: #dc2626; }
-.adjustment-panel footer { position: absolute; left: 0; right: 0; bottom: 0; display: flex; justify-content: flex-end; gap: 8px; padding: 12px 18px; background: #fff; border-top: 1px solid #e5e7eb; }
-.quality-panel { width: 438px; }
-.quality-panel header { height: 66px; }
-.quality-panel header div { min-width: 0; }
-.quality-panel header small { display: block; margin-top: 4px; color: #6b7280; font-size: 11px; font-weight: 400; }
-.quality-panel-body { padding: 12px 14px 82px; }
-.quality-card { margin-top: 10px; padding: 12px; border: 1px solid #e1e7eb; border-radius: 5px; background: #fff; min-width: 0; }
-.quality-card h4 { display: flex; align-items: center; gap: 7px; margin: 0 0 12px; color: #1f2937; font-size: 13px; }
-.quality-card h4 b { display: inline-grid; place-items: center; width: 19px; height: 19px; border-radius: 4px; color: #fff; background: #059669; font-size: 11px; }
-.quality-locator { display: grid; grid-template-columns: 88px minmax(0, 1fr); gap: 9px 10px; margin: 0 0 12px; }
-.quality-locator dt { color: #6b7280; }
-.quality-locator dd { min-width: 0; margin: 0; color: #111827; overflow-wrap: anywhere; }
-.quality-field, .quality-form-grid label { display: grid; min-width: 0; gap: 6px; color: #4b5563; font-size: 12px; }
-.quality-form-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; min-width: 0; }
-.quality-form-grid .span-two { grid-column: 1 / -1; }
-.quality-form-grid em { color: #dc2626; font-style: normal; }
-.quality-panel .full-control, .quality-panel .el-input, .quality-panel .el-select, .quality-panel .el-input-number { width: 100%; max-width: 100%; min-width: 0; }
-.quality-panel >>> .el-input__inner { width: 100%; padding-right: 30px; text-overflow: clip; }
-.quality-panel >>> .el-input-number .el-input__inner { padding-left: 10px; padding-right: 42px; text-align: left; }
-.quality-panel >>> .quality-select-popper { z-index: 3002 !important; }
-.quality-field small { display: block; line-height: 1.55; color: #6b7280; }
-.quality-panel >>> textarea { width: 100%; box-sizing: border-box; resize: vertical; }
-.quality-action-note { display: grid; gap: 4px; margin-top: 12px; padding: 10px; border: 1px solid #bfdbfe; border-radius: 4px; color: #3b5f88; background: #eff6ff; line-height: 1.55; }
-.quality-action-note strong { color: #1d4ed8; }
-.quality-action-note span { overflow-wrap: anywhere; }
-.active-quality-card { border-color: #f4c77a; background: #fffaf0; }
-.active-quality-card h4 b { background: #d97706; }
-.quality-event-row { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 10px; align-items: center; padding: 9px 0; border-top: 1px solid #f3dfbc; }
-.quality-event-row:first-of-type { border-top: 0; }
-.quality-event-row div:first-child { display: grid; min-width: 0; gap: 3px; }
-.quality-event-row span, .quality-event-row small { color: #6b7280; overflow-wrap: anywhere; }
-.quality-event-actions { display: flex; gap: 6px; }
-.table-card >>> .el-table__body-wrapper { overflow-x: auto; }
-.table-card >>> .cell { overflow-wrap: anywhere; }
-.side-slide-enter-active, .side-slide-leave-active { transition: transform .18s ease, opacity .18s ease; }
-.side-slide-enter, .side-slide-leave-to { transform: translateX(100%); opacity: .6; }
-.balance-picker-dialog .el-dialog__body { padding: 12px 16px 14px; }
-.inventory-serial-dialog-body { display:grid; gap:12px; }
-.serial-locator-summary { display:grid; grid-template-columns:1.5fr 1fr 1fr 1fr; gap:10px; padding:11px 12px; border:1px solid #dfe8e2; border-radius:4px; background:#f7faf8; }
-.serial-locator-summary>div { display:grid; gap:4px; min-width:0; }
-.serial-locator-summary span { color:#78847d; font-size:11px; }
-.serial-locator-summary strong { color:#24352c; font-size:12px; overflow-wrap:anywhere; }
-.inventory-serial-dialog .el-table .cell { white-space:normal; word-break:break-word; }
-.picker-filter { margin-bottom: 10px; }
-.picker-footer { display: flex; align-items: center; justify-content: space-between; padding-top: 10px; color: #4b5563; }
-@media (max-width: 1200px) {
-  .posting-layout, .balance-layout, .tx-layout { grid-template-columns: 1fr; }
-  .posting-repair-allocation { grid-template-columns:repeat(2,minmax(0,1fr)); }
-  .posting-repair-serials { grid-column:1/-1; }
-  .metric-grid.four { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .item-batch-dialog { width: 94% !important; min-width: 0; }
-  .batch-item-summary { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-  .batch-item-summary div:nth-child(4) { border-right: 0; }
-  .batch-item-summary div:nth-child(-n+4) { border-bottom: 1px solid #edf0f3; }
-  .batch-dialog-grid { grid-template-columns: 1fr; max-height: 72vh; overflow-y: auto; }
-  .batch-context-panel { border-left: 0; border-top: 1px solid #dfe4ea; }
-  .alert-config-main { grid-template-columns:1fr; }
-  .alert-config-check { border-top:1px solid #e0e7ed; border-left:0; }
-}
-@media (max-width: 760px) {
-  .serial-locator-summary { grid-template-columns:1fr 1fr; }
-  .item-batch-dialog .el-dialog__body { padding: 0 12px 10px; }
-  .batch-item-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .batch-item-summary div { border-bottom: 1px solid #edf0f3; }
-  .batch-item-summary div:nth-child(even) { border-right: 0; }
-  .batch-dialog-head { align-items: flex-start; flex-direction: column; justify-content: center; gap: 10px; }
-  .source-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
-  .page-head { flex-direction:column; gap:10px; }
-  .balance-head-actions { width:100%; justify-content:flex-start; }
-  .balance-alert-config-dialog { width:calc(100vw - 20px) !important; margin-top:4vh !important; }
-  .balance-alert-config-dialog .el-dialog__body { padding:8px 12px 14px; }
-  .alert-config-item-card { grid-template-columns:1fr 1fr; }
-  .alert-config-item-card>div:nth-child(2) { border-right:0; }
-  .alert-config-item-card>div:nth-child(-n+2) { border-bottom:1px solid #e8edf1; }
-  .alert-threshold-grid { grid-template-columns:1fr; }
 }
 .posting-dialog >>> .el-dialog, .posting-repair-dialog >>> .el-dialog { max-width: calc(100vw - 24px); }
 .posting-dialog .confirm-grid dt, .posting-dialog .confirm-grid dd { min-width: 0; overflow-wrap: anywhere; }
@@ -3375,7 +3121,7 @@ export default {
 @media (max-width: 600px) {
   .posting-view .metric-grid.four { grid-template-columns: minmax(0, 1fr); }
 }
-/* 按 2026-09-24 规则，侧页统一改为当前页面上的居中弹窗：四周留边、按视口限制宽高，长内容在内部滚动。 */
+/* 调整单详情面板维持居中弹窗呈现：四周留边、按视口限制宽高，长内容在内部滚动。 */
 .adjustment-panel {
   top: 50%;
   left: 50%;
@@ -3391,4 +3137,115 @@ export default {
   overflow: hidden;
 }
 .adjustment-panel footer { border-radius: 0 0 8px 8px; }
+</style>
+
+<style>
+/* append-to-body 居中弹窗全局作用域样式（以唯一 custom-class 限定边界，不污染其他模块） */
+.item-batch-dialog { max-width: 1380px; border-radius: 8px; }
+.item-batch-dialog .el-dialog__header { padding: 0; }
+.item-batch-dialog .el-dialog__headerbtn { top: 18px; right: 22px; z-index: 2; }
+.item-batch-dialog .el-dialog__body { padding: 0 22px 14px; max-height: 80vh; overflow-y: auto; }
+.item-batch-dialog .el-dialog__footer { padding: 12px 22px 14px; border-top: 1px solid #e5e9ef; }
+.item-batch-dialog .batch-dialog-page { color: #202833; }
+.item-batch-dialog .batch-dialog-head { display: flex; align-items: center; justify-content: space-between; min-height: 72px; padding-right: 26px; gap: 12px; }
+.item-batch-dialog .batch-dialog-head h2 { margin: 0 0 8px; font-size: 20px; line-height: 1.2; color: #0f172a; }
+.item-batch-dialog .batch-dialog-head p { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin: 0; font-size: 13px; }
+.item-batch-dialog .batch-dialog-head p span { font-weight: 600; color: #334155; }
+.item-batch-dialog .batch-item-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); border: 1px solid #dfe4ea; border-radius: 6px; margin-bottom: 12px; background: #fafbfc; overflow: hidden; }
+.item-batch-dialog .batch-item-summary div { min-width: 0; padding: 11px 14px; border-right: 1px solid #edf0f3; }
+.item-batch-dialog .batch-item-summary div:last-child { border-right: 0; }
+.item-batch-dialog .batch-item-summary span { display: block; margin-bottom: 6px; color: #64748b; font-size: 12px; }
+.item-batch-dialog .batch-item-summary strong { display: block; overflow-wrap: anywhere; font-size: 14px; line-height: 1.4; color: #0f172a; }
+.item-batch-dialog .detail-overview-panel { display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(0, 1fr); gap: 12px; margin-bottom: 10px; }
+.item-batch-dialog .overview-card { border: 1px solid #e2e8f0; border-radius: 6px; padding: 12px 14px; background: #fff; min-width: 0; }
+.item-batch-dialog .overview-kv-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px 14px; font-size: 12px; }
+.item-batch-dialog .overview-kv-grid .kv-item { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+.item-batch-dialog .overview-kv-grid .span-two { grid-column: 1 / -1; }
+.item-batch-dialog .overview-kv-grid .kv-lbl { color: #64748b; flex-shrink: 0; }
+.item-batch-dialog .overview-kv-grid .kv-val { color: #111827; font-weight: 600; overflow-wrap: anywhere; }
+.item-batch-dialog .detail-dialog-tabs .el-tabs__header { margin-bottom: 12px; }
+.item-batch-dialog .detail-dialog-tabs .el-tabs__item { font-weight: 600; color: #475569; }
+.item-batch-dialog .detail-dialog-tabs .el-tabs__item:hover,
+.item-batch-dialog .detail-dialog-tabs .el-tabs__item.is-active { color: #008b4b; }
+.item-batch-dialog .detail-dialog-tabs .el-tabs__active-bar { background-color: #008b4b; }
+.item-batch-dialog .batch-dialog-grid { display: grid; grid-template-columns: minmax(480px, 1.02fr) minmax(480px, .98fr); border: 1px solid #dfe4ea; border-radius: 6px; overflow: hidden; }
+.item-batch-dialog .batch-list-panel, .item-batch-dialog .batch-context-panel { min-width: 0; padding: 14px; }
+.item-batch-dialog .batch-context-panel { border-left: 1px solid #dfe4ea; }
+.item-batch-dialog .batch-list-panel h3, .item-batch-dialog .batch-context-panel h3 { margin: 0 0 12px; font-size: 15px; }
+.item-batch-dialog .batch-list-footer { display: flex; align-items: center; justify-content: space-between; min-height: 48px; gap: 8px; }
+.item-batch-dialog .batch-list-footer > span { white-space: nowrap; color: #5f6977; }
+.item-batch-dialog .batch-list-panel .el-table__body-wrapper, .item-batch-dialog .batch-context-panel .el-table__body-wrapper { overflow-x: auto; }
+.item-batch-dialog .batch-list-panel .cell, .item-batch-dialog .batch-context-panel .cell { padding-left: 7px; padding-right: 7px; overflow-wrap: anywhere; }
+.item-batch-dialog .current-batch-row > td { background: #f0fdf4 !important; }
+.item-batch-dialog .current-batch { margin: -2px 0 12px; color: #5e6875; }
+.item-batch-dialog .current-batch strong { margin-left: 8px; color: #202833; font-size: 14px; }
+.item-batch-dialog .batch-context-section { margin-bottom: 14px; }
+.item-batch-dialog .batch-context-section h4, .item-batch-dialog .batch-quality-actions h4 { position: relative; margin: 0 0 8px; padding-left: 12px; font-size: 14px; }
+.item-batch-dialog .batch-context-section h4::before, .item-batch-dialog .batch-quality-actions h4::before { position: absolute; left: 0; top: 2px; width: 3px; height: 15px; content: ''; background: #008b4b; }
+.item-batch-dialog .source-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin: 0; padding: 11px 12px; border: 1px solid #e4e8ed; background: #fbfcfd; border-radius: 4px; }
+.item-batch-dialog .source-grid div { min-width: 0; }
+.item-batch-dialog .source-grid dt { margin-bottom: 5px; color: #64748b; font-size: 11px; }
+.item-batch-dialog .source-grid dd { margin: 0; overflow-wrap: anywhere; font-size: 12px; font-weight: 600; color: #0f172a; }
+.item-batch-dialog .quality-history-section { min-height: 120px; }
+.item-batch-dialog .batch-quality-actions { padding: 2px 12px 12px; border: 1px solid #e4e8ed; background: #fbfcfd; border-radius: 4px; }
+.item-batch-dialog .batch-quality-actions h4 { margin-top: 10px; }
+.item-batch-dialog .batch-quality-actions p { margin: 8px 0 0; color: #64748b; font-size: 12px; }
+.item-batch-dialog .recent-tx-tab-body { min-height: 180px; }
+
+.item-tx-dialog { border-radius: 8px; }
+.item-tx-dialog .el-dialog__header { padding: 16px 20px; border-bottom: 1px solid #edf1f5; font-weight: 700; }
+.item-tx-dialog .el-dialog__body { padding: 14px 20px 10px; }
+.item-tx-dialog .el-dialog__footer { padding: 12px 20px 14px; border-top: 1px solid #edf1f5; }
+.item-tx-dialog .item-tx-summary { display: grid; grid-template-columns: 1fr 1.6fr 0.7fr 0.8fr 0.8fr; gap: 10px; padding: 10px 14px; border: 1px solid #e2e8f0; border-radius: 6px; background: #f8fafc; margin-bottom: 12px; }
+.item-tx-dialog .item-tx-summary > div { min-width: 0; }
+.item-tx-dialog .item-tx-summary span { display: block; font-size: 11px; color: #64748b; margin-bottom: 4px; }
+.item-tx-dialog .item-tx-summary strong { display: block; font-size: 13px; color: #0f172a; overflow-wrap: anywhere; }
+.item-tx-dialog .item-tx-filter { display: flex; flex-wrap: wrap; gap: 10px 12px; align-items: end; padding: 10px 12px; background: #fff; border: 1px solid #e5e7eb; border-radius: 6px; margin-bottom: 12px; }
+.item-tx-dialog .item-tx-filter label { display: flex; align-items: center; gap: 6px; color: #374151; font-size: 12px; white-space: nowrap; }
+.item-tx-dialog .item-tx-filter .el-input,
+.item-tx-dialog .item-tx-filter .el-select,
+.item-tx-dialog .item-tx-filter .paged-record-select { width: 152px; }
+.item-tx-dialog .item-tx-filter .el-date-editor { width: 224px; }
+
+.adjustment-dialog, .quality-dialog { border-radius: 8px; }
+.adjustment-dialog .el-dialog__header, .quality-dialog .el-dialog__header { padding: 16px 20px; border-bottom: 1px solid #e5e7eb; }
+.adjustment-dialog .el-dialog__body, .quality-dialog .el-dialog__body { padding: 14px 18px; max-height: 70vh; overflow-y: auto; }
+.adjustment-dialog .el-dialog__footer, .quality-dialog .el-dialog__footer { padding: 12px 18px 14px; border-top: 1px solid #e5e7eb; }
+.adjustment-dialog-body .el-form { margin-top: 12px; }
+.adjustment-dialog-body .el-select,
+.adjustment-dialog-body .el-input,
+.adjustment-dialog-body .el-input-number { width: 100%; }
+.quality-dialog .quality-dialog-title h3 { margin: 0; font-size: 16px; color: #111827; font-weight: 700; }
+.quality-dialog .quality-dialog-title small { display: block; margin-top: 4px; color: #6b7280; font-size: 12px; font-weight: 400; }
+.quality-dialog-body .full-control,
+.quality-dialog-body .el-input,
+.quality-dialog-body .el-select,
+.quality-dialog-body .el-input-number { width: 100%; max-width: 100%; min-width: 0; }
+.quality-dialog-body .el-input__inner { width: 100%; padding-right: 30px; text-overflow: clip; }
+.quality-dialog-body .el-input-number .el-input__inner { padding-left: 10px; padding-right: 42px; text-align: left; }
+.quality-dialog-body textarea { width: 100%; box-sizing: border-box; resize: vertical; }
+.inventory-serial-dialog .el-table .cell { white-space: normal; word-break: break-word; }
+.balance-picker-dialog .el-dialog__body { padding: 12px 16px 14px; }
+
+@media (max-width: 1200px) {
+  .item-batch-dialog { width: 94% !important; min-width: 0; }
+  .item-batch-dialog .batch-dialog-grid { grid-template-columns: 1fr; }
+  .item-batch-dialog .batch-context-panel { border-left: 0; border-top: 1px solid #dfe4ea; }
+}
+@media (max-width: 900px) {
+  .item-batch-dialog .detail-overview-panel { grid-template-columns: 1fr; }
+  .item-batch-dialog .overview-kv-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .item-tx-dialog .item-tx-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 760px) {
+  .item-batch-dialog .el-dialog__body { padding: 0 12px 12px; }
+  .item-batch-dialog .batch-dialog-head { align-items: flex-start; flex-direction: column; justify-content: center; gap: 10px; padding-top: 14px; padding-bottom: 10px; }
+  .item-batch-dialog .source-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .quality-dialog-body .quality-form-grid { grid-template-columns: 1fr; }
+  .item-tx-dialog .item-tx-filter label { flex-direction: column; align-items: stretch; width: 100%; }
+  .item-tx-dialog .item-tx-filter .el-input,
+  .item-tx-dialog .item-tx-filter .el-select,
+  .item-tx-dialog .item-tx-filter .paged-record-select,
+  .item-tx-dialog .item-tx-filter .el-date-editor { width: 100%; }
+}
 </style>

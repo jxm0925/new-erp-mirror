@@ -27,14 +27,19 @@ use Illuminate\Validation\ValidationException;
 class InventoryStocktakeService
 {
     public const STATUSES = ['counting' => '盘点中', 'completed' => '已完成', 'cancelled' => '已取消'];
+    public const CREATE_RULES = [
+        'warehouse_id' => 'required|integer|exists:erp_warehouses,id', 'scope' => 'sometimes|required|in:location,warehouse',
+        'location_id' => 'nullable|integer|exists:erp_locations,id', 'stocktake_date' => 'nullable|date', 'remark' => 'nullable|string|max:500',
+    ];
     public const ADD_LINE_RULES = [
         'expected_version' => 'required|integer|min:1', 'item_id' => 'required|integer|min:1',
         'location_id' => 'required|integer|min:1', 'batch_no' => 'required|string|max:80',
         'remark' => 'nullable|string|max:500', 'unit_cost' => ['nullable', 'regex:/^\d{1,10}(?:\.\d{1,8})?$/', 'numeric', 'gt:0'],
     ];
     public const COUNT_RULES = [
-        'lines' => 'required|array|min:1', 'lines.*.id' => 'required|integer', 'expected_version' => 'required|integer|min:1',
+        'lines' => 'required|array|min:1', 'lines.*.id' => 'required|integer|distinct', 'expected_version' => 'required|integer|min:1',
         'lines.*.counted_qty' => 'nullable|numeric|min:0', 'lines.*.remark' => 'nullable|string|max:500',
+        'lines.*.unit_cost' => ['nullable', 'regex:/^\d{1,10}(?:\.\d{1,8})?$/', 'numeric', 'gt:0'],
         'lines.*.mark_all_present' => 'nullable|boolean', 'lines.*.entries' => 'nullable|array|max:500',
         'lines.*.entries.*.id' => 'required|integer', 'lines.*.entries.*.counted_present' => 'nullable|boolean',
         'lines.*.delete_entry_ids' => 'nullable|array|max:500', 'lines.*.delete_entry_ids.*' => 'integer',
@@ -79,11 +84,6 @@ class InventoryStocktakeService
                 ->lockForUpdate()->value('stocktake_no');
             if ($overlap) throw ValidationException::withMessages(['warehouse_id' => "盘点范围与进行中的盘点单 {$overlap} 重叠。"]);
 
-            $balances = InventoryBalance::query()->where('warehouse_id', $warehouse->id)
-                ->when($locationId, fn ($query) => $query->where('location_id', $locationId))
-                ->where('quantity_on_hand', '<>', 0)->orderBy('location_id')->orderBy('item_id')->orderBy('batch_no')
-                ->lock('FOR UPDATE NOWAIT')->get();
-
             $stocktake = InventoryStocktake::create([
                 'stocktake_no' => $this->numbers->next('inventory_stocktake', 'PD'),
                 'warehouse_id' => $warehouse->id,
@@ -91,30 +91,73 @@ class InventoryStocktakeService
                 'stocktake_status' => 'counting',
                 'stocktake_date' => $data['stocktake_date'] ?? now()->toDateString(),
                 'remark' => $data['remark'] ?? null,
-                'line_count' => $balances->count(),
+                'line_count' => 0,
                 'created_by' => $operatorId,
             ]);
-            $items = Item::query()->whereIn('id', $balances->pluck('item_id')->unique())->get()->keyBy('id');
-            $written = 0;
-            foreach ($balances as $balance) {
-                $item = $items->get($balance->item_id);
-                $line = InventoryStocktakeLine::create([
-                    'stocktake_id' => $stocktake->id,
-                    'inventory_balance_id' => $balance->id,
-                    'item_id' => $balance->item_id,
-                    'warehouse_id' => $balance->warehouse_id,
-                    'location_id' => $balance->location_id,
-                    'batch_no' => $balance->batch_no,
-                    'unit_id' => $balance->unit_id,
-                    'book_qty' => $balance->quantity_on_hand,
-                    'unit_cost' => $balance->average_unit_cost ?? 0,
-                    'count_mode' => $item ? $this->entries->countMode($item) : 'quantity',
-                ]);
-                // 序列号/实物物料逐件拍快照，录入按件勾选，完成时自动生成带编号/实物的差异调整。
-                if ($line->count_mode !== 'quantity') $written += $this->entries->snapshot($line, $balance, $written);
-            }
-            return $stocktake;
+            $this->snapshotScopeLines($stocktake, $warehouse);
+            return $stocktake->fresh();
         });
+    }
+
+    /** 仅供显式修复旧空单；CLI 维护可省略人员，不冒用原单操作人。读取详情绝不补行。 */
+    public function populateBoundLines(int $id, int $expectedVersion, ?object $actor = null): InventoryStocktake
+    {
+        if ($actor === null && ! app()->runningInConsole()) {
+            throw ValidationException::withMessages(['actor' => '接口补齐盘点明细必须提供当前操作账号。']);
+        }
+        return $this->transaction(function () use ($id, $expectedVersion, $actor): InventoryStocktake {
+            $stocktake = $this->lockCounting($id);
+            if ($actor !== null) InventoryTransferService::assertWarehouseScope((int) $stocktake->warehouse_id, $actor);
+            if (! $stocktake->location_id) throw ValidationException::withMessages(['location_id' => '只有按库位的空白盘点单可以补齐绑定物料。']);
+            if ($stocktake->lines()->lockForUpdate()->exists()) return $stocktake;
+            if ((int) $stocktake->business_version !== $expectedVersion) throw ValidationException::withMessages(['expected_version' => '盘点单已被修改，请刷新后核对明细。']);
+            $warehouse = Warehouse::query()->findOrFail($stocktake->warehouse_id);
+            $this->snapshotScopeLines($stocktake, $warehouse);
+            if ($stocktake->line_count > 0) {
+                $stocktake->increment('business_version');
+                InventoryPostingLog::create(['source_type' => 'inventory_stocktake', 'source_id' => $stocktake->id, 'source_no' => $stocktake->stocktake_no,
+                    'transaction_type' => 'stocktake_bound_lines_added', 'posting_status' => 'counting',
+                    'message' => ($actor === null ? '系统维护补入：' : '').'按库位摆放及实际库存补齐旧空白盘点单',
+                    'posted_by' => $actor === null ? null : ($actor->legacy_id ?? $actor->id), 'posted_at' => now()]);
+            }
+            return $stocktake->fresh();
+        });
+    }
+
+    private function snapshotScopeLines(InventoryStocktake $stocktake, Warehouse $warehouse): void
+    {
+        $locationId = $stocktake->location_id;
+        $boundItems = $locationId ? Item::query()->whereIn('status', ['enabled', 'active'])->where('is_stock_item', true)
+            ->where('item_type', '<>', 'service')->where('management_scope', $warehouse->management_scope)
+            ->where(fn ($q) => $q->whereNull('manufacturing_strategy')->orWhere('manufacturing_strategy', '<>', 'phantom'))
+            ->whereHas('storageLocations', fn ($q) => $q->where('erp_locations.id', $locationId))
+            ->orderBy('id')->lock('FOR UPDATE NOWAIT')->get()->keyBy('id') : collect();
+        $balances = InventoryBalance::query()->where('warehouse_id', $warehouse->id)
+            ->when($locationId, fn ($query) => $query->where('location_id', $locationId))
+            ->where(fn ($q) => $q->where('quantity_on_hand', '<>', 0)->orWhereIn('item_id', $boundItems->keys()))
+            ->orderBy('location_id')->orderBy('item_id')->orderBy('batch_no')->lock('FOR UPDATE NOWAIT')->get();
+        // 绑定只表示摆放位置；首次盘点仅建零余额批次身份，完成时才产生库存数量、金额和流水。
+        foreach ($boundItems->except($balances->pluck('item_id')->unique()->all()) as $item) {
+            $balances->push(InventoryBalance::create([
+                'item_id' => $item->id, 'warehouse_id' => $warehouse->id, 'location_id' => $locationId,
+                'batch_no' => $stocktake->stocktake_no.'-L'.$locationId.'-I'.$item->id, 'unit_id' => $item->unit_id,
+            ])->fresh());
+        }
+        $items = Item::query()->whereIn('id', $balances->pluck('item_id')->unique())->get()->keyBy('id');
+        $written = 0;
+        foreach ($balances as $balance) {
+            $item = $items->get($balance->item_id);
+            $line = $stocktake->lines()->create([
+                'inventory_balance_id' => $balance->id, 'item_id' => $balance->item_id,
+                'warehouse_id' => $balance->warehouse_id, 'location_id' => $balance->location_id,
+                'batch_no' => $balance->batch_no, 'unit_id' => $balance->unit_id, 'book_qty' => $balance->quantity_on_hand,
+                'unit_cost' => $item && bccomp((string) $balance->quantity_on_hand, '0', 4) === 0
+                    ? $this->discoveredUnitCost($item, $balance, $this->entries->countMode($item), null) : ($balance->average_unit_cost ?? 0),
+                'count_mode' => $item ? $this->entries->countMode($item) : 'quantity',
+            ]);
+            if ($line->count_mode !== 'quantity') $written += $this->entries->snapshot($line, $balance, $written);
+        }
+        $stocktake->update(['line_count' => $balances->count()]);
     }
 
     public function addLine(int $id, array $data, object $actor): array
@@ -146,7 +189,7 @@ class InventoryStocktakeService
             }
             $lotId = InventoryBatch::query()->where('item_id', $item->id)->where('batch_no', $batchNo)->value('material_lot_id');
             // 零余额仅承载批次身份，数量和金额仍在完成盘点时经正式流水写入。
-            $balance ??= InventoryBalance::create($locator + ['unit_id' => $item->unit_id, 'material_lot_id' => $lotId]);
+            $balance ??= InventoryBalance::create($locator + ['unit_id' => $item->unit_id, 'material_lot_id' => $lotId])->fresh();
             if ($lotId && (int) $balance->material_lot_id !== (int) $lotId) {
                 throw ValidationException::withMessages(['batch_no' => '库存余额与已有材料批次不一致，请先核对批次来源。']);
             }
@@ -172,17 +215,49 @@ class InventoryStocktakeService
             if ($provided !== null) throw ValidationException::withMessages(['unit_cost' => '实物成本请在逐件盘点时填写。']);
             return '0';
         }
-        $lotId = $balance->material_lot_id;
-        if ($provided !== null && $lotId) throw ValidationException::withMessages(['unit_cost' => '已有材料批次按实际入库成本计价，请留空单价。']);
+        if ($provided !== null && $this->hasFrozenCost($balance)) {
+            throw ValidationException::withMessages(['unit_cost' => '已有库存或历史入库成本的批次按账面计价，不能修改盘盈单价。']);
+        }
         if ($provided !== null) return (string) $provided;
         if (bccomp((string) ($balance->average_unit_cost ?? 0), '0', 8) > 0) return (string) $balance->average_unit_cost;
-        $fact = InventoryTransactionItem::query()->where('item_id', $item->id)->where('batch_no', $balance->batch_no)
-            ->where('material_lot_id', $lotId)->where('change_qty', '>', 0)
-            ->whereHas('transaction', fn ($query) => $query->where('posting_status', 'posted'))->latest('id')->first();
+        $fact = $this->historicalCost($balance);
         if ($fact && bccomp((string) $fact->cost_amount, '0', 4) >= 0) return bcdiv((string) $fact->cost_amount, (string) $fact->change_qty, 8);
-        if ($lotId) throw ValidationException::withMessages(['batch_no' => '该材料批次缺少可追溯的入库金额，请先核对原始入库。']);
+        if ($balance->material_lot_id) return '0';
         if (bccomp((string) $item->standard_cost, '0', 8) > 0) return (string) $item->standard_cost;
-        throw ValidationException::withMessages(['unit_cost' => '此批次没有可用的历史成本或标准成本，请由有库存金额权限的人员填写盘盈单价。']);
+        return '0';
+    }
+
+    private function historicalCost(InventoryBalance $balance): ?InventoryTransactionItem
+    {
+        return InventoryTransactionItem::query()->where('item_id', $balance->item_id)->where('batch_no', $balance->batch_no)
+            ->where('material_lot_id', $balance->material_lot_id)->where('change_qty', '>', 0)
+            ->whereHas('transaction', fn ($query) => $query->where('posting_status', 'posted'))
+            ->orderByRaw('(warehouse_id = ? AND location_id = ?) DESC', [$balance->warehouse_id, $balance->location_id])->latest('id')->first();
+    }
+
+    private function hasFrozenCost(InventoryBalance $balance): bool
+    {
+        return $balance->material_lot_id || bccomp((string) $balance->quantity_on_hand, '0', 4) !== 0
+            || bccomp((string) ($balance->average_unit_cost ?? 0), '0', 8) > 0 || $this->historicalCost($balance) !== null;
+    }
+
+    public function canEditUnitCost(InventoryStocktakeLine $line): bool
+    {
+        if ($line->count_mode === 'physical' || bccomp((string) $line->book_qty, '0', 4) !== 0) return false;
+        $balance = InventoryBalance::query()->find($line->inventory_balance_id);
+        return $balance && ! $this->hasFrozenCost($balance);
+    }
+
+    /** 历史免费入库仍属有效成本；首次账外盘盈必须有核定单价，不能把缺失成本当作免费。 */
+    public function assertGainCost(InventoryStocktakeLine $line, InventoryBalance $balance): void
+    {
+        if ($line->count_mode === 'physical') return;
+        if ($balance->material_lot_id && bccomp((string) $balance->quantity_on_hand, '0', 4) === 0 && ! $this->historicalCost($balance)) {
+            throw ValidationException::withMessages(['unit_cost' => '该材料批次没有可追溯的入库金额，不能确定盘盈成本。']);
+        }
+        if (bccomp((string) $line->unit_cost, '0', 8) <= 0 && ! $this->hasFrozenCost($balance)) {
+            throw ValidationException::withMessages(['unit_cost' => '批次 '.$line->batch_no.' 尚未核定盘盈单价，请由有库存金额权限的人员填写后完成。']);
+        }
     }
 
     /** 录入实盘数：counted_qty 传 null 表示清空，可多次保存。 */
@@ -195,13 +270,24 @@ class InventoryStocktakeService
             foreach ($lines as $input) {
                 $line = $rows->get((int) $input['id']);
                 if (! $line) throw ValidationException::withMessages(['lines' => '盘点明细不属于当前盘点单。']);
+                if (array_key_exists('unit_cost', $input)) {
+                    if (! app(InventoryAmountVisibilityService::class)->canView()) throw ValidationException::withMessages(['unit_cost' => '填写盘盈单价需要库存金额权限。']);
+                    if (! $this->canEditUnitCost($line)) throw ValidationException::withMessages(['unit_cost' => '此行按已有库存或逐件实物成本计价，不能修改盘盈单价。']);
+                    $line->unit_cost = $input['unit_cost'] ?? '0';
+                    $line->save();
+                }
                 if ($line->count_mode !== 'quantity') {
                     if (array_key_exists('remark', $input)) $line->update(['remark' => $input['remark']]);
-                    $this->entries->saveLine($line, $input, $operatorId);
+                    if (array_intersect(['mark_all_present', 'entries', 'delete_entry_ids', 'new_entries', 'unnumbered_counted_qty'], array_keys($input))) {
+                        $this->entries->saveLine($line, $input, $operatorId);
+                    } elseif ($line->count_mode === 'serial' && $line->counted_qty !== null) {
+                        $line->update(['difference_amount' => round((float) $line->difference_qty * (float) $line->unit_cost, 4)]);
+                    }
                     continue;
                 }
-                $counted = array_key_exists('counted_qty', $input) && $input['counted_qty'] !== null && $input['counted_qty'] !== ''
-                    ? round((float) $input['counted_qty'], 4) : null;
+                $counted = array_key_exists('counted_qty', $input)
+                    ? ($input['counted_qty'] !== null && $input['counted_qty'] !== '' ? round((float) $input['counted_qty'], 4) : null)
+                    : ($line->counted_qty === null ? null : (float) $line->counted_qty);
                 if ($counted !== null && $counted < 0) throw ValidationException::withMessages(['lines' => '实盘数不能小于 0。']);
                 $difference = $counted === null ? null : round($counted - (float) $line->book_qty, 4);
                 $line->update([
@@ -271,6 +357,7 @@ class InventoryStocktakeService
                 $item = $items->get($line->item_id);
                 if ($line->count_mode !== 'quantity') {
                     $rows = $this->entries->adjustmentLines($line, $item, $difference);
+                    if (collect($rows)->contains(fn ($row) => $row['change_qty'] > 0)) $this->assertGainCost($line, $balance);
                     if ($processed->isNotEmpty()) {
                         $this->entries->assertPostedEntries($line, $rows, $processed);
                     } else {
@@ -279,6 +366,7 @@ class InventoryStocktakeService
                     continue;
                 }
                 if (abs($remaining) < 0.00005) continue;
+                if ($remaining > 0) $this->assertGainCost($line, $balance);
                 if ($item && ($item->serialTrackingMode() !== 'none' || $item->materialManagementMode() !== 'quantity')) {
                     // 历史盘点单（逐件快照上线前开盘）仍需手工处理。
                     $blocked[] = $item->item_code.'（'.$line->batch_no.'）';

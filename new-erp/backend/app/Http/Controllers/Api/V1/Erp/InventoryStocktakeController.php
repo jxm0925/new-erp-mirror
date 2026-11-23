@@ -48,7 +48,7 @@ class InventoryStocktakeController extends Controller
 
     public function options(Request $request)
     {
-        $this->authorizeAnyPermission($request, ['inventory.stocktake.view', 'inventory.transfer.view']);
+        $this->authorizeAnyPermission($request, ['inventory.stocktake.view', 'inventory.stocktake.create', 'inventory.transfer.view']);
         return response()->json(['data' => [
             'warehouses' => self::warehouseOptions(),
             'stocktake_statuses' => InventoryStocktakeService::STATUSES,
@@ -107,13 +107,8 @@ class InventoryStocktakeController extends Controller
     public function store(Request $request, InventoryStocktakeService $service)
     {
         $user = $this->authorizePermission($request, 'inventory.stocktake.create');
-        $data = $request->validate([
-            'warehouse_id' => 'required|integer|exists:erp_warehouses,id',
-            'scope' => 'sometimes|required|in:location,warehouse',
-            'location_id' => 'nullable|integer|exists:erp_locations,id',
-            'stocktake_date' => 'nullable|date',
-            'remark' => 'nullable|string|max:500',
-        ]);
+        $data = $request->validate(InventoryStocktakeService::CREATE_RULES);
+        InventoryTransferService::assertWarehouseScope((int) $data['warehouse_id'], $user);
         return response()->json(['message' => '盘点单已创建，范围内库存已冻结', 'data' => $service->create($data, (int) $user->legacy_id)], 201);
     }
 

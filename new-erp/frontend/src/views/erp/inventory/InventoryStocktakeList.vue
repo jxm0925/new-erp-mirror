@@ -21,7 +21,7 @@
 
     <div class="erp-page-tip">
       <i class="el-icon-info" />
-      <span>开盘即冻结所选仓库或库位的出入库，录入实盘数后一键完成盘点并自动生成“盘点差异”调整单过账；建议优先采用「按库位」分批盘点，避免整仓冻结影响正常领料与发货。</span>
+      <span>按库位新建盘点会自动带出绑定物料和实际库存批次，直接填写实盘数量，首次盘盈可填写单价。开盘即冻结所选范围出入库，完成盘点后自动生成差异调整单并过账；建议按库位分批盘点。</span>
     </div>
 
     <div class="metric-overview-grid">
@@ -199,7 +199,7 @@
         </el-form-item>
       </el-form>
       <el-alert
-        :title="createForm.scope === 'warehouse' ? '整仓盘点将暂停该仓库所有库位的领料、发货和入库，完成或取消后恢复。' : '开始盘点后，仅所选库位暂停出入库，同仓库其他库位可正常作业；完成或取消后恢复。'"
+        :title="createForm.scope === 'warehouse' ? '按实际库存批次生成明细。整仓盘点将暂停所有库位的出入库，完成或取消后恢复。' : '自动带出所选库位的绑定物料和实际库存批次。盘点期间仅该库位暂停出入库，完成或取消后恢复。'"
         type="warning"
         show-icon
         :closable="false"
@@ -213,12 +213,13 @@
     <stocktake-entry-dialog :visible.sync="entryVisible" :stocktake="detail" :line="entryLine" :editable="editable" @saved="entrySaved" />
     <stocktake-found-line-dialog v-if="foundLineOpen && editable" :stocktake="detail" @close="foundLineOpen = false" @added="foundLineAdded" />
 
-    <el-dialog :title="detail ? `盘点工作台 · ${detail.stocktake_no}` : '盘点单详情'" :visible.sync="detailVisible" :width="dialogWidth('1140px')" :before-close="closeDetail" append-to-body :close-on-click-modal="false">
+    <el-dialog :title="detail ? `盘点工作台 · ${detail.stocktake_no}` : '盘点单详情'" :visible.sync="detailVisible" :width="dialogWidth('1280px')" :before-close="closeDetail" append-to-body :close-on-click-modal="false">
       <div v-if="detail" v-loading="detailLoading" class="detail-dialog-body">
         <el-alert
           v-if="detail.stocktake_status === 'counting'"
           class="freeze-banner"
           :title="`${detail.warehouse ? detail.warehouse.warehouse_name : ''} / ${detail.location ? detail.location.location_name : '全部库位'} 正在盘点中，范围内暂停出入库，完成或取消后自动解除冻结。`"
+          description="已开盘单继续使用开盘时的明细，不会自动补入绑定物料；缺项请补录账外物料。"
           type="warning"
           show-icon
           :closable="false"
@@ -328,6 +329,7 @@
                 size="mini"
                 placeholder="输入实盘数"
                 style="width: 135px"
+                @change="captureEdits"
               />
               <span v-else class="font-tabular">{{ row.counted_qty == null ? '—' : num(row.counted_qty) }}</span>
             </template>
@@ -337,16 +339,29 @@
               <span class="font-tabular" :class="diffClass(row)">{{ diffText(row) }}</span>
             </template>
           </el-table-column>
+          <el-table-column v-if="$can('inventory.amount.view')" label="单价（元）" width="160" align="right">
+            <template slot-scope="{ row }">
+              <span v-if="row.count_mode === 'physical'" class="cell-sub">按逐件成本</span>
+              <template v-else-if="editable && row.unit_cost_editable">
+                <erp-money-input v-model.trim="row.unit_cost" unit-price size="mini" inputmode="decimal" placeholder="填写盘盈单价" :disabled="saving || detailLoading" @input="captureEdits" />
+                <small class="cell-sub cost-caption">仅用于盘盈入账</small>
+              </template>
+              <template v-else>
+                <span class="font-tabular">{{ unitPrice(row.unit_cost) }}</span>
+                <small class="cell-sub cost-caption">账面成本，只读</small>
+              </template>
+            </template>
+          </el-table-column>
           <el-table-column label="差异说明 / 备注" min-width="150">
             <template slot-scope="{ row }">
-              <el-input v-if="editable" v-model="row.remark" :disabled="saving || detailLoading" size="mini" maxlength="500" placeholder="选填差异原因" />
+              <el-input v-if="editable" v-model="row.remark" :disabled="saving || detailLoading" size="mini" maxlength="500" placeholder="选填差异原因" @input="captureEdits" />
               <span v-else>{{ row.remark || '—' }}</span>
             </template>
           </el-table-column>
         </el-table>
 
         <div class="pager-bar">
-          <span class="pager-hint">翻页或切换筛选时自动暂存当前页已录入的实盘数</span>
+          <span class="pager-hint">{{ editable ? '翻页或筛选保留未保存的数量、单价和备注，点击保存草稿后生效' : '按库位和批次查看盘点结果，每页显示 10 条明细' }}</span>
           <el-pagination
             background
             layout="total, prev, pager, next"
@@ -361,9 +376,9 @@
       <span slot="footer">
         <el-button size="small" :disabled="saving || detailLoading" @click="closeDetail()">关闭</el-button>
         <template v-if="detail && detail.stocktake_status === 'counting'">
-          <el-button v-if="$can('inventory.stocktake.cancel')" size="small" type="danger" plain @click="cancel">取消盘点</el-button>
-          <el-button v-if="editable" size="small" class="btn-green-outline" :loading="saving" @click="saveCounts">保存实盘草稿</el-button>
-          <el-button v-if="$can('inventory.stocktake.complete')" size="small" type="success" class="btn-theme-create" :loading="saving" @click="complete">完成盘点并过账</el-button>
+          <el-button v-if="$can('inventory.stocktake.cancel')" size="small" type="danger" plain :disabled="saving || detailLoading" @click="cancel">取消盘点</el-button>
+          <el-button v-if="editable" size="small" class="btn-green-outline" :loading="saving" :disabled="detailLoading" @click="saveCounts">保存盘点草稿</el-button>
+          <el-button v-if="$can('inventory.stocktake.complete')" size="small" type="success" class="btn-theme-create" :loading="saving" :disabled="detailLoading" @click="complete">完成盘点并过账</el-button>
         </template>
       </span>
     </el-dialog>
@@ -372,6 +387,7 @@
 
 <script>
 import { formatMoney as displayMoney } from '../../../utils/money.js'
+import { formatPurchasePrice } from '@/utils/purchaseLineAmount'
 import { listStocktakes, getStocktakeOptions, getStocktake, createStocktake, saveStocktakeCounts, completeStocktake, cancelStocktake } from '@/api/erp/inventory'
 import StocktakeEntryDialog from './StocktakeEntryDialog.vue'
 import StocktakeFoundLineDialog from './StocktakeFoundLineDialog.vue'
@@ -430,11 +446,12 @@ export default {
     window.removeEventListener('resize', this.onResize)
   },
   methods: {
+    unitPrice: formatPurchasePrice,
     onResize() {
       this.windowWidth = window.innerWidth
     },
     dialogWidth(width) {
-      return this.windowWidth < 768 ? '96%' : width
+      return this.windowWidth < parseInt(width, 10) + 48 ? '96%' : width
     },
     num(value) {
       const n = Number(value || 0)
@@ -582,10 +599,13 @@ export default {
       else this.$message.info('本页没有待填充的数量型未盘明细')
     },
     countInput(line) {
-      if (line.count_mode && line.count_mode !== 'quantity') return { id: line.id, remark: line.remark || null }
-      return { id: line.id, counted_qty: line.counted_qty == null ? null : Number(line.counted_qty), remark: line.remark || null }
+      const input = { id: line.id, remark: line.remark || null }
+      if (!line.count_mode || line.count_mode === 'quantity') input.counted_qty = line.counted_qty == null ? null : Number(line.counted_qty)
+      if (line.unit_cost_editable && this.$can('inventory.amount.view')) input.unit_cost = line.unit_cost == null || line.unit_cost === '' ? null : String(line.unit_cost).trim()
+      return input
     },
     openEntries(line) {
+      this.captureEdits()
       this.entryLine = line
       this.entryVisible = true
     },
@@ -610,8 +630,10 @@ export default {
       if (!this.detail || !this.editable) return
       this.detail.lines.forEach(line => {
         const input = this.countInput(line)
-        if (JSON.stringify(input) === JSON.stringify(this.originalCounts[line.id])) this.$delete(this.draftCounts, line.id)
-        else this.$set(this.draftCounts, line.id, input)
+        const original = this.originalCounts[line.id] || {}
+        const changes = Object.fromEntries(Object.entries(input).filter(([key, value]) => key !== 'id' && value !== original[key]))
+        if (!Object.keys(changes).length) this.$delete(this.draftCounts, line.id)
+        else this.$set(this.draftCounts, line.id, { id: line.id, ...changes })
       })
     },
     async closeDetail(done) {
@@ -619,7 +641,7 @@ export default {
       this.captureEdits()
       if (Object.keys(this.draftCounts).length) {
         try {
-          await this.$confirm('有尚未保存的实盘数，关闭将放弃这些修改。确认关闭？', '未保存修改', { type: 'warning' })
+          await this.$confirm('有尚未保存的数量、单价或备注，关闭将放弃这些修改。确认关闭？', '未保存修改', { type: 'warning' })
         } catch (e) {
           return
         }
@@ -645,6 +667,7 @@ export default {
         const { data } = await getStocktake(id, { ...filters, line_id: this.focusedLineId || undefined, page, per_page: 10 })
         if (this.detail && Object.keys(this.draftCounts).length) data.data.business_version = this.detail.business_version
         data.data.lines.forEach(line => {
+          if (line.unit_cost_editable && Number(line.unit_cost) === 0) line.unit_cost = ''
           if (!this.draftCounts[line.id]) this.$set(this.originalCounts, line.id, this.countInput(line))
           if (this.draftCounts[line.id]) Object.assign(line, this.draftCounts[line.id])
           line.counted_qty = line.counted_qty === null ? undefined : Number(line.counted_qty)
@@ -662,16 +685,19 @@ export default {
       this.captureEdits()
       const lines = Object.values(this.draftCounts)
       if (!lines.length) return
+      if (lines.some(line => line.unit_cost != null && (!/^\d{1,10}(\.\d{1,8})?$/.test(line.unit_cost) || Number(line.unit_cost) <= 0))) {
+        throw Object.assign(new Error('盘盈单价格式不正确'), { userMessage: '盘盈单价须大于零，最多填写八位小数；暂不填写可留空。' })
+      }
       const { data } = await saveStocktakeCounts(this.detail.id, lines, this.detail.business_version)
       this.detail.business_version = data.data.business_version
-      lines.forEach(line => this.$set(this.originalCounts, line.id, { ...line }))
+      lines.forEach(line => this.$set(this.originalCounts, line.id, { ...this.originalCounts[line.id], ...line }))
       this.draftCounts = {}
     },
     async saveCounts() {
       this.saving = true
       try {
         await this.persistCounts()
-        this.$message.success('实盘数已保存')
+        this.$message.success('盘点草稿已保存')
         this.load()
         await this.loadDetailPage(this.detail.id, this.detailPage)
       } catch (e) {
@@ -681,6 +707,7 @@ export default {
       }
     },
     async complete() {
+      if (this.saving || this.detailLoading) return
       try {
         await this.$confirm('完成后差异将生成“盘点差异”调整单并立即过账，同时解除冻结。确认完成？', '完成盘点', { type: 'warning' })
       } catch (e) {
@@ -700,6 +727,7 @@ export default {
       }
     },
     async cancel() {
+      if (this.saving || this.detailLoading) return
       try {
         await this.$confirm('取消后本次实盘作废，仓库/库位立即解除冻结。确认取消？', '取消盘点', { type: 'warning' })
       } catch (e) {
@@ -995,6 +1023,12 @@ export default {
 .meta-cell small {
   font-size: 11px;
   color: #8490a2;
+}
+
+.cost-caption {
+  display: block;
+  margin-top: 3px;
+  line-height: 1.4;
 }
 
 .progress-cell {

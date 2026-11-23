@@ -152,8 +152,12 @@ class WarehouseInventoryPosting
                 // 先盘亏可能把余额均价归零，盘盈仍按同张盘点的快照单价入账。
                 $gainUnitCost = null;
                 if ($adjustment->reason === StocktakeFreezeGuard::EXEMPT_ADJUSTMENT_REASON && (float) $line->change_qty > 0 && ! $balance->material_lot_id) {
-                    $gainUnitCost = InventoryStocktakeLine::query()->where('inventory_balance_id', $balance->id)
-                        ->whereHas('stocktake', fn ($query) => $query->where('stocktake_status', 'counting'))->value('unit_cost');
+                    $countLine = InventoryStocktakeLine::query()->where('inventory_balance_id', $balance->id)
+                        ->whereHas('stocktake', fn ($query) => $query->where('stocktake_status', 'counting'))->first();
+                    if ($countLine) {
+                        app(InventoryStocktakeService::class)->assertGainCost($countLine, $balance);
+                        $gainUnitCost = $countLine->unit_cost;
+                    }
                 }
                 if ($balance->material_lot_id) {
                     $quantity = (string) $line->change_qty;

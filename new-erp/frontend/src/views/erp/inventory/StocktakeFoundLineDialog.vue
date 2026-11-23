@@ -16,7 +16,7 @@
         <el-input v-model.trim="form.batch_no" maxlength="80" placeholder="现场盘到的批次号" />
       </el-form-item>
       <el-form-item v-if="showCost" label="盘盈单价">
-        <erp-money-input v-model.trim="form.unit_cost" inputmode="decimal" placeholder="留空使用可追溯成本" />
+        <erp-money-input v-model.trim="form.unit_cost" unit-price inputmode="decimal" placeholder="留空使用可追溯成本" />
       </el-form-item>
       <el-form-item label="发现原因">
         <el-input v-model.trim="form.remark" type="textarea" :rows="2" maxlength="500" />

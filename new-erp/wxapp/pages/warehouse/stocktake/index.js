@@ -5,18 +5,19 @@ function progress(counted, total) { return Number(total) > 0 ? Math.min(100, Mat
 Page({
   data: { id: 0, status: 'counting', keyword: '', page: 1, lastPage: 1, total: 0, rows: [], stats: {}, loading: true, saving: false,
     error: '', formError: '', header: null, lines: [], summary: {}, progress: 0, lineStatus: '', locator: {}, locatorOpen: false,
-    drafts: {}, canCount: false, canComplete: false, canAmount: false, entry: null, entryRows: [], entryPage: 1, entryLast: 1, entryTotal: 0,
+    drafts: {}, canCreate: false, canCount: false, canComplete: false, canAmount: false, entry: null, entryRows: [], entryPage: 1, entryLast: 1, entryTotal: 0,
     entryKeyword: '', entryLoading: false, entryError: '', entryChanges: {}, entryEditableCount: 0, newEntries: [], deleteIds: [], unnumbered: '',
     unnumberedChanged: false, supplementNo: '', physical: {}, entryFilterIndex: 0, entryFilters: [{ label: '全部', value: '' }, { label: '未确认', value: 'undecided' }, { label: '不在', value: 'missing' }, { label: '补录', value: 'new' }, { label: '业务占用', value: 'locked' }],
     pendingCounts: false, pendingComplete: false, pendingAdd: false, canAdd: false, confirmation: null,
-    foundLineId: 0, found: null, foundError: '', foundItemOpen: false, foundLocationOpen: false, foundContext: {} },
-  onLoad(options) { const can = page.permissions(); this.setData({ id: Number(options.id || 0), canCount: can('inventory.stocktake.create'), canComplete: can('inventory.stocktake.complete'), canAmount: can('inventory.amount.view') }); },
+    foundLineId: 0, found: null, foundError: '', foundItemOpen: false, foundLocationOpen: false, foundContext: {},
+    createForm: null, createLocationOpen: false, createError: '', pendingCreate: false, emptyLocator: {} },
+  onLoad(options) { const can = page.permissions(); this.setData({ id: Number(options.id || 0), canCreate: can('inventory.stocktake.create'), canCount: can('inventory.stocktake.create'), canComplete: can('inventory.stocktake.complete'), canAmount: can('inventory.amount.view') }); },
   onShow() { if (!page.resumingScan(this)) this.load(); }, onUnload() { this.sequence = (this.sequence || 0) + 1; this.entrySequence = (this.entrySequence || 0) + 1; },
   onPullDownRefresh() { this.load().finally(() => wx.stopPullDownRefresh()); },
   load() { return this.data.id ? this.loadDetail() : this.loadList(); },
   loadList() {
     wx.setNavigationBarTitle({ title: '我的盘点' });
-    const sequence = this.sequence = (this.sequence || 0) + 1; this.setData({ loading: true, error: '' });
+    const sequence = this.sequence = (this.sequence || 0) + 1; this.setData({ loading: true, error: '', canCreate: page.permissions()('inventory.stocktake.create'), pendingCreate: !!warehouse.pending('stocktake.create', 0) });
     return warehouse.stocktakes({ status: this.data.status, keyword: this.data.keyword.trim(), page: this.data.page, per_page: 10 }).then(response => {
       if (sequence !== this.sequence) return; const result = page.rows(response);
       if (result.page > result.lastPage) { this.setData({ page: result.lastPage }); return this.loadList(); }
@@ -33,14 +34,16 @@ Page({
       // 相机返回及刷新不能把旧草稿升级为他人的新版本，否则下一次保存会覆盖并发修改。
       const draftVersion = this.data.header && (Object.keys(this.data.drafts).length || this.data.entry) ? this.data.header.business_version : body.header.business_version;
       if (result.page > result.lastPage) { this.setData({ page: result.lastPage }); return this.loadDetail(); }
+      const canAmount = page.permissions()('inventory.amount.view');
       const lines = result.rows.map(row => {
         const entryStats = row.entry_stats || {}; const draft = this.data.drafts[row.id];
         return Object.assign({}, row, { bookText: page.quantity(row.book_qty), countedText: page.quantity(draft && Object.prototype.hasOwnProperty.call(draft, 'counted_qty') ? draft.counted_qty : row.counted_qty),
-          remarkText: draft ? draft.remark : row.remark || '', confirmed: Number(entryStats.present || 0) + Number(entryStats.missing || 0),
+          unitCostText: canAmount ? page.quantity(draft && Object.prototype.hasOwnProperty.call(draft, 'unit_cost') ? draft.unit_cost : Number(row.unit_cost) > 0 ? row.unit_cost : '') : '',
+          remarkText: draft && Object.prototype.hasOwnProperty.call(draft, 'remark') ? draft.remark : row.remark || '', confirmed: Number(entryStats.present || 0) + Number(entryStats.missing || 0),
           entryCount: Number(entryStats.book || 0), differenceText: page.quantity(row.difference_qty) });
       });
       this.setData({ header: Object.assign({}, body.header, { business_version: draftVersion, dateText: String(body.header.stocktake_date || body.header.created_at || '').slice(0, 10) }), lines, summary, progress: progress(summary.counted_lines, summary.total_lines), page: result.page, lastPage: result.lastPage, total: result.total, loading: false,
-        canCount: (body.actions || []).includes('stocktake.counts'), canAdd: (body.actions || []).includes('stocktake.add_line'), canComplete: (body.actions || []).includes('stocktake.complete'),
+        canAmount, canCount: (body.actions || []).includes('stocktake.counts'), canAdd: (body.actions || []).includes('stocktake.add_line'), canComplete: (body.actions || []).includes('stocktake.complete'),
         pendingCounts: !!warehouse.pending('stocktake.counts', this.data.id), pendingComplete: !!warehouse.pending('stocktake.complete', this.data.id),
         pendingAdd: !!warehouse.pending('stocktake.add_line', this.data.id) });
     }).catch(error => { if (sequence === this.sequence) this.setData({ loading: false, error: page.errorText(error) }); });
@@ -53,9 +56,35 @@ Page({
   },
   unitCostInput(event) { this.setData({ 'found.unit_cost': event.detail.value, 'found.unitCostText': event.detail.value }); },
   search() { this.setData({ page: 1 }); this.load(); },
+  newStocktake() {
+    if (this.data.saving || !this.data.canCreate || this.data.pendingCreate) return;
+    const now = new Date(); const date = [now.getFullYear(), String(now.getMonth() + 1).padStart(2, '0'), String(now.getDate()).padStart(2, '0')].join('-');
+    this.setData({ createForm: { locator: {}, stocktake_date: date, remark: '' }, createError: '' });
+  },
+  closeCreate() { if (!this.data.saving) this.setData({ createForm: null, createLocationOpen: false }); },
+  openCreateLocation() { if (!this.data.saving) this.setData({ createLocationOpen: true }); },
+  closeCreateLocation() { this.setData({ createLocationOpen: false }); },
+  chooseCreateLocation(event) { if (this.data.createForm && !this.data.saving) this.setData({ 'createForm.locator': event.detail, createLocationOpen: false, createError: '' }); },
+  createDate(event) { this.setData({ 'createForm.stocktake_date': event.detail.value }); },
+  async createStocktake() {
+    if (this.data.saving || !this.data.canCreate) return;
+    const form = this.data.createForm; const payload = {};
+    if (!this.data.pendingCreate) {
+      if (!form || !form.locator.location_id) return this.setData({ createError: '请选择要盘点的仓库和库位' });
+      Object.assign(payload, { warehouse_id: form.locator.warehouse_id, scope: 'location', location_id: form.locator.location_id, stocktake_date: form.stocktake_date, remark: form.remark.trim() });
+    }
+    this.setData({ saving: true, createError: '', formError: '' });
+    try {
+      const result = await warehouse.submit('stocktake.create', 0, payload);
+      this.setData({ id: Number(result.id), page: 1, keyword: '', locator: {}, drafts: {}, header: null, lineStatus: '', foundLineId: 0, createForm: null, pendingCreate: false });
+      await this.loadDetail(); wx.showToast({ title: '盘点单已创建', icon: 'success' });
+    } catch (error) {
+      const message = page.errorText(error); this.setData({ createError: message, formError: message, pendingCreate: !!warehouse.pending('stocktake.create', 0) });
+    } finally { this.setData({ saving: false }); }
+  },
   switchStatus(event) { this.setData({ status: event.currentTarget.dataset.status, page: 1 }); this.loadList(); },
   open(event) { this.setData({ id: Number(event.currentTarget.dataset.id), page: 1, keyword: '', locator: {}, drafts: {}, formError: '' }); this.loadDetail(); },
-  closeDetail() { if (Object.keys(this.data.drafts).length) { this.setData({ confirmation: { mode: 'back', title: '尚未保存本次录入', message: '返回将放弃本次未保存的实盘数。' } }); return; } this.backToList(); },
+  closeDetail() { if (this.data.saving) return; if (Object.keys(this.data.drafts).length) { this.setData({ confirmation: { mode: 'back', title: '尚未保存本次录入', message: '返回将放弃本次未保存的数量、单价及备注。' } }); return; } this.backToList(); },
   backToList() { this.setData({ id: 0, page: 1, header: null, keyword: '', drafts: {}, locator: {}, lineStatus: '', foundLineId: 0, found: null, formError: '' }); this.loadList(); },
   turn(event) { const target = this.data.page + Number(event.currentTarget.dataset.delta); if (!this.data.loading && !this.data.saving && target > 0 && target <= this.data.lastPage) { this.setData({ page: target }); this.load(); } },
   lineFilter(event) { this.setData({ lineStatus: event.currentTarget.dataset.status || '', foundLineId: 0, page: 1 }); this.loadDetail(); },
@@ -119,9 +148,13 @@ Page({
   clearLocation() { this.setData({ locator: {}, page: 1 }); this.loadDetail(); },
   lineInput(event) {
     const id = Number(event.currentTarget.dataset.id); const line = this.data.lines.find(row => Number(row.id) === id); if (!line) return;
-    const draft = Object.assign({ id, counted_qty: line.counted_qty, remark: line.remark || '' }, this.data.drafts[id] || {});
-    draft[event.currentTarget.dataset.field] = event.detail.value;
-    this.setData({ ['drafts.' + id]: draft });
+    const field = event.currentTarget.dataset.field;
+    if (!this.data.canCount || this.data.saving || this.data.pendingCounts || this.data.pendingComplete || this.data.pendingAdd || !['counted_qty', 'unit_cost', 'remark'].includes(field)) return;
+    if (field === 'counted_qty' && line.count_mode !== 'quantity' || field === 'unit_cost' && (!this.data.canAmount || !line.unit_cost_editable)) return;
+    const draft = Object.assign({ id }, this.data.drafts[id] || {});
+    draft[field] = event.detail.value;
+    const textField = { counted_qty: 'countedText', unit_cost: 'unitCostText', remark: 'remarkText' }[field];
+    this.setData({ ['drafts.' + id]: draft, ['lines[' + this.data.lines.indexOf(line) + '].' + textField]: event.detail.value });
   },
   async saveCounts(extraLines, closeEntry) {
     if (this.data.saving || this.data.pendingAdd) return false;
@@ -129,6 +162,13 @@ Page({
     (extraLines || []).forEach(row => { const index = lines.findIndex(value => Number(value.id) === Number(row.id)); if (index < 0) lines.push(row); else lines[index] = Object.assign({}, lines[index], row); });
     if (!lines.length && !this.data.pendingCounts) { this.setData({ formError: '请先录入实盘结果' }); return false; }
     for (const line of lines) if (line.counted_qty !== undefined && line.counted_qty !== null && line.counted_qty !== '' && (!Number.isFinite(Number(line.counted_qty)) || Number(line.counted_qty) < 0)) { this.setData({ formError: '实盘数必须为大于或等于零的数字' }); return false; }
+    for (const line of lines) {
+      if (!Object.prototype.hasOwnProperty.call(line, 'unit_cost')) continue;
+      if (!this.data.canAmount) { delete line.unit_cost; continue; }
+      const cost = String(line.unit_cost === null ? '' : line.unit_cost).trim();
+      if (cost && (!/^\d{1,10}(\.\d{1,8})?$/.test(cost) || !(Number(cost) > 0))) { this.setData({ formError: '盘盈单价必须大于零，整数最多十位，小数最多八位' }); return false; }
+      line.unit_cost = cost || null;
+    }
     this.setData({ saving: true, formError: '', entryError: '' });
     try {
       await warehouse.submit('stocktake.counts', this.data.id, { expected_version: this.data.header.business_version, lines });
