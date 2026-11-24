@@ -2,7 +2,7 @@
   <el-dialog :title="title" :visible="visible" :width="width" append-to-body :close-on-click-modal="false" :before-close="close">
     <div v-if="line" v-loading="loading">
       <div class="entry-meta">
-        <span>账面 {{ num(line.book_qty) }}</span>
+        <span>账面 {{ line.book_qty == null || line.book_qty === '' ? '—' : num(line.book_qty) }}</span>
         <span v-if="stats">在账{{ isSerial ? '编号' : '实物' }} {{ stats.book }} 件，已确认 {{ stats.present + stats.missing }}，不在 {{ stats.missing }}，补录 {{ stats.new }}<template v-if="stats.locked">，业务占用 {{ stats.locked }}</template></span>
         <span v-if="isSerial">账面无编号 {{ num(line.unnumbered_book_qty || 0) }} 件</span>
       </div>
@@ -76,7 +76,7 @@
 </template>
 
 <script>
-import { listStocktakeEntries, saveStocktakeCounts } from '@/api/erp/inventory'
+import { listStocktakeEntries, listStocktakeSourceEntries, saveStocktakeCounts } from '@/api/erp/inventory'
 import { formatMoney, settlementAmount } from '@/utils/money'
 
 // 序列号/实物逐件盘点：勾选在/不在、补录账外新件，保存后由后端重算该行实盘数。
@@ -125,7 +125,9 @@ export default {
       this.loading = true
       this.rows = []
       try {
-        const { data } = await listStocktakeEntries(this.stocktake.id, this.line.id, { page, per_page: 10, keyword: this.keyword || undefined, filter: this.filter || undefined })
+        const params = { page, per_page: 10, keyword: this.keyword || undefined, filter: this.filter || undefined }
+        const { data } = await (this.line.id ? listStocktakeEntries(this.stocktake.id, this.line.id, params)
+          : listStocktakeSourceEntries(this.stocktake.id, { ...params, source_key: this.line.source_key }))
         if (sequence !== this.loadSequence) return
         this.rows = data.data.filter(row => !this.deleteIds.includes(row.id))
         this.total = data.total
@@ -184,8 +186,9 @@ export default {
       this.$emit('update:visible', false)
     },
     async save() {
+      if (this.line.source_error) return
       const payload = {
-        id: this.line.id,
+        ...(this.line.id ? { id: this.line.id } : { source_key: this.line.source_key }),
         entries: Object.entries(this.changes).map(([id, present]) => ({ id: Number(id), counted_present: present })),
         new_entries: this.pendingNew,
         delete_entry_ids: this.deleteIds

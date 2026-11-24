@@ -61,6 +61,7 @@ export const saveItemPurchaseConversion = (itemId, data) => data.id
 export const disableItemPurchaseConversion = (itemId, id, data) => api.post(`/v1/erp/master/items/${itemId}/purchase-conversions/${id}/disable`, data)
 export const getItemMaterialPolicy = itemId => api.get(`/v1/erp/master/items/${itemId}/material-policy`)
 export const getItemIntegratedForm = (itemId, params) => api.get(`/v1/erp/master/items/${itemId}/integrated-form`, { params })
+export const listItemStorageLocationOptions = params => api.get('/v1/erp/master/items/storage-location-options', { params })
 export const saveItemIntegratedForm = (itemId, data, params) => itemId
   ? api.put(`/v1/erp/master/items/${itemId}/integrated-form`, data, { params })
   : api.post('/v1/erp/master/items/integrated-form', data, { params })

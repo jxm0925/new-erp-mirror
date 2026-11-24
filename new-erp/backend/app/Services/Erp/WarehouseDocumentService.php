@@ -3,11 +3,10 @@
 namespace App\Services\Erp;
 
 use App\Exceptions\Erp\WorkOrderDomainException;
-use App\Models\Erp\InventoryStocktakeLine;
 use App\Models\Erp\{InventoryTransaction, PurchaseReceipt, PurchaseReturn, SalesOrder, SalesReturn, SalesReturnReceipt, SalesShipment};
 use App\Models\Erp\{InventoryStocktake, Item, MfgMaterialDelivery, MfgMaterialReturn, MfgReceipt, MfgWorkOrder, MfgWorkOrderUnit, MfgWorkOrderOperation};
 use App\Services\Erp\Manufacturing\{MaterialDeliveryService, MaterialReturnService, ReceiptService};
-use App\Services\Erp\Inventory\{InventoryStocktakeService, InventoryStocktakeEntryService};
+use App\Services\Erp\Inventory\InventoryStocktakeService;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\DB;
 
@@ -128,19 +127,11 @@ final class WarehouseDocumentService
         if ($kind === 'stocktake') {
             $stocktake = InventoryStocktake::query()->with(['warehouse:id,warehouse_code,warehouse_name', 'location:id,location_code,location_name'])->findOrFail($id);
             $header = $stocktake->toArray() + ['document_type' => 'inventory_stocktake', 'status_label' => InventoryStocktakeService::STATUSES[$stocktake->stocktake_status] ?? $stocktake->stocktake_status];
-            $header['summary'] = app(InventoryStocktakeService::class)->summary($stocktake);
-            $keyword = trim((string) ($filters['keyword'] ?? ''));
-            $lines = $stocktake->lines()->with([InventoryStocktakeLine::ITEM_RELATION, 'location:id,location_code,location_name', 'unit:id,unit_name'])
-                ->when($filters['line_id'] ?? null, fn ($q, $lineId) => $q->whereKey($lineId))
-                ->when($keyword !== '', fn ($q) => $q->where(fn ($w) => $w->where('batch_no', 'like', '%'.$keyword.'%')
-                    ->orWhereHas('item', fn ($item) => $item->where('item_code', 'like', '%'.$keyword.'%')->orWhere('item_name', 'like', '%'.$keyword.'%')->orWhere('spec', 'like', '%'.$keyword.'%'))))
-                ->when($filters['location_id'] ?? null, fn ($q, $locationId) => $q->where('location_id', $locationId))
-                ->when(($filters['line_status'] ?? null) === 'uncounted', fn ($q) => $q->whereNull('counted_qty'))
-                ->when(($filters['line_status'] ?? null) === 'diff', fn ($q) => $q->withDifferences())
-                ->orderBy('location_id')->orderBy('item_id')->orderBy('id')->paginate($size, ['*'], 'page', $page);
-            $entries = app(InventoryStocktakeEntryService::class);
-            $stats = $entries->stats($lines->getCollection()->where('count_mode', '!=', 'quantity')->pluck('id')->all());
-            $lines->getCollection()->each(fn ($line) => $line->presentForCount($line->count_mode === 'quantity' ? null : ($stats[$line->id] ?? $entries->emptyStats())));
+            \App\Services\Erp\Inventory\InventoryTransferService::assertWarehouseScope((int) $stocktake->warehouse_id, $user);
+            $service = app(InventoryStocktakeService::class);
+            $header['summary'] = $service->summary($stocktake);
+            $header['line_count'] = (int) $header['summary']['total_lines'];
+            $lines = $service->paginateLines($stocktake, $filters, $size);
             if ($stocktake->stocktake_status === 'counting') $actions = ['stocktake.counts', 'stocktake.add_line', 'stocktake.complete'];
         } else {
             if ($kind === 'material_preparation') {

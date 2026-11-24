@@ -15,6 +15,10 @@
   box-sizing: border-box;
 }
 
+html {
+  scrollbar-gutter: stable;
+}
+
 html,
 body,
 #app {
@@ -1248,11 +1252,50 @@ select {
   }
 }
 
+/* 全局弹窗稳定性：消除打开/关闭 el-dialog 时的页面宽度跳动、高度撑开与外层多余滚动条 */
+html:has(> body.el-popup-parent--hidden) {
+  overflow: hidden !important;
+}
+body.el-popup-parent--hidden {
+  padding-right: 0 !important;
+  overflow: hidden !important;
+}
+.el-dialog__wrapper {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 16px;
+  overflow: hidden !important;
+}
+.el-dialog__wrapper:has(> .el-dialog.is-fullscreen) {
+  padding: 0;
+}
+.el-dialog__wrapper .el-dialog:not(.is-fullscreen) {
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - 48px);
+  max-width: calc(100vw - 32px);
+  margin: 0 !important;
+  overflow: hidden;
+}
+.el-dialog__wrapper .el-dialog:not(.is-fullscreen) > .el-dialog__header,
+.el-dialog__wrapper .el-dialog:not(.is-fullscreen) > .el-dialog__footer {
+  flex-shrink: 0;
+}
+.el-dialog__wrapper .el-dialog:not(.is-fullscreen) > .el-dialog__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
 /* 窄屏下弹窗与确认框不超出屏幕：固定宽度（如 740px）的弹窗收窄到屏幕宽度，两侧各留 12px。 */
 @media (max-width: 800px) {
+  .el-dialog__wrapper {
+    padding: 12px;
+  }
   .el-dialog {
     width: calc(100vw - 24px) !important;
-    margin-top: 4vh !important;
+    max-height: calc(100vh - 24px);
   }
   .el-dialog .el-col-12 {
     width: 100%;

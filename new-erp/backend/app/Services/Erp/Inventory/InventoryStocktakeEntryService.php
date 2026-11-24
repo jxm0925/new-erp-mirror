@@ -10,6 +10,7 @@ use App\Models\Erp\InventoryStocktakeEntry;
 use App\Models\Erp\InventoryStocktakeLine;
 use App\Models\Erp\Item;
 use App\Services\Erp\MaterialPhysicalService;
+use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
@@ -35,26 +36,7 @@ class InventoryStocktakeEntryService
     public function snapshot(InventoryStocktakeLine $line, InventoryBalance $balance, int $written): int
     {
         $now = now();
-        if ($line->count_mode === 'serial') {
-            $rows = InventorySerial::query()->where('inventory_balance_id', $balance->id)
-                ->whereIn('serial_status', array_merge(['available'], self::LOCKED_SERIAL_STATUSES))
-                ->orderBy('serial_no')->get(['id', 'serial_no', 'serial_status'])
-                ->map(fn ($serial) => [
-                    'inventory_serial_id' => $serial->id, 'serial_no' => $serial->serial_no, 'book_status' => $serial->serial_status,
-                    'is_locked' => $serial->serial_status !== 'available',
-                ]);
-        } else {
-            $rows = DB::table('erp_material_physicals as physical')
-                ->join('erp_material_holdings as holding', 'holding.id', '=', 'physical.current_holding_id')
-                ->where('holding.inventory_balance_id', $balance->id)->where('holding.position_type', 'WAREHOUSE')->where('holding.status', 'ACTIVE')
-                ->whereIn('physical.status', array_merge(['AVAILABLE'], self::LOCKED_PHYSICAL_STATUSES))
-                ->orderBy('physical.physical_no')->get(['physical.id', 'physical.physical_no', 'physical.dimensions', 'physical.total_cost', 'physical.status'])
-                ->map(fn ($physical) => [
-                    'material_physical_id' => $physical->id, 'physical_label' => mb_substr($physical->physical_no.' '.$this->dimensionText(json_decode((string) $physical->dimensions, true)), 0, 160),
-                    'dimensions' => $physical->dimensions, 'total_cost' => $physical->total_cost, 'book_status' => $physical->status,
-                    'is_locked' => $physical->status !== 'AVAILABLE',
-                ]);
-        }
+        $rows = $this->sourceRows($line, $balance);
         if ($written + $rows->count() > self::MAX_ENTRIES) {
             throw ValidationException::withMessages(['warehouse_id' => '盘点范围内逐件管理的序列号/实物超过 '.self::MAX_ENTRIES.' 件，请按库位分批盘点。']);
         }
@@ -75,6 +57,95 @@ class InventoryStocktakeEntryService
         }
         $line->update(['unnumbered_book_qty' => max(0, round((float) $line->book_qty - (float) $numbered, 4))]);
         return $rows->count();
+    }
+
+    private function sourceRows(InventoryStocktakeLine $line, InventoryBalance $balance): \Illuminate\Support\Collection
+    {
+        if (! $balance->id) return collect();
+        return $this->sourceQuery($line, $balance)->get()->map(fn ($row) => $this->sourceEntry($line, $row));
+    }
+
+    private function sourceQuery(InventoryStocktakeLine $line, InventoryBalance $balance): \Illuminate\Database\Query\Builder
+    {
+        if ($line->count_mode === 'serial') {
+            return DB::table('erp_inventory_serials')->where('inventory_balance_id', $balance->id ?? 0)
+                ->whereIn('serial_status', array_merge(['available'], self::LOCKED_SERIAL_STATUSES))
+                ->orderBy('serial_no')->select(['id', 'serial_no', 'serial_status']);
+        }
+        return DB::table('erp_material_physicals as physical')
+            ->join('erp_material_holdings as holding', 'holding.id', '=', 'physical.current_holding_id')
+            ->where('holding.inventory_balance_id', $balance->id ?? 0)->where('holding.position_type', 'WAREHOUSE')->where('holding.status', 'ACTIVE')
+            ->whereIn('physical.status', array_merge(['AVAILABLE'], self::LOCKED_PHYSICAL_STATUSES))
+            ->orderBy('physical.physical_no')->select(['physical.id', 'physical.physical_no', 'physical.dimensions', 'physical.total_cost', 'physical.status']);
+    }
+
+    private function sourceEntry(InventoryStocktakeLine $line, object $row): array
+    {
+        return $line->count_mode === 'serial' ? [
+            'inventory_serial_id' => $row->id, 'serial_no' => $row->serial_no, 'book_status' => $row->serial_status,
+            'is_locked' => $row->serial_status !== 'available',
+        ] : [
+            'material_physical_id' => $row->id, 'physical_label' => mb_substr($row->physical_no.' '.$this->dimensionText(json_decode((string) $row->dimensions, true)), 0, 160),
+            'dimensions' => $row->dimensions, 'total_cost' => $row->total_cost, 'book_status' => $row->status,
+            'is_locked' => $row->status !== 'AVAILABLE',
+        ];
+    }
+
+    public function previewStatsFor(\Illuminate\Support\Collection $lines): array
+    {
+        $serialIds = $lines->where('count_mode', 'serial')->pluck('inventory_balance_id')->filter()->unique();
+        $physicalIds = $lines->where('count_mode', 'physical')->pluck('inventory_balance_id')->filter()->unique();
+        $serials = $serialIds->isEmpty() ? collect() : DB::table('erp_inventory_serials')->whereIn('inventory_balance_id', $serialIds)
+            ->whereIn('serial_status', array_merge(['available'], self::LOCKED_SERIAL_STATUSES))->groupBy('inventory_balance_id')
+            ->selectRaw("inventory_balance_id, SUM(serial_status = 'available') AS book, SUM(serial_status <> 'available') AS locked")->get()->keyBy('inventory_balance_id');
+        $physicals = $physicalIds->isEmpty() ? collect() : DB::table('erp_material_physicals as physical')
+            ->join('erp_material_holdings as holding', 'holding.id', '=', 'physical.current_holding_id')
+            ->whereIn('holding.inventory_balance_id', $physicalIds)->where('holding.position_type', 'WAREHOUSE')->where('holding.status', 'ACTIVE')
+            ->whereIn('physical.status', array_merge(['AVAILABLE'], self::LOCKED_PHYSICAL_STATUSES))->groupBy('holding.inventory_balance_id')
+            ->selectRaw("holding.inventory_balance_id, SUM(physical.status = 'AVAILABLE') AS book, SUM(physical.status <> 'AVAILABLE') AS locked")->get()->keyBy('inventory_balance_id');
+        return $lines->mapWithKeys(function ($line) use ($serials, $physicals) {
+            $row = ($line->count_mode === 'serial' ? $serials : $physicals)->get($line->inventory_balance_id);
+            $book = (int) ($row->book ?? 0); $locked = (int) ($row->locked ?? 0);
+            // 实物没有无编号数量；浏览只聚合件数，正式保存快照时再逐件校验库存基本数量。
+            $unnumbered = $line->count_mode === 'serial' ? max(0, round((float) $line->book_qty - $book - $locked, 4)) : 0;
+            return [$line->source_key => ['stats' => array_merge($this->emptyStats(), ['book' => $book, 'undecided' => $book, 'locked' => $locked]),
+                'unnumbered_book_qty' => $unnumbered]];
+        })->all();
+    }
+
+    public function paginateSource(InventoryStocktakeLine $line, InventoryBalance $balance, array $filters): LengthAwarePaginator
+    {
+        $query = $this->sourceQuery($line, $balance);
+        $status = $line->count_mode === 'serial' ? 'serial_status' : 'physical.status';
+        $available = $line->count_mode === 'serial' ? 'available' : 'AVAILABLE';
+        $keyword = trim((string) ($filters['keyword'] ?? ''));
+        if ($keyword !== '') $query->where($line->count_mode === 'serial' ? 'serial_no' : 'physical.physical_no', 'like', '%'.$keyword.'%');
+        if (($filters['filter'] ?? null) === 'undecided') $query->where($status, $available);
+        if (($filters['filter'] ?? null) === 'locked') $query->where($status, '<>', $available);
+        if (in_array($filters['filter'] ?? null, ['new', 'missing'], true)) $query->whereRaw('1 = 0');
+        $paginator = $query->paginate(min(100, max(1, (int) ($filters['per_page'] ?? 10))), ['*'], 'page', max(1, (int) ($filters['page'] ?? 1)));
+        $paginator->setCollection($paginator->getCollection()->map(function ($row) use ($line) {
+            $data = $this->sourceEntry($line, $row);
+            if (isset($data['dimensions']) && is_string($data['dimensions'])) $data['dimensions'] = json_decode($data['dimensions'], true);
+            // 负 ID 只表示尚未保存的库存来源；保存时服务端按来源身份映射到正式盘点逐件记录。
+            return new InventoryStocktakeEntry(['id' => -(int) $row->id, 'entry_type' => $line->count_mode,
+                'book_present' => true, 'counted_present' => null, 'is_new' => false] + $data);
+        }));
+        return $paginator;
+    }
+
+    public function paginateStored(InventoryStocktakeLine $line, array $filters): LengthAwarePaginator
+    {
+        $keyword = trim((string) ($filters['keyword'] ?? ''));
+        $filter = $filters['filter'] ?? null;
+        return $line->entries()
+            ->when($keyword !== '', fn ($q) => $q->where(fn ($w) => $w->where('serial_no', 'like', '%'.$keyword.'%')->orWhere('physical_label', 'like', '%'.$keyword.'%')))
+            ->when($filter === 'undecided', fn ($q) => $q->where('book_present', true)->where('is_locked', false)->whereNull('counted_present'))
+            ->when($filter === 'missing', fn ($q) => $q->where('book_present', true)->where('is_locked', false)->where('counted_present', false))
+            ->when($filter === 'new', fn ($q) => $q->where('is_new', true))
+            ->when($filter === 'locked', fn ($q) => $q->where('is_locked', true))
+            ->orderBy('is_new')->orderBy('is_locked')->orderBy('id')
+            ->paginate(min(100, max(1, (int) ($filters['per_page'] ?? 10))), ['*'], 'page', max(1, (int) ($filters['page'] ?? 1)));
     }
 
     /** 录入逐件结果后按快照重算行实盘数；未全部确认时实盘数为空，完成盘点会提示未盘。 */

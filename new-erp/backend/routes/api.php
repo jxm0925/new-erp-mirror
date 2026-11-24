@@ -335,12 +335,14 @@ Route::prefix('v1/erp/inventory')->group(function () {
     Route::delete('adjustments/{id}', [InventoryAdjustmentController::class, 'destroy'])->whereNumber('id');
     Route::get('stocktakes', [InventoryStocktakeController::class, 'index']);
     Route::get('stocktakes/options', [InventoryStocktakeController::class, 'options']);
+    Route::get('stocktakes/location-preview', [InventoryStocktakeController::class, 'locationPreview']);
     Route::get('stocktakes/active', [InventoryStocktakeController::class, 'active']);
     Route::post('stocktakes', [InventoryStocktakeController::class, 'store']);
     Route::get('stocktakes/{id}', [InventoryStocktakeController::class, 'show'])->whereNumber('id');
     Route::get('stocktakes/{id}/items', [InventoryStocktakeController::class, 'items'])->whereNumber('id');
     Route::post('stocktakes/{id}/lines', [InventoryStocktakeController::class, 'addLine'])->whereNumber('id');
     Route::put('stocktakes/{id}/counts', [InventoryStocktakeController::class, 'saveCounts'])->whereNumber('id');
+    Route::get('stocktakes/{id}/source-entries', [InventoryStocktakeController::class, 'sourceEntries'])->whereNumber('id');
     Route::get('stocktakes/{id}/lines/{lineId}/entries', [InventoryStocktakeController::class, 'entries'])->whereNumber('id')->whereNumber('lineId');
     Route::post('stocktakes/{id}/complete', [InventoryStocktakeController::class, 'complete'])->whereNumber('id');
     Route::post('stocktakes/{id}/cancel', [InventoryStocktakeController::class, 'cancel'])->whereNumber('id');
@@ -870,6 +872,7 @@ Route::prefix('v1/erp/master')->group(function () {
     Route::post('trade-platforms', [\App\Http\Controllers\Api\V1\Erp\TradePlatformController::class, 'store']);
     Route::put('trade-platforms/{id}', [\App\Http\Controllers\Api\V1\Erp\TradePlatformController::class, 'update'])->whereNumber('id');
     Route::post('trade-platforms/{id}/status', [\App\Http\Controllers\Api\V1\Erp\TradePlatformController::class, 'status'])->whereNumber('id');
+    Route::get('items/storage-location-options', [ItemIntegratedFormController::class, 'storageLocationOptions']);
     Route::get('items/{itemId}/integrated-form', [ItemIntegratedFormController::class, 'show'])->whereNumber('itemId');
     Route::post('items/integrated-form', [ItemIntegratedFormController::class, 'store']);
     Route::put('items/{itemId}/integrated-form', [ItemIntegratedFormController::class, 'update'])->whereNumber('itemId');

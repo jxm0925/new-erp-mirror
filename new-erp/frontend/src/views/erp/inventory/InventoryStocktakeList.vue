@@ -21,7 +21,7 @@
 
     <div class="erp-page-tip">
       <i class="el-icon-info" />
-      <span>按库位新建盘点会自动带出绑定物料和实际库存批次，直接填写实盘数量，首次盘盈可填写单价。开盘即冻结所选范围出入库，完成盘点后自动生成差异调整单并过账；建议按库位分批盘点。</span>
+      <span>进行中的盘点按库位动态查询绑定物料和真实库存批次，直接填写实盘数量，首次盘盈可填写单价。开盘即冻结所选范围出入库，完成盘点后自动生成差异调整单并过账；建议按库位分批盘点。</span>
     </div>
 
     <div class="metric-overview-grid">
@@ -63,9 +63,8 @@
         </div>
         <div class="filter-item">
           <span class="filter-label">盘点仓库</span>
-          <el-select v-model="filters.warehouse_id" size="small" clearable filterable placeholder="全部仓库" @change="query">
-            <el-option v-for="w in warehouses" :key="w.id" :label="`${w.warehouse_code} ${w.warehouse_name}`" :value="w.id" />
-          </el-select>
+          <paged-record-select v-model="filters.warehouse_id" :request="getWarehouseLocators"
+            :params="{ mode: 'warehouse', kind: 'stocktake' }" title="筛选盘点仓库" placeholder="全部仓库" @change="query" />
         </div>
         <div class="filter-item">
           <span class="filter-label">单据状态</span>
@@ -104,7 +103,7 @@
           <template slot-scope="{ row }">
             <div class="progress-cell">
               <div class="progress-text font-tabular">
-                <span>已盘 <b>{{ countedLines(row) }}</b> / {{ row.line_count || 0 }} 行</span>
+                <span>已盘 <b>{{ countedLines(row) }}</b> / {{ totalLines(row) }} 行</span>
                 <span>{{ progressPercent(row) }}%</span>
               </div>
               <div class="mini-progress-bar">
@@ -176,41 +175,53 @@
       </div>
     </section>
 
-    <el-dialog title="新建库存盘点单" :visible.sync="createVisible" :width="dialogWidth('520px')" append-to-body :close-on-click-modal="false">
-      <el-form ref="createForm" :model="createForm" :rules="createRules" label-width="88px" size="small">
-        <el-form-item label="盘点粒度">
-          <el-radio-group v-model="createForm.scope" @change="createForm.location_id = null">
+    <el-dialog title="新建库存盘点单" :visible.sync="createVisible" :width="dialogWidth('760px')" append-to-body :close-on-click-modal="false" @closed="resetCreatePreview">
+      <el-form ref="createForm" :model="createForm" :rules="createRules" :disabled="saving" label-width="88px" size="small">
+        <el-form-item label="盘点范围">
+          <el-radio-group v-model="createForm.scope">
             <el-radio label="location">按库位盘点（推荐）</el-radio>
             <el-radio label="warehouse">整仓盘点</el-radio>
           </el-radio-group>
         </el-form-item>
         <el-form-item label="盘点仓库" prop="warehouse_id">
-          <el-select v-model="createForm.warehouse_id" filterable placeholder="请选择实体仓库" style="width: 100%" @change="createForm.location_id = null">
-            <el-option v-for="w in warehouses" :key="w.id" :label="`${w.warehouse_code} ${w.warehouse_name}`" :value="w.id" />
-          </el-select>
+          <paged-record-select v-model="createForm.warehouse_id" :request="getWarehouseLocators" confirm-on-select
+            :params="{ mode: 'warehouse', kind: 'stocktake' }" :disabled="saving" title="选择盘点仓库" placeholder="请选择实体仓库" @change="changeCreateWarehouse" />
         </el-form-item>
-        <el-form-item v-if="createForm.scope === 'location'" label="盘点库位" prop="location_id" :rules="[{ required: true, message: '请选择盘点库位', trigger: 'change' }]">
-          <el-select v-model="createForm.location_id" clearable filterable :disabled="!createForm.warehouse_id" placeholder="请选择要盘点的具体库位" style="width: 100%">
-            <el-option v-for="l in locationsOf(createForm.warehouse_id)" :key="l.id" :label="`${l.location_code} ${l.location_name}`" :value="l.id" />
-          </el-select>
+        <el-form-item :label="createForm.scope === 'warehouse' ? '预览库位' : '盘点库位'" prop="location_id" :rules="createForm.scope === 'location' ? [{ required: true, message: '请选择盘点库位', trigger: 'change' }] : []">
+          <paged-record-select ref="createLocation" v-model="createForm.location_id" :request="getWarehouseLocators" confirm-on-select
+            :params="{ mode: 'location', kind: 'stocktake', warehouse_id: createForm.warehouse_id }" :disabled="!createForm.warehouse_id || saving"
+            title="选择盘点库位" :placeholder="createForm.scope === 'warehouse' ? '选填，仅预览物料，不改变整仓范围' : '请选择要盘点的具体库位'" @change="changeCreateLocation" />
+          <span v-if="createForm.scope === 'warehouse'" class="cell-sub">此库位仅预览物料，开盘仍冻结整个仓库。</span>
         </el-form-item>
         <el-form-item label="盘点备注">
           <el-input v-model="createForm.remark" type="textarea" :rows="2" maxlength="500" placeholder="可填写本次盘点原因或班组说明（选填）" />
         </el-form-item>
       </el-form>
+      <div v-if="createForm.location_id" class="create-preview">
+        <el-table v-loading="createPreviewLoading" :data="createPreviewRows" size="small" max-height="240" empty-text="该库位暂无绑定物料或库存">
+          <el-table-column label="物料" min-width="230">
+            <template slot-scope="{ row }">{{ row.item && row.item.item_code }} {{ row.item && row.item.item_name }}<span class="cell-sub">{{ row.item && row.item.spec }}</span></template>
+          </el-table-column>
+          <el-table-column label="批次" min-width="140"><template slot-scope="{ row }">{{ row.batch_no || '—' }}</template></el-table-column>
+          <el-table-column label="账面数量" width="100" align="right"><template slot-scope="{ row }">{{ row.book_qty == null || row.book_qty === '' ? '—' : num(row.book_qty) }}</template></el-table-column>
+          <el-table-column label="单位" width="70"><template slot-scope="{ row }">{{ row.unit && row.unit.unit_name }}</template></el-table-column>
+        </el-table>
+        <div v-if="createPreviewError" class="text-orange">{{ createPreviewError }} <el-button type="text" size="mini" @click="loadCreatePreview(createPreviewPage)">重试</el-button></div>
+        <el-pagination background small layout="total, prev, pager, next" :current-page="createPreviewPage" :page-size="10" :total="createPreviewTotal" :disabled="createPreviewLoading || saving" @current-change="loadCreatePreview" />
+      </div>
       <el-alert
-        :title="createForm.scope === 'warehouse' ? '按实际库存批次生成明细。整仓盘点将暂停所有库位的出入库，完成或取消后恢复。' : '自动带出所选库位的绑定物料和实际库存批次。盘点期间仅该库位暂停出入库，完成或取消后恢复。'"
+        :title="createForm.scope === 'warehouse' ? '盘点仓库内全部库位，按库位动态查询绑定物料和真实库存批次。整仓暂停出入库，完成或取消后恢复。' : '动态查询所选库位的绑定物料和真实库存批次。盘点期间仅该库位暂停出入库，完成或取消后恢复。'"
         type="warning"
         show-icon
         :closable="false"
       />
       <span slot="footer">
-        <el-button size="small" @click="createVisible = false">取消</el-button>
+        <el-button size="small" :disabled="saving" @click="createVisible = false">取消</el-button>
         <el-button size="small" type="success" class="btn-theme-create" :loading="saving" @click="submitCreate">开始盘点并冻结</el-button>
       </span>
     </el-dialog>
 
-    <stocktake-entry-dialog :visible.sync="entryVisible" :stocktake="detail" :line="entryLine" :editable="editable" @saved="entrySaved" />
+    <stocktake-entry-dialog :visible.sync="entryVisible" :stocktake="detail" :line="entryLine" :editable="editable && !!entryLine && !entryLine.source_error" @saved="entrySaved" />
     <stocktake-found-line-dialog v-if="foundLineOpen && editable" :stocktake="detail" @close="foundLineOpen = false" @added="foundLineAdded" />
 
     <el-dialog :title="detail ? `盘点工作台 · ${detail.stocktake_no}` : '盘点单详情'" :visible.sync="detailVisible" :width="dialogWidth('1280px')" :before-close="closeDetail" append-to-body :close-on-click-modal="false">
@@ -219,7 +230,7 @@
           v-if="detail.stocktake_status === 'counting'"
           class="freeze-banner"
           :title="`${detail.warehouse ? detail.warehouse.warehouse_name : ''} / ${detail.location ? detail.location.location_name : '全部库位'} 正在盘点中，范围内暂停出入库，完成或取消后自动解除冻结。`"
-          description="已开盘单继续使用开盘时的明细，不会自动补入绑定物料；缺项请补录账外物料。"
+          description="按库位动态查询绑定物料和真实库存批次；筛选仅改变显示明细，不改变盘点及冻结范围。"
           type="warning"
           show-icon
           :closable="false"
@@ -263,9 +274,10 @@
         <div class="line-filter-bar">
           <div class="line-filter-left">
             <el-input v-model.trim="lineFilters.keyword" size="small" clearable prefix-icon="el-icon-search" placeholder="搜索物料编码 / 名称 / 批次号" :disabled="detailLoading || saving" style="width: 240px" @keyup.enter.native="filterLines" @clear="filterLines" />
-            <el-select v-model="lineFilters.location_id" size="small" clearable filterable placeholder="全部库位" :disabled="detailLoading || saving" style="width: 170px" @change="filterLines">
-              <el-option v-for="l in detail.location_options || []" :key="l.id" :label="`${l.location_code} ${l.location_name}`" :value="l.id" />
-            </el-select>
+            <paged-record-select v-if="!detail.location_id" v-model="lineFilters.location_id" :request="getWarehouseLocators" confirm-on-select
+              :params="{ mode: 'location', kind: 'stocktake', warehouse_id: detail.warehouse_id, stocktake_id: detail.id }"
+              title="筛选盘点库位" placeholder="筛选库位（全部）" :disabled="detailLoading || saving" style="width: 200px" @change="filterLines" />
+            <span v-else>{{ detail.location.location_code }} {{ detail.location.location_name }}</span>
             <el-radio-group v-model="lineFilters.line_status" size="small" :disabled="detailLoading || saving" @change="filterLines">
               <el-radio-button label="">全部明细</el-radio-button>
               <el-radio-button label="uncounted">只看未盘 ({{ detail.summary ? detail.summary.uncounted_lines : 0 }})</el-radio-button>
@@ -281,7 +293,7 @@
           </div>
         </div>
 
-        <el-table :data="detail.lines" border stripe fit size="small" max-height="440" class="enterprise-table">
+        <el-table :data="detail.lines" :row-key="lineKey" border stripe fit size="small" max-height="440" class="enterprise-table">
           <el-table-column label="物料编码 / 名称" min-width="210" show-overflow-tooltip>
             <template slot-scope="{ row }">
               <div class="item-cell">
@@ -301,7 +313,7 @@
           </el-table-column>
           <el-table-column label="账面数量" width="110" align="right">
             <template slot-scope="{ row }">
-              <strong class="font-tabular">{{ num(row.book_qty) }}</strong>
+              <strong class="font-tabular">{{ row.book_qty == null || row.book_qty === '' ? '—' : num(row.book_qty) }}</strong>
               <small class="unit-lbl">{{ row.unit && row.unit.unit_name }}</small>
             </template>
           </el-table-column>
@@ -310,7 +322,7 @@
               <template v-if="row.count_mode && row.count_mode !== 'quantity'">
                 <div class="serial-count-cell">
                   <strong class="font-tabular">{{ row.counted_qty == null ? '未盘' : num(row.counted_qty) }}</strong>
-                  <el-button type="text" size="mini" class="action-link" :disabled="saving || detailLoading" @click="openEntries(row)">
+                  <el-button type="text" size="mini" class="action-link" :disabled="saving || detailLoading || !!row.source_error" @click="openEntries(row)">
                     {{ editable ? '逐件盘点' : '逐件明细' }}
                   </el-button>
                 </div>
@@ -322,7 +334,7 @@
               <el-input-number
                 v-else-if="editable"
                 v-model="row.counted_qty"
-                :disabled="saving || detailLoading"
+                :disabled="saving || detailLoading || !!row.source_error"
                 :min="0"
                 :precision="4"
                 :controls="false"
@@ -343,7 +355,7 @@
             <template slot-scope="{ row }">
               <span v-if="row.count_mode === 'physical'" class="cell-sub">按逐件成本</span>
               <template v-else-if="editable && row.unit_cost_editable">
-                <erp-money-input v-model.trim="row.unit_cost" unit-price size="mini" inputmode="decimal" placeholder="填写盘盈单价" :disabled="saving || detailLoading" @input="captureEdits" />
+                <erp-money-input v-model.trim="row.unit_cost" unit-price size="mini" inputmode="decimal" placeholder="填写盘盈单价" :disabled="saving || detailLoading || !!row.source_error" @input="captureEdits" />
                 <small class="cell-sub cost-caption">仅用于盘盈入账</small>
               </template>
               <template v-else>
@@ -354,7 +366,8 @@
           </el-table-column>
           <el-table-column label="差异说明 / 备注" min-width="150">
             <template slot-scope="{ row }">
-              <el-input v-if="editable" v-model="row.remark" :disabled="saving || detailLoading" size="mini" maxlength="500" placeholder="选填差异原因" @input="captureEdits" />
+              <div v-if="row.source_error" class="cell-sub text-orange">{{ row.source_error }}</div>
+              <el-input v-if="editable" v-model="row.remark" :disabled="saving || detailLoading || !!row.source_error" size="mini" maxlength="500" placeholder="选填差异原因" @input="captureEdits" />
               <span v-else>{{ row.remark || '—' }}</span>
             </template>
           </el-table-column>
@@ -388,13 +401,15 @@
 <script>
 import { formatMoney as displayMoney } from '../../../utils/money.js'
 import { formatPurchasePrice } from '@/utils/purchaseLineAmount'
-import { listStocktakes, getStocktakeOptions, getStocktake, createStocktake, saveStocktakeCounts, completeStocktake, cancelStocktake } from '@/api/erp/inventory'
+import { listStocktakes, getStocktake, getStocktakeLocationPreview, createStocktake, saveStocktakeCounts, completeStocktake, cancelStocktake } from '@/api/erp/inventory'
 import StocktakeEntryDialog from './StocktakeEntryDialog.vue'
 import StocktakeFoundLineDialog from './StocktakeFoundLineDialog.vue'
+import PagedRecordSelect from '@/components/common/PagedRecordSelect.vue'
+import { getWarehouseLocators } from '@/api/erp/warehouse'
 
 export default {
   name: 'InventoryStocktakeList',
-  components: { StocktakeEntryDialog, StocktakeFoundLineDialog },
+  components: { StocktakeEntryDialog, StocktakeFoundLineDialog, PagedRecordSelect },
   data() {
     return {
       loading: false,
@@ -405,10 +420,10 @@ export default {
       pageSize: 10,
       stats: { total: 0, counting: 0, completed: 0, cancelled: 0, diff_orders: 0 },
       filters: { keyword: '', warehouse_id: null, status: '', has_diff: false },
-      warehouses: [],
-      statuses: {},
+      statuses: { counting: '盘点中', completed: '已完成', cancelled: '已取消' },
       createVisible: false,
       createForm: { scope: 'location', warehouse_id: null, location_id: null, remark: '' },
+      createPreviewRows: [], createPreviewLoading: false, createPreviewError: '', createPreviewPage: 1, createPreviewTotal: 0, createPreviewSequence: 0,
       createRules: { warehouse_id: [{ required: true, message: '请选择仓库', trigger: 'change' }] },
       detailVisible: false,
       detailLoading: false,
@@ -437,15 +452,16 @@ export default {
     }
   },
   created() {
-    this.loadOptions()
     this.load()
     if (Number(this.$route.query.id) > 0) this.openDetail(Number(this.$route.query.id))
     window.addEventListener('resize', this.onResize)
   },
   beforeDestroy() {
+    this.createPreviewSequence++
     window.removeEventListener('resize', this.onResize)
   },
   methods: {
+    getWarehouseLocators,
     unitPrice: formatPurchasePrice,
     onResize() {
       this.windowWidth = window.innerWidth
@@ -462,23 +478,23 @@ export default {
       return displayMoney(value || 0)
     },
     countedLines(row) {
+      if (row.summary) return Number(row.summary.counted_lines || 0)
       if (row.counted_lines_count !== undefined && row.counted_lines_count !== null) return Number(row.counted_lines_count)
       return row.stocktake_status === 'completed' ? Number(row.line_count || 0) : 0
     },
+    totalLines(row) { return Number(row.summary ? row.summary.total_lines || 0 : row.line_count || 0) },
     progressPercent(row) {
-      const total = Number(row.line_count || 0)
+      const total = this.totalLines(row)
       if (!total) return 100
       return Math.min(100, Math.round((this.countedLines(row) / total) * 100))
     },
     statusType(status) {
       return { counting: 'warning', completed: 'success', cancelled: 'info' }[status] || ''
     },
-    locationsOf(warehouseId) {
-      const warehouse = this.warehouses.find(w => w.id === warehouseId)
-      return warehouse ? warehouse.locations : []
-    },
+    // 未保存来源没有行主键，稳定来源键避免跨页草稿共用空 ID。
+    lineKey(line) { return String(line.id || line.source_key) },
     diffValue(row) {
-      if (row.counted_qty === null || row.counted_qty === undefined) return null
+      if (row.source_error || row.book_qty == null || row.book_qty === '' || row.counted_qty == null) return null
       return Number(row.counted_qty) - Number(row.book_qty)
     },
     diffText(row) {
@@ -492,15 +508,6 @@ export default {
     },
     fail(error) {
       this.$message.error((error && error.userMessage) || '操作失败')
-    },
-    async loadOptions() {
-      try {
-        const { data } = await getStocktakeOptions()
-        this.warehouses = data.data.warehouses || []
-        this.statuses = data.data.stocktake_statuses || {}
-      } catch (e) {
-        this.fail(e)
-      }
     },
     async load() {
       this.loading = true
@@ -546,9 +553,46 @@ export default {
       this.load()
     },
     openCreate() {
+      this.resetCreatePreview()
       this.createForm = { scope: 'location', warehouse_id: null, location_id: null, remark: '' }
       this.createVisible = true
       this.$nextTick(() => this.$refs.createForm && this.$refs.createForm.clearValidate())
+    },
+    resetCreatePreview() {
+      this.createPreviewSequence++
+      this.createPreviewRows = []
+      this.createPreviewPage = 1
+      this.createPreviewTotal = 0
+      this.createPreviewError = ''
+      this.createPreviewLoading = false
+    },
+    changeCreateWarehouse() {
+      this.createForm.location_id = null
+      this.resetCreatePreview()
+      if (this.createForm.warehouse_id) this.$nextTick(() => this.$refs.createLocation && this.$refs.createLocation.open())
+    },
+    changeCreateLocation() {
+      this.resetCreatePreview()
+      this.loadCreatePreview(1)
+    },
+    async loadCreatePreview(page = 1) {
+      if (!this.createForm.warehouse_id || !this.createForm.location_id) return this.resetCreatePreview()
+      const sequence = ++this.createPreviewSequence
+      this.createPreviewPage = page
+      this.createPreviewRows = []
+      this.createPreviewLoading = true
+      this.createPreviewError = ''
+      try {
+        const { data } = await getStocktakeLocationPreview({ warehouse_id: this.createForm.warehouse_id, location_id: this.createForm.location_id, page, per_page: 10 })
+        if (sequence !== this.createPreviewSequence || !this.createVisible) return
+        this.createPreviewRows = data.data || []
+        this.createPreviewPage = data.current_page
+        this.createPreviewTotal = data.total
+      } catch (error) {
+        if (sequence === this.createPreviewSequence) this.createPreviewError = error.userMessage || '库位物料加载失败'
+      } finally {
+        if (sequence === this.createPreviewSequence) this.createPreviewLoading = false
+      }
     },
     submitCreate() {
       this.$refs.createForm.validate(async valid => {
@@ -562,11 +606,12 @@ export default {
         }
         this.saving = true
         try {
-          const { data } = await createStocktake(this.createForm)
+          const previewLocationId = this.createForm.location_id
+          const { data } = await createStocktake({ ...this.createForm, location_id: this.createForm.scope === 'location' ? previewLocationId : null })
           this.$message.success(data.message || '盘点单已创建')
           this.createVisible = false
           this.load()
-          this.openDetail(data.data.id)
+          this.openDetail(data.data.id, previewLocationId)
         } catch (e) {
           this.fail(e)
         } finally {
@@ -574,14 +619,14 @@ export default {
         }
       })
     },
-    async openDetail(id) {
+    async openDetail(id, locationId = null) {
       this.foundLineOpen = false
       this.focusedLineId = null
       this.detail = null
       this.detailPage = 1
       this.draftCounts = {}
       this.originalCounts = {}
-      this.lineFilters = { keyword: '', location_id: null, line_status: '' }
+      this.lineFilters = { keyword: '', location_id: locationId, line_status: '' }
       this.detailVisible = true
       await this.loadDetailPage(id, 1)
     },
@@ -589,7 +634,7 @@ export default {
       if (!this.detail || !this.editable) return
       let filled = 0
       this.detail.lines.forEach(line => {
-        if ((!line.count_mode || line.count_mode === 'quantity') && (line.counted_qty === null || line.counted_qty === undefined)) {
+        if (!line.source_error && line.book_qty != null && line.book_qty !== '' && (!line.count_mode || line.count_mode === 'quantity') && (line.counted_qty === null || line.counted_qty === undefined)) {
           this.$set(line, 'counted_qty', Number(line.book_qty || 0))
           filled++
         }
@@ -599,12 +644,13 @@ export default {
       else this.$message.info('本页没有待填充的数量型未盘明细')
     },
     countInput(line) {
-      const input = { id: line.id, remark: line.remark || null }
+      const input = { ...(line.id ? { id: line.id } : { source_key: line.source_key }), remark: line.remark || null }
       if (!line.count_mode || line.count_mode === 'quantity') input.counted_qty = line.counted_qty == null ? null : Number(line.counted_qty)
       if (line.unit_cost_editable && this.$can('inventory.amount.view')) input.unit_cost = line.unit_cost == null || line.unit_cost === '' ? null : String(line.unit_cost).trim()
       return input
     },
     openEntries(line) {
+      if (line.source_error) return
       this.captureEdits()
       this.entryLine = line
       this.entryVisible = true
@@ -629,11 +675,13 @@ export default {
     captureEdits() {
       if (!this.detail || !this.editable) return
       this.detail.lines.forEach(line => {
+        if (line.source_error) return
         const input = this.countInput(line)
-        const original = this.originalCounts[line.id] || {}
-        const changes = Object.fromEntries(Object.entries(input).filter(([key, value]) => key !== 'id' && value !== original[key]))
-        if (!Object.keys(changes).length) this.$delete(this.draftCounts, line.id)
-        else this.$set(this.draftCounts, line.id, { id: line.id, ...changes })
+        const key = this.lineKey(line)
+        const original = this.originalCounts[key] || {}
+        const changes = Object.fromEntries(Object.entries(input).filter(([field, value]) => !['id', 'source_key'].includes(field) && value !== original[field]))
+        if (!Object.keys(changes).length) this.$delete(this.draftCounts, key)
+        else this.$set(this.draftCounts, key, { ...(line.id ? { id: line.id } : { source_key: line.source_key }), ...changes })
       })
     },
     async closeDetail(done) {
@@ -668,8 +716,9 @@ export default {
         if (this.detail && Object.keys(this.draftCounts).length) data.data.business_version = this.detail.business_version
         data.data.lines.forEach(line => {
           if (line.unit_cost_editable && Number(line.unit_cost) === 0) line.unit_cost = ''
-          if (!this.draftCounts[line.id]) this.$set(this.originalCounts, line.id, this.countInput(line))
-          if (this.draftCounts[line.id]) Object.assign(line, this.draftCounts[line.id])
+          const key = this.lineKey(line)
+          if (!this.draftCounts[key]) this.$set(this.originalCounts, key, this.countInput(line))
+          if (this.draftCounts[key]) Object.assign(line, this.draftCounts[key])
           line.counted_qty = line.counted_qty === null ? undefined : Number(line.counted_qty)
         })
         this.detail = data.data
@@ -690,7 +739,7 @@ export default {
       }
       const { data } = await saveStocktakeCounts(this.detail.id, lines, this.detail.business_version)
       this.detail.business_version = data.data.business_version
-      lines.forEach(line => this.$set(this.originalCounts, line.id, { ...this.originalCounts[line.id], ...line }))
+      lines.forEach(line => this.$set(this.originalCounts, this.lineKey(line), { ...this.originalCounts[this.lineKey(line)], ...line }))
       this.draftCounts = {}
     },
     async saveCounts() {

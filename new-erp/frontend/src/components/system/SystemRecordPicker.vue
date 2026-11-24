@@ -50,6 +50,7 @@ export default {
     valueKey: { type: String, default: 'id' },
     type: { type: String, default: 'users' },
     multiple: { type: Boolean, default: true },
+    confirmOnSelect: Boolean,
     roleStatus: { type: String, default: 'enabled' },
     value: { type: Array, default: () => [] },
     departmentId: { type: Number, default: 0 },
@@ -116,6 +117,7 @@ export default {
       else if (this.selected[id]) this.$delete(this.selected, id)
       else if (!this.multiple) this.selected = { [id]: { ...row } }
       else this.$set(this.selected, id, { ...row })
+      if (this.confirmOnSelect && this.singleRecord) this.confirm()
     },
     remove(id) { if (!this.isRequired(this.selected[id])) this.$delete(this.selected, id) },
     canSelect(row) { return !this.selectable || this.selectable(row) },

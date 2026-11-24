@@ -4,7 +4,9 @@ namespace App\Http\Controllers\Api\V1\Erp;
 
 use App\Exceptions\Erp\WorkOrderDomainException;
 use App\Http\Controllers\Controller;
+use App\Models\Erp\InventoryStocktake;
 use App\Services\Erp\{AuthContextService, WarehouseWorkspaceService};
+use App\Services\Erp\Inventory\InventoryTransferService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -70,7 +72,7 @@ final class WarehouseWorkspaceController extends Controller
 
     public function locators(Request $request)
     {
-        [, $permissions] = $this->context($request);
+        [$user, $permissions] = $this->context($request);
         // production.task.execute：车间开料登记余料回库位置，只能选工厂仓。
         $allowed = ['inventory.post.repair', 'sales_return.receive', 'sales_order.shipment.post', 'sales_order.shipment.packing.execute',
             'sales_order.shipment.packing.quality', 'production.task.execute', 'inventory.balance.view', 'inventory.stocktake.view',
@@ -79,19 +81,38 @@ final class WarehouseWorkspaceController extends Controller
         if (! array_intersect($allowed, $permissions)) throw new WorkOrderDomainException('permission_denied', '没有选择入出库位置的权限。', 403);
         $filters = $request->validate(['mode' => 'required|in:warehouse,location', 'warehouse_id' => 'required_if:mode,location|integer|min:1',
             'keyword' => 'nullable|string|max:100', 'page' => 'nullable|integer|min:1', 'per_page' => 'nullable|integer|min:1|max:100',
-            'id' => 'nullable|integer|min:1',
+            'id' => 'nullable|integer|min:1', 'ids' => 'nullable|array|max:100', 'ids.*' => 'integer|min:1|distinct',
+            'stocktake_id' => 'nullable|integer|min:1',
             'kind' => 'nullable|in:inventory_transfer,material_physical_transfer,stocktake',
             'location_purpose' => 'nullable|in:general,finished,shipping_staging,repair',
             'location_purposes' => 'nullable|array|max:4',
             'location_purposes.*' => 'required|in:general,finished,shipping_staging,repair|distinct']);
         $mode = $filters['mode'];
-        $query = DB::table($mode === 'warehouse' ? 'erp_warehouses' : 'erp_locations')->where('status', 'enabled');
+        $query = DB::table($mode === 'warehouse' ? 'erp_warehouses' : 'erp_locations');
+        if (isset($filters['stocktake_id'])) {
+            abort_unless(($filters['kind'] ?? '') === 'stocktake' && in_array('inventory.stocktake.view', $permissions, true), 403);
+            $doc = InventoryStocktake::findOrFail($filters['stocktake_id']);
+            InventoryTransferService::assertWarehouseScope((int) $doc->warehouse_id, $user);
+            if ($mode === 'warehouse') {
+                $query->where('id', $doc->warehouse_id);
+            } else {
+                $query->where('warehouse_id', $doc->warehouse_id)
+                    ->when($doc->location_id, fn ($q, $id) => $q->where('id', $id))
+                    ->where(function ($q) use ($doc) {
+                        $q->whereIn('id', DB::table('erp_inventory_stocktake_lines')->where('stocktake_id', $doc->id)->select('location_id'));
+                        if ($doc->stocktake_status === 'counting') $q->orWhereIn('status', ['enabled', 'active']);
+                    });
+            }
+        } else {
+            $query->whereIn('status', ($filters['kind'] ?? '') === 'stocktake' ? ['enabled', 'active'] : ['enabled']);
+        }
         if ($mode === 'location') $query->where('warehouse_id', $filters['warehouse_id']);
         if (! empty($filters['id'])) $query->where('id', $filters['id']);
+        if (! empty($filters['ids'])) $query->whereIn('id', $filters['ids']);
         if ($mode === 'location' && ! empty($filters['location_purpose'])) $query->where('location_purpose', $filters['location_purpose']);
         if ($mode === 'location' && ! empty($filters['location_purposes'])) $query->whereIn('location_purpose', $filters['location_purposes']);
         if (! empty($filters['kind'])) {
-            $ids = \App\Services\Erp\Inventory\InventoryTransferService::warehouseIds($this->context($request)[0]);
+            $ids = InventoryTransferService::warehouseIds($user);
             if ($ids !== null) $query->whereIn($mode === 'warehouse' ? 'id' : 'warehouse_id', $ids);
         }
         if (array_intersect(['sales_order.shipment.post', 'sales_order.shipment.packing.execute', 'sales_order.shipment.packing.quality', 'production.task.execute', 'production.receipt.execute'], $permissions)
@@ -102,6 +123,7 @@ final class WarehouseWorkspaceController extends Controller
         }
         if ($keyword = trim((string) ($filters['keyword'] ?? ''))) $query->where(fn ($q) => $q->where($mode.'_code', 'like', '%'.$keyword.'%')->orWhere($mode.'_name', 'like', '%'.$keyword.'%'));
         $query->select('id', $mode.'_code as code', $mode.'_name as name', 'status');
+        if (($filters['kind'] ?? '') === 'stocktake') $query->addSelect($mode.'_code', $mode.'_name');
         if ($mode === 'location') $query->addSelect('warehouse_id', 'area', 'location_purpose');
         return response()->json($query->orderBy('id')->paginate($filters['per_page'] ?? 10));
     }

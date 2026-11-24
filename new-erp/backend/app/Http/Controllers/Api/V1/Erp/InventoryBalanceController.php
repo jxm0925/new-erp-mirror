@@ -77,6 +77,12 @@ class InventoryBalanceController extends Controller
                 'quantity' => (string) $row->quantity,
             ])->all();
         }
+        if ($request->filled('item_id')) {
+            $query->withCount([
+                'serials',
+                'serials as available_serials_count' => fn ($q) => $q->where('serial_status', 'available'),
+            ]);
+        }
         $paginator = $query->paginate($this->perPage($request));
         return response()->json([...$paginator->toArray(), 'stats' => $stats, 'stocktake_freezes' => $this->stocktakeFreezes($request)]);
     }
@@ -133,13 +139,37 @@ class InventoryBalanceController extends Controller
             ->orderByDesc('last_transaction_at');
 
         $paginator = $query->paginate($this->perPage($request));
-        $paginator->getCollection()->transform(function ($row) use ($itemId) {
+        $batchNos = $paginator->getCollection()->pluck('batch_no')->filter()->unique()->values();
+        $sourcesByBatch = $batchNos->isEmpty()
+            ? collect()
+            : InventoryTransactionItem::query()
+                ->with(['purchaseReceiptItem.receipt.order', 'purchaseReceiptItem.receipt.supplier'])
+                ->where('source_type', 'purchase_receipt')
+                ->where('item_id', $itemId)
+                ->whereIn('batch_no', $batchNos)
+                ->where('change_qty', '>', 0)
+                ->orderByDesc('id')
+                ->get()
+                ->unique('batch_no')
+                ->keyBy('batch_no');
+
+        $paginator->getCollection()->transform(function ($row) use ($itemId, $sourcesByBatch) {
             $row->item_id = $itemId;
             $row->quality_event_count = InventoryQualityEvent::query()
                 ->where('item_id', $itemId)->where('batch_no', $row->batch_no)
                 ->whereNotIn('event_status', ['completed', 'cancelled'])->count();
             $row->serial_count = InventoryBalance::query()->where('item_id', $itemId)->where('batch_no', $row->batch_no)
                 ->withCount('serials')->get()->sum('serials_count');
+            $receipt = $sourcesByBatch->get($row->batch_no)?->purchaseReceiptItem?->receipt;
+            $row->source = [
+                'receipt_id' => $receipt?->id,
+                'receipt_no' => $receipt?->receipt_no,
+                'purchase_order_id' => $receipt?->order_id,
+                'purchase_order_no' => $receipt?->order?->purchase_order_no,
+                'supplier_id' => $receipt?->supplier_id,
+                'supplier_name' => $receipt?->supplier?->supplier_name,
+                'receipt_date' => $receipt?->receipt_date?->format('Y-m-d'),
+            ];
             return $row;
         });
         $this->attachBatchMeasures($request, $item, $paginator->getCollection());

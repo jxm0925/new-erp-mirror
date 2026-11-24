@@ -3,7 +3,7 @@
     <el-input :value="displayText" :placeholder="placeholder" :disabled="disabled" readonly :size="size" @click.native="open" @keydown.native.enter.prevent="open" @keydown.native.space.prevent="open">
       <template slot="suffix"><i v-if="clearable && values.length && !disabled" class="el-input__icon el-icon-circle-close" role="button" tabindex="0" aria-label="清空选择" @click.stop.prevent="clear" @keydown.enter.stop.prevent="clear" @keydown.space.stop.prevent="clear" /><i v-else class="el-input__icon el-icon-search" /></template>
     </el-input>
-    <system-record-picker :visible.sync="visible" :request="loadRecords" :params="queryParams" :config="{ title, placeholder }" :columns="recordColumns" :categories="categories" :label="recordLabel" :value-key="valueKey" :multiple="multiple" :value="eligibleRows" :local-rows="localRows" @confirm="confirm" />
+    <system-record-picker :visible.sync="visible" :request="loadRecords" :params="queryParams" :config="{ title, placeholder }" :columns="recordColumns" :categories="categories" :label="recordLabel" :value-key="valueKey" :multiple="multiple" :confirm-on-select="confirmOnSelect" :value="eligibleRows" :local-rows="localRows" @confirm="confirm" />
   </div>
 </template>
 
@@ -30,6 +30,7 @@ export default {
     title: { type: String, default: '选择记录' },
     placeholder: { type: String, default: '请选择' },
     multiple: Boolean,
+    confirmOnSelect: Boolean,
     disabled: Boolean,
     clearable: { type: Boolean, default: true },
     size: { type: String, default: 'small' },

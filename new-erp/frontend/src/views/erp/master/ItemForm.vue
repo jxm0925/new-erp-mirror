@@ -140,6 +140,12 @@
                 <paged-record-select v-model="form.unit_id" :disabled="form.base_unit_locked" class="full-width" placeholder="请选择基本计量单位" entity="units" title="选择基本计量单位" :params="{ status: 'enabled' }" :selected-rows.sync="units" :clearable="false" />
               </el-form-item>
 
+              <el-form-item label="存放库位" class="col-span-2">
+                <paged-record-select v-model="form.storage_location_ids" multiple :request="listItemStorageLocationOptions"
+                  :params="{ management_scope: managementScope }" :columns="storageLocationColumns" :label="storageLocationLabel"
+                  :selected-rows.sync="storageLocations" title="选择存放库位" placeholder="按仓库名称、库位编码或名称搜索，可选多个库位" />
+              </el-form-item>
+
               <!-- 规格型号 -->
               <el-form-item label="规格型号">
                 <el-input v-model.trim="form.spec" clearable :placeholder="isOffice ? '例如：A4 70g 500张/包' : '填写实际型号或尺寸'" />
@@ -736,7 +742,7 @@ import PagedRecordSelect from '@/components/common/PagedRecordSelect.vue'
 import { erpDateTime } from '../../../utils/dateTime'
 import cachedPageRoute from '../../../utils/cachedPageRoute'
 import { materialScopes, routeMaterialScope, materialScopeLabel, materialListPath, materialTypesForScope } from '../../../utils/materialManagementScope.mjs'
-import { getItemCategoryTree, listEntity, getItemIntegratedForm, saveItemIntegratedForm, uploadItemImage } from '../../../api/erp/master'
+import { getItemCategoryTree, listEntity, getItemIntegratedForm, listItemStorageLocationOptions, saveItemIntegratedForm, uploadItemImage } from '../../../api/erp/master'
 import { clearCreatePageReservation, reserveForCreatePage } from '../../../utils/documentNumberReservation'
 
 const blankItem = () => ({
@@ -747,6 +753,7 @@ const blankItem = () => ({
   item_type: '',
   category_id: null,
   unit_id: null,
+  storage_location_ids: [],
   spec: '',
   brand: '',
   material_grade: '',
@@ -810,6 +817,12 @@ export default {
       history: [],
       categories: [],
       units: [],
+      storageLocations: [],
+      originalStorageLocationIds: [],
+      storageLocationColumns: [
+        { prop: 'warehouse_code', label: '仓库编码' }, { prop: 'warehouse_name', label: '仓库名称' },
+        { prop: 'location_code', label: '库位编码' }, { prop: 'location_name', label: '库位名称' }
+      ],
       templates: [
         { value: 'office_consumable', label: '消耗品 / 办公物资' },
         { value: 'inventory_material', label: '库存材料 / 产成品 / 标准件' },
@@ -1091,6 +1104,8 @@ export default {
       this.reservation = null
       this.balance = {}
       this.history = []
+      this.storageLocations = []
+      this.originalStorageLocationIds = []
       this.pageError = ''
       this.legacyCategory = null
       this.loading = true
@@ -1196,9 +1211,12 @@ export default {
         const { data } = await getItemIntegratedForm(this.pageRoute.params.id, scope ? { management_scope: scope } : undefined)
         if (version !== this.pageLoadVersion) return
         this.units = data.item.unit ? [data.item.unit] : []
+        this.storageLocations = data.item.storage_locations || []
+        this.originalStorageLocationIds = this.storageLocations.map(row => row.id)
         this.form = {
           ...blankItem(),
           ...data.item,
+          storage_location_ids: this.storageLocations.map(row => row.id),
           cutting_mode: data.item.cutting_mode || (data.item.is_length_cut_material ? 'length' : 'none')
         }
         this.normalizeCuttingMode(this.form.cutting_mode)
@@ -1356,6 +1374,13 @@ export default {
         try {
           const itemPayload = { ...this.form }
           delete itemPayload.base_unit_locked
+          delete itemPayload.storage_locations
+          if (this.isEdit) {
+            const currentIds = [...this.form.storage_location_ids].map(Number).sort((a, b) => a - b)
+            const originalIds = [...this.originalStorageLocationIds].map(Number).sort((a, b) => a - b)
+            if (JSON.stringify(currentIds) === JSON.stringify(originalIds)) delete itemPayload.storage_location_ids
+            else itemPayload.expected_storage_location_ids = [...this.originalStorageLocationIds]
+          }
           if (!this.$can('inventory.amount.view')) {
             delete itemPayload.standard_cost
             delete itemPayload.last_purchase_price
@@ -1376,6 +1401,11 @@ export default {
           const { data } = await saveItemIntegratedForm(this.form.id, payload, this.isEdit && scope ? { management_scope: scope } : undefined)
           if (!this.isEdit) clearCreatePageReservation(this.reservation)
           this.form = { ...this.form, ...data.data }
+          if (Array.isArray(data.data.storage_locations)) {
+            this.storageLocations = data.data.storage_locations
+            this.form.storage_location_ids = this.storageLocations.map(row => row.id)
+          }
+          this.originalStorageLocationIds = [...this.form.storage_location_ids]
           this.pageHasSaved = true
           this.$message.success(data.message || '保存成功')
           const savedPath = `${materialListPath(data.data.management_scope || this.managementScope)}/${data.data.id}/edit`
@@ -1395,6 +1425,12 @@ export default {
     },
     unitLabel(row) {
       return `${row.unit_name || ''} (${row.symbol || row.unit_code || ''})`.trim()
+    },
+    listItemStorageLocationOptions,
+    storageLocationLabel(row) {
+      const warehouse = row.warehouse || {}
+      return [row.warehouse_name || warehouse.warehouse_name || row.warehouse_code || warehouse.warehouse_code,
+        [row.location_code, row.location_name].filter(Boolean).join(' ')].filter(Boolean).join(' / ')
     },
     qty(value) {
       if (value === null || value === undefined || value === '') return ''

@@ -3,9 +3,11 @@
 namespace App\Http\Controllers\Api\V1\Erp;
 
 use App\Http\Controllers\Controller;
+use App\Http\Controllers\Concerns\AuthorizesErpPermissions;
 use App\Models\Erp\InventoryBalance;
 use App\Models\Erp\Item;
 use App\Models\Erp\ItemCategory;
+use App\Models\Erp\Location;
 use App\Models\Erp\Unit;
 use App\Services\Erp\AuthContextService;
 use App\Services\Erp\ItemIntegratedFormApplicationService;
@@ -15,10 +17,35 @@ use Illuminate\Validation\Rule;
 
 class ItemIntegratedFormController extends Controller
 {
+    use AuthorizesErpPermissions;
+
+    public function storageLocationOptions(Request $request)
+    {
+        $this->erpAuthorize($request, ['master.item.view', 'master.item.create', 'master.item.edit']);
+        $params = $request->validate([
+            'warehouse_id' => 'nullable|integer|min:1', 'keyword' => 'nullable|string|max:120',
+            'ids' => 'nullable|array', 'ids.*' => 'integer|min:1|distinct',
+            'page' => 'nullable|integer|min:1', 'per_page' => 'nullable|integer|min:1',
+        ]);
+        $scope = app(ItemManagementScopeService::class)->requestScope($request);
+        $query = Location::query()->from('erp_locations as l')->join('erp_warehouses as w', 'l.warehouse_id', '=', 'w.id')
+            ->whereIn('l.status', ['enabled', 'active'])->whereIn('w.status', ['enabled', 'active'])
+            ->when($scope, fn ($q) => $q->where('w.management_scope', $scope))
+            ->when($params['warehouse_id'] ?? null, fn ($q, $id) => $q->where('l.warehouse_id', $id))
+            ->when($params['ids'] ?? null, fn ($q, $ids) => $q->whereIn('l.id', $ids));
+        $keyword = trim((string) ($params['keyword'] ?? ''));
+        if ($keyword !== '') {
+            $query->where(fn ($q) => $q->where('l.location_name', 'like', "%{$keyword}%")->orWhere('l.location_code', 'like', "%{$keyword}%")
+                ->orWhere('w.warehouse_name', 'like', "%{$keyword}%")->orWhere('w.warehouse_code', 'like', "%{$keyword}%"));
+        }
+        return response()->json($query->orderBy('w.warehouse_code')->orderBy('l.location_code')->orderBy('l.id')
+            ->paginate(min(100, (int) ($params['per_page'] ?? 10)), ['l.id', 'l.location_code', 'l.location_name', 'l.warehouse_id', 'w.warehouse_code', 'w.warehouse_name']));
+    }
+
     public function show(Request $request, int $id)
     {
         app(\App\Services\Erp\MasterDataAccessService::class)->authorize($request, 'items', 'view');
-        $item = Item::query()->with(['category', 'unit.standardUnit', 'activeMaterialPolicy'])->findOrFail($id);
+        $item = Item::query()->with(['category', 'unit.standardUnit', 'activeMaterialPolicy', 'storageLocations.warehouse:id,warehouse_code,warehouse_name'])->findOrFail($id);
         $scopes = app(ItemManagementScopeService::class);
         $scopes->assertContext($item, $scopes->requestScope($request));
         $scopes->exposeCategoryScope($item);
@@ -59,6 +86,10 @@ class ItemIntegratedFormController extends Controller
         $activate = $request->boolean('activate');
         $itemRules = [
             'item' => 'required|array',
+            'item.storage_location_ids' => 'sometimes|array',
+            'item.storage_location_ids.*' => 'integer|min:1|distinct',
+            'item.expected_storage_location_ids' => 'sometimes|array',
+            'item.expected_storage_location_ids.*' => 'integer|min:1|distinct',
             'item.item_code' => ['required', 'string', 'max:120', Rule::unique('erp_items', 'item_code')->ignore($id)],
             'item.item_name' => 'required|string|max:160',
             'item.image_url' => 'nullable|url:http,https|max:1024',

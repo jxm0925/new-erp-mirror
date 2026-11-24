@@ -1,7 +1,7 @@
 const warehouse = require('../../services/warehouse');
 const page = require('../../utils/warehouse-page');
 Component({
-  properties: { open: Boolean, value: { type: Object, value: {} }, locationPurpose: { type: String, value: '' }, locationPurposes: { type: Array, value: [] }, allowWarehouseOnly: Boolean, warehouseId: Number, warehouseName: String, kind: String },
+  properties: { open: Boolean, value: { type: Object, value: {} }, locationPurpose: { type: String, value: '' }, locationPurposes: { type: Array, value: [] }, allowWarehouseOnly: Boolean, confirmOnLocation: Boolean, warehouseId: Number, warehouseName: String, kind: String, stocktakeId: Number },
   data: { warehouses: [], locations: [], warehousePage: 1, locationPage: 1, warehouseLast: 1, locationLast: 1,
     warehouseTotal: 0, locationTotal: 0, warehouseKeyword: '', locationKeyword: '', selected: {}, error: '', warehouseLoading: false, locationLoading: false },
   observers: { open(value) { if (value) this.reset(); else { this.warehouseSequence = (this.warehouseSequence || 0) + 1; this.locationSequence = (this.locationSequence || 0) + 1; } } },
@@ -14,7 +14,7 @@ Component({
     loadWarehouses() {
       const sequence = this.warehouseSequence = (this.warehouseSequence || 0) + 1;
       this.setData({ warehouseLoading: true, error: '' });
-      return warehouse.locators({ mode: 'warehouse', kind: this.properties.kind || undefined, id: this.properties.warehouseId || undefined, keyword: this.data.warehouseKeyword, page: this.data.warehousePage, per_page: 10 }).then(response => {
+      return warehouse.locators({ mode: 'warehouse', kind: this.properties.kind || undefined, stocktake_id: this.properties.stocktakeId || undefined, id: this.properties.warehouseId || undefined, keyword: this.data.warehouseKeyword, page: this.data.warehousePage, per_page: 10 }).then(response => {
         if (sequence !== this.warehouseSequence) return;
         const result = page.rows(response); this.setData({ warehouses: result.rows, warehousePage: result.page, warehouseLast: result.lastPage, warehouseTotal: result.total, warehouseLoading: false });
       }).catch(error => { if (sequence === this.warehouseSequence) this.setData({ warehouseLoading: false, error: page.errorText(error) }); });
@@ -22,7 +22,7 @@ Component({
     loadLocations() {
       const sequence = this.locationSequence = (this.locationSequence || 0) + 1;
       this.setData({ locationLoading: true, error: '' });
-      return warehouse.locators({ mode: 'location', kind: this.properties.kind || undefined, warehouse_id: this.data.selected.warehouse_id, location_purposes: this.properties.locationPurposes, location_purpose: this.properties.locationPurposes.length ? undefined : this.properties.locationPurpose || undefined, keyword: this.data.locationKeyword, page: this.data.locationPage, per_page: 10 }).then(response => {
+      return warehouse.locators({ mode: 'location', kind: this.properties.kind || undefined, stocktake_id: this.properties.stocktakeId || undefined, warehouse_id: this.data.selected.warehouse_id, location_purposes: this.properties.locationPurposes, location_purpose: this.properties.locationPurposes.length ? undefined : this.properties.locationPurpose || undefined, keyword: this.data.locationKeyword, page: this.data.locationPage, per_page: 10 }).then(response => {
         if (sequence !== this.locationSequence) return;
         const result = page.rows(response); this.setData({ locations: result.rows.map(row => Object.assign({}, row, { areaName: ({ raw: '原料区', finished: '成品区' })[row.area] || row.area || '' })),
           locationPage: result.page, locationLast: result.lastPage, locationTotal: result.total, locationLoading: false });
@@ -38,7 +38,7 @@ Component({
       const sequence = this.locationSequence = (this.locationSequence || 0) + 1;
       this.setData({ locationLoading: true, error: '' });
       try {
-        const response = await warehouse.locators({ mode: 'location', kind: this.properties.kind || undefined, warehouse_id: resolved.warehouse_id, id: resolved.location_id,
+        const response = await warehouse.locators({ mode: 'location', kind: this.properties.kind || undefined, stocktake_id: this.properties.stocktakeId || undefined, warehouse_id: resolved.warehouse_id, id: resolved.location_id,
           location_purposes: this.properties.locationPurposes, location_purpose: this.properties.locationPurposes.length ? undefined : this.properties.locationPurpose || undefined, page: 1, per_page: 10 });
         if (sequence !== this.locationSequence || !this.properties.open) return;
         const row = page.rows(response).rows.find(item => Number(item.id) === Number(resolved.location_id));
@@ -61,7 +61,11 @@ Component({
     },
     chooseLocation(event) {
       const row = this.data.locations.find(row => Number(row.id) === Number(event.currentTarget.dataset.id));
-      if (row && Number(row.warehouse_id) === Number(this.data.selected.warehouse_id)) this.setData({ selected: Object.assign({}, this.data.selected, { location_id: row.id, location_name: row.name, location_code: row.code }) });
+      if (row && Number(row.warehouse_id) === Number(this.data.selected.warehouse_id)) {
+        const selected = Object.assign({}, this.data.selected, { location_id: row.id, location_name: row.name, location_code: row.code });
+        this.setData({ selected });
+        if (this.properties.confirmOnLocation) this.triggerEvent('confirm', selected);
+      }
     },
     turnPage(event) {
       const { pane, delta } = event.currentTarget.dataset; const field = `${pane}Page`; const last = `${pane}Last`;

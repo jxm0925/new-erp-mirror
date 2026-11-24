@@ -6,7 +6,7 @@
     <view class="phase-heading">我的盘点</view>
     <view wx:if="{{canCreate}}" class="warehouse-actions">
       <button wx:if="{{pendingCreate}}" class="warehouse-secondary" bindtap="createStocktake" loading="{{saving}}" disabled="{{saving}}">核对上次新建结果</button>
-      <button wx:else class="warehouse-primary stk-create-btn" bindtap="newStocktake" disabled="{{saving}}">按库位新建盘点</button>
+      <button wx:else class="warehouse-primary stk-create-btn" bindtap="newStocktake" disabled="{{saving}}">新建盘点</button>
     </view>
     <view wx:if="{{formError}}" class="warehouse-error">{{formError}}</view>
     <view class="warehouse-search">
@@ -61,14 +61,14 @@
       </view>
       <view class="stocktake-date">
         <van-icon name="location-o" color="#64748b" size="28rpx" />
-        <text>{{item.location ? item.location.location_code + ' · ' + item.location.location_name : '全仓盘点'}}</text>
+        <text>{{item.location ? item.location.location_code + ' · ' + item.location.location_name : '全部库位（整仓）'}}</text>
       </view>
       <view class="stocktake-date">
         <van-icon name="calendar-o" color="#64748b" size="28rpx" />
         <text>{{item.dateText}}</text>
       </view>
       <view class="stk-progress-head">
-        <text class="warehouse-muted">已录 {{item.counted_lines_count || 0}} / {{item.line_count}} 项</text>
+        <text class="warehouse-muted">已录 {{item.countedLines}} / {{item.totalLines}} 项</text>
         <text class="warehouse-danger">{{item.progress}}%</text>
       </view>
       <view class="phase-progress">
@@ -97,7 +97,7 @@
       </view>
       <view class="stocktake-date">
         <van-icon name="wap-home-o" color="#d81e06" size="28rpx" />
-        <text>{{header.warehouse.warehouse_name}} · {{header.location ? header.location.location_code : '全仓盘点'}}</text>
+        <text>盘点范围：{{header.warehouse.warehouse_name}} · {{header.location ? header.location.location_code : '全部库位（整仓）'}}</text>
       </view>
       <view class="stocktake-date">
         <van-icon name="calendar-o" color="#64748b" size="28rpx" />
@@ -106,12 +106,12 @@
     </view>
 
     <view class="warehouse-card">
-      <view class="phase-heading">扫描库位</view>
-      <view class="phase-inline">
+      <view class="phase-heading">库位筛选</view>
+      <view wx:if="{{!header.location_id}}" class="phase-inline">
         <scan-input
           focus
           compact
-          placeholder="扫描库位条码或输入库位"
+          placeholder="扫描或输入本单库位筛选"
           value="{{locator.location_code || ''}}"
           types="{{['location']}}"
           bind:resolved="scanLocation"
@@ -119,10 +119,11 @@
         />
         <button class="warehouse-secondary" bindtap="openLocator" disabled="{{saving}}">选择</button>
       </view>
-      <view wx:if="{{locator.location_id}}" class="stk-clear-loc" bindtap="clearLocation">
+      <view wx:if="{{!header.location_id && locator.location_id}}" class="stk-clear-loc" bindtap="clearLocation">
         <van-icon name="location-o" color="#d81e06" />
         <text>{{locator.location_code}} {{locator.location_name}} · 点击清除筛选</text>
       </view>
+      <view class="warehouse-muted">{{header.stocktake_status === 'counting' ? '按库位动态查询绑定物料和真实库存批次；筛选不改变盘点及冻结范围。' : '按库位查看本单历史盘点明细。'}}</view>
 
       <view class="phase-tabs">
         <view class="{{!lineStatus && !foundLineId ? 'active' : ''}}" data-status="" bindtap="lineFilter">全部（{{summary.total_lines || 0}}）</view>
@@ -134,14 +135,15 @@
         <button class="warehouse-secondary" bindtap="openFound" disabled="{{saving || pendingCounts || pendingComplete || pendingAdd}}">补录账外物料 / 批次</button>
       </view>
       <view wx:if="{{foundLineId}}" class="stk-clear-loc" data-status="" bindtap="lineFilter">正在查看新补录的盘点行 · 查看全部</view>
-      <view wx:if="{{!lines.length}}" class="warehouse-empty">当前范围暂无明细</view>
+      <view wx:if="{{!lines.length}}" class="warehouse-empty">当前筛选暂无明细</view>
 
-      <view wx:for="{{lines}}" wx:key="id" class="phase-line">
+      <view wx:for="{{lines}}" wx:key="rowKey" class="phase-line">
         <view class="phase-line-title">
           <text>{{item.item.item_name}} {{item.item.spec || ''}}</text>
           <text>{{item.location.location_code}}</text>
         </view>
         <view wx:if="{{item.batch_no}}" class="warehouse-muted">批次：{{item.batch_no}}</view>
+        <view wx:if="{{item.source_error}}" class="warehouse-error">{{item.source_error}}</view>
         <view class="stocktake-count">
           <text class="stk-book-lbl">账面：<text class="stk-book-val">{{item.bookText}} {{item.unit.unit_name}}</text></text>
           <view wx:if="{{item.count_mode === 'quantity'}}">
@@ -151,16 +153,16 @@
               type="digit"
               value="{{item.countedText}}"
               placeholder="未录入"
-              data-id="{{item.id}}"
+              data-key="{{item.rowKey}}"
               data-field="counted_qty"
               bindinput="lineInput"
-              disabled="{{!canCount || saving || pendingCounts || pendingComplete || pendingAdd}}"
+              disabled="{{item.source_error || !canCount || saving || pendingCounts || pendingComplete || pendingAdd}}"
             />
             <text>{{item.unit.unit_name}}</text>
           </view>
           <view wx:else>
             <text>已确认 {{item.confirmed}} / {{item.entryCount}}</text>
-            <button class="warehouse-secondary stk-entry-btn" data-id="{{item.id}}" bindtap="openEntries" disabled="{{saving || pendingAdd}}">
+            <button class="warehouse-secondary stk-entry-btn" data-key="{{item.rowKey}}" bindtap="openEntries" disabled="{{item.source_error || saving || pendingAdd}}">
               <text>逐件盘点</text>
               <van-icon name="arrow" />
             </button>
@@ -168,7 +170,7 @@
         </view>
         <view wx:if="{{canAmount}}" class="stocktake-note stocktake-cost">
           <text class="stk-note-lbl">盘盈单价（元）</text>
-          <input wx:if="{{item.unit_cost_editable}}" class="warehouse-input stocktake-unit-cost" type="digit" value="{{item.unitCostText}}" placeholder="填写盘盈单价" data-id="{{item.id}}" data-field="unit_cost" bindinput="lineInput" disabled="{{!canCount || saving || pendingCounts || pendingComplete || pendingAdd}}" />
+          <input wx:if="{{item.unit_cost_editable}}" class="warehouse-input stocktake-unit-cost" type="digit" value="{{item.unitCostText}}" placeholder="填写盘盈单价" data-key="{{item.rowKey}}" data-field="unit_cost" bindinput="lineInput" disabled="{{item.source_error || !canCount || saving || pendingCounts || pendingComplete || pendingAdd}}" />
           <text wx:else class="warehouse-muted">{{item.count_mode === 'physical' ? '按逐件实物成本' : '沿用已有成本'}}</text>
         </view>
         <view class="stocktake-note">
@@ -177,10 +179,10 @@
             class="warehouse-input"
             placeholder="请输入备注"
             value="{{item.remarkText}}"
-            data-id="{{item.id}}"
+            data-key="{{item.rowKey}}"
             data-field="remark"
             bindinput="lineInput"
-            disabled="{{!canCount || saving || pendingCounts || pendingComplete || pendingAdd}}"
+            disabled="{{item.source_error || !canCount || saving || pendingCounts || pendingComplete || pendingAdd}}"
           />
         </view>
         <view wx:if="{{item.differenceText !== '' && item.differenceText !== '0'}}" class="warehouse-error">
@@ -216,16 +218,36 @@
   </view>
 </view>
 
-<warehouse-locator open="{{locatorOpen}}" value="{{locator}}" bind:confirm="chooseLocator" bind:cancel="closeLocator" />
+<warehouse-locator open="{{locatorOpen}}" kind="stocktake" stocktake-id="{{id}}" value="{{locator}}" warehouse-id="{{header ? header.warehouse_id : 0}}" warehouse-name="{{header ? header.warehouse.warehouse_name : ''}}" bind:confirm="chooseLocator" bind:cancel="closeLocator" />
 
 <view wx:if="{{createForm && !createLocationOpen}}" class="warehouse-overlay" catchtouchmove="stop">
   <view class="warehouse-dialog">
-    <view class="warehouse-dialog-header">按库位新建盘点</view>
+    <view class="warehouse-dialog-header">新建库存盘点单</view>
     <view class="warehouse-dialog-body">
-      <view class="warehouse-field"><text>盘点库位</text><button class="warehouse-secondary stk-create-location" bindtap="openCreateLocation" disabled="{{saving || pendingCreate}}">{{createForm.locator.location_id ? createForm.locator.warehouse_name + ' · ' + createForm.locator.location_code + ' ' + createForm.locator.location_name : '选择仓库和库位'}}</button></view>
+      <view class="warehouse-field"><text>盘点范围</text></view>
+      <view class="warehouse-actions">
+        <button class="{{createForm.scope === 'location' ? 'warehouse-primary' : 'warehouse-secondary'}}" data-scope="location" bindtap="createScope" disabled="{{saving || pendingCreate}}">按库位盘点（推荐）</button>
+        <button class="{{createForm.scope === 'warehouse' ? 'warehouse-primary' : 'warehouse-secondary'}}" data-scope="warehouse" bindtap="createScope" disabled="{{saving || pendingCreate}}">整仓盘点</button>
+      </view>
+      <view class="warehouse-field"><text>{{createForm.scope === 'warehouse' ? '仓库 / 预览位' : '盘点仓库 / 库位'}}</text><button class="warehouse-secondary stk-create-location" bindtap="openCreateLocation" disabled="{{saving || pendingCreate}}">{{createForm.locator.warehouse_name ? createForm.locator.warehouse_name + (createForm.locator.location_id ? ' · ' + createForm.locator.location_code + ' ' + createForm.locator.location_name : '') : '先选仓库，再选库位'}}</button></view>
+      <view wx:if="{{createForm.scope === 'warehouse'}}" class="warehouse-muted">库位选填，仅预览物料，不改变整仓盘点和冻结范围。</view>
+      <view wx:if="{{createForm.locator.location_id}}">
+        <view wx:if="{{createPreviewLoading}}" class="warehouse-muted">正在查询库位物料...</view>
+        <view wx:elif="{{createPreviewError}}" class="warehouse-error">{{createPreviewError}}<button class="warehouse-secondary" bindtap="retryCreatePreview">重试</button></view>
+        <view wx:elif="{{!createPreviewRows.length}}" class="warehouse-muted">该库位暂无绑定物料或库存</view>
+        <view wx:for="{{createPreviewRows}}" wx:key="previewKey" class="phase-line">
+          <view>{{item.item.item_code}} {{item.item.item_name}} {{item.item.spec || ''}}</view>
+          <view class="warehouse-muted">批次：{{item.batch_no || '—'}} · 账面：{{item.bookText}} {{item.unit.unit_name}}</view>
+        </view>
+        <view class="warehouse-pager">
+          <button data-delta="-1" bindtap="turnCreatePreview" disabled="{{createPreviewPage <= 1 || createPreviewLoading || saving}}">上一页</button>
+          <text>{{createPreviewPage}} / {{createPreviewLast}} · {{createPreviewTotal}} 项</text>
+          <button data-delta="1" bindtap="turnCreatePreview" disabled="{{createPreviewPage >= createPreviewLast || createPreviewLoading || saving}}">下一页</button>
+        </view>
+      </view>
       <view class="warehouse-field"><text>盘点日期</text><picker mode="date" value="{{createForm.stocktake_date}}" bindchange="createDate" disabled="{{saving || pendingCreate}}"><view class="warehouse-input">{{createForm.stocktake_date}}</view></picker></view>
       <view class="warehouse-field"><text>备注</text><input class="warehouse-input" value="{{createForm.remark}}" data-field="createForm.remark" bindinput="input" maxlength="500" placeholder="填写盘点备注" disabled="{{saving || pendingCreate}}" /></view>
-      <view class="warehouse-muted">创建后，该库位暂停出入库，绑定物料会自动列出。</view>
+      <view class="warehouse-muted">{{createForm.scope === 'warehouse' ? '盘点全部库位，按库位动态查询绑定物料和真实库存批次；整仓暂停出入库，完成或取消后恢复。' : '动态查询所选库位的绑定物料和真实库存批次；该库位暂停出入库，完成或取消后恢复。'}}</view>
       <view wx:if="{{createError}}" class="warehouse-error">{{createError}}</view>
     </view>
     <view class="warehouse-dialog-footer">
@@ -234,7 +256,7 @@
     </view>
   </view>
 </view>
-<warehouse-locator open="{{createLocationOpen}}" kind="stocktake" value="{{createForm ? createForm.locator : emptyLocator}}" bind:confirm="chooseCreateLocation" bind:cancel="closeCreateLocation" />
+<warehouse-locator open="{{createLocationOpen}}" kind="stocktake" confirm-on-location allow-warehouse-only="{{createForm && createForm.scope === 'warehouse'}}" value="{{createForm ? createForm.locator : emptyLocator}}" bind:confirm="chooseCreateLocation" bind:cancel="closeCreateLocation" />
 
 <view wx:if="{{found && !foundItemOpen && !foundLocationOpen}}" class="warehouse-overlay" catchtouchmove="stop">
   <view class="warehouse-dialog">

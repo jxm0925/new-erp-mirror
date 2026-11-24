@@ -47,6 +47,14 @@ final class WarehouseWorkspaceService
         $query = $this->query($filters, $user, $permissions, $super);
         $page = $query->orderByDesc('urgency')->orderBy('sort_priority')->orderByDesc('sort_at')->orderBy('kind')->orderByDesc('id')
             ->paginate(min(100, max(1, (int) ($filters['per_page'] ?? 10))), ['*'], 'page', max(1, (int) ($filters['page'] ?? 1)));
+        $counting = $page->getCollection()->where('kind', 'stocktake')->where('status_group', 'pending');
+        if ($counting->isNotEmpty()) {
+            $docs = \App\Models\Erp\InventoryStocktake::whereKey($counting->pluck('id'))->get()->keyBy('id');
+            $service = app(\App\Services\Erp\Inventory\InventoryStocktakeService::class);
+            foreach ($counting as $row) {
+                if ($doc = $docs->get($row->id)) $row->item_count = $service->logicalLineCount($doc);
+            }
+        }
         $page->setCollection($page->getCollection()->map(fn ($row) => $this->present($row)));
         return ['data' => $page->items(), 'meta' => ['total' => $page->total(), 'current_page' => $page->currentPage(),
             'per_page' => $page->perPage(), 'last_page' => $page->lastPage()], 'types' => $this->types($permissions)];

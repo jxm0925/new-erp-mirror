@@ -29,6 +29,8 @@ class InventoryQualityController extends Controller
                 ->orWhere('batch_no', 'like', "%{$keyword}%")
                 ->orWhereHas('item', fn ($item) => $item->where('item_code', 'like', "%{$keyword}%")->orWhere('item_name', 'like', "%{$keyword}%")));
         }
+        if ($request->filled('item_id')) $query->where('item_id', $request->integer('item_id'));
+        if ($request->filled('batch_no')) $query->where('batch_no', trim((string) $request->input('batch_no')));
         if ($request->filled('event_status')) $query->where('event_status', $request->input('event_status'));
         if ($request->filled('handling_method')) $query->where('handling_method', $request->input('handling_method'));
 
