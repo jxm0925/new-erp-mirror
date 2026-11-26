@@ -3,10 +3,11 @@
     <div slot="title" class="form-dlg-head">
       <b>{{ form.id ? '编辑线索' : '新增线索' }}</b>
       <span v-if="currentUser.name" class="form-head-sub">
-        录入人：{{ currentUser.name }}{{ currentUser.department_name ? ' / ' + currentUser.department_name : '' }}
+        {{ isFormal ? '当前经办人' : '录入人' }}：{{ currentUser.name }}{{ currentUser.department_name ? ' / ' + currentUser.department_name : '' }}
       </span>
-      <el-tag size="mini" :type="isSales ? 'success' : 'info'">{{ isSales ? '销售自录' : '运营代录' }}</el-tag>
-      <el-tag v-if="identityLocked" size="mini" type="warning">已正式关联客户，身份与归属字段已锁定</el-tag>
+      <el-tag size="mini" :type="selfEntry ? 'success' : 'info'">{{ selfEntry ? '销售自录' : '运营代录' }}</el-tag>
+      <el-tag v-if="isFormal && !identityLocked" size="mini" type="success">修改将同步更新关联潜在客户档案</el-tag>
+      <el-tag v-if="identityLocked" size="mini" type="warning">已关联产生业务的客户，身份与归属字段已锁定</el-tag>
     </div>
 
     <div v-loading="loading">
@@ -24,11 +25,11 @@
             <el-form-item :label="form.customer_kind === 'enterprise' ? '企业名称' : '客户姓名'" required>
               <div class="crm-inline name-field">
                 <el-input v-model.trim="form.customer_name" :disabled="identityLocked" maxlength="160" placeholder="请输入客户名称" />
-                <el-button v-if="!identityLocked && (!$can || $can('sales.customer'))" type="text" icon="el-icon-search" @click="$refs.picker.open()">选择已有客户</el-button>
+                <el-button v-if="!isFormal && (!$can || $can('sales.customer'))" type="text" icon="el-icon-search" @click="$refs.picker.open()">选择已有客户</el-button>
               </div>
               <div v-if="form.customer_id" class="linked-cust-bar">
                 <span><i class="el-icon-circle-check" /> 已关联已有客户</span>
-                <el-button v-if="!identityLocked" type="text" size="mini" class="crm-danger-link" @click="unlinkCustomer">取消关联</el-button>
+                <el-button v-if="!isFormal" type="text" size="mini" class="crm-danger-link" @click="unlinkCustomer">取消关联</el-button>
               </div>
             </el-form-item>
             <el-form-item v-if="form.customer_kind === 'enterprise'" label="信用代码">
@@ -88,22 +89,29 @@
               </el-select>
             </el-form-item>
             <el-form-item label="所属部门" required>
-              <el-input v-if="isSales || identityLocked" :value="form.department_name || currentUser.department_name" disabled />
+              <el-input v-if="departmentLocked" :value="departmentName" disabled />
               <el-select popper-class="crm-select-popper" v-else v-model="form.department_legacy_id" filterable placeholder="选择线索归属部门">
-                <el-option v-for="item in metadata.departments || []" :key="item.id" :value="item.id" :label="item.name" />
+                <el-option v-for="item in departmentOptions" :key="item.id" :value="item.id" :label="item.pathLabel" :disabled="!canSelectDepartment(item.id)" class="crm-department-option">
+                  <span class="crm-department-row" :class="{ 'is-root': item.depth === 0 }" :style="{ paddingLeft: `${item.depth * 18}px` }">
+                    <span v-if="item.depth" class="crm-department-branch" aria-hidden="true">{{ item.branchPrefix }}</span>
+                    <i v-else class="el-icon-office-building" aria-hidden="true" />
+                    <span class="crm-department-name">{{ item.name }}</span>
+                    <small v-if="item.hasChildren" class="crm-department-level">{{ item.parent_id ? '上级' : '总公司' }}</small>
+                  </span>
+                </el-option>
               </el-select>
             </el-form-item>
             <el-form-item label="负责人">
-              <el-input :value="form.owner_name || form.pending_user_name || (isSales && !identityLocked ? `${currentUser.name || ''}（本人）` : '待分配')" disabled />
-              <small v-if="isSales && !identityLocked" class="crm-sub">销售自录默认由本人直接负责跟进</small>
+              <el-input :value="form.owner_name || form.pending_user_name || (isSales && !isFormal ? `${currentUser.name || ''}（本人）` : '待分配')" disabled />
+              <small v-if="isSales && !isFormal" class="crm-sub">销售自录默认由本人直接负责跟进</small>
             </el-form-item>
             <el-form-item label="来源渠道" required>
-              <el-select popper-class="crm-select-popper" v-model="form.source_channel" :disabled="identityLocked" filterable placeholder="请选择来源渠道" @change="sourceChanged">
+              <el-select popper-class="crm-select-popper" v-model="form.source_channel" :disabled="channelLocked" filterable placeholder="请选择来源渠道" @change="sourceChanged">
                 <el-option v-for="item in metadata.source_channels || []" :key="item" :value="item" :label="item" />
               </el-select>
             </el-form-item>
             <el-form-item label="录入方式">
-              <el-input :value="(form.entry_method ? form.entry_method === 'self' : isSales) ? '销售自录' : '运营代录'" disabled />
+              <el-input :value="selfEntry ? '销售自录' : '运营代录'" disabled />
             </el-form-item>
             <el-form-item label="线索类型">
               <el-select popper-class="crm-select-popper" v-model="form.lead_type" filterable allow-create default-first-option clearable placeholder="如：普通咨询">
@@ -152,7 +160,7 @@
                 </el-tag>
               </div>
               <el-form-item label="接待店铺" required>
-                <el-select popper-class="crm-select-popper" v-model="form.platform_legacy_id" filterable :disabled="identityLocked" placeholder="请选择接待店铺">
+                <el-select popper-class="crm-select-popper" v-model="form.platform_legacy_id" filterable :disabled="channelLocked" placeholder="请选择接待店铺">
                   <el-option v-for="item in platforms" :key="item.id" :value="item.id" :label="item.name" />
                 </el-select>
               </el-form-item>
@@ -160,11 +168,11 @@
                 <el-input :value="platform.buyer_platform_group || '—'" disabled />
               </el-form-item>
               <el-form-item label="平台买家ID" required>
-                <el-input v-model.trim="form.platform_buyer_id" :disabled="identityLocked" maxlength="160" placeholder="必填，用于唯一客户身份识别" />
+                <el-input v-model.trim="form.platform_buyer_id" :disabled="channelLocked" maxlength="160" placeholder="必填，用于唯一客户身份识别" />
                 <small class="crm-sub">请填写真实平台买家ID；昵称、订单号、店铺ID不能代替</small>
               </el-form-item>
               <div v-if="!platform.buyer_identity_scope || platform.buyer_identity_scope === 'unset'" class="crm-note warning">
-                该平台未设置识别方式，暂时只能保存草稿。请联系成交平台档案维护人员设置后正式录入。
+                {{ isFormal ? '该平台未设置识别方式，请联系成交平台档案维护人员设置后保存修改。' : '该平台未设置识别方式，暂时只能保存草稿。请联系成交平台档案维护人员设置后正式录入。' }}
               </div>
             </div>
 
@@ -195,16 +203,16 @@
     </div>
 
     <div slot="footer" class="crm-footer">
-      <span class="crm-muted">查重通过后正式录入；发现疑似客户时需先人工确认，不会自动覆盖已有客户主资料</span>
+      <span v-if="!isFormal" class="crm-muted">查重通过后正式录入；发现疑似客户时需先人工确认，不会自动覆盖已有客户主资料</span>
       <el-button size="small" :disabled="saving" @click="close">取消</el-button>
-      <el-button v-if="!identityLocked" size="small" :loading="saving" :disabled="loading || uploading || !!loadError" @click="save('draft')">保存草稿</el-button>
+      <el-button v-if="!isFormal" size="small" :loading="saving" :disabled="loading || uploading || !!loadError" @click="save('draft')">保存草稿</el-button>
       <el-button
         type="success"
         size="small"
         :loading="saving"
         :disabled="loading || uploading || !!loadError || (online && (!platform.buyer_identity_scope || platform.buyer_identity_scope === 'unset'))"
         @click="save('submit')"
-      >{{ identityLocked ? '保存修改' : '查重并录入' }}</el-button>
+      >{{ isFormal ? '保存修改' : '查重并录入' }}</el-button>
     </div>
 
     <customer-picker ref="picker" @select="selectCustomer" />
@@ -262,7 +270,7 @@
         <el-table-column label="最近联系" min-width="110">
           <template slot-scope="{row}">{{ row.last_contact_at || '—' }}</template>
         </el-table-column>
-        <el-table-column label="操作" min-width="140">
+        <el-table-column v-if="!isFormal" label="操作" min-width="140">
           <template slot-scope="{row}">
             <el-button v-if="row.visible !== false && !duplicates.reviewRequired" size="mini" type="success" :loading="saving" :disabled="row.selectable === false" @click="chooseDuplicate(row)">是这个客户</el-button>
             <el-button v-else type="text" @click="duplicates.reviewMode = true">申请核实</el-button>
@@ -270,17 +278,17 @@
         </el-table-column>
       </el-table>
       <el-form size="small" label-width="90px" class="duplicate-form">
-        <el-form-item v-if="duplicates.requiresConfirmation && !duplicates.reviewMode && !duplicates.reviewRequired" label="新建原因" required>
+        <el-form-item v-if="duplicates.requiresConfirmation && !duplicates.reviewMode && !duplicates.reviewRequired" :label="isFormal ? '确认原因' : '新建原因'" required>
           <el-input v-model.trim="duplicates.reason" type="textarea" :rows="2" maxlength="500" placeholder="请说明为何上述疑似客户均不是本次咨询客户" />
         </el-form-item>
-        <el-form-item v-if="duplicates.reviewMode || duplicates.reviewRequired" label="申请说明" required>
+        <el-form-item v-if="!isFormal && (duplicates.reviewMode || duplicates.reviewRequired)" label="申请说明" required>
           <el-input v-model.trim="duplicates.note" type="textarea" :rows="3" maxlength="500" placeholder="请填写核实申请说明，由对应部门负责人核实归属" />
         </el-form-item>
       </el-form>
       <div slot="footer" class="crm-footer">
         <el-button size="small" :disabled="saving" @click="duplicates.visible = false">返回修改</el-button>
-        <el-button size="small" :loading="saving" @click="requestReview">{{ duplicates.reviewMode || duplicates.reviewRequired ? '提交核实申请' : '暂存待核实' }}</el-button>
-        <el-button v-if="duplicates.requiresConfirmation && !duplicates.reviewRequired && !duplicates.reviewMode" size="small" type="success" :loading="saving" :disabled="!duplicates.reason" @click="createDespiteDuplicates">都不是，新建客户</el-button>
+        <el-button v-if="!isFormal" size="small" :loading="saving" @click="requestReview">{{ duplicates.reviewMode || duplicates.reviewRequired ? '提交核实申请' : '暂存待核实' }}</el-button>
+        <el-button v-if="duplicates.requiresConfirmation && !duplicates.reviewRequired && !duplicates.reviewMode" size="small" type="success" :loading="saving" :disabled="!duplicates.reason" @click="createDespiteDuplicates">{{ isFormal ? '确认无误，保存修改' : '都不是，新建客户' }}</el-button>
       </div>
     </el-dialog>
   </el-dialog>
@@ -290,6 +298,7 @@
 import { getCrmLeadMetadata, getCrmLead, listCrmLeads, saveCrmLead, crmDate, crmError } from '@/api/erp/crm'
 import { erpDateTime } from '@/utils/dateTime'
 import { customerProfileOptions } from '@/utils/customerProfileOptions'
+import { crmDepartmentTree } from '@/utils/crmDepartmentTree'
 import CustomerRegionSelect from '@/components/sales/CustomerRegionSelect.vue'
 import CustomerPicker from '@/components/sales/CustomerPicker.vue'
 import CrmAttachments from './CrmAttachments.vue'
@@ -359,6 +368,7 @@ export default {
     session: 0,
     form: blank(),
     metadata: {},
+    initialDepartmentId: null,
     profileOptions: customerProfileOptions,
     profileEdited: {},
     platforms: [],
@@ -373,11 +383,29 @@ export default {
   }),
   computed: {
     currentUser() { return this.metadata.current_user || {} },
-    isSales() { return !!this.currentUser.is_sales },
-    online() { return this.form.source_channel === '线上平台' || !!this.form.platform_legacy_id },
+    isSales() { return !!this.currentUser.is_sales && (!this.isFormal || !JSON.parse(localStorage.getItem('erp_me') || '{}').is_super_admin) },
+    selfEntry() { return this.form.entry_method ? this.form.entry_method === 'self' : this.isSales },
+    online() { return this.form.source_channel === '线上平台' || !!this.form.platform_legacy_id || !!String(this.form.platform_buyer_id || '').trim() },
     platform() { return this.platforms.find(item => item.id === this.form.platform_legacy_id) || {} },
     scopeLabel() { return ({ platform: '按平台识别', shop: '按店铺识别' })[this.platform.buyer_identity_scope] || '未设置识别方式' },
-    identityLocked() { return !!this.form.id && this.form.status !== 'draft' },
+    isFormal() { return !!this.form.id && this.form.status !== 'draft' },
+    identityLocked() { return this.isFormal && !this.form.abilities?.edit_identity },
+    departmentLocked() { return this.isSales || (this.isFormal && !this.form.abilities?.edit_department) },
+    channelLocked() { return this.isFormal && !this.form.abilities?.edit_channel },
+    entryDepartmentIds() {
+      return (this.metadata.entry_department_ids || (this.metadata.departments || []).map(item => item.id)).map(Number)
+    },
+    departmentOptions() {
+      const departments = this.metadata.departments || []
+      const current = this.form.department_legacy_id && this.form.department_name && !departments.some(item => Number(item.id) === this.form.department_legacy_id)
+        ? [{ id: this.form.department_legacy_id, name: this.form.department_name }]
+        : []
+      return crmDepartmentTree([...departments, ...current])
+    },
+    departmentName() {
+      const department = this.departmentOptions.find(item => item.id === this.form.department_legacy_id)
+      return (department && department.pathLabel) || this.form.department_name || (this.form.department_legacy_id === Number(this.currentUser.department_legacy_id) ? this.currentUser.department_name : '')
+    },
     canEditPersonalTags() { return !this.form.id || !!(this.form.abilities && this.form.abilities.edit_custom_tags) }
   },
   beforeDestroy() { this.session += 1 },
@@ -385,6 +413,7 @@ export default {
     async open(id) {
       const session = ++this.session
       this.form = blank()
+      this.initialDepartmentId = null
       this.profileEdited = {}
       this.attachments = []
       this.visible = true
@@ -399,6 +428,7 @@ export default {
         const [meta, lead] = await Promise.all([getCrmLeadMetadata(), id ? getCrmLead(id) : Promise.resolve(null)])
         if (session !== this.session) return
         this.metadata = meta.data.data || meta.data
+        this.metadata.departments = (this.metadata.departments || []).map(item => ({ ...item, id: Number(item.id) }))
         this.platforms = this.metadata.platforms || []
         if (lead) {
           this.form = { ...blank(), ...(lead.data.data || lead.data) }
@@ -414,6 +444,8 @@ export default {
           this.form.customer_pool = (this.metadata.customer_pools || []).find(item => item === '新线索快转池') || ''
           this.form.trade_type = (this.metadata.trade_types || [])[0] || ''
         }
+        this.form.department_legacy_id = this.form.department_legacy_id ? Number(this.form.department_legacy_id) : null
+        this.initialDepartmentId = this.form.department_legacy_id
       } catch (error) {
         if (session === this.session) this.loadError = crmError(error, '线索资料加载失败')
       } finally {
@@ -435,6 +467,9 @@ export default {
       if (this.$refs.attachments) this.$refs.attachments.reset()
     },
     date: crmDate,
+    canSelectDepartment(id) {
+      return this.entryDepartmentIds.includes(id) || (!!this.form.id && id === this.initialDepartmentId)
+    },
     resetLeadChoice() {
       this.leadChoiceSequence += 1
       this.leadChoice = blankLeadChoice()
@@ -444,6 +479,7 @@ export default {
       if (this.$refs.follow) this.$refs.follow.close()
     },
     unlinkCustomer() {
+      if (this.isFormal) return
       Object.keys(customerProfileSourceFields).forEach(field => {
         if (!this.profileEdited[field]) this.form[field] = field === 'customer_business_lines' ? [] : ''
       })
@@ -461,7 +497,7 @@ export default {
       })
     },
     selectCustomer(row) {
-      if (this.identityLocked || this.saving || row.visible === false || row.selectable === false) return
+      if (this.isFormal || this.saving || row.visible === false || row.selectable === false) return
       if (this.form.customer_id === row.id) return this.loadExistingLeads(1)
       this.resetLeadChoice()
       this.applyCustomerProfile(row)
@@ -475,7 +511,7 @@ export default {
     },
     async loadExistingLeads(page = 1) {
       const customerId = this.form.customer_id
-      if (!customerId || this.identityLocked) return
+      if (!customerId || this.isFormal) return
       const session = this.session
       const sequence = ++this.leadChoiceSequence
       this.leadChoice = { ...this.leadChoice, visible: true, loading: true, error: '', rows: [], total: 0, page, customerId }
@@ -528,7 +564,7 @@ export default {
       this.$emit('saved')
     },
     async chooseDuplicate(row) {
-      if (row.visible === false || row.selectable === false || this.saving) return
+      if (this.isFormal || row.visible === false || row.selectable === false || this.saving) return
       const session = this.session
       let confirmation = {}
       if (this.duplicates.rows.some(item => item.id !== row.id) && this.duplicates.requiresConfirmation) {
@@ -556,6 +592,7 @@ export default {
       return this.save('submit', { duplicate_confirmed: true, duplicate_reason: this.duplicates.reason })
     },
     requestReview() {
+      if (this.isFormal) return
       if (!this.duplicates.reviewMode && !this.duplicates.reviewRequired) {
         this.duplicates.reviewMode = true
         return
@@ -565,16 +602,20 @@ export default {
     },
     async save(mode, extra = {}, checkedCustomerId = null) {
       if (this.saving || this.loading || this.uploading || this.loadError || this.leadChoice.loading) return
+      if (this.isFormal && mode !== 'submit') return
       if (mode !== 'draft' && (!this.form.customer_name || !this.form.department_legacy_id || !this.form.source_channel)) {
         return this.$message.warning('请填写客户姓名、所属部门和来源渠道')
       }
-      if (mode === 'submit' && this.online && !this.form.platform_buyer_id) {
-        return this.$message.warning('请填写平台买家ID，可先保存草稿')
+      if (!this.departmentLocked && this.form.department_legacy_id && !this.canSelectDepartment(this.form.department_legacy_id)) {
+        return this.$message.warning('请选择有录入权限的所属部门')
+      }
+      if (mode === 'submit' && this.online && !String(this.form.platform_buyer_id || '').trim()) {
+        return this.$message.warning(this.isFormal ? '请填写平台买家ID' : '请填写平台买家ID，可先保存草稿')
       }
       if (mode === 'submit') {
         this.submissionExtra = { ...this.submissionExtra, ...extra }
         extra = this.submissionExtra
-        if (!this.identityLocked && this.form.customer_id && this.confirmedCustomerId !== this.form.customer_id && checkedCustomerId !== this.form.customer_id) {
+        if (!this.isFormal && this.form.customer_id && this.confirmedCustomerId !== this.form.customer_id && checkedCustomerId !== this.form.customer_id) {
           this.leadChoice.submitAfterChoice = true
           return this.loadExistingLeads(1)
         }
@@ -583,7 +624,7 @@ export default {
       this.saving = true
       this.submissionExtra = {}
       try {
-        const payload = { ...this.form, ...extra, mode, new_demand_confirmed: mode === 'submit' && !this.identityLocked && !!this.form.customer_id && this.confirmedCustomerId === this.form.customer_id, attachment_ids: this.attachments.map(file => file.id) }
+        const payload = { ...this.form, ...extra, mode, new_demand_confirmed: mode === 'submit' && !this.isFormal && !!this.form.customer_id && this.confirmedCustomerId === this.form.customer_id, attachment_ids: this.attachments.map(file => file.id) }
         if (!this.canEditPersonalTags) delete payload.custom_tags
         const { data } = await saveCrmLead(payload)
         if (session !== this.session) return
@@ -595,7 +636,7 @@ export default {
       } catch (error) {
         if (session !== this.session) return
         const data = error.response && error.response.data
-        if (data && data.requires_lead_choice) {
+        if (data && data.requires_lead_choice && !this.isFormal) {
           this.submissionExtra = extra
           this.form.customer_id = data.customer_id
           this.confirmedCustomerId = null

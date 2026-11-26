@@ -323,7 +323,7 @@
         <el-dropdown-menu slot="dropdown" class="crm-select-popper">
           <el-dropdown-item v-if="allowed.transfer" command="transfer">转交线索</el-dropdown-item>
           <el-dropdown-item v-if="allowed.pool" command="pool">调整客户池</el-dropdown-item>
-          <el-dropdown-item v-if="allowed.recycle" command="recycle" class="crm-danger-link">回收到公海</el-dropdown-item>
+          <el-dropdown-item v-if="allowed.recycle" command="recycle" class="crm-danger-link">{{ allowed.self_release ? '释放到公海' : '回收到公海' }}</el-dropdown-item>
           <el-dropdown-item v-if="allowed.invalidate" command="invalidate" class="crm-danger-link">标记无效</el-dropdown-item>
         </el-dropdown-menu>
       </el-dropdown>

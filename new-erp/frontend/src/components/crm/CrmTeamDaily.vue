@@ -14,7 +14,7 @@
       <div class="sheet-toolbar-group">
         <el-button size="small" icon="el-icon-refresh" @click="reload">刷新</el-button>
         <el-button v-if="ready" size="small" type="success" icon="el-icon-check" @click="save">保存经营总表</el-button>
-        <el-dropdown v-if="ready" split-button type="primary" size="small" :disabled="!hasAi || busy"
+        <el-dropdown v-if="ready" split-button type="success" size="small" :disabled="!hasAi || busy"
           @click="analyze(true)" @command="analyze(false)">
           AI 预填空白项
           <el-dropdown-menu slot="dropdown"><el-dropdown-item command="preview">仅生成填写提示</el-dropdown-item></el-dropdown-menu>
@@ -51,7 +51,7 @@
                   {{ h.subject.customer_name }} · {{ h.subject.number }}
                 </el-button>
               </div>
-              <el-button v-if="['accepted', 'pending'].includes(h.help_status)" size="mini" type="primary" plain @click="handle(h)">
+              <el-button v-if="['accepted', 'pending'].includes(h.help_status)" size="mini" type="success" plain @click="handle(h)">
                 办理协调
               </el-button>
             </header>

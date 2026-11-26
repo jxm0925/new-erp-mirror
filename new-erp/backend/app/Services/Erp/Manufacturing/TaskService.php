@@ -461,7 +461,7 @@ final class TaskService
      * 审核报废：通过 = 这台设备报废；驳回 = 继续在本道返工。
      * 审核人：工单生产负责人，没填就是业务员档案里任一启用的生产负责人；$hasApprovePermission（报废确认权限）也可以审。
      */
-    public function scrapForCancellation(MfgWorkOrder $wo, array $unitIds, string $reason, array $evidence, object $actor): int
+    public function scrapForCancellation(MfgWorkOrder $wo, array $unitIds, string $reason, array $evidence, object $actor, bool $proxyByManager = false): int
     {
         $auth = app(AuthContextService::class);
         $needsReview = ProductionReviewers::needsReview($wo, $this->actorId($actor))
@@ -480,8 +480,8 @@ final class TaskService
             if ($needsReview) {
                 $before = $unit->status;
                 $unit->update(['status' => 'rework']);
-                $this->workOrders->log($wo, 'unit_scrap_requested', $before, 'rework', '订单需求变更，接单人申请报废：'.$reason, $actor, [], $unit->id);
-            } else $this->approveScrap($wo, $report, '订单需求失效，报废确认：'.$reason, $actor);
+                $this->workOrders->log($wo, 'unit_scrap_requested', $before, 'rework', '订单需求变更，'.($proxyByManager ? '申请报废（生产管理代办）' : '接单人申请报废').'：'.$reason, $actor, [], $unit->id);
+            } else $this->approveScrap($wo, $report, '订单需求失效，报废确认'.($proxyByManager ? '（生产管理代办）' : '').'：'.$reason, $actor);
         }
         return $units->count();
     }

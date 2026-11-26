@@ -115,34 +115,6 @@ class InventoryQualityController extends Controller
         ], 201);
     }
 
-    public function start(Request $request, int $id, InventoryQualityApplicationService $service)
-    {
-        $this->erpAuthorize($request, 'inventory.quality.handle');
-        [$operatorId, $operatorName] = $this->operator($request);
-        return response()->json([
-            'message' => '质量处理已开始，问题库存继续保持冻结。',
-            'data' => $service->start($id, $operatorId, $operatorName),
-        ]);
-    }
-
-    public function complete(Request $request, int $id, InventoryQualityApplicationService $service)
-    {
-        $this->erpAuthorize($request, 'inventory.quality.handle');
-        $payload = $request->validate(['result_description' => 'required|string|max:1000']);
-        [$operatorId, $operatorName] = $this->operator($request);
-        return response()->json([
-            'message' => '质量处理已完成并复检合格，对应库存已恢复可用。',
-            'data' => $service->complete($id, $payload, $operatorId, $operatorName),
-        ]);
-    }
-
-    private function operator(Request $request): array
-    {
-        $user = app(AuthContextService::class)->currentUser($request);
-        abort_unless($user, 401, '未登录或登录已过期。');
-        return [$user?->legacy_id, $user?->nickname ?: $user?->username];
-    }
-
     private function perPage(Request $request): int
     {
         return min(100, max(10, (int) $request->input('per_page', 10)));

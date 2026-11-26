@@ -20,6 +20,7 @@ use App\Services\Erp\PurchaseReceiptManagementScopeService;
 use App\Services\Erp\PurchaseReceiptPostingEligibilityService;
 use App\Services\Erp\PurchaseReceiptSettlementService;
 use App\Services\Erp\PurchaseFinancialFactService;
+use App\Services\Erp\PurchaseReceiptSalesReservationService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
@@ -163,6 +164,7 @@ class PurchaseInventoryPosting
                     : ['inventory_posting_status' => 'not_required']);
             }
 
+            app(PurchaseReceiptSalesReservationService::class)->reservePostedReceipt($receipt, $transaction, $operatorId);
             return $transaction->fresh(['items.item', 'items.warehouse', 'items.location']);
         }, 5);
     }
@@ -273,6 +275,7 @@ class PurchaseInventoryPosting
                 'posted_at' => now(),
             ]);
 
+            app(PurchaseReceiptSalesReservationService::class)->reservePostedReceipt($receipt, $transaction, $operatorId);
             return $transaction->fresh(['items.item', 'items.warehouse', 'items.location']);
         }, 5);
     }

@@ -37,7 +37,7 @@
         </el-button>
         <el-button
           v-if="canSubmit"
-          type="primary"
+          type="success"
           size="small"
           icon="el-icon-check"
           class="btn-theme-submit"
@@ -588,7 +588,7 @@
         </el-button>
         <el-button
           v-if="canSubmit"
-          type="primary"
+          type="success"
           size="small"
           icon="el-icon-check"
           class="btn-theme-submit"

@@ -6,6 +6,7 @@ use App\Services\Erp\Inventory\PurchaseInventoryPosting;
 use App\Domain\Finance\FinanceConstants;
 use App\Domain\Finance\Money;
 use App\Models\Erp\FinanceInvoiceAllocation;
+use App\Models\Erp\ApprovalTask;
 use App\Models\Erp\FinanceOperationLog;
 use App\Models\Erp\InventoryTransactionItem;
 use App\Models\Erp\InventoryBalance;
@@ -20,6 +21,7 @@ use App\Models\Erp\PurchaseReturnItem;
 use App\Models\Erp\PurchaseReturnLog;
 use App\Models\Erp\PurchaseReturnItemSerial;
 use App\Models\Erp\PurchaseSettlementSource;
+use App\Services\Erp\ApprovalIntegrations\PurchaseReturnApprovalIntegration;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
@@ -34,6 +36,7 @@ class PurchaseReturnApplicationService
         private readonly PurchaseReceiptSettlementService $settlements,
         private readonly PurchaseSettlementSourceApplicationService $settlementSources,
         private readonly MaterialPhysicalService $physicalMaterials,
+        private readonly PurchaseReturnApprovalIntegration $approvalIntegration,
     ) {
     }
 
@@ -226,8 +229,7 @@ class PurchaseReturnApplicationService
                 'business_doc_no' => $purchaseReturn->return_no,
             ]);
             $this->log($purchaseReturn, 'create', null, 'submitted', $operatorId, $operatorName, '由不合格品处理生成采购退货单并提交审核');
-
-            return $this->load($purchaseReturn);
+            return $this->startApproval($purchaseReturn, $operatorId, $operatorName);
         }, 5);
     }
 
@@ -259,7 +261,8 @@ class PurchaseReturnApplicationService
                 'batch_no' => $balance->batch_no,
                 'requested_base_qty' => (float) $event->issue_qty,
             ];
-            $this->assertPostedReturnAvailability($source, $row, null);
+            // 质量事件已完成冻结，只加回它自己持有的数量核对采购来源可退量。
+            $this->assertPostedReturnAvailability($source, $row, null, $event);
 
             $purchaseReturn = PurchaseReturn::create([
                 'return_no' => $this->nextReturnNo(),
@@ -313,30 +316,45 @@ class PurchaseReturnApplicationService
             $this->refreshFinancialTotals($purchaseReturn);
             $this->log($purchaseReturn, 'create_from_inventory_quality', null, 'submitted', $operatorId, $operatorName,
                 "由库存质量事件 {$event->event_no} 生成并提交采购退货审批");
-            return $this->load($purchaseReturn);
+            return $this->startApproval($purchaseReturn, $operatorId, $operatorName);
         }, 5);
     }
 
     public function submit(int $id, ?int $operatorId, ?string $operatorName): PurchaseReturn
     {
-        return $this->transition($id, ['draft'], 'submitted', function (PurchaseReturn $return) use ($operatorId): void {
-            foreach ($return->items as $item) {
-                $this->assertReturnAvailability($item, $return->id);
-                $this->assertReturnItemSerials($item, $return->id);
-                $this->physicalMaterials->assertPurchaseReturnReady($item, (string) $item->requested_base_qty);
-            }
-            $return->update(['audit_status' => 'pending', 'submitted_by' => $operatorId, 'submitted_at' => now()]);
-        }, 'submit', $operatorId, $operatorName, '提交采购退货审批');
+        return DB::transaction(function () use ($id, $operatorId, $operatorName): PurchaseReturn {
+            $return = $this->transition($id, ['draft'], 'submitted', function (PurchaseReturn $return) use ($operatorId): void {
+                foreach ($return->items as $item) {
+                    $this->assertReturnAvailability($item, $return->id);
+                    $this->assertReturnItemSerials($item, $return->id);
+                    $this->physicalMaterials->assertPurchaseReturnReady($item, (string) $item->requested_base_qty);
+                }
+                $return->update(['audit_status' => 'pending', 'submitted_by' => $operatorId, 'submitted_at' => now()]);
+            }, 'submit', $operatorId, $operatorName, '提交采购退货审批');
+            return $this->startApproval($return, $operatorId, $operatorName);
+        }, 5);
     }
 
-    public function approve(int $id, ?int $operatorId, ?string $operatorName): PurchaseReturn
+    private function startApproval(PurchaseReturn $return, ?int $operatorId, ?string $operatorName): PurchaseReturn
+    {
+        $initiator = $operatorId ? DB::table('erp_legacy_admin_users')->where('legacy_id', $operatorId)->first() : null;
+        if (!$initiator) throw ValidationException::withMessages(['initiator' => '采购退货提交缺少有效发起人，不能启动审核。']);
+        $task = $this->approvalIntegration->submitted($return, $initiator);
+        if (!$task) return $this->approve($return->id, $operatorId, $operatorName, null, '采购退货无需审核，直接进入待出库');
+        $return = $this->load($return);
+        $return->setAttribute('approval_task', $task);
+        return $return;
+    }
+
+    public function approve(int $id, ?int $operatorId, ?string $operatorName, ?int $approvalTaskId = null, ?string $content = null): PurchaseReturn
     {
         $scope = PurchaseReturn::query()->whereKey($id)->value('return_scope');
         $approvalContent = $scope === 'rejected_before_posting'
             ? '采购退货已审核，等待退回供应商'
             : '采购退货已审核，等待仓库出库';
 
-        return $this->transition($id, ['submitted'], 'pending_outbound', function (PurchaseReturn $return) use ($operatorId): void {
+        return $this->transition($id, ['submitted'], 'pending_outbound', function (PurchaseReturn $return) use ($operatorId, $operatorName, $approvalTaskId): void {
+            $this->assertApprovalOwner($return->id, $approvalTaskId);
             if ($return->audit_status !== 'pending') {
                 throw ValidationException::withMessages(['audit_status' => '只有待审核采购退货单可以审核通过。']);
             }
@@ -349,7 +367,11 @@ class PurchaseReturnApplicationService
                 $item->update(['approved_base_qty' => $item->requested_base_qty]);
             }
             $return->update(['audit_status' => 'approved', 'approved_by' => $operatorId, 'approved_at' => now()]);
-        }, 'approve', $operatorId, $operatorName, $approvalContent);
+            if ($return->return_scope === 'rejected_before_posting') {
+                PurchaseDefectHandling::query()->whereIn('id', $return->items->pluck('source_defect_handling_id')->filter())
+                    ->update(['current_step' => 'return_pending_outbound', 'updated_by' => $operatorName]);
+            }
+        }, 'approve', $operatorId, $operatorName, $content ?? $approvalContent);
     }
 
     public function post(int $id, ?int $operatorId, ?string $operatorName): PurchaseReturn
@@ -580,11 +602,24 @@ class PurchaseReturnApplicationService
 
     public function cancel(int $id, ?int $operatorId, ?string $operatorName): PurchaseReturn
     {
-        return $this->transition($id, ['draft', 'submitted'], 'cancelled', function (PurchaseReturn $return) use ($operatorId, $operatorName): void {
+        return $this->cancelReturn($id, $operatorId, $operatorName);
+    }
+
+    public function reject(int $id, ?int $operatorId, ?string $operatorName, int $approvalTaskId, ?string $reason = null): PurchaseReturn
+    {
+        return $this->cancelReturn($id, $operatorId, $operatorName, $approvalTaskId, $reason);
+    }
+
+    private function cancelReturn(int $id, ?int $operatorId, ?string $operatorName, ?int $approvalTaskId = null, ?string $reason = null): PurchaseReturn
+    {
+        $rejected = $approvalTaskId !== null;
+        return $this->transition($id, $rejected ? ['submitted'] : ['draft', 'submitted'], 'cancelled', function (PurchaseReturn $return) use ($operatorId, $operatorName, $approvalTaskId, $rejected): void {
+            $this->assertApprovalOwner($return->id, $approvalTaskId);
             if ($return->stock_post_status === 'posted') {
                 throw ValidationException::withMessages(['return_status' => '已完成库存出库的采购退货单不能取消。']);
             }
             $return->update(['cancelled_by' => $operatorId, 'cancelled_at' => now()]);
+            if ($rejected) $return->update(['audit_status' => 'rejected']);
             foreach ($return->items->whereNotNull('source_inventory_quality_event_id') as $item) {
                 app(InventoryQualityApplicationService::class)->cancelPendingSupplierReturn(
                     (int) $item->source_inventory_quality_event_id,
@@ -598,7 +633,14 @@ class PurchaseReturnApplicationService
                     ->whereIn('id', $return->items->pluck('source_defect_handling_id')->filter())
                     ->update(['handling_status' => 'cancelled', 'current_step' => 'return_cancelled', 'updated_by' => $operatorName]);
             }
-        }, 'cancel', $operatorId, $operatorName, '取消采购退货单');
+        }, $rejected ? 'reject' : 'cancel', $operatorId, $operatorName, $rejected ? '采购退货审核驳回，已撤销并释放来源占用。原因：'.($reason ?: '审核不通过') : '取消采购退货单');
+    }
+
+    private function assertApprovalOwner(int $id, ?int $approvalTaskId): void
+    {
+        $pending = ApprovalTask::query()->where('business_type', 'PURCHASE_RETURN')->where('business_id', $id)
+            ->where('task_status', 'PENDING')->when($approvalTaskId, fn ($query) => $query->where('id', '<>', $approvalTaskId))->exists();
+        if ($pending) throw ValidationException::withMessages(['approval_task' => '该采购退货已进入审核中心，请在审核工作台处理。']);
     }
 
     public function close(int $id, ?int $operatorId, ?string $operatorName): PurchaseReturn
@@ -663,7 +705,7 @@ class PurchaseReturnApplicationService
         }, 5);
     }
 
-    private function assertPostedReturnAvailability(PurchaseReceiptItem $source, array $row, ?int $exceptReturnId): void
+    private function assertPostedReturnAvailability(PurchaseReceiptItem $source, array $row, ?int $exceptReturnId, ?InventoryQualityEvent $ownQualityEvent = null): void
     {
         $warehouseId = (int) $row['warehouse_id'];
         $locationId = (int) $row['location_id'];
@@ -696,6 +738,16 @@ class PurchaseReturnApplicationService
             ->where('batch_no', $batchNo)
             ->lockForUpdate()
             ->first();
+        if ($ownQualityEvent) {
+            if (!$balance || (int) $ownQualityEvent->inventory_balance_id !== (int) $balance->id
+                || $ownQualityEvent->event_status !== 'pending_supplier_return'
+                || (float) $balance->quantity_pending + 0.00000001 < (float) $ownQualityEvent->issue_qty) {
+                throw ValidationException::withMessages(['items' => '质量事件冻结库存尚未就绪，不能提交采购退货。']);
+            }
+            $balance = clone $balance;
+            $balance->quantity_pending = (float) $balance->quantity_pending - (float) $ownQualityEvent->issue_qty;
+            $balance->quantity_available = (float) $balance->quantity_available + (float) $ownQualityEvent->issue_qty;
+        }
         if ($source->item?->materialManagementMode() === 'physical' && $balance) {
             $physicals = DB::table('erp_material_physicals as physical')
                 ->join('erp_material_holdings as holding', 'holding.id', '=', 'physical.current_holding_id')

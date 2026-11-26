@@ -377,7 +377,7 @@
             @keyup.enter.native="searchDeleted"
             @clear="searchDeleted"
           />
-          <el-button size="small" type="primary" class="btn-theme-search" icon="el-icon-search" @click="searchDeleted">查询</el-button>
+          <el-button size="small" type="success" class="btn-theme-search" icon="el-icon-search" @click="searchDeleted">查询</el-button>
           <el-button size="small" icon="el-icon-refresh" @click="resetDeletedSearch">重置</el-button>
         </div>
 
@@ -466,7 +466,7 @@
     </el-dialog>
 
 
-    <el-drawer :title="editorTitle" :visible.sync="drawer" size="420px" custom-class="purchase-drawer">
+    <el-dialog :title="editorTitle" :visible.sync="drawer" width="560px" top="5vh" append-to-body custom-class="purchase-editor-dialog">
       <el-form label-width="92px" size="small" class="purchase-form">
         <template v-if="mode==='requests'">
           <el-form-item label="物料"><paged-record-select v-model="form.item_id" entity="items" :params="{ management_scope: form.management_scope || undefined }" :selected-rows.sync="items" category-type="item" /></el-form-item>
@@ -515,11 +515,11 @@
         </template>
         <el-form-item label="备注"><el-input v-model="form.remark" type="textarea" :rows="3" /></el-form-item>
       </el-form>
-      <div class="drawer-actions">
+      <div slot="footer" class="dialog-footer-custom">
         <el-button size="small" @click="drawer=false">取消</el-button>
         <el-button size="small" type="success" @click="save">保存</el-button>
       </div>
-    </el-drawer>
+    </el-dialog>
 
     <el-dialog
       title="到货库位与编号核对"
@@ -610,7 +610,7 @@ const metaMap = {
     title: '采购计划',
     short: '计划',
     subtitle: '制定采购计划，拆分分配到供应商，生成采购订单。',
-    tip: '采购计划可多供应商；审核通过后才能预览/生成采购订单，已生成后不可重复生成。',
+    tip: '采购计划可多供应商；提交时匹配已发布审核流程才进入审核，否则直接通过，可预览并生成采购订单。',
     statuses: [{ label: '草稿', value: 'draft' }, { label: '已提交', value: 'submitted' }, { label: '已审核', value: 'approved' }, { label: '已生成订单', value: 'order_generated' }]
   },
   orders: {
@@ -623,8 +623,8 @@ const metaMap = {
   receipts: {
     title: '采购到货',
     short: '到货单',
-    subtitle: '确认到货只记录到货与验收结果。',
-    tip: '当前阶段只记录到货与验收结果，暂不更新正式库存；确认后进入“待库存过账”。',
+    subtitle: '确认到货并验收，满足条件时自动完成库存过账。',
+    tip: '库存物料全部合格，且入库分配和过账权限检查通过时，确认到货自动完成库存过账；其余库存物料保持待过账。',
     statuses: [{ label: '待确认', value: 'draft' }, { label: '已确认', value: 'confirmed' }]
   }
 }
@@ -863,7 +863,7 @@ export default {
       if (this.mode === 'plans' && !this.scopeIssue(this.selected)) this.preview(this.selected)
     },
     async afterBusinessAction(id, command = '') {
-      if (['submitOrder', 'confirmReceipt'].includes(command)) this.selected = null
+      if (['submitPlan', 'submitOrder'].includes(command)) this.selected = null
       await this.load()
     },
     reset() { this.filters = { management_scope: '', keyword: '', status: '', dateRange: [] }; this.page = 1; this.load() },
@@ -1064,8 +1064,10 @@ export default {
         return []
       }
       if (this.mode === 'plans') {
-        if (row.plan_status === 'draft' || row.audit_status === 'rejected') return [{ command: 'submitPlan', label: '提交审核' }]
-        if (row.plan_status === 'submitted' && row.audit_status === 'pending') return [{ command: 'approvePlan', label: '审核通过' }, { command: 'rejectPlan', label: '驳回' }]
+        if (row.plan_status === 'draft' || row.audit_status === 'rejected') return [{ command: 'submitPlan', label: '提交计划' }]
+        if (row.plan_status === 'submitted' && row.audit_status === 'pending') return row.approval_task_status === 'PENDING'
+          ? [{ command: 'viewApproval', label: '查看审核进度' }]
+          : [{ command: 'approvePlan', label: '审核通过' }, { command: 'rejectPlan', label: '驳回' }]
         if (row.audit_status === 'approved' && ['not_ordered', 'partially_ordered'].includes(row.order_status) && !['closed', 'cancelled'].includes(row.plan_status)) return [{ command: 'previewPlanOrders', label: '预览订单' }, { command: 'generatePlanOrders', label: '生成采购订单' }]
         if (['order_generated', 'ordered'].includes(row.order_status)) return [{ command: 'goOrders', label: '查看采购订单' }]
         return []
@@ -1261,7 +1263,7 @@ export default {
       return (canonical && (canonical.unit_name || canonical.symbol || canonical.unit_code)) || '-'
     },
     confirmButtonText(command) {
-      return ({ submitRequest: '确认需求', requestToPlan: '转采购计划', approvePlan: '审核通过', submitOrder: '提交订单', approveOrder: '审核通过', confirmReceipt: '确认到货' })[command] || '确认执行'
+      return ({ submitRequest: '确认需求', requestToPlan: '转采购计划', submitPlan: '提交计划', approvePlan: '审核通过', submitOrder: '提交订单', approveOrder: '审核通过', confirmReceipt: '确认到货' })[command] || '确认执行'
     },
     confirmSummary(command, row) {
       const no = this.detailNo(row)
@@ -1271,10 +1273,11 @@ export default {
       const summaries = {
         submitRequest: `<p>确认需求：${no}</p><p>明细 ${lineCount} 行，采购数量 ${this.quantityByUnit(lines, 'purchase_quantity')}。确认后需求会被锁定，可转采购计划。</p>`,
         requestToPlan: `<p>转采购计划：${no}</p><p>明细 ${lineCount} 行，采购数量 ${this.quantityByUnit(lines, 'purchase_quantity')}，本次转化库存数量 ${this.quantityByUnit(lines, line => line.remaining_qty ?? Math.max(0, Number(line.request_qty || 0) - Number(line.converted_qty ?? line.planned_qty ?? 0)))}。</p>`,
+        submitPlan: `<p>提交采购计划：${no}</p><p>物料 ${lineCount} 行，供应商 ${this.planSupplierCount(row)} 个，预计金额 ¥${amount}。匹配已发布审核流程时进入审核，否则直接通过，可生成采购订单。</p>`,
         approvePlan: `<p>审核采购计划：${no}</p><p>物料 ${lineCount} 行，供应商 ${this.planSupplierCount(row)} 个，预计金额 ¥${amount}。审核通过后可生成采购订单。</p>`,
         submitOrder: `<p>提交采购订单：${no}</p><p>供应商：${row.supplier ? row.supplier.supplier_name : '--'}；明细 ${lineCount} 行，采购数量 ${this.quantityByUnit(lines, line => line.purchase_qty ?? line.order_qty ?? line.qty ?? 0)}，金额 ¥${amount}。匹配已发布审核流程时进入审核，否则直接确认待到货。</p>`,
         approveOrder: `<p>审核采购订单：${no}</p><p>供应商：${row.supplier ? row.supplier.supplier_name : '--'}；审核通过后才可生成到货单。</p>`,
-        confirmReceipt: `<p>确认到货：${no}</p><p>到货 ${this.quantityByUnit(lines, 'receipt_qty')}，合格 ${this.quantityByUnit(lines, 'qualified_qty')}，不合格 ${this.quantityByUnit(lines, 'unqualified_qty')}，质量待处理 ${this.quantityByUnit(lines, line => this.receiptUnresolvedQty(line))}。本次不更新正式库存。</p>`
+        confirmReceipt: `<p>确认到货：${no}</p><p>到货 ${this.quantityByUnit(lines, 'receipt_qty')}，合格 ${this.quantityByUnit(lines, 'qualified_qty')}，不合格 ${this.quantityByUnit(lines, 'unqualified_qty')}，质量待处理 ${this.quantityByUnit(lines, line => this.receiptUnresolvedQty(line))}。整单质量、入库分配和权限检查通过时，自动完成库存过账；其余情况保留待处理状态。</p>`
       }
       if (command === 'generatePlanOrders') {
         const suppliers = this.planSupplierCount(row)
@@ -1313,6 +1316,7 @@ export default {
     },
     successMessage(command, res) {
       if (command === 'submitRequest') return '需求已确认，已锁定需求，可转采购计划'
+      if (command === 'confirmReceipt' && res.data.data?.stock_post_status === 'posted') return '到货已确认并自动完成库存过账'
       return res.data.message || '操作成功'
     },
     planSupplierCount(row) {
@@ -1927,25 +1931,9 @@ export default {
   gap: 8px;
 }
 
-/* 抽屉样式适配 */
-.purchase-form {
-  padding: 0 18px 70px;
-}
 .purchase-form .el-select,
 .purchase-form .el-date-editor {
   width: 100%;
-}
-.drawer-actions {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  padding: 12px 18px;
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  background: #fff;
-  border-top: 1px solid #e2e8f0;
 }
 
 @media (max-width: 760px) {

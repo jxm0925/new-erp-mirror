@@ -2,12 +2,18 @@
 
 namespace App\Services\Erp;
 
+use App\Models\Erp\ApprovalTask;
 use App\Models\Erp\InventoryAdjustment;
 use App\Models\Erp\InventoryAdjustmentItem;
 use App\Models\Erp\InventoryAdjustmentSerial;
 use App\Models\Erp\InventoryBalance;
 use App\Models\Erp\InventorySerial;
+use App\Models\Erp\InventoryStocktake;
 use App\Models\Erp\Item;
+use App\Services\Erp\ApprovalIntegrations\InventoryAdjustmentApprovalIntegration;
+use App\Services\Erp\Inventory\StocktakeFreezeGuard;
+use App\Services\Erp\Inventory\WarehouseInventoryPosting;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
@@ -149,40 +155,111 @@ class InventoryAdjustmentApplicationService
         unset($line);
     }
 
-    public function submit(int $id, ?int $operatorId = null): InventoryAdjustment
+    public function submit(int $id, object $initiator, bool $canPost = false): InventoryAdjustment
     {
-        return DB::transaction(function () use ($id, $operatorId): InventoryAdjustment {
-            $adjustment = InventoryAdjustment::query()->with(['items.item', 'items.serials', 'items.physicalEntries'])->lockForUpdate()->findOrFail($id);
-            if ($adjustment->adjustment_status !== 'draft') {
-                throw ValidationException::withMessages(['status' => '只有草稿调整单可以提交。']);
+        return DB::transaction(function () use ($id, $initiator, $canPost): InventoryAdjustment {
+            if (! (int) ($initiator->legacy_id ?? 0)) {
+                throw ValidationException::withMessages(['initiator' => '库存调整提交缺少发起人，不能启动审批。']);
             }
-            if (!$adjustment->items()->exists()) {
-                throw ValidationException::withMessages(['items' => '调整单没有明细，不能提交。']);
+            $operatorId = (int) $initiator->legacy_id;
+            $this->assertNoActiveApproval($id);
+            $adjustment = $this->prepareSubmission($id, $operatorId);
+            $task = app(InventoryAdjustmentApprovalIntegration::class)->submitted($adjustment, $initiator);
+            // 只有引擎明确 BYPASS 且提交人具备过账权限才合并办理；任何过账失败都回滚本次提交。
+            // 过账服务反向依赖本服务，需在用例执行时解析，避免构造器循环依赖。
+            if (! $task && $canPost) app(WarehouseInventoryPosting::class)->postAdjustment($id, $operatorId);
+
+            $result = $adjustment->fresh(['items.serials', 'items.physicalEntries']);
+            $this->attachApprovalState([$result]);
+            return $result;
+        }, 5);
+    }
+
+    public function postStocktakeDifference(InventoryStocktake $stocktake, array $items, ?int $operatorId): InventoryAdjustment
+    {
+        return DB::transaction(function () use ($stocktake, $items, $operatorId): InventoryAdjustment {
+            $stocktake = InventoryStocktake::query()->lockForUpdate()->findOrFail($stocktake->id);
+            if ($stocktake->stocktake_status !== 'counting') {
+                throw ValidationException::withMessages(['stocktake' => '只有进行中的盘点可以登记差异。']);
             }
-            foreach ($adjustment->items as $line) {
-                $balance = InventoryBalance::query()
-                    ->where('item_id', $line->item_id)
-                    ->where('warehouse_id', $line->warehouse_id)
-                    ->where('location_id', $line->location_id)
-                    ->where('batch_no', $line->batch_no)
-                    ->lockForUpdate()->firstOrFail();
-                $this->validateStoredLine($line, $balance, $adjustment->id);
-            }
-            $adjustment->update(['adjustment_status' => 'submitted', 'submitted_by' => $operatorId, 'submitted_at' => now()]);
+            // 完成盘点本身已是正式库存动作，只对本事务新建的派生单直接过账，不给已有手工调整免审批入口。
+            $adjustment = $this->save([
+                'adjustment_date' => now()->toDateString(),
+                'reason' => StocktakeFreezeGuard::EXEMPT_ADJUSTMENT_REASON,
+                'remark' => "盘点单 {$stocktake->stocktake_no} 差异",
+                'items' => $items,
+            ], null, $operatorId);
+            $this->prepareSubmission($adjustment->id, $operatorId);
+            app(WarehouseInventoryPosting::class)->postAdjustment($adjustment->id, $operatorId);
             return $adjustment->fresh(['items.serials', 'items.physicalEntries']);
         }, 5);
     }
 
-    public function cancel(int $id, ?int $operatorId = null): InventoryAdjustment
+    private function prepareSubmission(int $id, ?int $operatorId): InventoryAdjustment
     {
-        return DB::transaction(function () use ($id, $operatorId): InventoryAdjustment {
+        $adjustment = InventoryAdjustment::query()->with(['items.item', 'items.serials', 'items.physicalEntries'])->lockForUpdate()->findOrFail($id);
+        if ($adjustment->adjustment_status !== 'draft') {
+            throw ValidationException::withMessages(['status' => '只有草稿调整单可以提交。']);
+        }
+        if (! $adjustment->items()->exists()) {
+            throw ValidationException::withMessages(['items' => '调整单没有明细，不能提交。']);
+        }
+        foreach ($adjustment->items as $line) {
+            $balance = InventoryBalance::query()
+                ->where('item_id', $line->item_id)
+                ->where('warehouse_id', $line->warehouse_id)
+                ->where('location_id', $line->location_id)
+                ->where('batch_no', $line->batch_no)
+                ->lockForUpdate()->firstOrFail();
+            $this->validateStoredLine($line, $balance, $adjustment->id);
+        }
+        $adjustment->update(['adjustment_status' => 'submitted', 'submitted_by' => $operatorId, 'submitted_at' => now()]);
+        return $adjustment;
+    }
+
+    public function cancel(int $id, ?int $operatorId = null, ?ApprovalTask $completionTask = null): InventoryAdjustment
+    {
+        return DB::transaction(function () use ($id, $operatorId, $completionTask): InventoryAdjustment {
+            $this->assertNoActiveApproval($id, $completionTask);
             $adjustment = InventoryAdjustment::query()->lockForUpdate()->findOrFail($id);
+            $this->assertNoActiveApproval($id, $completionTask);
             if ($adjustment->adjustment_status !== 'submitted') {
                 throw ValidationException::withMessages(['status' => '只有已提交、尚未过账的调整单可以取消。']);
             }
             $adjustment->update(['adjustment_status' => 'cancelled', 'cancelled_by' => $operatorId, 'cancelled_at' => now()]);
             return $adjustment->fresh('items');
         }, 5);
+    }
+
+    public function attachApprovalState($adjustments): void
+    {
+        $ids = collect($adjustments)->pluck('id')->map(fn ($id) => (int) $id)->all();
+        $tasks = $ids ? $this->activeApprovalQuery($ids)->select(['id', 'business_id'])->orderByDesc('id')->get()->unique('business_id')->keyBy('business_id') : collect();
+        foreach ($adjustments as $adjustment) {
+            $task = $tasks->get((int) $adjustment->id);
+            $adjustment->setAttribute('approval_pending', $task !== null);
+            $adjustment->setAttribute('approval_task_id', $task?->id);
+        }
+    }
+
+    public function assertNoActiveApproval(int $adjustmentId, ?ApprovalTask $completionTask = null): void
+    {
+        // 先按审批运行时的任务→单据顺序锁定；取得单据锁后还须再次当前读，防止漏掉并发提交新建的任务。
+        $tasks = $this->activeApprovalQuery([$adjustmentId])->select('id')->orderBy('id')->lockForUpdate()->get();
+        foreach ($tasks as $task) {
+            if (! $completionTask || (int) $task->id !== (int) $completionTask->id) {
+                throw ValidationException::withMessages(['approval' => '该调整单正在审批，请在审批中心处理，不能直接过账或取消。']);
+            }
+        }
+    }
+
+    private function activeApprovalQuery(array $adjustmentIds): Builder
+    {
+        return ApprovalTask::query()->where('business_object_code', 'INVENTORY_ADJUSTMENT')->whereIn('business_id', $adjustmentIds)
+            ->where(function (Builder $query): void {
+                // 当前运行时使用 PENDING；同时保护兼容状态及尚未释放的活动业务键，失败动作也不能被绕过。
+                $query->whereIn(DB::raw('LOWER(task_status)'), ['pending', 'in_progress'])->orWhereNotNull('active_business_key');
+            });
     }
 
     public function deleteDraft(int $id): void

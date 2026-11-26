@@ -57,7 +57,6 @@ class InventoryStocktakeService
 
     public function __construct(
         private readonly InventoryAdjustmentApplicationService $adjustments,
-        private readonly WarehouseInventoryPosting $posting,
         private readonly DocumentNumberService $numbers,
         private readonly InventoryStocktakeEntryService $entries,
     )
@@ -610,14 +609,7 @@ class InventoryStocktakeService
 
             $adjustmentId = null;
             if ($adjustmentRows) {
-                $adjustment = $this->adjustments->save([
-                    'adjustment_date' => now()->toDateString(),
-                    'reason' => StocktakeFreezeGuard::EXEMPT_ADJUSTMENT_REASON,
-                    'remark' => "盘点单 {$stocktake->stocktake_no} 差异",
-                    'items' => $adjustmentRows,
-                ], null, $operatorId);
-                $this->adjustments->submit($adjustment->id, $operatorId);
-                $this->posting->postAdjustment($adjustment->id, $operatorId);
+                $adjustment = $this->adjustments->postStocktakeDifference($stocktake, $adjustmentRows, $operatorId);
                 $adjustmentId = $adjustment->id;
             }
 

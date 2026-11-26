@@ -92,7 +92,7 @@
           </el-select>
         </div>
         <div class="filter-actions">
-          <el-button size="small" type="primary" icon="el-icon-search" @click="applyFilters">查询</el-button>
+          <el-button size="small" type="success" icon="el-icon-search" @click="applyFilters">查询</el-button>
           <el-button size="small" icon="el-icon-refresh-left" @click="resetFilters">重置</el-button>
           <el-button size="small" icon="el-icon-refresh" circle title="刷新列表" @click="fetchAll" />
         </div>
@@ -123,7 +123,7 @@
                     <span class="sub-hint"><i class="el-icon-info" /> 点击行或操作按钮可直达 SKU 独立详情与编辑页</span>
                   </div>
                   <div class="nested-actions">
-                    <el-button size="mini" type="primary" plain icon="el-icon-plus" @click.stop="openSkuCreate(row)">单独新增SKU</el-button>
+                    <el-button size="mini" type="success" plain icon="el-icon-plus" @click.stop="openSkuCreate(row)">单独新增SKU</el-button>
                     <el-button size="mini" type="success" plain icon="el-icon-s-grid" @click.stop="openSkuMatrix(row)">生成SKU矩阵</el-button>
                   </div>
                 </div>
@@ -371,7 +371,7 @@
         <el-button size="small" @click="detailDialogVisible = false">关闭</el-button>
         <el-button size="small" icon="el-icon-s-grid" @click="openSkuMatrix(selectedProduct)">生成SKU矩阵</el-button>
         <el-button size="small" icon="el-icon-plus" @click="openSkuCreate(selectedProduct)">新增SKU</el-button>
-        <el-button size="small" type="primary" icon="el-icon-edit" @click="openProductEdit(selectedProduct)">编辑此商品</el-button>
+        <el-button size="small" type="success" icon="el-icon-edit" @click="openProductEdit(selectedProduct)">编辑此商品</el-button>
       </div>
     </el-dialog>
 
@@ -393,7 +393,7 @@
         <section class="matrix-block">
           <div class="block-title-row">
             <h5>规格维度定义</h5>
-            <el-button size="mini" type="primary" plain icon="el-icon-plus" @click="addSkuDimension">新增规格维度</el-button>
+            <el-button size="mini" type="success" plain icon="el-icon-plus" @click="addSkuDimension">新增规格维度</el-button>
           </div>
           <div v-for="(dim, index) in skuMatrix.dimensions" :key="index" class="dimension-edit-row">
             <span class="dim-num">维度 {{ index + 1 }}</span>
@@ -1202,45 +1202,45 @@ export default {
 }
 
 /* 查询按钮与主要操作按钮定制为 ERP 主题绿 */
-::v-deep .filter-actions .el-button--primary,
-::v-deep .nested-actions .el-button--primary,
-::v-deep .table-container-card .el-button--primary,
-::v-deep .product-detail-modal .el-button--primary {
+::v-deep .filter-actions .el-button--success,
+::v-deep .nested-actions .el-button--success,
+::v-deep .table-container-card .el-button--success,
+::v-deep .product-detail-modal .el-button--success {
   background-color: #008b4b !important;
   border-color: #008b4b !important;
   color: #ffffff !important;
   transition: all 0.2s ease;
 }
 
-::v-deep .filter-actions .el-button--primary:hover,
-::v-deep .filter-actions .el-button--primary:focus,
-::v-deep .nested-actions .el-button--primary:hover,
-::v-deep .nested-actions .el-button--primary:focus,
-::v-deep .table-container-card .el-button--primary:hover,
-::v-deep .table-container-card .el-button--primary:focus,
-::v-deep .product-detail-modal .el-button--primary:hover,
-::v-deep .product-detail-modal .el-button--primary:focus {
+::v-deep .filter-actions .el-button--success:hover,
+::v-deep .filter-actions .el-button--success:focus,
+::v-deep .nested-actions .el-button--success:hover,
+::v-deep .nested-actions .el-button--success:focus,
+::v-deep .table-container-card .el-button--success:hover,
+::v-deep .table-container-card .el-button--success:focus,
+::v-deep .product-detail-modal .el-button--success:hover,
+::v-deep .product-detail-modal .el-button--success:focus {
   background-color: #00763f !important;
   border-color: #00763f !important;
   color: #ffffff !important;
   box-shadow: 0 2px 6px rgba(0, 139, 75, 0.25);
 }
 
-::v-deep .filter-actions .el-button--primary:active,
-::v-deep .nested-actions .el-button--primary:active {
+::v-deep .filter-actions .el-button--success:active,
+::v-deep .nested-actions .el-button--success:active {
   background-color: #006233 !important;
   border-color: #006233 !important;
 }
 
 /* 朴素主要按钮（如展开面板中的单独新增SKU） */
-::v-deep .el-button--primary.is-plain {
+::v-deep .el-button--success.is-plain {
   background-color: #eaf7ef !important;
   border-color: #b7ebc7 !important;
   color: #008b4b !important;
 }
 
-::v-deep .el-button--primary.is-plain:hover,
-::v-deep .el-button--primary.is-plain:focus {
+::v-deep .el-button--success.is-plain:hover,
+::v-deep .el-button--success.is-plain:focus {
   background-color: #008b4b !important;
   border-color: #008b4b !important;
   color: #ffffff !important;

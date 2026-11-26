@@ -77,7 +77,7 @@ Do not change layout without approval.
       <div class="toolbar-actions">
         <el-button size="small" @click="$router.push(returnPath)">{{ platformPaymentOnly ? '返回订单' : '返回列表' }}</el-button>
         <el-button v-if="canEditOrder" size="small" class="btn-emerald-plain" :disabled="platformPaymentSaving" @click="save(false)">{{ isConfirmedEdit ? '保存修改' : '保存草稿' }}</el-button>
-        <el-button v-if="canEditOrder && !isConfirmedEdit && ($can('sales_order.submit_confirmation') || $can('sales_order.formal_confirm'))" size="small" type="primary" icon="el-icon-check" class="btn-emerald-primary" :disabled="platformPaymentSaving" @click="save(true)">保存并确认</el-button>
+        <el-button v-if="canEditOrder && !isConfirmedEdit && ($can('sales_order.submit_confirmation') || $can('sales_order.formal_confirm'))" size="small" type="success" icon="el-icon-check" class="btn-emerald-primary" :disabled="platformPaymentSaving" @click="save(true)">保存并确认</el-button>
       </div>
     </header>
 
@@ -283,7 +283,7 @@ Do not change layout without approval.
           </div>
           <div class="panel-actions">
             <el-button size="small" icon="el-icon-document-copy" @click="copyLine">复制当前行</el-button>
-            <el-button size="small" type="primary" class="btn-emerald-primary" icon="el-icon-plus" @click="addLine">添加订单行</el-button>
+            <el-button size="small" type="success" class="btn-emerald-primary" icon="el-icon-plus" @click="addLine">添加订单行</el-button>
           </div>
         </div>
         <el-table
@@ -430,7 +430,7 @@ Do not change layout without approval.
                         <el-option label="其他技术附件" value="其他技术附件" />
                       </el-select>
                       <el-upload action="#" :auto-upload="false" :show-file-list="false" :on-change="addLineFile">
-                        <el-button size="small" type="primary" icon="el-icon-upload2" class="btn-emerald-primary">上传图纸 / 文件</el-button>
+                        <el-button size="small" type="success" icon="el-icon-upload2" class="btn-emerald-primary">上传图纸 / 文件</el-button>
                       </el-upload>
                     </div>
                   </div>
@@ -2251,8 +2251,8 @@ export default {
           }
           return
         }
-        this.$message.success('订单已确认，请核实后执行“生产确认”')
-        this.$router.push(`/sales/orders/${id}/detail`)
+        this.$message.success('订单已确认')
+        this.$router.push({ path: `/sales/orders/${id}/detail`, query: result.order?.allowed_actions?.confirm_production ? { confirm_production: '1' } : {} })
       } else {
         this.$message.success('订单草稿已保存')
         const editPath = `/sales/orders/${id}/edit`

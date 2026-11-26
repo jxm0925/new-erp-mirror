@@ -62,7 +62,20 @@
       </template>
 
       <el-form size="small" label-width="92px" class="action-form" :disabled="saving || loading || !!error">
-        <el-form-item v-if="['return','recycle','invalidate'].includes(action)" :label="action === 'return' ? '退回原因' : action === 'recycle' ? '回收原因' : '无效原因'" required>
+        <el-form-item v-if="action === 'recycle'" label="目标公海" required>
+          <el-select popper-class="crm-select-popper" v-model="form.target_department_legacy_id" filterable clearable placeholder="请选择公海所属部门">
+            <el-option v-for="item in recycleDepartments" :key="item.id" :value="item.id" :label="item.pathLabel" class="crm-department-option">
+              <span class="crm-department-row" :class="{ 'is-root': item.depth === 0 }" :style="{ paddingLeft: `${item.depth * 18}px` }">
+                <span v-if="item.depth" class="crm-department-branch" aria-hidden="true">{{ item.branchPrefix }}</span>
+                <i v-else class="el-icon-office-building" aria-hidden="true" />
+                <span class="crm-department-name">{{ item.name }}</span>
+                <small v-if="item.hasChildren" class="crm-department-level">{{ item.parent_id ? '上级' : '总公司' }}</small>
+                <small class="crm-department-scope">{{ item.hasChildren || !item.parent_id ? '下属部门共享' : '本部门可见' }}</small>
+              </span>
+            </el-option>
+          </el-select>
+        </el-form-item>
+        <el-form-item v-if="['return','recycle','invalidate'].includes(action)" :label="action === 'return' ? '退回原因' : action === 'recycle' ? (selfRelease ? '释放原因' : '回收原因') : '无效原因'" required>
           <el-select popper-class="crm-select-popper" v-model="form.reason" filterable allow-create default-first-option placeholder="选择或输入原因">
             <el-option v-for="item in reasonOptions" :key="item" :label="item" :value="item" />
           </el-select>
@@ -101,7 +114,7 @@
     <span slot="footer" class="crm-footer">
       <el-button size="small" :disabled="saving" @click="close">取消</el-button>
       <el-button size="small" type="success" :loading="saving" :disabled="loading || peopleLoading || uploading || !!error || !allowed[action]" @click="save">
-        {{ title.replace('线索','').replace('到公海','') === '回收' ? '确认回收' : '确认' + (labels[action] || '') }}
+        {{ action === 'recycle' ? (selfRelease ? '确认释放' : '确认回收') : '确认' + (labels[action] || '') }}
       </el-button>
     </span>
 
@@ -117,6 +130,7 @@
 
 <script>
 import { getCrmLead, getCrmLeadMetadata, listCrmLeadAssignees, actCrmLead, crmDate, crmError } from '@/api/erp/crm'
+import { crmDepartmentTree } from '@/utils/crmDepartmentTree'
 import CrmAttachments from './CrmAttachments.vue'
 import '@/styles/crm.css'
 
@@ -158,20 +172,23 @@ export default {
   }),
   computed: {
     title() {
-      return this.action === 'recycle' ? '回收到公海' : (labels[this.action] || '') + (['pool', 'confirm', 'invalidate'].includes(this.action) ? '' : '线索')
+      return this.action === 'recycle' ? (this.selfRelease ? '释放到公海' : '回收到公海') : (labels[this.action] || '') + (['pool', 'confirm', 'invalidate'].includes(this.action) ? '' : '线索')
     },
     allowed() { return this.lead.abilities || {} },
+    selfRelease() { return this.action === 'recycle' && !!this.allowed.self_release },
+    recycleDepartments() { return crmDepartmentTree(this.lead.recycle_departments || []) },
+    recycleDepartment() { return this.recycleDepartments.find(item => item.id === this.form.target_department_legacy_id) },
     reasonOptions() {
       return this.action === 'return'
         ? ['不在本人负责范围', '客户资料不完整', '重复线索', '其他']
-        : ['超期未跟进', '暂缓采购', '原负责人停用', '客户无需求', '其他']
+        : this.selfRelease ? ['暂缓采购', '暂时无法跟进', '客户暂无需求', '其他'] : ['超期未跟进', '暂缓采购', '原负责人停用', '客户无需求', '其他']
     },
     explanation() {
       return ({
         assign: '分配后进入新负责人的待接收列表，销售可确认接收或填写原因退回。',
         transfer: '转交后进入新负责人的待接收列表；已产生订单的销售归属和历史成交不变。',
         return: '退回后线索回到待分配，由分配人重新处理；退回记录保留在操作记录中。',
-        recycle: '自动回收未开启，本次为人工回收。回收后原销售不再负责该线索；客户负责人不变。',
+        recycle: this.selfRelease ? '释放后你将不再负责跟进该线索，所选公海层级的可见销售均可重新领取；客户负责人保持不变。' : '回收后原销售不再负责跟进该线索，所选公海层级的可见销售均可重新领取；客户负责人保持不变。',
         claim: '多人同时领取时，只有先提交的一方成功。',
         accept: this.lead.delegated ? `你代为接收后，线索由${this.lead.pending_user_name || '原销售'}负责。` : '接收后由你负责该线索的日常跟进。',
         pool: '客户池只调整本条线索的经营分组。',
@@ -203,7 +220,7 @@ export default {
       const session = ++this.session
       this.action = action
       this.lead = {}
-      this.form = { to_user_legacy_id: null, reason: '', note: '', transfer_customer: false, customer_pool: '' }
+      this.form = { to_user_legacy_id: null, target_department_legacy_id: null, reason: '', note: '', transfer_customer: false, customer_pool: '' }
       this.people = []
       this.peopleTotal = 0
       this.peopleQuery = { page: 1, per_page: 10, keyword: '' }
@@ -223,6 +240,7 @@ export default {
         this.currentUser = (meta.data.data || meta.data).current_user || {}
         this.pools = (meta.data.data || meta.data).customer_pools || []
         this.form.customer_pool = this.lead.customer_pool || ''
+        this.form.target_department_legacy_id = Number(this.lead.default_recycle_department_id || this.lead.department_legacy_id) || null
         if (!this.allowed[action]) this.error = '该线索状态或权限已变化，请刷新后重新选择。'
         else if (['assign', 'transfer'].includes(action)) await this.loadPeople()
       } catch (error) {
@@ -265,6 +283,7 @@ export default {
     },
     async save() {
       if (this.saving || this.loading || this.uploading || this.error || !this.allowed[this.action]) return
+      if (this.action === 'recycle' && !this.recycleDepartment) return this.$message.warning('请选择有效的目标公海')
       if (['assign', 'transfer'].includes(this.action) && !this.form.to_user_legacy_id) return this.$message.warning('请选择接收销售')
       if (['assign', 'transfer', 'return', 'recycle', 'invalidate', 'pool'].includes(this.action) && !this.form.reason) return this.$message.warning('请填写原因或说明')
       if (['return', 'recycle', 'invalidate'].includes(this.action) && !this.form.note) return this.$message.warning('请填写说明')
@@ -272,8 +291,10 @@ export default {
       const session = this.session
       this.saving = true
       try {
+        const { target_department_legacy_id: targetDepartmentId, ...form } = this.form
         await actCrmLead(this.lead.id, this.action, {
-          ...this.form,
+          ...form,
+          ...(this.action === 'recycle' ? { target_department_legacy_id: targetDepartmentId } : {}),
           version: this.lead.version,
           customer_version: this.lead.customer && this.lead.customer.crm_version,
           ...(['assign', 'transfer'].includes(this.action) ? { assignment_attachment_ids: this.attachments.map(file => file.id) } : {})

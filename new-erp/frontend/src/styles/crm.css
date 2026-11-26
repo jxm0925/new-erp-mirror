@@ -216,6 +216,53 @@
 .crm-select-popper .el-select-dropdown__item.selected, .crm-select-popper .el-dropdown-menu__item:not(.is-disabled):hover {
   color: #008b4b;
 }
+.crm-department-option {
+  height: auto;
+  min-height: 34px;
+  line-height: 20px;
+  white-space: normal;
+}
+.crm-department-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding-top: 7px;
+  padding-bottom: 7px;
+  box-sizing: border-box;
+}
+.crm-department-row.is-root .crm-department-name {
+  font-weight: 600;
+}
+.crm-department-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.crm-department-branch {
+  flex: none;
+  color: #94a3b8;
+  white-space: pre;
+}
+.crm-department-level {
+  flex: none;
+  padding: 0 5px;
+  border-radius: 3px;
+  background: #f1f5f9;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 18px;
+}
+.crm-department-scope {
+  flex: none;
+  margin-left: auto;
+  color: #94a3b8;
+  font-size: 11px;
+  font-weight: 400;
+}
+.crm-department-option.selected:not(.is-disabled) {
+  color: #008b4b;
+}
 .crm-dialog .el-radio-button__orig-radio:checked + .el-radio-button__inner {
   background: #f0fdf4;
   color: #00763f;

@@ -956,7 +956,7 @@
               <div class="title-row">
                 <h1 class="page-title">{{ activeView === 'adjustments' ? '手工调整' : '库存流水' }}</h1>
                 <el-tag size="small" type="success" effect="plain" class="head-tag total-tag">共 {{ activeView === 'adjustments' ? adjustmentPagination.total : txPagination.total }} 条{{ activeView === 'adjustments' ? '调整单' : '流水记录' }}</el-tag>
-                <el-tag v-if="activeView === 'adjustments' && adjustmentStats.submitted_count > 0" size="small" type="warning" effect="plain" class="sub-total-tag">{{ adjustmentStats.submitted_count }} 张待确认过账</el-tag>
+                <el-tag v-if="activeView === 'adjustments' && adjustmentStats.submitted_count > 0" size="small" type="warning" effect="plain" class="sub-total-tag">{{ adjustmentStats.submitted_count }} 张待审批或过账</el-tag>
               </div>
             </div>
           </div>
@@ -965,13 +965,13 @@
         </div>
         <div class="head-actions">
           <el-button size="small" icon="el-icon-refresh" class="btn-refresh" @click="activeView === 'adjustments' ? loadAdjustments() : loadTransactions()">刷新</el-button>
-          <el-button size="small" type="success" class="btn-theme-create" icon="el-icon-plus" @click="openAdjustmentDrawer()">手工调整</el-button>
+          <el-button v-if="$can('inventory.adjustment.create')" size="small" type="success" class="btn-theme-create" icon="el-icon-plus" @click="openAdjustmentDrawer()">手工调整</el-button>
         </div>
       </div>
 
       <div class="erp-page-tip">
         <i class="el-icon-info" />
-        <span>库存流水为库存变化唯一依据，生成后只读不可编辑或删除；手工调整必须通过正式调整单提交并确认过账后生成库存流水，后续反过账只能通过反向事务处理。</span>
+        <span>库存流水为库存变化唯一依据，生成后只读不可编辑或删除；手工调整按审批设置办理，无需审批且有过账权限时提交即过账，后续反过账只能通过反向事务处理。</span>
       </div>
 
       <div v-if="activeView === 'posting'" class="erp-page-tip">
@@ -985,7 +985,7 @@
       <div class="metric-grid four">
         <article :class="{ 'clickable-card': activeView === 'adjustments', 'active-metric': activeView === 'adjustments' && !adjustmentQuery.status }" @click="activeView === 'adjustments' && filterAdjustmentByStatus('')"><i class="el-icon-download green" /><span>{{ activeView === 'adjustments' ? '调整单数' : '今日入库流水' }}</span><strong>{{ activeView === 'adjustments' ? adjustmentPagination.total : transactionStats.today_in_count }}</strong></article>
         <article :class="{ 'clickable-card': activeView === 'adjustments', 'active-metric': activeView === 'adjustments' && adjustmentQuery.status === 'posted' }" @click="activeView === 'adjustments' && filterAdjustmentByStatus('posted')"><i class="el-icon-refresh orange" /><span>{{ activeView === 'adjustments' ? '已过账调整' : '今日调整流水' }}</span><strong>{{ activeView === 'adjustments' ? adjustmentStats.posted_count : transactionStats.today_adjust_count }}</strong></article>
-        <article :class="{ 'clickable-card': activeView === 'adjustments', 'active-metric': activeView === 'adjustments' && adjustmentQuery.status === 'submitted' }" @click="activeView === 'adjustments' && filterAdjustmentByStatus('submitted')"><i class="el-icon-time blue" /><span>{{ activeView === 'adjustments' ? '待确认过账' : '待过账调整' }}</span><strong>{{ activeView === 'adjustments' ? adjustmentStats.submitted_count : transactionStats.pending_adjustment_count }}</strong></article>
+        <article :class="{ 'clickable-card': activeView === 'adjustments', 'active-metric': activeView === 'adjustments' && adjustmentQuery.status === 'submitted' }" @click="activeView === 'adjustments' && filterAdjustmentByStatus('submitted')"><i class="el-icon-time blue" /><span>{{ activeView === 'adjustments' ? '待审批或过账' : '待过账调整' }}</span><strong>{{ activeView === 'adjustments' ? adjustmentStats.submitted_count : transactionStats.pending_adjustment_count }}</strong></article>
         <article :class="{ 'clickable-card': activeView === 'adjustments', 'active-metric': activeView === 'adjustments' && adjustmentQuery.status === 'draft' }" @click="activeView === 'adjustments' && filterAdjustmentByStatus('draft')"><i class="el-icon-refresh-left purple" /><span>{{ activeView === 'adjustments' ? '草稿调整' : '今日出库流水' }}</span><strong>{{ activeView === 'adjustments' ? adjustmentStats.draft_count : (transactionStats.today_out_count || 0) }}</strong></article>
       </div>
 
@@ -1015,7 +1015,7 @@
         <b class="green-text">采购到货入库</b>
         <b class="orange-text">手工库存调整</b>
       </div>
-      <div v-else class="disabled-legend">手工调整单是库存数量修正的业务单据：先保存/提交，确认过账后才生成库存流水并改变余额。详情请点击单据查看。</div>
+      <div v-else class="disabled-legend">手工调整单提交后按审批设置办理，过账时生成库存流水并更新余额。详情请点击单据查看。</div>
 
       <section class="tx-layout">
         <div class="table-card">
@@ -1056,7 +1056,7 @@
               <template slot-scope="{ row }"><span :class="row.change_qty >= 0 ? 'green-text' : 'red-text'">{{ row.change_qty > 0 ? '+' : '' }}{{ row.change_qty }}</span></template>
             </el-table-column>
             <el-table-column label="状态" width="92">
-              <template slot-scope="{ row }"><el-tag size="mini" :type="adjustmentStatusType(row.status)">{{ adjustmentStatusText(row.status) }}</el-tag></template>
+              <template slot-scope="{ row }"><el-tag size="mini" :type="adjustmentStatusType(row.status)">{{ row.approval_pending ? '审批中' : adjustmentStatusText(row.status) }}</el-tag></template>
             </el-table-column>
             <el-table-column prop="created_by_name" label="制单人" width="96" show-overflow-tooltip />
             <el-table-column prop="posted_by_name" label="过账人" width="96" show-overflow-tooltip />
@@ -1065,10 +1065,11 @@
               <template slot-scope="{ row }">
                 <div class="row-actions row-actions-wide">
                   <el-button size="mini" plain @click.stop="viewAdjustment(row)">查看</el-button>
-                  <el-button v-if="row.status === 'draft'" size="mini" type="text" @click.stop="submitExistingAdjustment(row)">提交</el-button>
-                  <el-button v-if="row.status === 'draft'" size="mini" type="text" class="red-text" @click.stop="deleteAdjustment(row)">删除</el-button>
-                  <el-button v-if="row.status === 'submitted'" size="mini" type="success" @click.stop="postAdjustment(row)">确认过账</el-button>
-                  <el-button v-if="row.status === 'submitted'" size="mini" type="text" @click.stop="cancelAdjustment(row)">取消</el-button>
+                  <el-button v-if="row.status === 'draft' && $can('inventory.adjustment.create')" size="mini" type="text" @click.stop="submitExistingAdjustment(row)">提交</el-button>
+                  <el-button v-if="row.status === 'draft' && $can('inventory.adjustment.delete')" size="mini" type="text" class="red-text" @click.stop="deleteAdjustment(row)">删除</el-button>
+                  <el-button v-if="row.status === 'submitted' && !row.approval_pending && $can('inventory.adjustment.confirm')" size="mini" type="success" @click.stop="postAdjustment(row)">确认过账</el-button>
+                  <el-button v-if="row.status === 'submitted' && !row.approval_pending && ($can('inventory.adjustment.create') || $can('inventory.adjustment.confirm'))" size="mini" type="text" @click.stop="cancelAdjustment(row)">取消</el-button>
+                  <span v-if="row.approval_pending" class="readonly-text">等待审批</span>
                   <span v-if="['posted', 'cancelled'].includes(row.status)" class="readonly-text">只读</span>
                 </div>
               </template>
@@ -1356,7 +1357,7 @@
         <div v-if="selectedAdjustment" class="adjustment-panel-body">
           <dl class="detail-dl adjustment-detail-dl">
             <dt>调整单号</dt><dd>{{ selectedAdjustment.adjustment_no }}</dd>
-            <dt>状态</dt><dd><el-tag size="mini" :type="adjustmentStatusType(selectedAdjustment.status)">{{ adjustmentStatusText(selectedAdjustment.status) }}</el-tag></dd>
+            <dt>状态</dt><dd><el-tag size="mini" :type="adjustmentStatusType(selectedAdjustment.status)">{{ selectedAdjustment.approval_pending ? '审批中' : adjustmentStatusText(selectedAdjustment.status) }}</el-tag></dd>
             <dt>调整原因</dt><dd>{{ adjustmentReasonLabel(selectedAdjustment.reason) }}</dd>
             <dt>物料</dt><dd>{{ selectedAdjustment.item_code }} / {{ selectedAdjustment.item_name || '-' }}</dd>
             <dt>仓库</dt><dd>{{ selectedAdjustment.warehouse_name || '-' }}</dd>
@@ -1374,10 +1375,10 @@
         </div>
         <footer>
           <el-button size="small" @click="adjustmentDetailVisible = false">关闭</el-button>
-          <el-button v-if="selectedAdjustment && selectedAdjustment.status === 'draft'" size="small" type="success" @click="submitExistingAdjustment(selectedAdjustment)">提交调整</el-button>
-          <el-button v-if="selectedAdjustment && selectedAdjustment.status === 'draft'" size="small" type="danger" plain @click="deleteAdjustment(selectedAdjustment)">删除草稿</el-button>
-          <el-button v-if="selectedAdjustment && selectedAdjustment.status === 'submitted'" size="small" type="success" @click="postAdjustment(selectedAdjustment)">确认过账</el-button>
-          <el-button v-if="selectedAdjustment && selectedAdjustment.status === 'submitted'" size="small" @click="cancelAdjustment(selectedAdjustment)">取消调整</el-button>
+          <el-button v-if="selectedAdjustment && selectedAdjustment.status === 'draft' && $can('inventory.adjustment.create')" size="small" type="success" @click="submitExistingAdjustment(selectedAdjustment)">提交调整</el-button>
+          <el-button v-if="selectedAdjustment && selectedAdjustment.status === 'draft' && $can('inventory.adjustment.delete')" size="small" type="danger" plain @click="deleteAdjustment(selectedAdjustment)">删除草稿</el-button>
+          <el-button v-if="selectedAdjustment && selectedAdjustment.status === 'submitted' && !selectedAdjustment.approval_pending && $can('inventory.adjustment.confirm')" size="small" type="success" @click="postAdjustment(selectedAdjustment)">确认过账</el-button>
+          <el-button v-if="selectedAdjustment && selectedAdjustment.status === 'submitted' && !selectedAdjustment.approval_pending && ($can('inventory.adjustment.create') || $can('inventory.adjustment.confirm'))" size="small" @click="cancelAdjustment(selectedAdjustment)">取消调整</el-button>
         </footer>
       </aside>
     </transition>
@@ -2540,6 +2541,7 @@ export default {
         id: row.id,
         adjustment_no: row.adjustment_no,
         status: row.adjustment_status,
+        approval_pending: !!row.approval_pending,
         reason: row.reason || '-',
         reason_label: this.adjustmentReasonLabel(row.reason),
         item_code: first.item?.item_code || '',
@@ -2559,6 +2561,7 @@ export default {
     },
     defaultAdjustmentForm() {
       return {
+        id: null,
         reason: '',
         balance_id: null,
         item_id: null,
@@ -2614,7 +2617,10 @@ export default {
       try {
         const response = await createInventoryQualityEvent({ inventory_balance_id: this.qualityForm.inventory_balance_id, serial_no: this.qualityForm.serial_no || null, issue_qty: Number(this.qualityForm.issue_qty), issue_category: this.qualityForm.issue_category, issue_description: this.qualityForm.issue_description, handling_method: this.qualityForm.handling_method, responsible_party: this.qualityForm.responsible_party, attachments: this.qualityForm.attachments })
         const event = response.data.data
-        this.$message.success(`质量事件 ${event.event_no} 已创建，处理单 ${event.business_doc_no}，问题库存已冻结。`)
+        const returnProgress = event.business_doc_type === 'purchase_return'
+          ? (event.purchase_return_status === 'pending_outbound' ? '退货单已通过审核，等待出库。' : (event.approval_task ? '退货单等待审批。' : '退货单等待审核。'))
+          : ''
+        this.$message.success(`质量事件 ${event.event_no} 已创建，处理单 ${event.business_doc_no}，问题库存已冻结。${returnProgress}`)
         this.qualityDrawerVisible = false
         await this.loadBalances()
         if (this.batchDialogVisible && this.selectedBalance) {
@@ -2930,35 +2936,43 @@ export default {
       }
     },
     async saveAdjustmentDraft() {
+      if (this.adjustmentSaving) return
       this.syncAdjustmentQtyFromInput()
       if (!this.validateAdjustmentForm()) return
+      this.adjustmentSaving = true
       try {
         await saveInventoryAdjustment(this.adjustmentPayload())
         this.$message.success('已保存草稿')
         this.adjustmentDrawerVisible = false
-        await Promise.all([this.loadAdjustments(), this.loadBalances(), this.loadTransactions()])
-        if (this.batchDialogVisible && this.selectedBalance) {
-          await this.refreshDetailDialog()
-        }
+        await this.refreshAdjustmentInventory()
       } catch (error) {
         this.$message.error(error.userMessage || '保存调整单失败')
+      } finally {
+        this.adjustmentSaving = false
       }
     },
     async submitAdjustment() {
+      if (this.adjustmentSaving) return
       this.syncAdjustmentQtyFromInput()
       if (!this.validateAdjustmentForm()) return
+      const draftForm = this.adjustmentForm
+      const payload = this.adjustmentPayload()
+      this.adjustmentSaving = true
       try {
-        await this.$confirm('确认提交当前调整单？提交后不能再编辑，只能确认过账或取消。', '提交调整', { type: 'warning' })
-        const saved = await saveInventoryAdjustment(this.adjustmentPayload())
-        await submitInventoryAdjustment(saved.data.data.id)
-        this.$message.success('已提交调整，待确认调整过账。')
-        this.adjustmentDrawerVisible = false
-        await Promise.all([this.loadAdjustments(), this.loadBalances(), this.loadTransactions()])
-        if (this.batchDialogVisible && this.selectedBalance) {
-          await this.refreshDetailDialog()
-        }
+        await this.$confirm('确认提交当前调整单？提交后按审批设置办理，无需审批且有过账权限时会立即更新库存，提交后不能再编辑。', '提交调整', { type: 'warning' })
+        const saved = await saveInventoryAdjustment(payload)
+        draftForm.id = saved.data.data.id
+        const response = await submitInventoryAdjustment(saved.data.data.id)
+        this.$message.success(response.data.message || '调整单已提交。')
+        if (this.adjustmentForm === draftForm) this.adjustmentDrawerVisible = false
+        await this.refreshAdjustmentInventory(response.data.data?.adjustment_status === 'posted')
       } catch (error) {
-        if (error !== 'cancel' && error !== 'close') this.$message.error(error.userMessage || '提交调整单失败')
+        if (error !== 'cancel' && error !== 'close') {
+          const message = error.userMessage || '提交调整单失败'
+          this.$message.error(draftForm.id ? `草稿已保存，提交未完成：${message}` : message)
+        }
+      } finally {
+        this.adjustmentSaving = false
       }
     },
     async postAdjustment(adj) {
@@ -2966,7 +2980,7 @@ export default {
         await this.$confirm(`确认过账调整单 ${adj.adjustment_no}？过账后将生成库存流水并改变库存余额，不能直接撤销。`, '确认调整过账', { type: 'warning' })
         await postInventoryAdjustment(adj.id)
         this.$message.success('调整已过账，已生成库存流水。')
-        await Promise.all([this.loadAdjustments(), this.loadBalances(), this.loadTransactions()])
+        await this.refreshAdjustmentInventory(true)
         this.adjustmentDetailVisible = false
       } catch (error) {
         if (error !== 'cancel' && error !== 'close') this.$message.error(error.userMessage || '调整过账失败')
@@ -2974,10 +2988,10 @@ export default {
     },
     async submitExistingAdjustment(adj) {
       try {
-        await this.$confirm(`确认提交调整单 ${adj.adjustment_no}？提交后不能再编辑。`, '提交调整', { type: 'warning' })
-        await submitInventoryAdjustment(adj.id)
-        this.$message.success('调整单已提交，等待确认过账。')
-        await this.loadAdjustments()
+        await this.$confirm(`确认提交调整单 ${adj.adjustment_no}？提交后按审批设置办理，无需审批且有过账权限时会立即更新库存，提交后不能再编辑。`, '提交调整', { type: 'warning' })
+        const response = await submitInventoryAdjustment(adj.id)
+        this.$message.success(response.data.message || '调整单已提交。')
+        await this.refreshAdjustmentInventory(response.data.data?.adjustment_status === 'posted')
         this.adjustmentDetailVisible = false
       } catch (error) {
         if (error !== 'cancel' && error !== 'close') this.$message.error(error.userMessage || '提交调整单失败')
@@ -2993,6 +3007,31 @@ export default {
       } catch (error) {
         if (error !== 'cancel' && error !== 'close') this.$message.error(error.userMessage || '取消调整单失败')
       }
+    },
+    async refreshAdjustmentInventory(posted = false) {
+      const requests = []
+      if (this.$can('inventory.adjustment.view')) requests.push(this.loadAdjustments())
+      if (this.$can('inventory.balance.view')) requests.push(this.loadBalances())
+      if (this.$can('inventory.transaction.view')) requests.push(this.loadTransactions())
+      const results = await Promise.allSettled(requests)
+      if (posted && this.batchDialogVisible && this.selectedBalance && this.$can('inventory.balance.view')
+        && !this.balanceRows.some(row => Number(row.item_id) === Number(this.selectedBalance.item_id))) {
+        const target = this.selectedBalance
+        const version = this.balanceRequestSeq
+        const [summary] = await Promise.allSettled([listInventoryBalances({
+          ...this.balanceParams(), item_id: target.item_id, page: 1, per_page: 10
+        })])
+        results.push(summary)
+        if (summary.status === 'fulfilled' && this.batchDialogVisible && this.selectedBalance === target && version === this.balanceRequestSeq) {
+          const row = (summary.value.data.data || []).find(item => Number(item.item_id) === Number(target.item_id))
+          if (row) this.selectedBalance = this.mapBalance(row)
+          else this.batchDialogVisible = false
+        }
+      }
+      if (this.batchDialogVisible && this.selectedBalance && this.$can('inventory.balance.view')) {
+        results.push(...await Promise.allSettled([this.refreshDetailDialog()]))
+      }
+      if (results.some(result => result.status === 'rejected')) this.$message.warning('操作已完成，部分库存信息刷新失败，请手动刷新。')
     },
     async deleteAdjustment(adj) {
       try {
@@ -3060,6 +3099,7 @@ export default {
     },
     adjustmentPayload() {
       return {
+        id: this.adjustmentForm.id,
         reason: this.adjustmentForm.reason,
         remark: this.adjustmentForm.remark,
         items: [{

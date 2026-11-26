@@ -27,11 +27,12 @@
         <el-button
           v-if="canSubmit"
           size="small"
-          type="primary"
+          type="success"
           icon="el-icon-upload2"
           :loading="submitLoading"
           @click="submitForAudit"
-        >提交审核</el-button>
+        >提交计划</el-button>
+        <el-button v-if="plan.approval_task && $can('approval.task.view')" size="small" icon="el-icon-time" @click="$router.push(`/approvals/tasks/${plan.approval_task.id}`)">查看审核进度</el-button>
         <el-button
           v-if="canGenerate"
           size="small"
@@ -492,10 +493,10 @@ export default {
     async submitForAudit() {
       if (this.scopeIssue) return this.$message.warning(this.scopeIssue)
       try {
-        await this.$confirm(`确认提交采购计划 ${this.plan.plan_no} 进行审核？`, '提交审核确认', { type: 'warning' })
+        await this.$confirm(`确认提交采购计划 ${this.plan.plan_no}？匹配已发布审核流程时进入审核，否则直接通过，可生成采购订单。`, '提交计划', { type: 'warning' })
         this.submitLoading = true
-        await submitPlan(this.plan.id)
-        this.$message.success('采购计划已提交审核')
+        const { data } = await submitPlan(this.plan.id)
+        this.$message.success(data.message || '采购计划已提交')
         await this.load()
       } catch (e) {
         if (e === 'cancel' || e === 'close') return

@@ -123,19 +123,8 @@ class InventoryQualityApplicationService
             ]);
             $createdEventId = $event->id;
 
-            if ($method === 'return_supplier') {
-                $document = $this->returns->createFromInventoryQuality(
-                    $event, $balance, $receiptItem, $operatorId, $operatorName,
-                );
-                $event->update([
-                    'business_doc_type' => 'purchase_return',
-                    'business_doc_id' => $document->id,
-                    'business_doc_no' => $document->return_no,
-                ]);
-            } else {
-                $document = $this->exchanges->createFromInventoryQuality(
-                    $event, $balance, $receiptItem, $operatorName,
-                );
+            if ($method !== 'return_supplier') {
+                $document = $this->exchanges->createFromInventoryQuality($event, $balance, $receiptItem, $operatorName);
                 $event->update([
                     'business_doc_type' => 'purchase_exchange_order',
                     'business_doc_id' => $document->id,
@@ -166,7 +155,24 @@ class InventoryQualityApplicationService
                 'content' => "创建库存质量事件并冻结 {$quantity} {$event->unit_name_snapshot} 可用库存；处理方式：{$method}",
             ]);
 
-                return $this->load($event);
+            // 自动审核可能立即检查或释放质量冻结，生成处理单前必须先保存真实冻结事实。
+            if ($method === 'return_supplier') {
+                $document = $this->returns->createFromInventoryQuality(
+                    $event, $balance, $receiptItem, $operatorId, $operatorName,
+                );
+                $event->update([
+                    'business_doc_type' => 'purchase_return',
+                    'business_doc_id' => $document->id,
+                    'business_doc_no' => $document->return_no,
+                ]);
+            }
+
+            $result = $this->load($event);
+            if ($method === 'return_supplier') {
+                $result->setAttribute('purchase_return_status', $document->return_status);
+                $result->setAttribute('approval_task', $document->getAttribute('approval_task'));
+            }
+            return $result;
             }, 5);
         } catch (\Throwable $exception) {
             if ($createdEventId) {
@@ -293,60 +299,6 @@ class InventoryQualityApplicationService
             $this->log($event, 'cancel_supplier_return', 'pending_supplier_return', 'cancelled', $operatorId, $operatorName,
                 "关联采购退货单 {$returnNo} 已取消，未产生库存出库流水，冻结库存已恢复可用。");
 
-            return $this->load($event);
-        }, 5);
-    }
-
-    public function start(int $id, ?int $operatorId, ?string $operatorName): InventoryQualityEvent
-    {
-        return DB::transaction(function () use ($id, $operatorId, $operatorName): InventoryQualityEvent {
-            $event = InventoryQualityEvent::query()->lockForUpdate()->findOrFail($id);
-            if (!str_starts_with((string) $event->event_status, 'pending_')) {
-                throw ValidationException::withMessages(['event_status' => '只有待执行的质量事件可以开始处理。']);
-            }
-            $from = $event->event_status;
-            $to = 'processing_'.$event->handling_method;
-            $event->update(['event_status' => $to, 'started_at' => now()]);
-            $this->log($event, 'start', $from, $to, $operatorId, $operatorName, '开始执行质量处理，问题库存继续保持冻结。');
-            return $this->load($event);
-        }, 5);
-    }
-
-    public function complete(int $id, array $payload, ?int $operatorId, ?string $operatorName): InventoryQualityEvent
-    {
-        return DB::transaction(function () use ($id, $payload, $operatorId, $operatorName): InventoryQualityEvent {
-            $event = InventoryQualityEvent::query()->lockForUpdate()->findOrFail($id);
-            if (!str_starts_with((string) $event->event_status, 'processing_')) {
-                throw ValidationException::withMessages(['event_status' => '质量事件必须先开始处理，才能登记完成结果。']);
-            }
-            if (!in_array($event->handling_method, ['repair', 'continue_use'], true)) {
-                throw ValidationException::withMessages([
-                    'handling_method' => '退供应商、换货和报废必须完成对应出入库/审批单据后才能结束，不能在质量事件中直接点完成。',
-                ]);
-            }
-
-            $balance = InventoryBalance::query()->lockForUpdate()->findOrFail($event->inventory_balance_id);
-            $pending = max(0, (float) $balance->quantity_pending - (float) $event->issue_qty);
-            $balance->update([
-                'quantity_pending' => $pending,
-                'quantity_available' => $this->available($balance, $pending),
-                'last_transaction_at' => now(),
-            ]);
-            $this->refreshAlert($balance, 'inventory_quality_release');
-            $this->changeLocationPending($balance, -(float) $event->issue_qty);
-            if ($event->inventory_serial_id) {
-                $serial = InventorySerial::query()->whereKey($event->inventory_serial_id)->lockForUpdate()->firstOrFail();
-                $serial->update(['serial_status' => 'available']);
-                $this->serialEvent($serial, 'quality_released', 'quality_hold', 'available', $event, $operatorId, $operatorName);
-            }
-
-            $from = $event->event_status;
-            $event->update([
-                'event_status' => 'completed',
-                'completed_at' => now(),
-                'remark' => trim(collect([$event->remark, $payload['result_description'] ?? null])->filter()->implode("\n")),
-            ]);
-            $this->log($event, 'complete_and_release', $from, 'completed', $operatorId, $operatorName, '返修/让步审批完成并复检合格，释放对应待处理库存。');
             return $this->load($event);
         }, 5);
     }

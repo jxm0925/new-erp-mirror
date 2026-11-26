@@ -211,7 +211,7 @@
     </el-dialog>
 
     <!-- 采购付款关联弹窗 -->
-    <purchase-payment-link-dialog :visible.sync="purchaseLinksVisible" :cash-id="purchaseLinksCashId" @changed="load" />
+    <purchase-payment-link-dialog :visible.sync="purchaseLinksVisible" :cash-id="purchaseLinksCashId" @changed="onPurchaseLinksChanged" />
 
     <!-- 收付款单据详情居中弹窗 (对齐居中弹窗规范 el-dialog) -->
     <el-dialog
@@ -304,6 +304,15 @@
               <el-tag size="mini" type="info" class="card-title-tag">
                 {{ (detailDoc.purchase_order_allocations && detailDoc.purchase_order_allocations.length) ? `已关联 ${detailDoc.purchase_order_allocations.length} 笔订单` : '未指定具体采购用途' }}
               </el-tag>
+              <el-button
+                v-if="detailDoc.party_type === 'supplier' && detailDoc.status === 'confirmed' && $can(confirmPermission)"
+                type="text"
+                size="mini"
+                icon="el-icon-edit"
+                class="btn-action-view"
+                style="margin-left: auto"
+                @click="openPurchaseLinks(detailDoc)"
+              >补充 / 调整采购关联</el-button>
             </div>
             <div v-if="detailDoc.purchase_order_allocations && detailDoc.purchase_order_allocations.length" class="table-wrap">
               <el-table :data="detailDoc.purchase_order_allocations" border stripe size="mini" class="enterprise-table">
@@ -430,7 +439,7 @@
         <el-button
           v-if="detailDoc && detailDoc.status === 'draft' && $can(createPermission)"
           size="small"
-          type="primary"
+          type="success"
           icon="el-icon-edit"
           class="btn-detail-edit"
           @click="editDraftFromDetail"
@@ -462,7 +471,7 @@
           size="small"
           icon="el-icon-goods"
           class="btn-detail-link"
-          @click="openPurchaseLinksFromDetail"
+          @click="openPurchaseLinks(detailDoc)"
         >
           采购关联
         </el-button>
@@ -499,7 +508,7 @@ export default {
     query: blankQuery(), partyFilter: {}, sourceContext: null, sourceLoading: false, sourceError: '',
     allocationVisible: false, allocationId: null, contextRevision: 0, loadRevision: 0,
     purchaseLinksVisible: false, purchaseLinksCashId: 0,
-    detailDialogVisible: false, detailLoading: false, detailDoc: null,
+    detailDialogVisible: false, detailLoading: false, detailDoc: null, detailRevision: 0,
   }),
   computed: {
     title() { return this.direction === 'receipt' ? '收款' : '付款' },
@@ -518,8 +527,9 @@ export default {
   },
   watch: {
     routeContextKey: { immediate: true, handler() { this.initializeFromRoute() } },
+    detailDialogVisible(value) { if (!value) this.detailRevision++ },
   },
-  beforeDestroy() { this.contextRevision++; this.loadRevision++ },
+  beforeDestroy() { this.contextRevision++; this.loadRevision++; this.detailRevision++ },
   methods: {
     listAccounts: listFinanceAccounts,
     accountLabel(row) { return row.account_name },
@@ -545,6 +555,10 @@ export default {
       this.allocationId = null
       this.purchaseLinksVisible = false
       this.purchaseLinksCashId = 0
+      this.detailRevision++
+      this.detailDialogVisible = false
+      this.detailLoading = false
+      this.detailDoc = null
       this.rows = []
       this.total = 0
       this.page = 1
@@ -621,6 +635,7 @@ export default {
     allocationStatusChanged() { if (this.query.allocation_status) this.query.status = 'confirmed'; return this.search() },
     create() { this.$router.push({ path: this.basePath + '/create', query: this.sourceContext ? { source_type: this.sourceContext.type, source_id: this.sourceContext.id } : {} }) },
     async view(row) {
+      const revision = ++this.detailRevision
       this.detailDoc = {
         ...row,
         allocations: row.allocations || [],
@@ -634,6 +649,8 @@ export default {
         const fetchFn = typeof getCashDocument === 'function' ? getCashDocument : null
         if (fetchFn && row.id) {
           const res = await fetchFn(row.id)
+          // 关闭、换单或再次刷新后，旧请求不得覆盖当前详情。
+          if (revision !== this.detailRevision || !this.detailDialogVisible) return
           const data = res?.data?.data || res?.data
           if (data) {
             this.detailDoc = {
@@ -646,9 +663,10 @@ export default {
           }
         }
       } catch (error) {
+        if (revision !== this.detailRevision || !this.detailDialogVisible) return
         console.error('加载单据详情失败:', error)
       } finally {
-        this.detailLoading = false
+        if (revision === this.detailRevision) this.detailLoading = false
       }
     },
     editDraftFromDetail() {
@@ -665,11 +683,6 @@ export default {
       const row = this.detailDoc
       this.detailDialogVisible = false
       if (row) this.openAllocation(row)
-    },
-    openPurchaseLinksFromDetail() {
-      const row = this.detailDoc
-      this.detailDialogVisible = false
-      if (row) this.openPurchaseLinks(row)
     },
     voidFromDetail() {
       const row = this.detailDoc
@@ -720,6 +733,13 @@ export default {
       if (row.party_type !== 'supplier' || row.status === 'draft') return
       this.purchaseLinksCashId = Number(row.id)
       this.purchaseLinksVisible = true
+    },
+    onPurchaseLinksChanged(doc) {
+      this.purchaseLinksVisible = false
+      this.load()
+      if (this.detailDialogVisible && this.detailDoc && Number(this.detailDoc.id) === Number(this.purchaseLinksCashId)) {
+        this.view(doc)
+      }
     },
     openAllocation(row) {
       if (this.hasSourceReference && !this.canUseSource(row)) return this.$message.warning('请选用同一供应商、同币种且有未核销余额的付款。')
@@ -1063,9 +1083,19 @@ export default {
 }
 
 .enterprise-table >>> td {
+  background-color: #ffffff;
   padding: 9px 0;
   font-size: 13px;
   color: #1e293b;
+}
+
+.enterprise-table >>> tr.el-table__row--striped > td.el-table__cell {
+  background-color: #fafafa;
+}
+
+.enterprise-table >>> .el-table__body tr.hover-row > td.el-table__cell,
+.enterprise-table >>> .el-table__body tr:hover > td.el-table__cell {
+  background-color: #f8fafc;
 }
 
 .font-tabular {
@@ -1165,20 +1195,24 @@ export default {
   margin-left: 0 !important;
 }
 
-.btn-action-view { color: #008b4b !important; }
-.btn-action-view:hover { color: #00763f !important; }
+.btn-action-view,
+.btn-action-alloc,
+.btn-action-link,
+.btn-action-use-prepay:not(:disabled) {
+  color: #008b4b !important;
+}
+
+.btn-action-view:hover,
+.btn-action-alloc:hover,
+.btn-action-link:hover,
+.btn-action-use-prepay:not(:disabled):hover {
+  color: #00763f !important;
+}
 
 .btn-action-confirm { color: #059669 !important; }
 .btn-action-confirm:hover { color: #047857 !important; }
 
-.btn-action-alloc { color: #2563eb !important; }
-.btn-action-alloc:hover { color: #1d4ed8 !important; }
-
-.btn-action-use-prepay { color: #d97706 !important; font-weight: 600 !important; }
-.btn-action-use-prepay:hover { color: #b45309 !important; }
-
-.btn-action-link { color: #0d9488 !important; }
-.btn-action-link:hover { color: #0f766e !important; }
+.btn-action-use-prepay { font-weight: 600 !important; }
 
 .btn-action-void.danger { color: #dc2626 !important; }
 .btn-action-void.danger:hover { color: #b91c1c !important; }

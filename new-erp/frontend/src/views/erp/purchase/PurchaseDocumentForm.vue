@@ -50,7 +50,7 @@
     </div>
     <div v-if="type==='receipt'" class="erp-page-tip">
       <i class="el-icon-info" />
-      <span>当前确认仅生成待过账库存记录，不直接更新正式库存余额。正式库存过账由库存模块完成。<template v-if="form.order_id">关联采购订单的到货金额保存时按订单剩余成交金额分摊。</template></span>
+      <span>库存物料全部合格，且入库分配和过账权限检查通过时，确认到货自动完成库存过账；其余库存物料保持待过账。<template v-if="form.order_id">关联采购订单的到货金额保存时按订单剩余成交金额分摊。</template></span>
     </div>
 
     <div :class="['form-layout', {'request-layout': ['request', 'plan'].includes(type)}]">
@@ -1065,7 +1065,7 @@ export default {
       return 'info'
     },
     submitActionText() {
-      return this.type === 'request' ? '确认需求' : this.type === 'receipt' ? '保存' : this.type === 'order' ? '提交订单' : '提交审核'
+      return this.type === 'request' ? '确认需求' : this.type === 'receipt' ? '保存' : this.type === 'order' ? '提交订单' : '提交计划'
     },
     scopeOptions() { return purchaseScopes },
     legacySalesSource() { return Boolean(this.form.id && !this.form.source_id && (this.form.items || []).some(row => (row.sales_allocations || []).length)) },
@@ -2445,13 +2445,13 @@ export default {
       if (this.type === 'request' && this.form.source_type === 'production' && !this.form.source_id) return this.$message.error('请选择需求来源的生产工单')
       if (submit && this.type !== 'receipt') {
         // 提交后单据锁定，确认框写清对象和金额，避免误提交。
-        const label = { request: '确认采购需求', plan: '提交采购计划审核', order: '提交采购订单' }[this.type]
+        const label = { request: '确认采购需求', plan: '提交采购计划', order: '提交采购订单' }[this.type]
         const supplier = this.type === 'order' ? ((this.suppliers.find(row => Number(row.id) === Number(this.form.supplier_id)) || {}).supplier_name || '') : ''
         const amount = this.type === 'order' ? `，含税金额 ¥${this.money(this.totalAmount)}` : ''
         // 采购价格预警：单价比历史采购价高出预警比例时，在确认框里逐项列出。
         const warnings = this.type === 'order' ? await this.priceWarningsForSubmit() : []
         const escape = value => String(value).replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]))
-        const approvalTip = this.type === 'order' ? '匹配已发布审核流程时进入审核，否则直接确认待到货。' : ''
+        const approvalTip = this.type === 'order' ? '匹配已发布审核流程时进入审核，否则直接确认待到货。' : this.type === 'plan' ? '匹配已发布审核流程时进入审核，否则直接通过，可生成采购订单。' : ''
         const summary = `${supplier ? '供应商：' + supplier + '；' : ''}明细 ${this.form.items.length} 行${amount}。${approvalTip}提交后不能直接修改，是否继续？`
         const warningHtml = warnings.length ? `<div style="margin-top:8px;padding:8px 10px;border-radius:4px;background:#fff1f2;color:#c0392b;font-size:12px;line-height:1.6"><b>价格预警：</b><br>${warnings.map(line => escape(priceCheckText(line))).join('<br>')}</div>` : ''
         try {
@@ -2484,13 +2484,13 @@ export default {
         }
         try {
           if (submit && this.type === 'request') await submitRequest(savedId)
-          if (submit && this.type === 'plan') await submitPlan(savedId)
+          if (submit && this.type === 'plan') res = await submitPlan(savedId)
           if (submit && this.type === 'order') res = await submitOrder(savedId)
         } catch (e) {
           this.$message.error(e.userMessage || '提交失败，请检查当前状态和必填信息')
           return
         }
-        this.$message.success(submit && this.type === 'request' ? '需求已确认，已锁定需求，可转采购计划' : submit && this.type === 'order' ? res.data.message || '订单已提交' : submit && this.type !== 'receipt' ? '已保存并提交审核' : '保存成功')
+        this.$message.success(submit && this.type === 'request' ? '需求已确认，已锁定需求，可转采购计划' : submit && ['plan', 'order'].includes(this.type) ? res.data.message || '单据已提交' : '保存成功')
         this.$router.push(this.type === 'request' ? '/purchase/requests' : this.type === 'plan' ? '/purchase/plans' : this.type === 'order' ? '/purchase/orders' : '/purchase/receipts')
       } finally { this.saving = false }
     },

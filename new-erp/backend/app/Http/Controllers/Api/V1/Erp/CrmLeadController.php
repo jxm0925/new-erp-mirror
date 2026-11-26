@@ -30,7 +30,9 @@ final class CrmLeadController extends Controller
         $actor = $this->user($request, 'crm.lead.view');
         $dept = $staff->departmentOf((int) $actor->legacy_id);
         $grant = $assignments->activeGrant($actor);
-        $ids = $assignments->expandDepartments(array_unique(array_filter(array_merge([$dept], $grant?->department_ids ?? [], $assignments->managedDepartments($actor)))));
+        $entryDepartmentIds = $assignments->expandDepartments(array_unique(array_filter(array_merge([$dept], $grant?->department_ids ?? [], $assignments->managedDepartments($actor)))));
+        $poolDepartmentIds = $assignments->visiblePoolDepartments($actor, $dept, $access->dataScope($actor, 'crm.lead.view'));
+        $ids = array_unique(array_merge($entryDepartmentIds, $poolDepartmentIds));
         $query = CrmLead::query();
         $this->leads->applyVisible($query, $actor);
         $channels = array_values(array_unique(array_merge(array_keys(CrmLeadApplicationService::CHANNELS), $grant?->channels ?? [], (clone $query)->whereNotNull('source_channel')->distinct()->pluck('source_channel')->all())));
@@ -40,11 +42,14 @@ final class CrmLeadController extends Controller
         $dictionaries['custom_tags'] = (clone $query)->where('created_by_legacy_id', $actor->legacy_id)->whereNotNull('custom_tags')->select('custom_tags')->limit(500)->get()->pluck('custom_tags')->flatten()->unique()->values()->all();
         $abilities = [];
         foreach (['create', 'edit', 'assign', 'transfer', 'recycle', 'claim', 'follow', 'pool', 'invalidate', 'confirm'] as $action) $abilities[$action] = $access->can($actor, 'crm.lead.'.$action);
-        foreach (['assign', 'transfer', 'recycle', 'claim'] as $action) {
-            $abilities[$action] = $abilities[$action] && (app(AuthContextService::class)->isSuperAdmin($actor) || ($grant && in_array($action, $grant->actions, true)));
+        $super = app(AuthContextService::class)->isSuperAdmin($actor);
+        foreach (['assign', 'transfer', 'recycle'] as $action) {
+            $abilities[$action] = $abilities[$action] && ($super || ($grant && in_array($action, $grant->actions, true)));
         }
-        $abilities['review'] = $access->can($actor, 'sales.customer.verify') && (app(AuthContextService::class)->isSuperAdmin($actor) || ($grant && in_array('verify', $grant->actions, true)));
+        $abilities['review'] = $access->can($actor, 'sales.customer.verify') && ($super || ($grant && in_array('verify', $grant->actions, true)));
         $isSales = $assignments->activeSales((int) $actor->legacy_id);
+        $abilities['claim'] = $abilities['claim'] && ($super || ($isSales && $assignments->accepting((int) $actor->legacy_id))
+            || ($grant && in_array('claim', $grant->actions, true)));
         return response()->json(['data' => [
             'can_self_delegate' => $isSales,
             'customer_pools' => CrmLeadApplicationService::POOLS, 'statuses' => CrmLeadApplicationService::STATUSES,
@@ -54,6 +59,7 @@ final class CrmLeadController extends Controller
             'platforms' => DB::table('erp_sales_order_trade_platforms')->where('parent_legacy_id', 0)->where('enabled', true)->orderBy('sort')->orderBy('legacy_id')
                 ->get(['legacy_id', 'name', 'legacy_payload'])->map(fn ($row) => ['id' => (int) $row->legacy_id, 'name' => $row->name] + TradePlatformApplicationService::buyerIdentity($row->legacy_payload))->values(),
             'entry_methods' => ['self' => '销售自录', 'operations' => '运营代录'],
+            'entry_department_ids' => $entryDepartmentIds,
             'departments' => DB::table('erp_departments')->whereIn('legacy_id', $ids)->orderBy('sort')->orderBy('legacy_id')->get(['legacy_id as id', 'parent_legacy_id as parent_id', 'name']),
             'current_user' => ['id' => (int) $actor->legacy_id, 'name' => ($actor->nickname ?? null) ?: $actor->username,
                 'department_legacy_id' => $dept, 'department_name' => $access->departmentName($dept), 'is_sales' => $isSales],
@@ -113,6 +119,7 @@ final class CrmLeadController extends Controller
         elseif (in_array($tab, ['pending_assignment', 'pending_review', 'public_pool', 'draft'], true)) $query->where('status', $tab);
         $query->orderByDesc('id');
         CrmListViewQueryService::apply($query, $data);
+        $this->leads->withRecycleOrigin($query);
         $page = $query->paginate((int) ($data['per_page'] ?? 10))->through(fn ($lead) => $this->leads->present($lead, $actor));
         return response()->json($page->toArray() + ['tabs' => $tabs]);
     }
@@ -208,6 +215,7 @@ final class CrmLeadController extends Controller
     {
         $actor = $this->user($request, 'crm.lead.'.$action);
         $data = $request->validate(['version' => 'required|integer|min:1', 'reason' => 'nullable|string|max:500', 'note' => 'nullable|string|max:500',
+            'target_department_legacy_id' => 'nullable|integer|min:1',
             'to_user_legacy_id' => 'nullable|integer|min:1', 'customer_pool' => ['nullable', Rule::in(CrmLeadApplicationService::POOLS)],
             'transfer_customer' => 'nullable|boolean', 'customer_version' => 'nullable|integer|min:1', 'assignment_attachment_ids' => 'nullable|array|max:30',
             'assignment_attachment_ids.*' => 'required|integer|min:1|distinct']);

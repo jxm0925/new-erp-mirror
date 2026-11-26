@@ -45,7 +45,7 @@
         <el-button
           v-if="result && result.work_order"
           size="small"
-          type="primary"
+          type="success"
           plain
           icon="el-icon-document"
           class="btn-action-light"
@@ -440,7 +440,7 @@
             <el-button
               v-if="result.work_order && result.work_order.id"
               size="small"
-              type="primary"
+              type="success"
               plain
               icon="el-icon-document"
               class="action-block-btn"

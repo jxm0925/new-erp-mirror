@@ -5,7 +5,7 @@ namespace App\Http\Controllers\Api\V1\Erp;
 use App\Http\Controllers\Controller;
 use App\Models\Erp\{SalesOrder, CancellationProductionDisposition as Disposition};
 use App\Services\Erp\{AuthContextService, SalesOrderVisibilityService};
-use App\Services\Erp\Manufacturing\{OrderChangeLaborService, DispositionLaborService};
+use App\Services\Erp\Manufacturing\{OrderChangeLaborService, DispositionLaborService, CancellationProductionService};
 use Illuminate\Http\Request;
 
 final class OrderChangeLaborController extends Controller
@@ -22,7 +22,7 @@ final class OrderChangeLaborController extends Controller
 
     public function show(Request $request, int $id, DispositionLaborService $service)
     {
-        $actor = $this->user($request, ['production.work_order.view', 'production.task.view', ...DispositionLaborService::EXECUTE_PERMISSIONS]);
+        $actor = $this->user($request, ['production.work_order.view', 'production.work_order.edit', 'production.task.view', ...DispositionLaborService::EXECUTE_PERMISSIONS]);
         $this->assertDispositionVisible($id, $actor);
         $filters = $request->validate(['page' => 'nullable|integer|min:1', 'per_page' => 'nullable|integer|min:1|max:100']);
         return response()->json(['data' => $service->show($id, $actor, $filters)]);
@@ -57,6 +57,7 @@ final class OrderChangeLaborController extends Controller
     private function assertDispositionVisible(int $id, object $actor): void
     {
         $row = Disposition::findOrFail($id);
+        if (!$row->resolved_at && CancellationProductionService::canProxyDecide($actor)) return;
         if (DispositionLaborService::canRecord($row, (int) ($actor->legacy_id ?? $actor->id))) return;
         $query = SalesOrder::query();
         app(SalesOrderVisibilityService::class)->apply($query, $actor, true);

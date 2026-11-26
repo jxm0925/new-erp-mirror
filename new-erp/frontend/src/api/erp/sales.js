@@ -61,7 +61,6 @@ export const getSalesOrderOptions = params => api.get('/v1/erp/sales/orders/opti
 export const getProductionPreview = id => api.get(`/v1/erp/sales/orders/${id}/production-confirmation-preview`)
 export const getProductionBomMaterials = (id, params) => api.get(`/v1/erp/sales/orders/${id}/production-bom-materials`, { params })
 export const confirmProduction = (id, data) => api.post(`/v1/erp/sales/orders/${id}/production-confirmation`, data)
-export const lockSalesOrderInventory = (id, data) => api.post(`/v1/erp/sales/orders/${id}/lock-inventory`, data)
 
 export const listSalesReturns = params => api.get('/v1/erp/sales/returns', { params })
 export const listSalesReturnSources = params => api.get('/v1/erp/sales/returns/sources', { params })

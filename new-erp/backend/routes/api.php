@@ -316,8 +316,6 @@ Route::prefix('v1/erp/inventory')->group(function () {
     Route::get('quality-events', [InventoryQualityController::class, 'index']);
     Route::get('quality-events/context/{balanceId}', [InventoryQualityController::class, 'context'])->whereNumber('balanceId');
     Route::post('quality-events', [InventoryQualityController::class, 'store']);
-    Route::post('quality-events/{id}/start', [InventoryQualityController::class, 'start'])->whereNumber('id');
-    Route::post('quality-events/{id}/complete', [InventoryQualityController::class, 'complete'])->whereNumber('id');
     Route::get('quality-events/{id}', [InventoryQualityController::class, 'show'])->whereNumber('id');
 
     Route::get('transactions', [InventoryTransactionController::class, 'index']);

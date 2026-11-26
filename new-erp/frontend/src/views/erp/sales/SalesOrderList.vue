@@ -318,7 +318,8 @@ export default {
       const response = await confirmSalesOrder(row.id)
       const result = response.data && response.data.data ? response.data.data : response.data
       if (result.passed && !(result.checks || []).some(check => check.status === 'blocked')) {
-        this.$message.success('订单已确认，请核实后执行“生产确认”')
+        this.$message.success('订单已确认')
+        if (result.order?.allowed_actions?.confirm_production) return this.$router.push({ path: `/sales/orders/${row.id}/detail`, query: { confirm_production: '1' } })
         await this.load()
         return
       }

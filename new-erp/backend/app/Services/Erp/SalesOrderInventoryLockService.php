@@ -8,6 +8,7 @@ use App\Models\Erp\SalesOrderCommand;
 use App\Models\Erp\SalesOrderFulfillment;
 use App\Models\Erp\SalesOrderLine;
 use App\Models\Erp\InventoryReservation;
+use App\Models\Erp\InventoryTransaction;
 use App\Models\Erp\Unit;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
@@ -52,10 +53,10 @@ class SalesOrderInventoryLockService
                 // Existing confirmed purchasing quantities are already allocated business
                 // demand, but still need stock. Consume them first and retain the unmet tail.
                 foreach ($pendingPurchases as $purchase) {
-                    $created += $this->lockAvailableSlice($order, $line, $this->salesQty($purchase, $line), $payload, $plannedByBalance, $purchase);
+                    $created += count($this->lockAvailableSlice($order, $line, $this->salesQty($purchase, $line), $payload, $plannedByBalance, $purchase));
                 }
                 if ($unallocated > 0.00000001) {
-                    $created += $this->lockAvailableSlice($order, $line, $unallocated, $payload, $plannedByBalance);
+                    $created += count($this->lockAvailableSlice($order, $line, $unallocated, $payload, $plannedByBalance));
                 }
                 $this->refreshLineAllocation($line);
             }
@@ -94,20 +95,70 @@ class SalesOrderInventoryLockService
         });
     }
 
-    private function lockAvailableSlice(SalesOrder $order, SalesOrderLine $line, float $requiredSalesQty, array $payload, array &$plannedByBalance, ?SalesOrderFulfillment $purchase = null): int
+    /** 采购过账自动补锁只核销已确认采购尾差；调用方的入库事务承担重试和回滚边界。 */
+    public function lockPurchaseTail(int $fulfillmentId, array $baseQuantityLimits, array $protectedArrivalLimits, InventoryTransaction $transaction, array $receiptItemIds, ?int $actorId, string $operator): array
     {
-        if ($requiredSalesQty <= 0.00000001) return 0;
+        return DB::transaction(function () use ($fulfillmentId, $baseQuantityLimits, $protectedArrivalLimits, $transaction, $receiptItemIds, $actorId, $operator): array {
+            $source = SalesOrderFulfillment::query()->whereKey($fulfillmentId)->lockForUpdate()->first();
+            if (!$source) return [];
+            $order = SalesOrder::query()->whereKey($source->sales_order_id)->lockForUpdate()->first();
+            if (!$order || $order->isLegacyHistory() || $order->order_status !== 'confirmed' || $order->cancelled_at || $order->short_closed_at) return [];
+            $line = $order->lines()->with('item')->whereKey($source->sales_order_line_id)->lockForUpdate()->first();
+            $purchase = $order->fulfillments()->whereKey($fulfillmentId)->where('fulfillment_type', 'purchase')
+                ->where('demand_status', 'confirmed')->where('reservation_status', 'awaiting_purchase')->lockForUpdate()->first();
+            if (!$line || !$purchase || !$this->isPhysical($line) || in_array($line->line_status, ['cancelled', 'replaced', 'void', 'voided'], true)
+                || (float) $line->shipped_qty + 0.00000001 >= SalesOrderFulfillmentPolicy::effectiveQuantity((float) $line->order_qty, (float) $line->cancelled_qty)) return [];
+            $factor = (float) $line->fulfillment_factor_snapshot;
+            if ($factor <= 0 || (int) $purchase->item_id !== (int) $line->item_id
+                || (int) $purchase->base_unit_id !== (int) $line->item_base_unit_id
+                || (int) $purchase->sales_unit_id !== (int) $line->unit_id
+                || abs((float) $purchase->fulfillment_factor_snapshot - $factor) > 0.00000001
+                || ($purchase->item_base_qty !== null && abs((float) $purchase->item_base_qty - round($this->salesQty($purchase, $line) * $factor, 8)) > 0.00000001)) return [];
+
+            $payload = ['client_command_id' => 'purchase_posting:'.$transaction->id.':'.$purchase->id,
+                'inventory_transaction_id' => (int) $transaction->id, 'purchase_receipt_item_ids' => $receiptItemIds];
+            $planned = [];
+            $baseQuantityLimits = $this->availability->purchaseReceiptQuantityLimits($line, $this->salesQty($purchase, $line), $baseQuantityLimits, $protectedArrivalLimits);
+            if (!$baseQuantityLimits) return [];
+            $ids = $this->lockAvailableSlice($order, $line, $this->salesQty($purchase, $line), $payload, $planned, $purchase, $baseQuantityLimits);
+            if (!$ids) return [];
+            // 仅预留本次新建的切片，不能顺带占用订单上早先待锁定的其他库存。
+            $reserved = $this->reservations->reserveForSalesOrder($order, $ids);
+            $this->refreshLineAllocation($line);
+            $this->reservations->refreshSalesOrderExecution((int) $order->id);
+            $before = $order->inventory_lock_status;
+            $order->setRelation('lines', $order->lines()->lockForUpdate()->get());
+            $order->setRelation('fulfillments', $order->fulfillments()->lockForUpdate()->get());
+            $status = $this->lockStatus($order);
+            $order->update(['inventory_lock_status' => $status, 'inventory_locked_at' => now(),
+                'inventory_locked_by_legacy_id' => $actorId, 'business_version' => (int) $order->business_version + 1]);
+            DB::table('erp_sales_order_logs')->insert([
+                'sales_order_id' => $order->id, 'action' => 'purchase_receipt_inventory_lock', 'operator' => $operator,
+                'before_status' => $before, 'after_status' => $status,
+                'content' => '采购到货入库自动占用库存',
+                'payload' => json_encode($payload + ['source_purchase_fulfillment_id' => $purchase->id,
+                    'inventory_fulfillment_ids' => $ids, 'reservation_ids' => collect($reserved)->pluck('id')->all()], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+                'created_at' => now(), 'updated_at' => now(),
+            ]);
+            return $reserved;
+        });
+    }
+
+    private function lockAvailableSlice(SalesOrder $order, SalesOrderLine $line, float $requiredSalesQty, array $payload, array &$plannedByBalance, ?SalesOrderFulfillment $purchase = null, ?array $baseQuantityLimits = null): array
+    {
+        if ($requiredSalesQty <= 0.00000001) return [];
         $factor = $this->factor($line);
         if ($purchase && ((int) $purchase->item_id !== (int) $line->item_id || (int) $purchase->base_unit_id !== (int) $line->item_base_unit_id
             || abs((float) $purchase->fulfillment_factor_snapshot - $factor) > 0.00000001)) {
             $this->fail('purchase_identity_changed', '外购待到货记录的物料或单位快照与订单不一致，请先核对，不能重新解释缺口。', 409);
         }
-        $analysis = $this->availability->analyzeSalesOrderLine($line, $requiredSalesQty, true, $plannedByBalance);
+        $analysis = $this->availability->analyzeSalesOrderLine($line, $requiredSalesQty, true, $plannedByBalance, $baseQuantityLimits);
         $inventorySalesQty = (float) $analysis['suggested_inventory_qty'];
-        if ($inventorySalesQty <= 0.00000001) return 0;
+        if ($inventorySalesQty <= 0.00000001) return [];
         $allocations = $this->availability->allocateBaseQuantity($analysis, round($inventorySalesQty * $factor, 8));
         $remainingSales = $inventorySalesQty;
         $conversion = [];
+        $createdIds = [];
         foreach ($allocations as $index => $allocation) {
             $salesQty = $index === array_key_last($allocations) ? $remainingSales : round((float) $allocation['base_qty'] / $factor, 8);
             $remainingSales = max(0, $remainingSales - $salesQty);
@@ -124,6 +175,8 @@ class SalesOrderInventoryLockService
                 'match_snapshot' => [
                     'source' => 'sales_order_inventory_lock', 'snapshot_locked' => true,
                     'client_command_id' => $payload['client_command_id'],
+                    'inventory_transaction_id' => $payload['inventory_transaction_id'] ?? null,
+                    'purchase_receipt_item_ids' => $payload['purchase_receipt_item_ids'] ?? null,
                     'fulfillment_strategy' => $purchase || SalesOrderFulfillmentPolicy::isPurchaseLine($line) ? 'purchase' : 'production',
                     'source_purchase_fulfillment_id' => $purchase?->id,
                     'purchase_confirmation_command_id' => data_get($purchase?->match_snapshot, 'confirmation_command_id'),
@@ -132,6 +185,7 @@ class SalesOrderInventoryLockService
                         'available_sales_qty' => $analysis['available_sales_qty'], 'locked_sales_qty' => $salesQty],
                 ],
             ]);
+            $createdIds[] = (int) $fulfillment->id;
             $conversion[] = ['inventory_fulfillment_id' => (int) $fulfillment->id, 'sales_qty' => $salesQty,
                 'item_base_qty' => (float) $allocation['base_qty'], 'client_command_id' => $payload['client_command_id']];
             $balanceId = (int) $allocation['inventory_balance_id'];
@@ -141,12 +195,12 @@ class SalesOrderInventoryLockService
             $purchase->update(SalesOrderFulfillmentPolicy::purchaseTail($requiredSalesQty, $inventorySalesQty, $factor,
                 $purchase->item_base_qty === null ? null : (float) $purchase->item_base_qty, (array) $purchase->match_snapshot, $conversion));
         }
-        return count($allocations);
+        return $createdIds;
     }
 
     private function refreshLineAllocation(SalesOrderLine $line): void
     {
-        $rows = SalesOrderFulfillment::where('sales_order_line_id', $line->id)->where('demand_status', 'confirmed')->get();
+        $rows = SalesOrderFulfillment::where('sales_order_line_id', $line->id)->where('demand_status', 'confirmed')->lockForUpdate()->get();
         $types = $rows->filter(fn ($row) => $this->salesQty($row, $line) > 0.00000001)->pluck('fulfillment_type')->unique()->values();
         $unallocated = max(0, SalesOrderFulfillmentPolicy::effectiveQuantity((float) $line->order_qty, (float) $line->cancelled_qty)
             - (float) $rows->sum(fn ($row) => $this->salesQty($row, $line)));

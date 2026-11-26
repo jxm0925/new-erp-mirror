@@ -122,7 +122,34 @@ class InventoryAvailabilityService
         return max(0, $onHand - $locked - $defective - $pending);
     }
 
-    public function analyzeSalesOrderLine(SalesOrderLine $line, float $salesQty, bool $lock = false, array $plannedByBalance = []): array
+    /** 本次到货不足一个销售单位时，只用无归属余量或旧库存补足这一余数，不借入受保护份额。 */
+    public function purchaseReceiptQuantityLimits(SalesOrderLine $line, float $salesQty, array $arrivalLimits, array $protectedArrivalLimits): array
+    {
+        $analysis = $this->analyzeSalesOrderLine($line, $salesQty, true, [], $arrivalLimits);
+        $arrivalQty = (float) $analysis['available_base_qty'];
+        if ($arrivalQty <= 0.00000001) return [];
+        $factor = (float) $analysis['fulfillment_factor'];
+        $precision = (int) (Unit::find($line->unit_id)?->decimal_places ?? 0);
+        $salesUnits = $this->floorToPrecision($arrivalQty / $factor, $precision);
+        if ($arrivalQty - round($salesUnits * $factor, 8) > 0.00000001) $salesUnits += 1 / (10 ** max(0, $precision));
+        $remaining = round(max(0, min($salesQty, $salesUnits) * $factor - $arrivalQty), 8);
+        if ($remaining <= 0.00000001) return $arrivalLimits;
+
+        $expanded = $arrivalLimits;
+        foreach ($this->eligibleBalances((int) $line->item_id, true) as $balance) {
+            if ((int) $balance->unit_id !== (int) $line->item_base_unit_id) continue;
+            $availableForCompletion = max(0, $this->safeAvailable($balance) - (float) ($protectedArrivalLimits[$balance->id] ?? 0));
+            $take = min($remaining, $availableForCompletion);
+            if ($take <= 0.00000001) continue;
+            $expanded[$balance->id] = round((float) ($expanded[$balance->id] ?? 0) + $take, 8);
+            $remaining = round($remaining - $take, 8);
+            if ($remaining <= 0.00000001) return $expanded;
+        }
+        // 其他可用库存不够凑成下一最小销售单位时，不提前耗用它，仍只分配本次到货能表示的数量。
+        return $arrivalLimits;
+    }
+
+    public function analyzeSalesOrderLine(SalesOrderLine $line, float $salesQty, bool $lock = false, array $plannedByBalance = [], ?array $baseQuantityLimits = null): array
     {
         if (!$line->item_id) {
             return $this->emptyAnalysis($line, $salesQty, '当前订单行没有默认库存物料');
@@ -135,9 +162,10 @@ class InventoryAvailabilityService
             ]);
         }
 
-        $balances = $this->eligibleBalances((int) $line->item_id, $lock);
+        $balances = $this->eligibleBalances((int) $line->item_id, $lock, $baseQuantityLimits === null ? null : array_keys($baseQuantityLimits));
+        if ($baseQuantityLimits !== null) $balances = $balances->where('unit_id', $line->item_base_unit_id)->values();
         $availableBaseQty = round($balances->sum(fn (InventoryBalance $balance) => max(0,
-            $this->safeAvailable($balance) - (float) ($plannedByBalance[$balance->id] ?? 0))), 8);
+            min($this->safeAvailable($balance), (float) ($baseQuantityLimits[$balance->id] ?? INF)) - (float) ($plannedByBalance[$balance->id] ?? 0))), 8);
         $precision = (int) (Unit::find($line->unit_id)?->decimal_places ?? 0);
         $availableSalesQty = $this->floorToPrecision($availableBaseQty / $factor, $precision);
         $split = SalesOrderFulfillmentPolicy::split($salesQty, $availableSalesQty, SalesOrderFulfillmentPolicy::isPurchaseLine($line));
@@ -163,6 +191,7 @@ class InventoryAvailabilityService
             'fulfillment_factor' => $factor,
             'balances' => $balances,
             'planned_by_balance' => $plannedByBalance,
+            'base_quantity_limits' => $baseQuantityLimits,
         ];
     }
 
@@ -175,7 +204,8 @@ class InventoryAvailabilityService
 
         foreach ($balances as $balance) {
             if ($remaining <= 0.00000001) break;
-            $available = max(0, $this->safeAvailable($balance) - (float) ($analysis['planned_by_balance'][$balance->id] ?? 0));
+            $available = max(0, min($this->safeAvailable($balance), (float) ($analysis['base_quantity_limits'][$balance->id] ?? INF))
+                - (float) ($analysis['planned_by_balance'][$balance->id] ?? 0));
             $allocated = min($remaining, $available);
             if ($allocated <= 0.00000001) continue;
             $allocations[] = [
@@ -198,7 +228,7 @@ class InventoryAvailabilityService
         return $allocations;
     }
 
-    public function eligibleBalances(int $itemId, bool $lock = false): Collection
+    public function eligibleBalances(int $itemId, bool $lock = false, ?array $balanceIds = null): Collection
     {
         $query = InventoryBalance::query()
             ->select('erp_inventory_balances.*')
@@ -209,6 +239,7 @@ class InventoryAvailabilityService
                     ->on('erp_inventory_batches.batch_no', '=', 'erp_inventory_balances.batch_no');
             })
             ->where('erp_inventory_balances.item_id', $itemId)
+            ->when($balanceIds !== null, fn ($query) => $query->whereIn('erp_inventory_balances.id', $balanceIds))
             ->whereIn('erp_warehouses.status', ['enabled', 'active'])
             ->whereIn('erp_locations.status', ['enabled', 'active'])
             ->whereIn('erp_inventory_batches.status', ['enabled', 'active'])

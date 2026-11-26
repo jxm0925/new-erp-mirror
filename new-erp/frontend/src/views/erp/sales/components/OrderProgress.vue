@@ -262,7 +262,6 @@
             <template v-if="quantitySummary.requires_delivery">
               <span>订单库存需求<b>{{ summaryQuantity(quantitySummary.required_base_qty, quantitySummary.base_unit_name) }}</b></span>
               <span>库存余额<b>{{ summaryQuantity(quantitySummary.inventory_on_hand_qty, quantitySummary.sales_unit_name) }}</b></span>
-              <span>可再锁库存<b>{{ summaryQuantity(quantitySummary.inventory_available_qty, quantitySummary.sales_unit_name) }}</b></span>
               <span>本行已锁<b>{{ summaryQuantity(quantitySummary.locked_inventory_qty, quantitySummary.sales_unit_name) }}</b></span>
               <span v-if="quantitySummary.fulfillment_strategy === 'production' || Number(quantitySummary.pending_production_qty) > 0">生产待补<b>{{ summaryQuantity(quantitySummary.pending_production_qty, quantitySummary.sales_unit_name) }}</b></span>
               <span v-if="quantitySummary.fulfillment_strategy === 'purchase' || Number(quantitySummary.pending_purchase_qty) > 0">外购待补<b>{{ summaryQuantity(quantitySummary.pending_purchase_qty, quantitySummary.sales_unit_name) }}</b></span>

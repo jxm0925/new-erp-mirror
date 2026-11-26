@@ -18,9 +18,14 @@ use App\Models\Erp\MfgMaterialIssue;
 use App\Models\Erp\MfgMaterialReturn;
 use App\Models\Erp\SalesOrder;
 use App\Models\Erp\SalesOrderFulfillment;
+use App\Models\Erp\ProductionRouting;
+use App\Services\Erp\BomMatcher;
 use App\Services\Erp\DocumentNumberService;
 use App\Services\Erp\SerialNumberService;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Collection;
+use Illuminate\Validation\ValidationException;
+use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
 
 /**
  * 新生产工单：订单生产确认后按“一行一张”自动建单并下达；生产主管只能调整；
@@ -308,6 +313,207 @@ final class WorkOrderService
         }, 5);
     }
 
+    /** 主资料操作成功后再重试；自动下达失败不能反过来使 BOM / 路线保存报错。 */
+    public function retryBlockedForMasterDataAfterCommit(?int $bomId, ?int $routingId, object $actor): void
+    {
+        try {
+            if ($bomId && ! app(BomMatcher::class)->eligibleQuery()->whereKey($bomId)->exists()) return;
+            if ($routingId && ! ProductionRouting::query()->whereKey($routingId)->where('status', 'active')->exists()) return;
+            if (! $bomId && ! $routingId) return;
+            DB::afterCommit(function () use ($bomId, $routingId, $actor) {
+                try {
+                    $this->retryBlockedForMasterData($bomId, $routingId, $actor);
+                } catch (\Throwable $error) {
+                    report($error);
+                }
+            });
+        } catch (\Throwable $error) {
+            report($error);
+        }
+    }
+
+    /** @return list<int> 本次实际自动下达的工单；不自动启动手工备货、技术待处理或订单处置中的工单。 */
+    public function retryBlockedForMasterData(?int $bomId, ?int $routingId, object $actor): array
+    {
+        $bom = $bomId ? app(BomMatcher::class)->eligibleQuery()->find($bomId) : null;
+        $routing = $routingId ? ProductionRouting::query()->where('status', 'active')->find($routingId) : null;
+        if (! $bom && ! $routing) return [];
+        $phantomItemId = $bom && $bom->outputItem?->isPhantom() ? (int) $bom->output_item_id : null;
+        $released = [];
+        $matchingItems = [];
+        MfgWorkOrder::query()->where('status', 'planned')->whereNotNull('block_reason')->where('block_reason', '!=', '')
+            ->whereIn('source_type', ['sales_order', 'work_order'])
+            ->when(! $routing, fn ($q) => $q->where(function ($items) use ($bom, $phantomItemId) {
+                $items->where('item_id', $bom->output_item_id);
+                if ($phantomItemId) $items->orWhere(fn ($parent) => $parent
+                    ->whereJsonContains('bom_snapshot->items', ['component_item_id' => $phantomItemId])
+                    ->where(fn ($failed) => $failed->where('bom_snapshot->phantom_expansion_complete', false)
+                        ->orWhere(fn ($legacy) => $legacy->whereNull('bom_snapshot->phantom_expansion_complete')->where('block_reason', 'like', '%虚拟件%'))));
+            }))
+            ->chunkById(100, function ($rows) use ($bom, $routing, $bomId, $routingId, $phantomItemId, $actor, &$released, &$matchingItems) {
+                foreach ($rows as $row) {
+                    try {
+                        $itemId = (int) $row->item_id;
+                        if (! array_key_exists($itemId, $matchingItems)) {
+                            $matchingItems[$itemId] = ($bom && (int) $bom->output_item_id === $itemId)
+                                || ($routing && ProductionRouting::query()->whereKey($routing->id)->where('status', 'active')->applicableToItem($itemId)->exists());
+                        }
+                        if (! $matchingItems[$itemId] && ! ($phantomItemId && $this->retryDependsOnPhantomBom($row, $phantomItemId, (int) $bomId))) continue;
+                        $didRelease = DB::transaction(function () use ($row, $bomId, $routingId, $actor) {
+                            // 先按销售改单的顺序锁订单，再按 ID 锁祖先和本单；锁后重查真实需求，不使用扫描时的状态下达。
+                            [$orders, $scope] = $this->lockRetryDemandScope((int) $row->id);
+                            $wo = $scope->get($row->id);
+                            if (! $wo || $wo->status !== 'planned' || ! filled($wo->block_reason) || $wo->started_at
+                                || ! in_array($wo->source_type, ['sales_order', 'work_order'], true)
+                                || MfgWorkOrderTech::query()->where('work_order_id', $wo->id)->where('status', 'pending')->lockForUpdate()->first(['id'])
+                                || ! $this->hasRetryDemand($wo, $orders, $scope)) return false;
+                            $triggerBom = $bomId ? app(BomMatcher::class)->eligibleQuery()->whereKey($bomId)->lockForUpdate()->first(['id', 'output_item_id']) : null;
+                            $matches = $triggerBom && ((int) $triggerBom->output_item_id === (int) $wo->item_id
+                                || (Item::query()->whereKey($triggerBom->output_item_id)->where('manufacturing_strategy', 'phantom')->lockForUpdate()->first(['id'])
+                                    && $this->retryDependsOnPhantomBom($wo, (int) $triggerBom->output_item_id, (int) $triggerBom->id)));
+                            if (! $matches && ! ($routingId && ProductionRouting::query()->whereKey($routingId)->where('status', 'active')
+                                ->applicableToItem((int) $wo->item_id)->lockForUpdate()->first(['id']))) return false;
+                            try {
+                                // 保存点覆盖重规划、设备号和下达：业务错误只回滚这一张的部分结果，阻塞原因在外层锁内保存。
+                                return DB::transaction(function () use ($wo, $actor) {
+                                    $this->retryBlockedPlan($wo, $actor);
+                                    return $wo->status === 'released';
+                                });
+                            } catch (WorkOrderDomainException|ValidationException|HttpExceptionInterface $error) {
+                                if ($error instanceof HttpExceptionInterface && $error->getStatusCode() >= 500) throw $error;
+                                $wo->refresh();
+                                $reason = $error instanceof ValidationException ? implode('；', $error->validator->errors()->all()) : $error->getMessage();
+                                $reason = mb_substr('自动下达受阻：'.$reason, 0, 500);
+                                if ($wo->block_reason !== $reason) $wo->update(['block_reason' => $reason,
+                                    'business_version' => (int) $wo->business_version + 1, 'updated_by_legacy_id' => $this->actorId($actor)]);
+                                return false;
+                            }
+                        }, 5);
+                        if ($didRelease) $released[] = (int) $row->id;
+                    } catch (\Throwable $error) {
+                        report($error);
+                    }
+                }
+            });
+        return $released;
+    }
+
+    /** 只刷新失败快照中直接引用的虚拟件；原行指定的子 BOM 必须仍是本次生效的版本。 */
+    private function retryDependsOnPhantomBom(MfgWorkOrder $wo, int $phantomItemId, int $bomId): bool
+    {
+        if (! $this->bomExpansionIncomplete($wo)) return false;
+        foreach ((array) data_get($wo->bom_snapshot, 'items', []) as $line) {
+            if (is_array($line) && (int) ($line['component_item_id'] ?? 0) === $phantomItemId
+                && (empty($line['child_bom_id']) || (int) $line['child_bom_id'] === $bomId)) return true;
+        }
+        return false;
+    }
+
+    /** 只用预读确定锁范围；关系在需求检查时当前读，新增到范围外的父级本轮跳过，防止逆序补锁。 */
+    private function lockRetryDemandScope(int $id): array
+    {
+        $ids = $pending = [$id];
+        while ($pending) {
+            $parents = MfgWorkOrderLink::query()->whereIn('child_work_order_id', $pending)->where('qty', '>', 0)->pluck('parent_work_order_id')->all();
+            $pending = array_values(array_diff($parents, $ids));
+            $ids = array_values(array_unique([...$ids, ...$pending]));
+        }
+        $orderIds = MfgWorkOrder::query()->whereIn('id', $ids)->where('source_type', 'sales_order')->pluck('sales_order_id')->filter()->unique()->all();
+        $orders = SalesOrder::query()->whereIn('id', $orderIds)->orderBy('id')->lockForUpdate()->get()->keyBy('id');
+        $scope = MfgWorkOrder::query()->whereIn('id', $ids)->orderBy('id')->lockForUpdate()->get()->keyBy('id');
+        return [$orders, $scope];
+    }
+
+    private function hasRetryDemand(MfgWorkOrder $wo, Collection $orders, Collection $scope, array $path = []): bool
+    {
+        if (in_array((int) $wo->id, $path, true) || ! in_array($wo->status, ['planned', 'released', 'in_progress', 'paused'], true)
+            || CancellationProductionService::pending((int) $wo->id)) return false;
+        $units = MfgWorkOrderUnit::query()->where('work_order_id', $wo->id)->lockForUpdate()->get(['id', 'status']);
+        if ($units->isNotEmpty()) {
+            $disposed = \App\Models\Erp\CancellationProductionDisposition::query()->where('work_order_id', $wo->id)
+                ->whereNotNull('work_order_unit_id')->lockForUpdate()->pluck('work_order_unit_id');
+            if ($units->whereNotIn('status', ['scrapped', 'cancelled'])->whereNotIn('id', $disposed)->isEmpty()) return false;
+        }
+        if ($wo->source_type === 'stock') return true;
+        if ($wo->source_type === 'sales_order') {
+            $order = $orders->get($wo->sales_order_id);
+            if (! $order || $order->isLegacyHistory() || $order->order_status !== 'confirmed' || $order->short_closed_at || $order->cancelled_at) return false;
+            $fulfillment = SalesOrderFulfillment::query()->whereKey($wo->sales_fulfillment_id)->where('sales_order_id', $order->id)
+                ->where('sales_order_line_id', $wo->sales_order_line_id)->where('fulfillment_type', 'production')->where('demand_status', 'confirmed')->lockForUpdate()->first();
+            if (! $fulfillment || (float) ($fulfillment->item_base_qty ?: $fulfillment->fulfillment_qty) <= 0) return false;
+            $line = \App\Models\Erp\SalesOrderLine::query()->whereKey($wo->sales_order_line_id)->where('sales_order_id', $order->id)
+                ->where('line_status', '!=', 'removed')->lockForUpdate()->first();
+            return $line && (int) ($fulfillment->item_id ?: $line->item_id) === (int) $wo->item_id;
+        }
+        if ($wo->source_type !== 'work_order') return false;
+        foreach (CancellationProductionService::activeParentLinks((int) $wo->id, true)->where('component_item_id', $wo->item_id) as $link) {
+            $parent = $scope->get($link->parent_work_order_id);
+            if ($parent && $this->hasRetryDemand($parent, $orders, $scope, [...$path, (int) $wo->id])
+                && MfgWorkOrderMaterial::query()->where('work_order_id', $parent->id)->where('component_item_id', $wo->item_id)
+                    ->where('required_qty', '>', 0)->lockForUpdate()->first(['id'])) return true;
+        }
+        return false;
+    }
+
+    private function retryBlockedPlan(MfgWorkOrder $wo, object $actor): void
+    {
+        $item = Item::query()->with('unit')->where('status', 'enabled')->lockForUpdate()->find($wo->item_id);
+        if (! $item || $item->isPurchaseFulfilledItem() || $item->isPhantom()
+            || ($wo->source_type === 'work_order' && ! self::isChildOrderItem($item)))
+            $this->fail('item_unavailable', '产出物料已停用或不再是自制物料，请核实工单。');
+        if (MfgWorkOrderUnit::query()->where('work_order_id', $wo->id)->lockForUpdate()->first(['id'])
+            || MfgCuttingBatch::query()->where('work_order_id', $wo->id)->lockForUpdate()->first(['id'])
+            || \App\Models\Erp\MfgCuttingAllocation::query()->where('work_order_id', $wo->id)->lockForUpdate()->first(['id'])
+            || \App\Models\Erp\MfgCuttingRunAllocation::query()->where('work_order_id', $wo->id)->lockForUpdate()->first(['id'])
+            || MfgMaterialIssue::query()->where('work_order_id', $wo->id)->lockForUpdate()->first(['id']))
+            $this->fail('production_facts_exist', '工单已有设备、领料或开料事实，请人工核实原生产资料。');
+        $bomId = $wo->bom_id && $this->plans->isBomEligible((int) $wo->bom_id, (int) $item->id) ? (int) $wo->bom_id : null;
+        $routingId = $wo->routing_id && ProductionRouting::query()->whereKey($wo->routing_id)->where('status', 'active')
+            ->whereHas('operations', fn ($q) => $q->where('execution_context', 'production')->orWhereNull('execution_context'))
+            ->applicableToItem((int) $item->id)->lockForUpdate()->first(['id']) ? (int) $wo->routing_id : null;
+        $snapshot = $wo->bom_snapshot;
+        $salesBom = $wo->sales_fulfillment_id ? data_get(SalesOrderFulfillment::query()->whereKey($wo->sales_fulfillment_id)->lockForUpdate()->first()?->match_snapshot, 'production_bom') : null;
+        $salesReplacements = data_get($salesBom, 'sales_confirmation.has_replacements');
+        $protected = data_get($snapshot, 'custom') || data_get($snapshot, 'sales_confirmation.has_replacements') || $salesReplacements;
+        if ($protected && (! $bomId || ! $this->validBomSnapshot($wo, $snapshot)))
+            $this->fail('custom_bom_unavailable', '原定制或销售替换 BOM 已失效，请人工修订确认，不能自动套用标准 BOM。');
+        if ($salesReplacements && ! data_get($snapshot, 'custom') && ! data_get($snapshot, 'sales_confirmation.has_replacements'))
+            $this->fail('sales_bom_locked', '工单缺少销售确认的替换快照，请人工核实本单用料。');
+        $expansionIncomplete = $this->bomExpansionIncomplete($wo);
+        if ($bomId && $snapshot !== null) {
+            if (! $this->validBomSnapshot($wo, $snapshot)) $this->fail('bom_snapshot_missing', '工单的 BOM 快照不完整，请人工核实原用料依据。');
+            if ($expansionIncomplete) {
+                $snapshot = $this->plans->freezeBom($snapshot, (int) $item->id, true);
+                if (($snapshot['phantom_expansion_complete'] ?? null) === false)
+                    $this->fail('bom_expansion_incomplete', implode('；', $snapshot['phantom_expansion_block_reasons'] ?? ['虚拟件用料尚未完整展开']));
+            }
+            $wo->bom_snapshot = $snapshot;
+        } else $snapshot = null;
+        $routingSnapshot = $routingId && is_array($wo->routing_snapshot) && (int) ($wo->routing_snapshot['routing_id'] ?? 0) === $routingId
+            && collect($wo->routing_snapshot['operations'] ?? [])->contains(fn ($op) => ($op['execution_context'] ?? null) === 'production') ? $wo->routing_snapshot : null;
+        $plan = $this->plans->build($item, $wo->product_id, $wo->sku_id, $wo->configuration_snapshot, (float) $wo->planned_qty,
+            $bomId, $routingId, $snapshot, $routingSnapshot);
+        // 旧 BOM 可能绑了纯发货路线；它不能锁死生产重试，仍按既有唯一默认规则寻找真正的生产路线。
+        if (! $routingId && ! collect($plan['operations'])->contains(fn ($op) => ($op['execution_context'] ?? null) === 'production')) {
+            $matches = app(\App\Services\Erp\ProductionMasterDataService::class)->defaultRoutingMatches((int) $item->id, $wo->product_id, $wo->sku_id);
+            if ($matches->count() === 1) $plan = $this->plans->build($item, $wo->product_id, $wo->sku_id, $wo->configuration_snapshot,
+                (float) $wo->planned_qty, $bomId, (int) $matches->first()->id, $plan['bom']);
+        }
+        $performancePlan = $wo->performance_plan;
+        $this->applyPlan($wo, $item, $bomId, $routingId, true, false, $plan);
+        if (! $expansionIncomplete && $bomId && $performancePlan !== null && (int) $wo->bom_id === $bomId && $routingSnapshot
+            && (int) ($routingSnapshot['standards_bom_id'] ?? 0) === $bomId) $wo->performance_plan = $performancePlan;
+        $wo->business_version = (int) $wo->business_version + 1;
+        $wo->updated_by_legacy_id = $this->actorId($actor);
+        $wo->save();
+        if ($wo->block_reason) return;
+        if ($this->bomExpansionIncomplete($wo) || ! $wo->bom_id || ! $this->plans->isBomEligible((int) $wo->bom_id, (int) $item->id))
+            $this->fail('release_blocked', 'BOM 尚未完整展开或已失效，请核实生产资料。');
+        $this->doRelease($wo, $actor, true, 'BOM/工艺路线补齐生效，系统自动下达工单');
+        \App\Events\AssemblyDisplayChanged::afterCommit('work-order-release:'.$wo->id.':'.$wo->business_version,
+            'work_order.released', [(int) $wo->id], $wo->sales_order_id ? (int) $wo->sales_order_id : null);
+    }
+
     /** 生产主管能调整的：负责人、计划日期、加急、备注；未开工前可换 BOM/路线版本；备货工单下达前可改数量。 */
     public function adjust(int $id, array $data, object $actor): MfgWorkOrder
     {
@@ -591,16 +797,6 @@ final class WorkOrderService
             ->update(['serial_status' => 'available', 'reserved_at' => null]);
     }
 
-    /** 订单工单转备货：断开与订单、生产需求的关联，保留原订单号便于追溯。调用方须已锁工单。 */
-    public function convertToStock(MfgWorkOrder $wo, string $reason, ?object $actor): void
-    {
-        if (!in_array($wo->source_type, ['sales_order', 'work_order'], true)) return;
-        $orderNo = $wo->sales_order_no;
-        $wo->update(['source_type' => 'stock', 'stock_reason' => 'order_released', 'sales_order_id' => null, 'sales_order_line_id' => null,
-            'sales_fulfillment_id' => null, 'business_version' => (int) $wo->business_version + 1, 'updated_by_legacy_id' => $actor ? $this->actorId($actor) : null]);
-        $this->log($wo, 'converted_to_stock', $wo->status, $wo->status, $reason.'；转为备货工单，产出进入公共库存（原订单 '.$orderNo.'）', $actor, ['sales_order_no' => $orderNo]);
-    }
-
     /** 订单工单的生产需求已作废（订单取消、短交或变更）却还没转备货的，入库前补转；返回是否转了。调用方须已锁工单。 */
     public function convertIfDemandGone(MfgWorkOrder $wo, ?object $actor, ?array $unitIds = null): bool
     {
@@ -826,7 +1022,7 @@ final class WorkOrderService
         $this->log($wo, 'cancelled', $before, 'cancelled', '取消工单：'.$reason, $actor);
     }
 
-    private function doRelease(MfgWorkOrder $wo, object $actor, bool $automatic = false): void
+    private function doRelease(MfgWorkOrder $wo, object $actor, bool $automatic = false, ?string $releaseText = null): void
     {
         if ($this->bomExpansionIncomplete($wo))
             $this->fail('bom_expansion_incomplete', '不能下达：虚拟件用料尚未完整展开，请补齐资料后在“调整工单”中选择 BOM 并保存，重新规划用料。');
@@ -835,7 +1031,7 @@ final class WorkOrderService
         [$serials, $range] = $this->generateUnits($wo);
         $wo->update(['status' => 'released', 'released_at' => now(), 'released_by_legacy_id' => $this->actorId($actor),
             'block_reason' => null, 'business_version' => (int) $wo->business_version + 1]);
-        $this->log($wo, 'released', 'planned', 'released', ($automatic ? '自动下达' : '下达工单').$range, $actor, ['serials' => $serials]);
+        $this->log($wo, 'released', 'planned', 'released', ($releaseText ?? ($automatic ? '自动下达' : '下达工单')).$range, $actor, ['serials' => $serials]);
         TaskService::syncWorkStatus([(int) $wo->id]);
     }
 
@@ -865,23 +1061,7 @@ final class WorkOrderService
                 $this->fail('bom_expansion_incomplete', '虚拟件用料尚未完整展开，请补齐资料后在“调整工单”中选择 BOM 并保存，重新规划用料；不能沿用原快照下达。');
             $snapshot = $wo->bom_snapshot;
             // 空明细或缺用量不能被转成零需求后覆盖原工单用料。
-            $validSnapshot = $wo->bom_id && is_array($snapshot) && (int) ($snapshot['id'] ?? 0) === (int) $wo->bom_id
-                && is_array($snapshot['items'] ?? null) && $snapshot['items'];
-            if ($validSnapshot) {
-                foreach ($snapshot['items'] as $line) {
-                    if (! is_array($line)) {
-                        $validSnapshot = false;
-                        break;
-                    }
-                    $qty = data_get($line, 'cutting_quantity_snapshot.theoretical_qty') ?? ($line['qty'] ?? null);
-                    if ((int) ($line['component_item_id'] ?? 0) <= 0 || ! is_numeric($qty) || (float) $qty < 0
-                        || ! is_numeric($line['loss_rate'] ?? 0) || (float) ($line['loss_rate'] ?? 0) < 0
-                        || ! is_numeric($line['fixed_qty'] ?? 0) || (float) ($line['fixed_qty'] ?? 0) < 0) {
-                        $validSnapshot = false;
-                        break;
-                    }
-                }
-            }
+            $validSnapshot = $this->validBomSnapshot($wo, $snapshot);
             if ($validSnapshot) {
                 $bomSnapshot = $snapshot;
             } elseif ($wo->status !== 'planned' || $snapshot !== null) {
@@ -917,7 +1097,7 @@ final class WorkOrderService
             'routing_name' => $routing['routing_name'] ?? null, 'routing_version' => $routing['version'] ?? null,
             'routing_snapshot' => $routing,
             'performance_plan' => $planBom ? app(\App\Services\Erp\BomPositionPerformanceService::class)->freezePlan($planBom) : null,
-            'block_reason' => $plan['block_reasons'] ? implode('；', $plan['block_reasons']) : null,
+            'block_reason' => $plan['block_reasons'] ? mb_substr(implode('；', $plan['block_reasons']), 0, 500) : null,
         ]);
         $opIds = [];
         foreach ($plan['operations'] as $op) {
@@ -947,6 +1127,20 @@ final class WorkOrderService
         $complete = data_get($wo->bom_snapshot, 'phantom_expansion_complete');
         // 旧版失败快照没有完整标记，但会保留虚拟件阻断原因；不能让重下达抹掉该证据。
         return $complete === false || ($complete === null && str_contains((string) $wo->block_reason, '虚拟件'));
+    }
+
+    private function validBomSnapshot(MfgWorkOrder $wo, mixed $snapshot): bool
+    {
+        if (! $wo->bom_id || ! is_array($snapshot) || (int) ($snapshot['id'] ?? 0) !== (int) $wo->bom_id
+            || ! is_array($snapshot['items'] ?? null) || ! $snapshot['items']) return false;
+        foreach ($snapshot['items'] as $line) {
+            if (! is_array($line)) return false;
+            $qty = data_get($line, 'cutting_quantity_snapshot.theoretical_qty') ?? ($line['qty'] ?? null);
+            if ((int) ($line['component_item_id'] ?? 0) <= 0 || ! is_numeric($qty) || (float) $qty < 0
+                || ! is_numeric($line['loss_rate'] ?? 0) || (float) ($line['loss_rate'] ?? 0) < 0
+                || ! is_numeric($line['fixed_qty'] ?? 0) || (float) ($line['fixed_qty'] ?? 0) < 0) return false;
+        }
+        return true;
     }
 
     /** 第 1 阶段下达的工单台没有记当前工序：未开工的统一放到第一道车间工序。 */

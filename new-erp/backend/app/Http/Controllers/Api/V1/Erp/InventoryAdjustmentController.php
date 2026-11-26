@@ -41,6 +41,7 @@ class InventoryAdjustmentController extends Controller
         if ($request->filled('status')) $query->where('adjustment_status', $request->input('status'));
         $paginator = $query->paginate($this->perPage($request));
         $this->attachOperatorNames($paginator->getCollection());
+        app(InventoryAdjustmentApplicationService::class)->attachApprovalState($paginator->getCollection());
         return response()->json([...$paginator->toArray(), 'stats' => $stats]);
     }
 
@@ -68,7 +69,9 @@ class InventoryAdjustmentController extends Controller
     public function show(Request $request, int $id)
     {
         $this->authorizePermission($request, 'inventory.adjustment.view');
-        return response()->json(InventoryAdjustment::with(['items.item.unit', 'items.warehouse', 'items.location', 'items.serials', 'items.physicalEntries'])->findOrFail($id));
+        $adjustment = InventoryAdjustment::with(['items.item.unit', 'items.warehouse', 'items.location', 'items.serials', 'items.physicalEntries'])->findOrFail($id);
+        app(InventoryAdjustmentApplicationService::class)->attachApprovalState([$adjustment]);
+        return response()->json($adjustment);
     }
 
     public function update(Request $request, int $id, InventoryAdjustmentApplicationService $service)
@@ -82,7 +85,12 @@ class InventoryAdjustmentController extends Controller
     public function submit(Request $request, int $id, InventoryAdjustmentApplicationService $service)
     {
         $user = $this->authorizePermission($request, 'inventory.adjustment.create');
-        return response()->json(['message' => '调整单已提交', 'data' => $service->submit($id, (int) $user->legacy_id)]);
+        $auth = app(AuthContextService::class);
+        $canPost = $auth->isSuperAdmin($user) || in_array('inventory.post.execute', $auth->permissionCodes($user), true);
+        $adjustment = $service->submit($id, $user, $canPost);
+        $message = $adjustment->adjustment_status === 'posted' ? '调整已提交并过账，库存余额已更新。'
+            : ($adjustment->approval_pending ? '调整单已提交，等待审批通过后过账。' : '调整单已提交，等待有权限的人员确认过账。');
+        return response()->json(['message' => $message, 'data' => $adjustment]);
     }
 
     public function post(Request $request, int $id, WarehouseInventoryPosting $service)

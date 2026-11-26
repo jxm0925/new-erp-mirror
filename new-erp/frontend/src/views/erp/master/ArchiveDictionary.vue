@@ -197,7 +197,7 @@
             <el-table-column v-if="kind === 'payments'" label="适用业务" min-width="210">
               <template slot-scope="{ row }">
                 <div class="usage-tags-row">
-                  <el-tag v-if="row.available_for_sales" size="mini" effect="plain" type="primary" class="usage-tag">销售订单</el-tag>
+                  <el-tag v-if="row.available_for_sales" size="mini" effect="plain" type="success" class="usage-tag">销售订单</el-tag>
                   <el-tag v-if="row.available_for_receipt" size="mini" effect="plain" type="success" class="usage-tag">收款</el-tag>
                   <el-tag v-if="row.available_for_payment" size="mini" effect="plain" type="warning" class="usage-tag">付款</el-tag>
                   <span v-if="!row.available_for_sales && !row.available_for_receipt && !row.available_for_payment" class="text-muted text-xs">无适用</span>

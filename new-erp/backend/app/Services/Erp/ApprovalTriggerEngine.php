@@ -2,8 +2,10 @@
 
 namespace App\Services\Erp;
 
+use App\Models\Erp\ApprovalBusinessEvent;
 use App\Models\Erp\ApprovalFlowTemplate;
 use App\Models\Erp\ApprovalFlowVersion;
+use App\Models\Erp\ApprovalTask;
 use Illuminate\Support\Facades\DB;
 
 class ApprovalTriggerEngine
@@ -16,6 +18,26 @@ class ApprovalTriggerEngine
         private readonly ApprovalBusinessObjectAccessService $access,
         private readonly AuthContextService $auth,
     ) {}
+
+    public function submitIfRegistered(string $objectCode, int $businessId, object $initiator, string $subject): ?ApprovalTask
+    {
+        // 尚未安装事件时沿用免审路径。已注册但停用或执行失败时，保留引擎异常以回滚业务提交。
+        $registered = ApprovalBusinessEvent::query()
+            ->whereHas('businessObject', fn ($query) => $query->where('object_code', $objectCode))
+            ->where('event_code', 'submit_approval')->exists();
+        if (!$registered) return null;
+
+        $result = $this->dispatch($objectCode, $businessId, 'submit_approval', $initiator, [
+            'integration_source' => strtolower($objectCode).'_submit',
+            'subject' => $subject,
+        ]);
+        if ($result['result'] === 'BYPASS') return null;
+        $task = $result['task'] ?? null;
+        if (!$task instanceof ApprovalTask) {
+            throw ValidationException::withMessages(['approval_flow' => '审核任务未成功创建，单据仍保留原状态。']);
+        }
+        return $task;
+    }
 
     public function dispatch(string $objectCode, int $businessId, string $eventCode, object $initiator, array $metadata = [], string $mode = 'EVENT_TRIGGER', ?int $flowTemplateId = null): array
     {

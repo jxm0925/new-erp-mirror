@@ -111,7 +111,7 @@ class MfgTaskController extends Controller
         $auth = app(AuthContextService::class);
         $user = $auth->currentUser($request);
         if (! $user || ! empty($user->deleted_at)) throw new WorkOrderDomainException('unauthenticated', '请先登录 ERP。', 401);
-        $allowed = $auth->isSuperAdmin($user) || array_intersect(['production.scrap.approve', 'production.task.execute', 'sales_order.shipment.packing.execute',
+        $allowed = $auth->isSuperAdmin($user) || array_intersect(['production.scrap.approve', 'production.task.execute', 'production.work_order.edit', 'sales_order.shipment.packing.execute',
             'sales_order.shipment.packing.quality'], $auth->permissionCodes($user));
         if (! $allowed && Schema::hasTable(BusinessStaffService::TABLE)) {
             // 业务身份独立于报工权限；只读识别，不能用会自动补档或缺表放行的 isActive。
@@ -119,7 +119,7 @@ class MfgTaskController extends Controller
             app(BusinessStaffService::class)->applyActive($workers, 'production_worker');
             $allowed = $workers->exists();
         }
-        if (! $allowed) throw new WorkOrderDomainException('permission_denied', '仅生产工人或有生产、发货作业权限的员工可以上传影像。', 403);
+        if (! $allowed) throw new WorkOrderDomainException('permission_denied', '仅生产工人或有生产管理、生产作业、发货作业权限的员工可以上传影像。', 403);
         $request->validate(['file' => 'required|file|max:102400']);
         return response()->json(['data' => $media->upload($request->file('file'), $user)]);
     }

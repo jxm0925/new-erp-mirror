@@ -3,12 +3,14 @@
 namespace App\Services\Erp;
 
 use App\Models\Erp\PurchaseLog;
+use App\Models\Erp\ApprovalTask;
 use App\Models\Erp\PurchaseOrder;
 use App\Models\Erp\PurchasePlan;
 use App\Models\Erp\PurchasePlanItem;
 use App\Models\Erp\PurchasePlanSupplierSplit;
 use App\Models\Erp\PurchaseRequest;
 use App\Services\Erp\ApprovalIntegrations\PurchaseOrderApprovalIntegration;
+use App\Services\Erp\ApprovalIntegrations\PurchasePlanApprovalIntegration;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
@@ -17,6 +19,7 @@ class PurchaseWorkflowApplicationService
     public function __construct(
         private readonly PurchaseFinancialFactService $finance,
         private readonly PurchaseOrderApprovalIntegration $approvalIntegration,
+        private readonly PurchasePlanApprovalIntegration $planApprovalIntegration,
     )
     {
     }
@@ -47,38 +50,36 @@ class PurchaseWorkflowApplicationService
             }
             $plan->update(['plan_status' => 'submitted', 'audit_status' => 'pending']);
             $this->log('purchase_plan', $id, 'submit', '提交采购计划', $operator);
-
-            return $plan->fresh(['items.item', 'items.splits.supplier']);
+            if (!$actor) return $plan->fresh(['items.item', 'items.splits.supplier']);
+            $task = $this->planApprovalIntegration->submitted($plan, $actor);
+            if (!$task) return $this->confirmPlan($plan, $operator, '采购计划无需审核，直接通过');
+            $plan = $plan->fresh(['items.item', 'items.splits.supplier']);
+            $plan->setAttribute('approval_task', $task);
+            return $plan;
         }, 5);
     }
 
-    public function approvePlan(int $id, ?string $operator): PurchasePlan
+    public function approvePlan(int $id, ?string $operator, ?int $approvalTaskId = null): PurchasePlan
     {
-        return DB::transaction(function () use ($id, $operator): PurchasePlan {
+        return DB::transaction(function () use ($id, $operator, $approvalTaskId): PurchasePlan {
             $plan = PurchasePlan::query()->lockForUpdate()->findOrFail($id);
             if ($plan->plan_status !== 'submitted' || $plan->audit_status !== 'pending') {
                 throw ValidationException::withMessages(['plan_status' => '只有已提交且待审核的采购计划可以审核通过。']);
             }
             app(PurchaseManagementScopeService::class)->assertDocumentScope($plan);
-            $plan->update([
-                'plan_status' => 'approved',
-                'audit_status' => 'approved',
-                'approved_by' => $operator,
-                'approved_at' => now(),
-            ]);
-            $this->log('purchase_plan', $plan->id, 'approve', '采购计划审核通过', $operator);
-
-            return $plan->fresh(['items.item', 'items.splits.supplier']);
+            $this->assertPlanApprovalOwner($id, $approvalTaskId);
+            return $this->confirmPlan($plan, $operator, '采购计划审核通过');
         }, 5);
     }
 
-    public function rejectPlan(int $id, string $reason, ?string $operator): PurchasePlan
+    public function rejectPlan(int $id, string $reason, ?string $operator, ?int $approvalTaskId = null): PurchasePlan
     {
-        return DB::transaction(function () use ($id, $reason, $operator): PurchasePlan {
+        return DB::transaction(function () use ($id, $reason, $operator, $approvalTaskId): PurchasePlan {
             $plan = PurchasePlan::query()->lockForUpdate()->findOrFail($id);
             if ($plan->plan_status !== 'submitted' || $plan->audit_status !== 'pending') {
                 throw ValidationException::withMessages(['plan_status' => '只有待审核的采购计划可以驳回。']);
             }
+            $this->assertPlanApprovalOwner($id, $approvalTaskId);
             $plan->update([
                 'plan_status' => 'draft',
                 'audit_status' => 'rejected',
@@ -89,6 +90,21 @@ class PurchaseWorkflowApplicationService
 
             return $plan->fresh(['items.item', 'items.splits.supplier']);
         }, 5);
+    }
+
+    private function confirmPlan(PurchasePlan $plan, ?string $operator, string $content): PurchasePlan
+    {
+        $plan->update(['plan_status' => 'approved', 'audit_status' => 'approved', 'approved_by' => $operator, 'approved_at' => now()]);
+        $this->log('purchase_plan', $plan->id, 'approve', $content, $operator);
+        return $plan->fresh(['items.item', 'items.splits.supplier']);
+    }
+
+    private function assertPlanApprovalOwner(int $id, ?int $approvalTaskId): void
+    {
+        // 与提交共用计划锁；只有对应审核任务的完成动作可改变审核中的计划。
+        $pending = ApprovalTask::query()->where('business_type', 'PURCHASE_PLAN')->where('business_id', $id)
+            ->where('task_status', 'PENDING')->when($approvalTaskId, fn ($query) => $query->where('id', '<>', $approvalTaskId))->exists();
+        if ($pending) throw ValidationException::withMessages(['approval_task' => '该采购计划已进入审核中心，请在审核工作台处理。']);
     }
 
     public function confirmRequest(int $id, ?string $operator, ?object $actor = null): PurchaseRequest

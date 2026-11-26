@@ -1,7 +1,7 @@
 const production = require('../../services/production');
 const view = require('../../utils/warehouse-page');
 const labels = { cancel: '取消后续生产', stock: '继续做备货', dismantle: '拆解退料', scrap: '报废在制设备', finish_termination: '处置办结', terminate: '终止生产', postpone: '继续暂停' };
-const statuses = { pending: '待接单人决定', postponed: '继续暂停', terminating: '退料 / 拆解 / 报废处理中' };
+const statuses = { pending: '待处置决定', postponed: '继续暂停', terminating: '退料 / 拆解 / 报废处理中' };
 const activities = [{ value: 'material_return', label: '退料' }, { value: 'dismantle', label: '拆解' }, { value: 'scrap', label: '报废处理' }];
 
 Component({
@@ -13,7 +13,7 @@ Component({
   methods: {
     load() {
       const can = view.permissions();
-      if (!(can('production.task.execute') || can('production.work_order.view'))) return this.setData({ rows: [], total: 0, error: '' });
+      if (!(can('production.task.execute') || can('production.work_order.view') || can('production.work_order.edit') || can('production.material_return.request'))) return this.setData({ rows: [], total: 0, error: '' });
       const sequence = this.sequence = (this.sequence || 0) + 1;
       return production.dispositions({ work_order_id: this.properties.workOrderId || undefined, page: this.data.page, per_page: 10 }).then(response => {
         if (sequence !== this.sequence) return;
@@ -74,7 +74,7 @@ Component({
     submit() {
       const d = this.data;
       if (d.busy || d.uploading || !d.action) return;
-      if (!d.reason.trim()) return wx.showToast({ title: '请填写处理原因', icon: 'none' });
+      if (!d.reason.trim()) return wx.showModal({ title: '请填写原因', content: d.selected.can_proxy_decide ? '生产主管代接单人办理处置必须填写原因说明。' : '请填写处理原因。', showCancel: false });
       if (d.action === 'postpone' && !d.due) return wx.showToast({ title: '请选择处理日期', icon: 'none' });
       if (d.action === 'scrap' && (!d.unitIds.length || !d.media.some(item => item.type === 'image'))) return wx.showToast({ title: '请选择设备并上传现场照片', icon: 'none' });
       const payload = { action: d.action, reason: d.reason.trim(), expected_version: d.selected.business_version };

@@ -28,7 +28,7 @@ final class WorkOrderPlanBuilder
     /**
      * @return array{bom: ?array, routing: ?array, operations: array, materials: array, block_reasons: array, bom_selection_error: ?string}
      */
-    public function build(Item $item, ?int $productId, ?int $skuId, ?array $configuration, float $qty, ?int $bomId = null, ?int $routingId = null, ?array $bomSnapshot = null): array
+    public function build(Item $item, ?int $productId, ?int $skuId, ?array $configuration, float $qty, ?int $bomId = null, ?int $routingId = null, ?array $bomSnapshot = null, ?array $routingSnapshot = null): array
     {
         $blocks = [];
         // 已保存工单的用量依据来自自身快照，换路线不能重新解析已修改的 BOM 主档。
@@ -49,8 +49,10 @@ final class WorkOrderPlanBuilder
             $bomRouting = (int) (Bom::query()->whereKey($bomId)->value('routing_id') ?? 0);
             if ($bomRouting && ProductionRouting::query()->where('status', 'active')->applicableToItem((int) $item->id)->whereKey($bomRouting)->exists()) $routingId = $bomRouting;
         }
-        $routing = $this->routing($item, $productId, $skuId, $routingId, $blocks);
-        if ($routing) $routing = $this->applyBomStandards($routing, $bomId, $item, $productId, is_array($bom) ? ($bom['custom_operation_standards'] ?? null) : null);
+        $routing = $routingSnapshot ?? $this->routing($item, $productId, $skuId, $routingId, $blocks);
+        // 仅自动重试传入已核验有效的原路线；补上新 BOM 时须计算其标准，不能沿用无 BOM 时的计酬。
+        if ($routing && ($routingSnapshot === null || (int) ($routing['standards_bom_id'] ?? 0) !== (int) $bomId))
+            $routing = $this->applyBomStandards($routing, $bomId, $item, $productId, is_array($bom) ? ($bom['custom_operation_standards'] ?? null) : null);
         $operations = $routing ? $routing['operations'] : [];
         $production = array_values(array_filter($operations, fn ($op) => $op['execution_context'] === 'production'));
         if ($routing && ! $production) $blocks[] = '工艺路线里没有车间工序，请在路线里补上生产工序';
@@ -67,7 +69,10 @@ final class WorkOrderPlanBuilder
         $bom['phantom_expansion_complete'] = ! $blocks;
         // 展开失败时保留基准行和原因，防止把部分用料当成完整生产依据。
         if ($blocks) $bom['phantom_expansion_block_reasons'] = $blocks;
-        else $bom['items'] = $expanded;
+        else {
+            $bom['items'] = $expanded;
+            unset($bom['phantom_expansion_block_reasons']);
+        }
         return $bom;
     }
 

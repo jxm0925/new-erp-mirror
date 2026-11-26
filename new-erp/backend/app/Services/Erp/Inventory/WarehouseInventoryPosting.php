@@ -2,6 +2,7 @@
 
 namespace App\Services\Erp\Inventory;
 
+use App\Models\Erp\ApprovalTask;
 use App\Models\Erp\InventoryAdjustment;
 use App\Models\Erp\InventoryBalance;
 use App\Models\Erp\InventoryPostingLog;
@@ -29,10 +30,13 @@ class WarehouseInventoryPosting
     {
     }
 
-    public function postAdjustment(int $adjustmentId, ?int $operatorId = null): InventoryTransaction
+    public function postAdjustment(int $adjustmentId, ?int $operatorId = null, ?ApprovalTask $completionTask = null): InventoryTransaction
     {
-        return DB::transaction(function () use ($adjustmentId, $operatorId) {
+        return DB::transaction(function () use ($adjustmentId, $operatorId, $completionTask) {
+            $this->adjustments->assertNoActiveApproval($adjustmentId, $completionTask);
             $adjustment = InventoryAdjustment::with(['items.item', 'items.serials', 'items.physicalEntries'])->lockForUpdate()->findOrFail($adjustmentId);
+            // 等待单据锁期间提交方可能刚创建任务，取得锁后再用当前读确认，不能沿用先前的无任务结果。
+            $this->adjustments->assertNoActiveApproval($adjustmentId, $completionTask);
             if ($adjustment->adjustment_status === 'posted') {
                 throw ValidationException::withMessages(['adjustment' => '该调整单已过账，不能重复过账。']);
             }

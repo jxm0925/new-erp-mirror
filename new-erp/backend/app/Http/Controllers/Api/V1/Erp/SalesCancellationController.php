@@ -43,12 +43,13 @@ final class SalesCancellationController extends Controller
 
     public function production(Request $request)
     {
-        $actor = $this->user($request, ['production.work_order.view', 'production.task.execute', 'production.material_return.request']);
+        $actor = $this->user($request, ['production.work_order.view', 'production.work_order.edit', 'production.task.execute', 'production.material_return.request']);
         $data = $request->validate(['work_order_id' => 'nullable|integer|min:1', 'sales_order_id' => 'nullable|integer|min:1', 'per_page' => 'nullable|integer|min:1|max:100']);
         $q = Disposition::query()->whereNull('resolved_at');
         $auth = app(AuthContextService::class);
         $super = $auth->isSuperAdmin($actor); $permissions = $auth->permissionCodes($actor);
-        if (!$super && !in_array('production.work_order.view', $permissions, true)) {
+        $manager = CancellationProductionService::canProxyDecide($actor);
+        if (!$manager && !in_array('production.work_order.view', $permissions, true)) {
             $me = (int) ($actor->legacy_id ?? $actor->id ?? 0);
             $q->where(fn ($visible) => $visible->whereJsonContains('history->[0]->permitted_decider_ids', $me)
                 ->orWhereExists(fn ($p) => $p->selectRaw('1')->from('erp_mfg_task_participants as p')->whereColumn('p.work_order_id', 'erp_cancellation_production_dispositions.work_order_id')->where('p.employee_legacy_id', $me))
@@ -58,16 +59,18 @@ final class SalesCancellationController extends Controller
         }
         if (!empty($data['work_order_id'])) $q->where('work_order_id', $data['work_order_id']);
         if (!empty($data['sales_order_id'])) $q->where('sales_order_id', $data['sales_order_id']);
-        return response()->json($q->orderBy('due_at')->paginate($data['per_page'] ?? 10)->through(function ($row) use ($actor, $super, $permissions) {
+        return response()->json($q->orderBy('due_at')->paginate($data['per_page'] ?? 10)->through(function ($row) use ($actor, $super, $permissions, $manager) {
             $wo = \App\Models\Erp\MfgWorkOrder::find($row->work_order_id); $order = SalesOrder::find($row->sales_order_id);
             $unit = $row->work_order_unit_id ? \App\Models\Erp\MfgWorkOrderUnit::find($row->work_order_unit_id) : null;
-            $canDecide = CancellationProductionService::canDecide($row, $actor)
+            $originalDecider = CancellationProductionService::isOriginalDecider($row, $actor);
+            $canDecide = ($originalDecider || $manager)
                 && $unit && ($super || array_intersect(['production.work_order.edit', 'production.task.execute'], $permissions));
             return [...\Illuminate\Support\Arr::except($row->toArray(), ['history']), 'work_order_no' => $wo?->work_order_no, 'item_name' => $wo?->item_name,
                 'sales_order_no' => $order?->sales_order_no, 'owner_name' => $wo?->owner_name,
                 'unit_serial_no' => $unit?->serial_no, 'unit_status' => $unit?->status,
                 'parent_unit_serial_no' => $row->parent_unit_id ? \App\Models\Erp\MfgWorkOrderUnit::whereKey($row->parent_unit_id)->value('serial_no') : null,
                 'origin_type' => $row->sales_order_change_id ? 'change' : 'cancellation', 'can_decide' => $canDecide,
+                'can_proxy_decide' => $canDecide && !$originalDecider && $manager,
                 'can_record_labor' => \App\Services\Erp\Manufacturing\DispositionLaborService::canRecord($row, (int) ($actor->legacy_id ?? $actor->id ?? 0))
                     && ($super || array_intersect(\App\Services\Erp\Manufacturing\DispositionLaborService::EXECUTE_PERMISSIONS, $permissions)),
                 'can_request_material_return' => $canDecide && $row->status === 'terminating' && ($super || in_array('production.material_return.request', $permissions, true)),
@@ -85,7 +88,7 @@ final class SalesCancellationController extends Controller
     public function decide(Request $request, int $id, CancellationProductionService $service)
     {
         $actor = $this->user($request, ['production.work_order.edit', 'production.task.execute']);
-        $data = $request->validate(['action' => 'required|in:stock,postpone,terminate,cancel,dismantle,scrap,finish_termination', 'reason' => 'required|string|max:500',
+        $data = $request->validate(['action' => 'required|in:stock,postpone,terminate,cancel,dismantle,scrap,finish_termination', 'reason' => 'nullable|string|max:500',
             'expected_version' => 'required|integer|min:1', 'due_at' => 'required_if:action,postpone|nullable|date',
             'unit_ids' => 'required_if:action,scrap|array|min:1|max:1000', 'unit_ids.*' => 'integer|min:1|distinct',
             ...\App\Services\Erp\ProductionMediaService::rules()]);

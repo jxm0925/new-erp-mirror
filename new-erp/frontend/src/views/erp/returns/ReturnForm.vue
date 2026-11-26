@@ -25,7 +25,7 @@
       <div class="erp-page-tip">
         <i class="el-icon-info" />
         <span>
-          <strong>退货提示：</strong>采购退货单需提交并审核通过，仓库完成<strong>退货出库过账</strong>后对应仓库与批次库存才会扣减；同一退货单仅支持勾选<strong>同一张原到货单</strong>下的入库批次。
+          <strong>退货提示：</strong>采购退货提交时匹配已发布审核流程才进入审核，否则直接通过；仓库完成<strong>退货出库过账</strong>后对应仓库与批次库存才会扣减；同一退货单仅支持勾选<strong>同一张原到货单</strong>下的入库批次。
         </span>
       </div>
 
@@ -768,10 +768,11 @@ export default {
         const row = response.data.data || response.data
         clearCreatePageReservation(this.reservation)
         draftSaved = true
+        let advanceResponse
         try {
-          if (advance) await (this.kind === 'purchase' ? submitPurchaseReturn(row.id) : confirmSalesReturn(row.id))
+          if (advance) advanceResponse = await (this.kind === 'purchase' ? submitPurchaseReturn(row.id) : confirmSalesReturn(row.id))
         } finally { this.$router.replace(`${this.basePath}/${row.id}/detail`) }
-        this.$message.success(advance ? '已保存并进入下一状态' : '草稿已保存')
+        this.$message.success(advance ? advanceResponse.data.message || '已保存并进入下一状态' : '草稿已保存')
       } catch (error) { this.$message.error((draftSaved ? '草稿已保存，提交失败：' : '') + (error.userMessage || '退货单保存失败')) }
       finally { this.saving = false }
     }

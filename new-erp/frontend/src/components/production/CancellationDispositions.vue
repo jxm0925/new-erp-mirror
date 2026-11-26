@@ -1,7 +1,7 @@
 <template>
   <section v-if="total || error" class="cancellation-dispositions">
     <div class="panel-head"><strong>订单变更 / 取消 · {{ total }} 个编号待处理</strong><el-button size="mini" :loading="loading" @click="load">刷新</el-button></div>
-    <el-alert title="暂停等待不计工时。已开工编号由实际接单人决定去向；退料和拆回物料须经仓库接收入库后办结。" type="warning" :closable="false" show-icon />
+    <el-alert title="暂停等待不计工时。已开工编号由实际接单人或生产主管决定去向；退料和拆回物料须经仓库接收入库后办结。" type="warning" :closable="false" show-icon />
     <el-alert v-if="error" :title="error" type="error" :closable="false" />
     <el-table :data="rows" size="small" border style="margin-top:12px">
       <el-table-column prop="sales_order_no" label="原订单" min-width="135" />
@@ -14,8 +14,8 @@
       <el-table-column prop="reason" label="原因" min-width="160" />
       <el-table-column label="生产处置" min-width="300"><template slot-scope="{row}">
         <template v-if="row.can_decide">
-          <el-dropdown v-if="actionsFor(row).length" trigger="click" @command="item => open(row,item)"><el-button type="text" size="mini">选择去向<i class="el-icon-arrow-down el-icon--right" /></el-button><el-dropdown-menu slot="dropdown"><el-dropdown-item v-for="item in actionsFor(row)" :key="item" :command="item">{{ actionLabels[item] }}</el-dropdown-item></el-dropdown-menu></el-dropdown>
-        </template><span v-else>等待实际接单人处理</span>
+          <el-dropdown v-if="actionsFor(row).length" trigger="click" @command="item => open(row,item)"><el-button type="text" size="mini">{{ row.can_proxy_decide ? '生产管理代办' : '选择去向' }}<i class="el-icon-arrow-down el-icon--right" /></el-button><el-dropdown-menu slot="dropdown"><el-dropdown-item v-for="item in actionsFor(row)" :key="item" :command="item">{{ actionLabels[item] }}</el-dropdown-item></el-dropdown-menu></el-dropdown>
+        </template><span v-else>等待接单人或生产主管处理</span>
         <el-button v-if="row.can_request_material_return && row.operations && row.operations.length" type="text" size="mini" @click="open(row,'return')">申请退料</el-button>
         <el-button v-if="row.can_record_labor || row.can_decide" type="text" size="mini" @click="open(row,'labor')">处理计时</el-button>
       </template></el-table-column>
@@ -37,7 +37,7 @@
             </div>
           </template>
           <el-form-item v-else-if="action === 'return'" label="退料工序"><el-select v-model="operationId" style="width:100%"><el-option v-for="op in selected.operations" :key="op.id" :value="op.id" :label="op.name" /></el-select></el-form-item>
-          <el-form-item v-else label="处理原因（必填）"><el-input v-model.trim="reason" type="textarea" :rows="2" maxlength="500" /></el-form-item>
+          <el-form-item v-else :label="selected.can_proxy_decide ? '代办原因（必填）' : '处理原因（必填）'"><el-input v-model.trim="reason" type="textarea" :rows="2" maxlength="500" :placeholder="selected.can_proxy_decide ? '请说明代接单人办理处置的原因' : '请填写处理原因'" /></el-form-item>
           <el-form-item v-if="action === 'postpone'" label="下次处理日期（不得超过取消后两周）"><el-date-picker v-model="due" type="date" value-format="yyyy-MM-dd" :picker-options="dateOptions" /></el-form-item>
           <template v-if="action === 'scrap'">
             <el-form-item label="本次报废设备">{{ selected.unit_serial_no || ('第' + (selected.unit_no || selected.work_order_unit_id) + '个') }}</el-form-item>
@@ -58,7 +58,7 @@ export default {
   props: { workOrderId: [String, Number], salesOrderId: [String, Number] },
   data: () => ({ rows: [], page: 1, total: 0, loading: false, revision: 0, error: '', selected: null, action: '', dialog: false, saving: false, reason: '', due: '', unitIds: [], media: [], uploading: false,
     returnVisible: false, operationId: 0, labor: {}, laborLoading: false, laborError: '', activity: 'material_return',
-    labels: { pending: '待接单人决定', postponed: '继续暂停', terminating: '退料 / 拆解 / 报废处理中' },
+    labels: { pending: '待处置决定', postponed: '继续暂停', terminating: '退料 / 拆解 / 报废处理中' },
     actionLabels: { cancel: '取消后续生产', stock: '继续做备货', dismantle: '拆解退料', postpone: '继续暂停', terminate: '终止生产', finish_termination: '处置办结', scrap: '报废在制设备', return: '申请退料', labor: '处理计时' },
     activityLabels: { material_return: '退料', dismantle: '拆解', scrap: '报废处理' },
     hints: { cancel: '停止这个编号的后续生产。它已领的材料须先退回仓库，仍有待处理事项时保留待办。', dismantle: '只拆本次编号上的可用材料并申请退回仓库，仓库真实接收入库后再办结。', stock: '这个编号继续做备货，完工后入库；其余编号保留原来的订单安排。', postpone: '这个编号继续暂停，提醒保留，暂停等待不计工时。', terminate: '停止这个编号的后续生产，落实退料、拆回或报废后再办结。', finish_termination: '系统核对这个编号的退料、配送和入库去向，尚有未处理事项不能办结。', scrap: '只报废本次编号，保留已经发生的工时和成本。可回收材料仍须办理拆回入库。', labor: '仅在实际处理这个编号时开始计时，等待仓库或暂停作业时请暂停计时。' } }),
@@ -84,7 +84,22 @@ export default {
     async load() { const revision=++this.revision;this.loading=true; this.error=''; try { const r=await api.get('/v1/erp/production/cancellation-dispositions',{params:{page:this.page,per_page:10,work_order_id:this.workOrderId || undefined,sales_order_id:this.salesOrderId || undefined}});if(revision!==this.revision)return;this.rows=r.data.data;this.total=r.data.total } catch(e){if(revision===this.revision)this.error=e.userMessage || '生产处置清单加载失败'}finally{if(revision===this.revision)this.loading=false} },
     async open(row,action) { this.selected=row;this.action=action;this.reason='';this.due='';this.unitIds=row.work_order_unit_id ? [row.work_order_unit_id] : [];this.media=[];this.dialog=true;this.operationId=row.operations?.[0]?.id || 0;if(action==='labor')await this.loadLabor() },
     async upload(event) { const files=Array.from(event.target.files || []);if(this.media.length+files.length>9)return this.$message.warning('最多上传9张照片');this.uploading=true;try{for(const file of files){const form=new FormData();form.append('file',file);const r=await api.post('/v1/erp/production/tasks/media',form,{headers:{'Content-Type':'multipart/form-data'}});this.media.push(r.data.data)}}catch(e){this.$message.error(e.userMessage || '照片上传失败')}finally{this.uploading=false;event.target.value=''} },
-    async submit() { if(this.action==='return'){if(!this.selected.can_request_material_return)return this.$message.warning('当前账号或处置状态不能申请退料');if(!this.operationId)return this.$message.warning('请选择退料工序');this.dialog=false;this.returnVisible=true;return}if(!this.reason)return this.$message.warning('请填写处理原因');if(this.action==='postpone'&&!this.due)return this.$message.warning('请选择下次处理日期');if(this.action==='scrap'&&(!this.unitIds.length||!this.media.length))return this.$message.warning('请选择设备并上传现场照片');this.saving=true;try{const data={action:this.action,reason:this.reason,expected_version:this.selected.business_version,...(this.action==='postpone'?{due_at:this.due}:{}),...(this.action==='scrap'?{unit_ids:this.unitIds,media:this.media}:{})};await api.post(`/v1/erp/production/cancellation-dispositions/${this.selected.id}/decision`,data);this.dialog=false;this.$message.success('处置已记录');await this.load();this.$emit('changed')}catch(e){this.$message.error(e.userMessage || '处置未完成，请核对待办事项')}finally{this.saving=false} }
+    async submit() {
+      if (this.action === 'return') {
+        if (!this.selected.can_request_material_return) return this.$message.warning('当前账号或处置状态不能申请退料')
+        if (!this.operationId) return this.$message.warning('请选择退料工序')
+        this.dialog=false;this.returnVisible=true;return
+      }
+      if (!this.reason.trim()) return this.$message.warning(this.selected.can_proxy_decide ? '生产主管代接单人办理处置必须填写原因说明。' : '请填写处理原因')
+      if (this.action === 'postpone' && !this.due) return this.$message.warning('请选择下次处理日期')
+      if (this.action === 'scrap' && (!this.unitIds.length || !this.media.length)) return this.$message.warning('请选择设备并上传现场照片')
+      this.saving=true
+      try {
+        const data={action:this.action,reason:this.reason.trim(),expected_version:this.selected.business_version,...(this.action==='postpone'?{due_at:this.due}:{}),...(this.action==='scrap'?{unit_ids:this.unitIds,media:this.media}:{})}
+        await api.post(`/v1/erp/production/cancellation-dispositions/${this.selected.id}/decision`,data)
+        this.dialog=false;this.$message.success('处置已记录');await this.load();this.$emit('changed')
+      } catch(e) { this.$message.error(e.userMessage || '处置未完成，请核对待办事项') } finally { this.saving=false }
+    }
   }
 }
 </script>

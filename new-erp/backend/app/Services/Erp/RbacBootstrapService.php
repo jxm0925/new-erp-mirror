@@ -2,6 +2,7 @@
 
 namespace App\Services\Erp;
 
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
@@ -9,7 +10,19 @@ class RbacBootstrapService
 {
     public function bootstrap(bool $force = false): void
     {
+        static $completed = [];
+        static $definitionHash = null;
+        $definitionHash ??= hash('sha256', hash_file('sha256', __FILE__).'|'.hash_file('sha256', __DIR__.'/BusinessStaffService.php'));
+        $cacheKey = 'erp:rbac:bootstrap:'.hash('sha256', DB::connection()->getDatabaseName().'|'.$definitionHash);
+        if (! $force && isset($completed[$cacheKey])) return;
+        // 目录或档案回填规则变更会自动失效；空授权库仍走原初始化判断，不被旧缓存跳过。
+        if (! $force && Cache::get($cacheKey) === true && DB::table('erp_rbac_role_permissions')->exists()) {
+            $completed[$cacheKey] = true;
+            return;
+        }
         if ($force) {
+            unset($completed[$cacheKey]);
+            Cache::forget($cacheKey);
             $this->syncDepartments(true);
         }
         $created = $this->seedPermissions($force);
@@ -23,6 +36,8 @@ class RbacBootstrapService
         if ($freshInstall) $this->initializeBuiltinRoleDefaults();
         // 升级到业务员档案后，按原销售标记一次性登记销售员，保证订单业务员候选不丢。
         app(BusinessStaffService::class)->ensureBackfilled();
+        Cache::forever($cacheKey, true);
+        $completed[$cacheKey] = true;
     }
 
     /** 内置角色默认权限：精确码或“前缀.*”；授予按钮时自动带上各级父菜单。 */
@@ -34,7 +49,7 @@ class RbacBootstrapService
         ],
         'sales_user' => [
             'crm.workbench.view', 'crm.dashboard.view',
-            'crm.lead.view', 'crm.lead.create', 'crm.lead.edit', 'crm.lead.accept', 'crm.lead.return', 'crm.lead.claim',
+            'crm.lead.view', 'crm.lead.create', 'crm.lead.edit', 'crm.lead.accept', 'crm.lead.return', 'crm.lead.release', 'crm.lead.claim',
             'crm.lead.follow', 'crm.lead.confirm', 'crm.lead.invalidate', 'crm.lead.pool', 'crm.followup.edit',
             'crm.opportunity.view', 'crm.opportunity.create', 'crm.opportunity.edit', 'crm.opportunity.stage',
             'crm.opportunity.lose', 'crm.opportunity.follow', 'crm.opportunity.file', 'crm.opportunity.order',
@@ -153,6 +168,7 @@ class RbacBootstrapService
         'crm.lead.assign' => ['sales_manager', 'department_principal'],
         'crm.lead.accept' => ['sales_user', 'sales_manager', 'department_principal'],
         'crm.lead.return' => ['sales_user', 'sales_manager', 'department_principal'],
+        'crm.lead.release' => ['sales_user', 'sales_manager', 'department_principal'],
         'crm.lead.transfer' => ['sales_manager', 'department_principal'],
         'crm.lead.recycle' => ['sales_manager', 'department_principal'],
         'crm.lead.claim' => ['sales_user', 'sales_manager', 'department_principal'],
@@ -178,6 +194,7 @@ class RbacBootstrapService
 
     /** 新权限还要授给已有某个权限的角色（如自建的采购员角色有“新增需求”就能看生产缺料并转采购）。 */
     private const NEW_PERMISSION_FOLLOWERS = [
+        'crm.lead.release' => 'crm.lead.return',
         // 业务员档案从部门管理拆出：已能维护部门的角色同步获得档案的对应能力。
         'system.business_staff' => 'system.department',
         'system.business_staff.view' => 'system.department.view',
@@ -515,6 +532,7 @@ class RbacBootstrapService
             ['crm.lead.invalidate', '标记无效线索', 'button', 'crm.lead', null, null, 'el-icon-remove-outline', 12],
             ['crm.lead.pool', '调整客户池', 'button', 'crm.lead', null, null, 'el-icon-collection-tag', 13],
             ['crm.followup.edit', '修改跟进记录', 'button', 'crm.lead', null, null, 'el-icon-edit-outline', 15],
+            ['crm.lead.release', '释放本人线索到公海', 'button', 'crm.lead', null, null, 'el-icon-box', 16],
             ['crm.team.view', '查看销售团队', 'button', 'crm.team', null, null, 'el-icon-view', 1],
             ['crm.team.capability', '维护销售能力', 'button', 'crm.team', null, null, 'el-icon-collection-tag', 2],
             ['crm.team.grant', '维护CRM分配授权', 'button', 'crm.team', null, null, 'el-icon-key', 3],

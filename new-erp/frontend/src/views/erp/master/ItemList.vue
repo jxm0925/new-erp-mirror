@@ -175,7 +175,7 @@
         </div>
 
         <div class="filter-actions">
-          <el-button size="small" type="primary" icon="el-icon-search" class="btn-theme-query" @click="search">查询</el-button>
+          <el-button size="small" type="success" icon="el-icon-search" class="btn-theme-query" @click="search">查询</el-button>
           <el-button size="small" icon="el-icon-refresh-left" @click="reset">重置</el-button>
           <el-button size="small" icon="el-icon-refresh" circle title="刷新列表" @click="load" />
         </div>
@@ -428,7 +428,7 @@
                 <span class="card-icon-badge"><i class="el-icon-refresh" /></span>
                 <h3>采购单位换算</h3>
               </div>
-              <el-button size="mini" type="primary" plain icon="el-icon-plus" @click="openConversionCreate">新增采购换算</el-button>
+              <el-button size="mini" type="success" plain icon="el-icon-plus" @click="openConversionCreate">新增采购换算</el-button>
             </div>
             <el-table :data="conversions" border size="mini" empty-text="暂无采购单位换算，系统默认采用基本单位采购">
               <el-table-column label="采购单位" min-width="110">
@@ -504,7 +504,7 @@
       <div slot="footer" class="dialog-footer">
         <el-button size="small" @click="detailDialogVisible = false">关闭</el-button>
         <el-button size="small" icon="el-icon-edit" @click="openEdit(selected)">编辑物料</el-button>
-        <el-button v-if="!selectedIsOffice" size="small" type="primary" class="btn-theme-primary" @click="$router.push('/master/sku-item-relations')">
+        <el-button v-if="!selectedIsOffice" size="small" type="success" class="btn-theme-primary" @click="$router.push('/master/sku-item-relations')">
           去关联SKU
         </el-button>
       </div>
@@ -573,7 +573,7 @@
 
       <div slot="footer" class="dialog-footer">
         <el-button size="small" @click="conversionDialogVisible = false">取消</el-button>
-        <el-button size="small" type="primary" :loading="saving" class="btn-theme-primary" @click="saveConversion">
+        <el-button size="small" type="success" :loading="saving" class="btn-theme-primary" @click="saveConversion">
           保存并生效
         </el-button>
       </div>

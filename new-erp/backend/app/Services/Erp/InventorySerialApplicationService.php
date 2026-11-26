@@ -87,37 +87,6 @@ class InventorySerialApplicationService
         }
     }
 
-    public function attachPostedReceiptLine(PurchaseReceipt $receipt, PurchaseReceiptItem $line, InventoryBalance $balance): void
-    {
-        if (!$line->item || $line->item->serialTrackingMode() === 'none') return;
-        if ($line->item->serialTrackingMode() === 'optional' && !trim((string) $line->serial_text)) return;
-
-        $serialNumbers = $this->validatedSerialNumbers($line);
-        $serials = InventorySerial::query()
-            ->where('source_receipt_item_id', $line->id)
-            ->whereIn('serial_no', $serialNumbers)
-            ->lockForUpdate()
-            ->get();
-
-        if ($serials->count() !== $serialNumbers->count() || $serials->contains(fn (InventorySerial $serial) => $serial->serial_status !== 'pending_posting')) {
-            throw ValidationException::withMessages([
-                'serial_text' => "物料 {$line->item->item_code} 的设备编号尚未在实物入库环节完整建档，不能库存过账。",
-            ]);
-        }
-
-        foreach ($serials as $serial) {
-            $serial->update([
-                'inventory_balance_id' => $balance->id,
-                'warehouse_id' => $line->warehouse_id,
-                'location_id' => $line->location_id,
-                'batch_no' => $line->batch_no,
-                'serial_status' => 'available',
-                'posted_at' => now(),
-            ]);
-            $this->event($serial, 'inventory_posted', 'pending_posting', 'available', $receipt, $line);
-        }
-    }
-
     public function attachPostedReceiptAllocation(PurchaseReceipt $receipt, PurchaseReceiptItem $line, PurchaseReceiptItemAllocation $allocation, InventoryBalance $balance): void
     {
         if (!$line->item || $line->item->serialTrackingMode() === 'none') return;

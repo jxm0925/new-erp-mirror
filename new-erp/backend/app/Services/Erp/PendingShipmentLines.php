@@ -25,6 +25,16 @@ final class PendingShipmentLines
         return $this->forOrders(new Collection([$order]))[$order->id] ?? [];
     }
 
+    /** 基线按订单行取最大值：同一事实会随父子预留复制，不能按预留数量求和。 */
+    public function legacyShippedQuantities(array $lineIds, bool $currentRead = false): array
+    {
+        if ($lineIds === []) return [];
+        return DB::table('erp_inventory_reservations')->where('source_type', 'sales_order')->whereIn('source_order_line_id', $lineIds)
+            ->whereRaw("JSON_EXTRACT(reservation_snapshot, '$.sales_order_legacy_shipped_qty') IS NOT NULL")
+            ->selectRaw("source_order_line_id, MAX(CAST(JSON_UNQUOTE(JSON_EXTRACT(reservation_snapshot, '$.sales_order_legacy_shipped_qty')) AS DECIMAL(24, 8))) AS qty")
+            ->groupBy('source_order_line_id')->when($currentRead, fn ($query) => $query->lockForUpdate())->pluck('qty', 'source_order_line_id')->all();
+    }
+
     public function forOrders(Collection $orders): array
     {
         $orders = $orders->filter(fn ($order) => $order->order_status === 'confirmed' && !$order->short_closed_at && !$order->isLegacyHistory());
@@ -32,6 +42,7 @@ final class PendingShipmentLines
         $orders->loadMissing('lines');
         $lines = $orders->flatMap(fn ($order) => $order->lines->sortBy('line_no'));
         $lineIds = $lines->pluck('id');
+        $legacyByLine = $this->legacyShippedQuantities($lineIds->all());
         $shipped = SalesOrderFulfillmentPolicy::shippedLines()->current()->whereIn('sales_order_line_id', $lineIds)
             ->selectRaw('sales_order_line_id, SUM(sales_qty) as qty')->groupBy('sales_order_line_id')->pluck('qty', 'sales_order_line_id');
         $allocated = SalesShipmentLine::query()->current()->whereIn('sales_order_line_id', $lineIds)
@@ -52,6 +63,9 @@ final class PendingShipmentLines
             if ($line->line_status === 'cancelled' || ! SalesOrderFulfillmentPolicy::isPhysical((string) $line->line_type)) continue;
             $sent = (string) ($shipped[$line->id] ?? '0');
             $totalAllocated = (string) ($allocated[$line->id] ?? '0');
+            $legacy = (string) ($legacyByLine[$line->id] ?? '0');
+            $sent = bcadd($sent, $legacy, 8);
+            $totalAllocated = bcadd($totalAllocated, $legacy, 8);
             // 有历史实发缓存、没有发货明细的旧行也不能重新备货。
             if (! isset($allocated[$line->id])) $sent = (string) max($sent, $line->shipped_qty ?? '0');
             $remaining = bcsub(bcsub((string) $line->order_qty, (string) ($line->cancelled_qty ?? '0'), 8), $sent, 8);

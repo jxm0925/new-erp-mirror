@@ -330,7 +330,9 @@ export default {
       const plans = unique([doc.plan, ...items.map(line => line.plan || (line.plan_item && line.plan_item.plan))], 'id')
       const receipts = (doc.receipts || []).filter(row => row.receipt_status !== 'cancelled')
       const confirmed = receipts.filter(row => row.confirm_status === 'confirmed')
-      const posted = confirmed.filter(row => ['posted', 'not_required'].includes(row.stock_post_status))
+      const posted = confirmed.filter(row => row.stock_post_status === 'posted')
+      const pendingPosting = confirmed.filter(row => row.stock_post_status === 'pending')
+      const notRequired = confirmed.filter(row => row.stock_post_status === 'not_required')
       const finance = doc.finance_summary || {}
       const payable = Number(finance.current_payable_amount || 0)
       const paid = Number(finance.paid_amount || 0)
@@ -347,8 +349,8 @@ export default {
         { title: '到货验收', status: received ? 'finish' : confirmed.length ? 'process' : approved ? 'process' : 'wait',
           desc: received ? '已全部到货' : confirmed.length ? '部分到货' : approved ? (doc.expected_arrival_date ? `预计 ${String(doc.expected_arrival_date).slice(0, 10)}` : '等待到货') : '订单确认后到货',
           links: receipts.map(row => ({ text: row.receipt_no, to: { path: '/purchase/receipts', query: { keyword: row.receipt_no } } })) },
-        { title: '入库过账', status: confirmed.length && posted.length === confirmed.length && received ? 'finish' : posted.length ? 'process' : 'wait',
-          desc: confirmed.length ? `${posted.length}/${confirmed.length} 张到货单已入库` : '到货确认后入库', links: [] },
+        { title: '入库过账', status: confirmed.length && posted.length + notRequired.length === confirmed.length && received ? 'finish' : confirmed.length ? 'process' : 'wait',
+          desc: confirmed.length ? `已过账 ${posted.length} 张 · 待过账 ${pendingPosting.length} 张 · 无需过账 ${notRequired.length} 张` : '到货确认后按库存管理要求过账', links: [] },
         { title: '付款', status: payable > 0 && paid + 0.005 >= payable && received ? 'finish' : paid > 0 ? 'process' : 'wait',
           desc: payable > 0 ? `已付 ¥${money(paid)} / 应付 ¥${money(payable)}` : '到货确认后形成应付',
           links: canFinance && payable > 0 ? [{ text: '查看应付', to: { path: '/finance/payables', query: { view: 'documents', purchase_order_no: doc.purchase_order_no } } }] : [] }

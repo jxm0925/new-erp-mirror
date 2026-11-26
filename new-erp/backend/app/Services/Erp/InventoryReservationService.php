@@ -128,14 +128,15 @@ class InventoryReservationService
         }, 5);
     }
 
-    public function reserveForSalesOrder(SalesOrder $order): array
+    public function reserveForSalesOrder(SalesOrder $order, ?array $fulfillmentIds = null): array
     {
-        return DB::transaction(function () use ($order) {
+        return DB::transaction(function () use ($order, $fulfillmentIds) {
             $created = [];
             foreach ($order->fulfillments()
                 ->where('fulfillment_type', 'inventory')
                 ->where('demand_status', 'confirmed')
                 ->where('reservation_status', 'pending')
+                ->when($fulfillmentIds !== null, fn ($query) => $query->whereIn('id', $fulfillmentIds))
                 ->orderBy('inventory_balance_id')
                 ->get() as $fulfillment) {
                 $key = "sales_order:{$order->id}:line:{$fulfillment->sales_order_line_id}:fulfillment:{$fulfillment->id}";

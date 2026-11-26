@@ -15,7 +15,7 @@
           <el-button
             v-if="$can('approval.task.submit')"
             size="small"
-            type="primary"
+            type="success"
             icon="el-icon-plus"
             @click="openLaunch"
             >发起申请</el-button

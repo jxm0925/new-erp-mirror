@@ -1,10 +1,10 @@
 <template>
-  <div class="prod-confirm-page" v-loading="loading">
+  <div class="prod-confirm-page" :class="{ 'prod-confirm-page--embedded': embeddedOrderId }" v-loading="loading">
     <!-- 顶部统一标头 (.page-head) -->
     <header class="page-head" v-if="order">
       <div class="head-left">
         <el-button size="small" icon="el-icon-back" class="btn-back" @click="returnToOrder">
-          返回销售订单
+          {{ embeddedOrderId ? '关闭' : '返回销售订单' }}
         </el-button>
         <span class="head-icon"><i class="el-icon-s-operation" /></span>
         <div class="head-title-wrap">
@@ -362,8 +362,10 @@ import { confirmationAllocationSum, currentConfirmationSuggestion, confirmationI
 export default {
   mixins: [cachedPageRoute],
   name: 'SalesProductionConfirmation',
+  props: { embeddedOrderId: { type: [Number, String], default: null } },
   components: { ProductionConfirmationBom, PurchaseItemPicker },
-  data: () => ({
+  data () { return {
+    pageRoute: this.embeddedOrderId ? { ...this.$route, params: { id: this.embeddedOrderId } } : this.$route,
     loading: false,
     submitting: false,
     preview: {},
@@ -375,8 +377,10 @@ export default {
     bomDraftKey: '',
     bomTarget: null,
     loadSequence: 0
-  }),
+  } },
   computed: {
+    confirmationOrderId () { return this.embeddedOrderId || this.pageRoute.params.id },
+    isPageRouteActive () { return !!this.embeddedOrderId || this.$route.path === this.pageRoute.path },
     editable () {
       return !this.pending && this.$can('sales_order.production_confirm') && this.order && this.order.order_status === 'confirmed' && ['pending', 'blocked'].includes(this.order.production_confirm_status)
     },
@@ -439,17 +443,19 @@ export default {
   },
   created () { this.load() },
   deactivated () { this.closeBomPicker() },
+  beforeDestroy () { this.loadSequence += 1; this.closeBomPicker() },
   watch: {
-    'pageRoute.params.id' () { this.load() }
+    confirmationOrderId () { this.load() }
   },
   methods: {
     returnToOrder () {
+      if (this.embeddedOrderId) return this.$emit('close')
       if (!this.order || !this.order.id) return this.$router.push('/sales/orders')
       return this.$router.push(`/sales/orders/${this.order.id}/detail`)
     },
     async load (notify = false) {
       const sequence = ++this.loadSequence
-      const orderId = this.pageRoute.params.id
+      const orderId = this.confirmationOrderId
       this.closeBomPicker()
       const drafts = Object.fromEntries(this.lines.filter(row => row.bom_draft).map(row => [row.sales_order_line_id, row.bom_draft]))
       if (Number(this.order?.id) !== Number(orderId)) {
@@ -660,7 +666,7 @@ export default {
     },
     async submit () {
       if (this.submitting || this.loading || !this.$can('sales_order.production_confirm') || !this.order?.id
-        || Number(this.pageRoute.params.id) !== Number(this.order.id)) return
+        || Number(this.confirmationOrderId) !== Number(this.order.id)) return
       const orderId = this.order.id
       const storageKey = this.storageKey
       const draftKey = this.bomDraftKey
@@ -680,30 +686,31 @@ export default {
             '提交生产备货确认',
             { type: 'warning', confirmButtonText: '确认提交', cancelButtonText: '取消' }
           )
-          if (contextSequence !== this.loadSequence || Number(this.pageRoute.params.id) !== Number(orderId)) return
+          if (contextSequence !== this.loadSequence || Number(this.confirmationOrderId) !== Number(orderId)) return
           localStorage.setItem(storageKey, JSON.stringify(payload))
           this.pending = payload
         }
         const { data } = await confirmProduction(orderId, payload)
         localStorage.removeItem(storageKey)
         localStorage.removeItem(draftKey)
-        if (Number(this.pageRoute.params.id) === Number(orderId)) {
+        if (Number(this.confirmationOrderId) === Number(orderId)) {
           this.lines.forEach(row => { row.bom_draft = null })
           const shipmentNo = data.data?.confirmation_command_result?.shipment_no
           this.$message.success(shipmentNo ? '订单已下达，待发单 ' + shipmentNo : '订单生产确认已成功提交')
           await this.load()
+          this.$emit('changed')
         }
       } catch (error) {
         if (error === 'cancel' || error === 'close') return
         const status = Number(error.response?.status || 0)
         if (status >= 400 && status < 500 && !['command_processing', 'command_recovery_required', 'recovery_required'].includes(error.errorCode)) {
           localStorage.removeItem(storageKey)
-          if (Number(this.pageRoute.params.id) === Number(orderId)) {
+          if (Number(this.confirmationOrderId) === Number(orderId)) {
             this.pending = null
             if ([403, 404, 409].includes(status)) await this.load()
           }
         }
-        if (Number(this.pageRoute.params.id) === Number(orderId)) {
+        if (Number(this.confirmationOrderId) === Number(orderId)) {
           this.$message.error(error.userMessage || error.message || '订单生产确认提交失败，请重试原确认')
         }
       } finally {
@@ -747,6 +754,10 @@ export default {
   background: #f8fafc;
   color: #1e293b;
   box-sizing: border-box;
+}
+.prod-confirm-page--embedded {
+  min-height: 0;
+  padding: 0;
 }
 
 /* 顶部页面标头 (.page-head) */

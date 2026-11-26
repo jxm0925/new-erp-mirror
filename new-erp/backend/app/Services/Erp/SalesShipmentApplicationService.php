@@ -75,6 +75,83 @@ class SalesShipmentApplicationService
         return $shipment;
     }
 
+    /** 自动备货只带入无序列号物料；设备仍须由仓库选择真实编号。 */
+    public function issueForOrderWithReservedItems(SalesOrder $order, string $operator): ?SalesShipment
+    {
+        return DB::transaction(function () use ($order, $operator): ?SalesShipment {
+            $order = SalesOrder::query()->whereKey($order->id)->lockForUpdate()->firstOrFail();
+            $order->assertCurrentBusiness();
+            $order->setRelation('lines', $order->lines()->orderBy('id')->lockForUpdate()->get());
+            $shipment = $this->issueForOrder($order, $operator);
+            if (! $shipment) return null;
+
+            $fulfillments = $order->fulfillments()->where('demand_status', 'confirmed')
+                ->whereIn('fulfillment_type', ['inventory', 'production', 'purchase'])->orderBy('id')->lockForUpdate()->get();
+            $parents = InventoryReservation::query()->with('item')
+                ->where('source_type', InventoryReservation::SOURCE_SALES_ORDER)->where('source_order_id', $order->id)
+                ->where('reservation_status', 'active')->where('reserved_qty', '>', 0)
+                ->orderBy('reserved_at')->orderBy('id')->lockForUpdate()->get();
+            $legacyByLine = app(PendingShipmentLines::class)->legacyShippedQuantities($order->lines->modelKeys(), true);
+            // 必须读当前明细而非 shipped_qty 缓存；同一订单行已经安排的部分不能再自动加入。
+            $allocated = SalesShipmentLine::query()->current()->whereIn('sales_order_line_id', $order->lines->modelKeys())
+                ->whereHas('shipment', fn ($q) => $q->whereIn('shipment_status', ['draft', 'pending_outbound', 'prepared', 'partially_shipped', 'outbound_posted', 'shipped', 'completed']))
+                ->orderBy('id')->lockForUpdate()->get();
+            $allocatedByLine = $allocated->groupBy('sales_order_line_id');
+            $allocatedReservationIds = $allocated->pluck('inventory_reservation_id')->map(fn ($id) => (int) $id)->all();
+            $lines = $order->lines->keyBy('id');
+            $parentsByFulfillment = [];
+            foreach ($parents as $parent) {
+                if ($parent->item?->serialTrackingMode() !== 'none' || in_array((int) $parent->id, $allocatedReservationIds, true)) continue;
+                $line = $lines->get($parent->source_order_line_id);
+                if (! $line || in_array($line->line_status, ['removed', 'replaced', 'cancelled'], true)
+                    || (int) $parent->item_id !== (int) $line->item_id || ! SalesOrderFulfillmentPolicy::isPhysical((string) $line->line_type)) continue;
+                $matches = $fulfillments->filter(fn ($row) => (int) $row->sales_order_line_id === (int) $line->id
+                    && (int) $row->item_id === (int) $line->item_id
+                    && ($parent->sales_order_fulfillment_id
+                        ? (int) $row->id === (int) $parent->sales_order_fulfillment_id
+                        : (int) $row->inventory_balance_id === (int) $parent->inventory_balance_id));
+                // 旧预留没有履约 ID 时只能接受唯一对应，不能把同一份库存随意归给某个批次。
+                if ($matches->count() !== 1) continue;
+                $parentsByFulfillment[$matches->first()->id][] = $parent;
+            }
+            $rows = []; $remainingByLine = [];
+            foreach ($parentsByFulfillment as $fulfillmentId => $sources) {
+                $fulfillment = $fulfillments->firstWhere('id', $fulfillmentId);
+                $line = $lines->get($fulfillment->sales_order_line_id);
+                $factor = (string) ($line->fulfillment_factor_snapshot ?? '0');
+                if (bccomp($factor, '0', 8) <= 0) throw ValidationException::withMessages(['lines' => '订单行缺少有效单位换算快照，不能自动加入发货明细。']);
+                $lineAllocations = $allocatedByLine->get($line->id, collect());
+                if (! isset($remainingByLine[$line->id])) {
+                    $effective = bcsub((string) $line->order_qty, (string) ($line->cancelled_qty ?? '0'), 8);
+                    $usedBase = $lineAllocations->reduce(fn ($sum, $row) => bcadd($sum, (string) $row->base_qty, 8), '0');
+                    $legacyShippedQty = $this->legacyShippedQuantity($line, $lineAllocations, $legacyByLine);
+                    $usedBase = bcadd($usedBase, bcmul($legacyShippedQty, $factor, 8), 8);
+                    $remainingByLine[$line->id] = bcsub(bcmul($effective, $factor, 8), $usedBase, 8);
+                }
+                $usedBase = $lineAllocations->where('sales_order_fulfillment_id', $fulfillment->id)
+                    ->reduce(fn ($sum, $row) => bcadd($sum, (string) $row->base_qty, 8), '0');
+                $fulfillmentRemaining = bcsub((string) ($fulfillment->item_base_qty ?? $fulfillment->fulfillment_qty), $usedBase, 8);
+                $baseQty = collect($sources)->reduce(fn ($sum, $parent) => bcadd($sum, (string) $parent->reserved_qty, 8), '0');
+                foreach ([$remainingByLine[$line->id], $fulfillmentRemaining] as $cap) if (bccomp($baseQty, $cap, 8) > 0) $baseQty = $cap;
+                if (bccomp($baseQty, '0', 8) <= 0) continue;
+                $rows[] = ['sales_order_fulfillment_id' => $fulfillment->id,
+                    'inventory_reservation_ids' => array_map(fn ($parent) => (int) $parent->id, $sources), 'base_qty' => $baseQty];
+                $remainingByLine[$line->id] = bcsub($remainingByLine[$line->id], $baseQty, 8);
+            }
+            // 统一走人工追加入口的快照、预留切分、状态、包装冻结、版本和日志规则。
+            // 整段持有订单及预留锁；重试只会看到剩余 active 数量，不会重复生成明细。
+            return $rows === [] ? $shipment : $this->createDraft((int) $order->id, ['shipment_id' => $shipment->id, 'lines' => $rows], $operator);
+        }, 5);
+    }
+
+    /** 旧行已发基线独立于后续发货明细；预留切分、取消或重新安排都不能再次占用这部分需求。 */
+    private function legacyShippedQuantity(SalesOrderLine $line, \Illuminate\Support\Collection $allocatedLines, array $legacyByLine): string
+    {
+        $quantity = (string) ($legacyByLine[$line->id] ?? '0');
+        if ($allocatedLines->isEmpty() && bccomp((string) ($line->shipped_qty ?? '0'), $quantity, 8) > 0) $quantity = (string) $line->shipped_qty;
+        return bccomp($quantity, '0', 8) > 0 ? bcadd($quantity, '0', 8) : '0.00000000';
+    }
+
     public function cancelEmptyDraftsForOrder(SalesOrder $order, string $operator, string $reason): void
     {
         $drafts = $order->shipments()->where('shipment_status', 'draft')->doesntHave('lines')->doesntHave('packages')
@@ -120,6 +197,7 @@ class SalesShipmentApplicationService
             $existingLineIds = $appended ? $shipment->lines()->pluck('id')->all() : [];
             $shipment ??= $this->newDraft($order, $payload, $operator);
 
+            $legacyByLine = app(PendingShipmentLines::class)->legacyShippedQuantities($order->lines->modelKeys(), true);
             $usedSerialIds = [];
             foreach ($payload['lines'] ?? [] as $index => $row) {
                 $fulfillment = SalesOrderFulfillment::query()
@@ -142,6 +220,7 @@ class SalesShipmentApplicationService
                     ->where('reservation_status', 'active')
                     // 完工直交只接本批入库预留；普通发货未指定时仍按原预留顺序分配。
                     ->when(isset($row['inventory_reservation_id']), fn ($query) => $query->whereKey((int) $row['inventory_reservation_id']))
+                    ->when(isset($row['inventory_reservation_ids']), fn ($query) => $query->whereIn('id', $row['inventory_reservation_ids']))
                     ->orderBy('reserved_at')->orderBy('id')->lockForUpdate()->get();
                 if ($parents->isEmpty()) {
                     throw ValidationException::withMessages(['lines.'.$index => '当前订单行没有可用于发货的有效库存预留。']);
@@ -155,21 +234,42 @@ class SalesShipmentApplicationService
                 $baseUnit = app(UnitConversionDomainService::class)->canonicalUnit(\App\Models\Erp\Unit::find($line->item_base_unit_id ?: $line->unit_id));
                 if (! $baseUnit) throw ValidationException::withMessages(['lines.'.$index => '发货明细缺少有效基础单位。']);
                 app(UnitConversionDomainService::class)->assertUnitPrecision($baseQty, $baseUnit, 'lines.'.$index.'.base_qty');
-                if (! SalesOrderFulfillmentPolicy::isPhysical((string) $line->line_type)) {
+                if (in_array($line->line_status, ['removed', 'replaced', 'cancelled'], true) || ! SalesOrderFulfillmentPolicy::isPhysical((string) $line->line_type)) {
                     throw ValidationException::withMessages(['lines.'.$index => '服务或无需发货的订单行不能创建实物发货。']);
                 }
                 $factor = (float) $line->fulfillment_factor_snapshot;
                 if ($factor <= 0 || (int) $fulfillment->item_id !== (int) $line->item_id
+                    || $parents->contains(fn ($parent) => (int) $parent->item_id !== (int) $line->item_id)
+                    || ($fulfillment->base_unit_id !== null && (int) $fulfillment->base_unit_id !== (int) ($line->item_base_unit_id ?: $line->unit_id))
                     || ($fulfillment->fulfillment_factor_snapshot !== null && abs((float) $fulfillment->fulfillment_factor_snapshot - $factor) > 0.00000001)) {
                     throw ValidationException::withMessages(['lines.'.$index => '订单行与库存备货的物料或单位快照不一致，请先核对。']);
                 }
                 // 直接汇总有效发货明细，避免旧 shipped_qty 缓存含待发货数量时被重复扣除。
-                $allocatedSalesQty = (float) SalesShipmentLine::query()->where('sales_order_line_id', $line->id)
+                $allocatedLines = SalesShipmentLine::query()->where('sales_order_line_id', $line->id)
                     ->current()
-                    ->whereHas('shipment', fn ($q) => $q->whereIn('shipment_status', ['draft', 'pending_outbound', 'prepared', 'partially_shipped', 'outbound_posted', 'shipped', 'completed']))->sum('sales_qty');
+                    ->whereHas('shipment', fn ($q) => $q->whereIn('shipment_status', ['draft', 'pending_outbound', 'prepared', 'partially_shipped', 'outbound_posted', 'shipped', 'completed']))
+                    ->orderBy('id')->lockForUpdate()->get(['id', 'sales_qty', 'base_qty', 'sales_order_fulfillment_id']);
+                $legacyShippedQty = $this->legacyShippedQuantity($line, $allocatedLines, $legacyByLine);
+                $legacyByLine[$line->id] = $legacyShippedQty;
+                $allocatedSalesQty = (float) bcadd($legacyShippedQty,
+                    $allocatedLines->reduce(fn ($sum, $allocated) => bcadd($sum, (string) $allocated->sales_qty, 8), '0'), 8);
                 $remainingSalesQty = max(0, SalesOrderFulfillmentPolicy::effectiveQuantity((float) $line->order_qty, (float) $line->cancelled_qty)
                     - $allocatedSalesQty);
-                if ($baseQty / $factor > $remainingSalesQty + 0.00000001) {
+                $fulfillmentLines = $allocatedLines->where('sales_order_fulfillment_id', $fulfillment->id);
+                $usedBaseQty = $fulfillmentLines->reduce(fn ($sum, $allocated) => bcadd($sum, (string) $allocated->base_qty, 8), '0');
+                $usedSalesQty = $fulfillmentLines->reduce(fn ($sum, $allocated) => bcadd($sum, (string) $allocated->sales_qty, 8), '0');
+                $frozenBaseQty = (string) ($fulfillment->item_base_qty ?? $fulfillment->fulfillment_qty);
+                $frozenSalesQty = (string) ($fulfillment->sales_qty ?? round((float) $frozenBaseQty / $factor, 8));
+                $fulfillmentRemaining = bcsub($frozenBaseQty, $usedBaseQty, 8);
+                if (bccomp($frozenBaseQty, '0', 8) <= 0 || bccomp($frozenSalesQty, '0', 8) <= 0
+                    || bccomp(number_format($baseQty, 8, '.', ''), $fulfillmentRemaining, 8) > 0) {
+                    throw ValidationException::withMessages(['lines.'.$index.'.base_qty' => '本次发货数量超过该备货批次尚未安排的基础数量。']);
+                }
+                // 销售数量按冻结履约分摊；最后一份基础数量承接尾差，分库位或分次追加都不丢数量。
+                $rowSalesQty = app(ShipmentDirectSourcePolicy::class)->salesQuantitySlice($frozenSalesQty, $frozenBaseQty,
+                    number_format($baseQty, 8, '.', ''), $usedSalesQty,
+                    bccomp(number_format($baseQty, 8, '.', ''), $fulfillmentRemaining, 8) === 0);
+                if (bccomp($rowSalesQty, '0', 8) <= 0 || (float) $rowSalesQty > $remainingSalesQty + 0.00000001) {
                     throw ValidationException::withMessages(['lines.'.$index.'.base_qty' => '本次发货数量超过扣除取消量及其他发货单后的订单有效待发数量。']);
                 }
                 $serialIds = array_values(array_unique(array_map('intval', (array) ($row['inventory_serial_ids'] ?? []))));
@@ -197,7 +297,6 @@ class SalesShipmentApplicationService
                 }
                 $remainingQty = $baseQty;
                 $allocatedSalesQty = '0.00000000';
-                $rowSalesQty = number_format(round($baseQty / $factor, 8), 8, '.', '');
                 if ($trackingMode === 'optional' && $serialIds !== []) {
                     $parents = $parents->sortByDesc(fn ($parent) => ($serialsByBalance->get($parent->inventory_balance_id) ?? collect())->isNotEmpty())->values();
                 }
@@ -233,6 +332,12 @@ class SalesShipmentApplicationService
                             throw ValidationException::withMessages(['serial_ids' => '该来源已有真实设备编号，请选择对应设备；不能把有编号的设备作为无编号数量发货。']);
                     }
                     if ($quantityWithoutIdentity > 0.00000001) $identityGroups->push(['base_qty' => $quantityWithoutIdentity, 'serial_ids' => []]);
+                    if (bccomp($legacyShippedQty, '0', 8) > 0) {
+                        // 先记在父预留，切分子预留会继承；取消后即使临时子预留被删除也不丢历史基线。
+                        $snapshot = (array) $parent->reservation_snapshot;
+                        $snapshot['sales_order_legacy_shipped_qty'] = $legacyShippedQty;
+                        $parent->update(['reservation_snapshot' => $snapshot]);
+                    }
                     foreach ($identityGroups as $groupIndex => $group) {
                         $lastGroup = $groupIndex === $identityGroups->count() - 1 && abs($remainingQty - $sliceQty) <= 0.00000001;
                         $salesQty = app(ShipmentDirectSourcePolicy::class)->salesQuantitySlice($rowSalesQty, number_format($baseQty, 8, '.', ''),

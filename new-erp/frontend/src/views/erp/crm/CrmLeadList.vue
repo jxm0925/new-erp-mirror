@@ -45,7 +45,7 @@
 
     <div v-if="query.tab === 'public_pool'" class="context-banner" :class="abilities.claim ? 'is-green' : 'is-slate'">
       <i :class="abilities.claim ? 'el-icon-circle-check' : 'el-icon-info'" />
-      <span>{{ abilities.claim ? '当前公海展示你 CRM 授权范围内的可跟进线索，领取后即转入“我负责的”由你跟进。' : '你当前没有公海领取权限，仅可查看授权范围内公海线索；如需跟进请联系有分配权限的人员分配。' }}</span>
+      <span>{{ abilities.claim ? '当前公海包含你可见的本部门及上级公海线索，可领取的线索会显示“领取”，领取后即由你负责跟进。' : '当前展示你可见的公海线索；如需跟进，请联系有分配权限的人员分配。' }}</span>
       <span v-if="!metadata.automatic_recycle_enabled" class="banner-tag">人工回收模式</span>
     </div>
     <div v-else-if="query.tab === 'pending_review'" class="context-banner is-amber">
@@ -69,10 +69,17 @@
         @keyup.enter.native="search"
         @clear="search"
       />
-      <div v-if="query.tab !== 'public_pool' && (metadata.departments || []).length > 1" class="filter-item">
+      <div v-if="departmentOptions.length > 1" class="filter-item">
         <span>部门</span>
-        <el-select popper-class="crm-select-popper" v-model="query.department_legacy_id" size="small" filterable clearable placeholder="全部授权部门" @change="search">
-          <el-option v-for="item in metadata.departments || []" :key="item.id" :value="item.id" :label="item.name" />
+        <el-select popper-class="crm-select-popper" v-model="query.department_legacy_id" size="small" filterable clearable placeholder="全部可见部门" @change="search">
+          <el-option v-for="item in departmentOptions" :key="item.id" :value="item.id" :label="item.pathLabel" class="crm-department-option">
+            <span class="crm-department-row" :class="{ 'is-root': item.depth === 0 }" :style="{ paddingLeft: `${item.depth * 18}px` }">
+              <span v-if="item.depth" class="crm-department-branch" aria-hidden="true">{{ item.branchPrefix }}</span>
+              <i v-else class="el-icon-office-building" aria-hidden="true" />
+              <span class="crm-department-name">{{ item.name }}</span>
+              <small v-if="item.hasChildren" class="crm-department-level">{{ item.parent_id ? '上级' : '总公司' }}</small>
+            </span>
+          </el-option>
         </el-select>
       </div>
       <div class="filter-item">
@@ -313,7 +320,7 @@
         </el-table-column>
 
         </template>
-        <el-table-column label="操作" :min-width="query.tab === 'public_pool' ? 140 : 225" fixed="right">
+        <el-table-column label="操作" :min-width="query.tab === 'public_pool' ? 210 : 225" fixed="right">
           <template slot-scope="{row}">
             <div class="crm-inline row-ops">
               <el-button type="text" size="mini" icon="el-icon-view" @click="$refs.detail.open(row.id)">查看</el-button>
@@ -392,6 +399,7 @@
 <script>
 import { formatMoney as displayMoney } from '../../../utils/money.js'
 import { getCrmLeadMetadata, listCrmLeads, crmError, crmDate } from '@/api/erp/crm'
+import { crmDepartmentTree } from '@/utils/crmDepartmentTree'
 import CrmLeadFormDialog from '@/components/crm/CrmLeadFormDialog.vue'
 import CrmLeadDetailDialog from '@/components/crm/CrmLeadDetailDialog.vue'
 import CrmLeadActionDialog from '@/components/crm/CrmLeadActionDialog.vue'
@@ -471,10 +479,11 @@ export default {
     ]
   }),
   computed: {
+    departmentOptions() { return crmDepartmentTree(this.metadata.departments || []) },
     viewColumns() { return orderedColumnGroups(this.viewConfiguration.columns,this.columnGroups) },
     viewTableKey() { return this.viewConfiguration.columns.join(',') + ':' + this.viewConfiguration.group_by + ':' + (this.query.tab === 'public_pool' ? 'pool' : 'std') },
     groupTitle() { const field = ((this.$refs.views && this.$refs.views.metadata.group_fields) || []).find(field => field.key === this.viewConfiguration.group_by); return field ? field.label : '分组' },
-    viewFilterOptions() { return { tab: Object.fromEntries(this.visibleTabs.map(item => [item.value,item.label])), status: this.metadata.statuses || {}, department_legacy_id: Object.fromEntries((this.metadata.departments || []).map(item => [item.id,item.name])), entry_method: this.metadata.entry_methods || {}, due: Object.fromEntries(this.dueOptions.map(item => [item.value,item.label])) } },
+    viewFilterOptions() { return { tab: Object.fromEntries(this.visibleTabs.map(item => [item.value,item.label])), status: this.metadata.statuses || {}, department_legacy_id: Object.fromEntries(this.departmentOptions.map(item => [item.id,item.pathLabel])), entry_method: this.metadata.entry_methods || {}, due: Object.fromEntries(this.dueOptions.map(item => [item.value,item.label])) } },
     currentUser() { return this.metadata.current_user || {} },
     abilities() { return this.metadata.abilities || {} },
     visibleTabs() {
@@ -490,7 +499,7 @@ export default {
           : []),
         { value: 'pending_acceptance', label: '待接收', icon: 'el-icon-bell', desc: '本人及代班待接收线索', tone: 'is-amber' },
         { value: 'pending_review', label: '待核实', icon: 'el-icon-warning-outline', desc: '身份冲突或疑似客户核实', tone: 'is-red' },
-        { value: 'public_pool', label: '公海', icon: 'el-icon-receiving', desc: '回收沉淀可重新领取分配', tone: '' },
+        { value: 'public_pool', label: '公海', icon: 'el-icon-receiving', desc: '释放或回收后可重新领取分配', tone: '' },
         { value: 'draft', label: '草稿', icon: 'el-icon-edit-outline', desc: '本人暂存待提交草稿', tone: '' }
       ]
     },
@@ -536,7 +545,7 @@ export default {
     emptySub() {
       if (this.hasActiveFilters) return '当前筛选条件下未找到匹配记录，可尝试清空筛选条件后重新查询'
       if (this.query.tab === 'mine') return '可通过右上角“新增线索”录入咨询，或前往“公海”领取线索'
-      if (this.query.tab === 'public_pool') return '被人工回收的线索将在此沉淀，供授权销售重新领取跟进'
+      if (this.query.tab === 'public_pool') return '释放或回收的线索将在此沉淀，供有领取权限的可见销售重新领取跟进'
       return '数据随线索录入、分配和跟进状态实时更新'
     }
   },
@@ -574,6 +583,7 @@ export default {
     applyView(configuration, reload = true) {
       this.viewConfiguration = configuration
       this.query = { ...blankQuery(this.query.per_page,this.abilities.assign && !this.currentUser.is_sales ? 'all' : 'mine'), ...configuration.filters, page: 1 }
+      this.query.department_legacy_id = Number(this.query.department_legacy_id) || null
       if (!this.visibleTabs.some(item => item.value === this.query.tab)) this.query.tab = 'all'
       if (reload) this.load()
     },
@@ -587,6 +597,7 @@ export default {
       })
       query.page = Math.max(1, Number.parseInt(query.page, 10) || 1)
       query.per_page = [10, 20, 50, 100].includes(Number(query.per_page)) ? Number(query.per_page) : 10
+      query.department_legacy_id = Number(query.department_legacy_id) || null
       if (!this.visibleTabs.some(item => item.value === query.tab)) query.tab = 'all'
       this.query = query
     },
@@ -630,6 +641,7 @@ export default {
     rowActions(row) {
       const allowed = row.abilities || {}
       return ACTION_META.filter(action => action.key === 'opportunity' ? !!row.opportunity_id : (action.key === 'review' ? row.review && row.review.can_resolve : allowed[action.key]))
+        .map(action => action.key === 'recycle' && allowed.self_release ? { ...action, label: '释放公海' } : action)
     },
     handleAction(row, action) {
       if (action === 'opportunity') this.$refs.opportunityDetail.open(row.opportunity_id)

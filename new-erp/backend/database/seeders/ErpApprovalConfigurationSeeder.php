@@ -81,6 +81,7 @@ class ErpApprovalConfigurationSeeder extends Seeder
         return [
             'PURCHASE_ORDER' => [
                 'name' => '采购订单',
+                'view_permission' => 'purchase.order.view',
                 'module' => '采购管理',
                 'table' => 'erp_purchase_orders',
                 'route' => '/purchase/orders/{id}/detail',
@@ -90,6 +91,48 @@ class ErpApprovalConfigurationSeeder extends Seeder
                 'display' => ['id', 'purchase_order_no', 'supplier_id', 'order_date', 'expected_arrival_date', 'currency', 'tax_mode', 'settlement_method', 'purchase_status', 'audit_status', 'receipt_status', 'total_qty', 'total_amount', 'amount_excl_tax', 'amount_incl_tax', 'tax_amount', 'freight_amount', 'other_purchase_cost_amount', 'finance_fact_status', 'remark'],
                 'condition' => ['id', 'purchase_order_no', 'plan_id', 'source_type', 'source_no', 'supplier_id', 'order_date', 'expected_arrival_date', 'currency', 'base_currency', 'business_exchange_rate', 'exchange_rate_date', 'tax_mode', 'settlement_method', 'delivery_method', 'purchase_status', 'audit_status', 'receipt_status', 'total_qty', 'total_amount', 'amount_excl_tax', 'base_amount_excl_tax', 'amount_incl_tax', 'base_amount_incl_tax', 'tax_amount', 'freight_amount', 'other_purchase_cost_amount', 'finance_fact_status', 'remark', 'data_source', 'created_at'],
                 'reference' => ['plan_id', 'supplier_id'],
+                'writable' => ['remark'],
+            ],
+            'PURCHASE_PLAN' => [
+                'name' => '采购计划',
+                'module' => '采购管理',
+                'table' => 'erp_purchase_plans',
+                'route' => '/purchase/plans/{id}/detail',
+                'view_permission' => 'purchase.plan.view',
+                'provider' => 'App\\Services\\Erp\\ApprovalProviders\\DatabaseBusinessObjectProvider',
+                'display_fields' => ['plan_no', 'plan_date', 'total_amount', 'plan_status', 'audit_status'],
+                'search_fields' => ['plan_no'],
+                'display' => ['id', 'plan_no', 'plan_date', 'management_scope', 'created_by', 'total_qty', 'total_amount', 'plan_status', 'audit_status', 'remark'],
+                'condition' => ['id', 'plan_no', 'plan_date', 'management_scope', 'created_by', 'total_qty', 'total_amount', 'plan_status', 'audit_status'],
+                'reference' => [],
+                'writable' => ['remark'],
+            ],
+            'PURCHASE_RETURN' => [
+                'name' => '采购退货',
+                'module' => '采购管理',
+                'table' => 'erp_purchase_returns',
+                'route' => '/purchase/returns/{id}/detail',
+                'view_permission' => 'purchase_return.view',
+                'provider' => 'App\\Services\\Erp\\ApprovalProviders\\DatabaseBusinessObjectProvider',
+                'display_fields' => ['return_no', 'supplier_id', 'return_date', 'amount_incl_tax', 'return_status', 'audit_status'],
+                'search_fields' => ['return_no'],
+                'display' => ['id', 'return_no', 'supplier_id', 'source_receipt_id', 'source_order_id', 'return_date', 'return_scope', 'management_scope', 'return_reason', 'currency_snapshot', 'amount_incl_tax', 'return_status', 'audit_status', 'remark'],
+                'condition' => ['id', 'return_no', 'supplier_id', 'source_receipt_id', 'source_order_id', 'return_date', 'return_scope', 'management_scope', 'return_reason', 'currency_snapshot', 'amount_incl_tax', 'return_status', 'audit_status'],
+                'reference' => ['supplier_id', 'source_receipt_id', 'source_order_id'],
+                'writable' => ['remark'],
+            ],
+            'INVENTORY_ADJUSTMENT' => [
+                'name' => '库存调整',
+                'module' => '库存管理',
+                'table' => 'erp_inventory_adjustments',
+                'route' => '/inventory/adjustments',
+                'view_permission' => 'inventory.adjustment.view',
+                'provider' => 'App\\Services\\Erp\\ApprovalProviders\\DatabaseBusinessObjectProvider',
+                'display_fields' => ['adjustment_no', 'adjustment_date', 'reason', 'adjustment_status'],
+                'search_fields' => ['adjustment_no'],
+                'display' => ['id', 'adjustment_no', 'adjustment_date', 'reason', 'adjustment_status', 'created_by', 'submitted_by', 'submitted_at', 'remark'],
+                'condition' => ['id', 'adjustment_no', 'adjustment_date', 'reason', 'adjustment_status', 'created_by', 'submitted_by', 'submitted_at'],
+                'reference' => ['created_by', 'submitted_by'],
                 'writable' => ['remark'],
             ],
             'SALES_ORDER_CHANGE' => [
@@ -146,7 +189,7 @@ class ErpApprovalConfigurationSeeder extends Seeder
                 'provider_class' => $config['provider'],
                 'context_provider_class' => $config['provider'],
                 'enabled' => true,
-                'view_permission_code' => $code === 'PURCHASE_ORDER' ? 'purchase.order.view' : null,
+                'view_permission_code' => $config['view_permission'] ?? null,
             ]);
 
             $objectId = (int) DB::table('erp_approval_business_objects')->where('object_code', $code)->value('id');
@@ -206,6 +249,12 @@ class ErpApprovalConfigurationSeeder extends Seeder
             [null, 'generic.reject.update_fields', '审核驳回后更新允许字段', 'rejected', 'App\\Services\\Erp\\ApprovalActions\\UpdateRegisteredFieldsAction'],
             ['PURCHASE_ORDER', 'purchase_order.approve', '确认采购订单并进入待到货', 'approved', 'App\\Services\\Erp\\ApprovalActions\\PurchaseOrderAction'],
             ['PURCHASE_ORDER', 'purchase_order.reject', '退回采购订单草稿', 'rejected', 'App\\Services\\Erp\\ApprovalActions\\PurchaseOrderAction'],
+            ['PURCHASE_PLAN', 'purchase_plan.approve', '审核通过采购计划', 'approved', 'App\\Services\\Erp\\ApprovalActions\\PurchasePlanAction'],
+            ['PURCHASE_PLAN', 'purchase_plan.reject', '驳回采购计划', 'rejected', 'App\\Services\\Erp\\ApprovalActions\\PurchasePlanAction'],
+            ['PURCHASE_RETURN', 'purchase_return.approve', '确认采购退货并进入待出库', 'approved', 'App\\Services\\Erp\\ApprovalActions\\PurchaseReturnAction'],
+            ['PURCHASE_RETURN', 'purchase_return.reject', '驳回采购退货', 'rejected', 'App\\Services\\Erp\\ApprovalActions\\PurchaseReturnAction'],
+            ['INVENTORY_ADJUSTMENT', 'inventory_adjustment.approve', '通过并过账库存调整', 'approved', 'App\\Services\\Erp\\ApprovalActions\\InventoryAdjustmentAction'],
+            ['INVENTORY_ADJUSTMENT', 'inventory_adjustment.reject', '驳回库存调整', 'rejected', 'App\\Services\\Erp\\ApprovalActions\\InventoryAdjustmentAction'],
             ['SALES_ORDER_CHANGE', 'sales_order_change.decide', '执行销售订单变更节点决策', 'node_decision', 'App\\Services\\Erp\\ApprovalActions\\SalesOrderChangeAction'],
         ];
     }
@@ -217,11 +266,14 @@ class ErpApprovalConfigurationSeeder extends Seeder
         }
 
         $objectIds = DB::table('erp_approval_business_objects')
-            ->whereIn('object_code', ['PURCHASE_ORDER', 'SALES_ORDER_CHANGE', 'CUSTOM_FORM_SUBMISSION'])
+            ->whereIn('object_code', array_keys($this->businessObjects()))
             ->pluck('id', 'object_code');
 
         foreach ([
             ['PURCHASE_ORDER', 'submit_approval', '提交采购订单审核', true, true],
+            ['PURCHASE_PLAN', 'submit_approval', '提交采购计划审核', false, true],
+            ['PURCHASE_RETURN', 'submit_approval', '提交采购退货审核', false, true],
+            ['INVENTORY_ADJUSTMENT', 'submit_approval', '提交库存调整审核', false, true],
             ['SALES_ORDER_CHANGE', 'submit_change', '提交订单变更审核', false, true],
             ['CUSTOM_FORM_SUBMISSION', 'submit_form', '提交自定义表单', true, true],
         ] as [$objectCode, $eventCode, $eventName, $manualStart, $eventTrigger]) {

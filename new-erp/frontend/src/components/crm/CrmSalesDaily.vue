@@ -41,7 +41,7 @@
       <div class="sheet-toolbar-group">
         <el-button size="small" icon="el-icon-refresh" @click="reload">刷新</el-button>
         <el-button v-if="ready && editable" size="small" icon="el-icon-document" @click="persist(false)">保存草稿</el-button>
-        <el-dropdown v-if="ready && editable" split-button type="primary" size="small" :disabled="!hasAi || busy"
+        <el-dropdown v-if="ready && editable" split-button type="success" size="small" :disabled="!hasAi || busy"
           @click="analyze(true)" @command="analyze(false)">
           AI 预填空白项
           <el-dropdown-menu slot="dropdown"><el-dropdown-item command="preview">仅生成填写提示</el-dropdown-item></el-dropdown-menu>
@@ -153,7 +153,7 @@
         <el-tabs v-show="aiExpanded" v-model="aiTab" size="mini">
           <el-tab-pane :label="`客户池推进 (${aiPoolAdvice.length})`" name="pool">
             <div v-if="editable" style="margin-bottom: 8px; display: flex; gap: 8px">
-              <el-button size="mini" type="primary" plain @click="adoptPoolAdvice()">仅填空白项到客户池表</el-button>
+              <el-button size="mini" type="success" plain @click="adoptPoolAdvice()">仅填空白项到客户池表</el-button>
             </div>
             <div v-if="!aiPoolAdvice.length" class="daily-muted">暂无客户池推进建议。</div>
             <article v-for="r in aiPoolAdvice" :key="r.key" class="daily-item">
@@ -197,8 +197,8 @@
 
           <el-tab-pane label="复盘与明日计划草稿" name="reviewPlan">
             <div v-if="editable" style="margin-bottom: 8px; display: flex; gap: 8px">
-              <el-button size="mini" type="primary" plain @click="adoptReview()">填充复盘空白项</el-button>
-              <el-button size="mini" type="primary" plain @click="$message.info(adoptPlan() ? '已填入客户池及补充事项' : '没有可新增的计划项')">采纳计划建议</el-button>
+              <el-button size="mini" type="success" plain @click="adoptReview()">填充复盘空白项</el-button>
+              <el-button size="mini" type="success" plain @click="$message.info(adoptPlan() ? '已填入客户池及补充事项' : '没有可新增的计划项')">采纳计划建议</el-button>
             </div>
             <div v-if="aiReview" class="daily-fields">
               <div v-for="field in reviewFields" :key="field.key"><b>{{ field.label }}：</b>{{ aiReview[field.key] || '—' }}</div>
@@ -415,7 +415,7 @@
                   <el-option label="部门事项" value="department" />
                   <el-option v-for="row in form.pool_others.filter(r => r.key)" :key="row.key" :value="row.key" :label="label(row.key)" />
                 </el-select>
-                <el-button size="small" type="primary" plain icon="el-icon-edit" @click="editHelp()">填写协调事项</el-button>
+                <el-button size="small" type="success" plain icon="el-icon-edit" @click="editHelp()">填写协调事项</el-button>
               </div>
             </div>
             <div v-if="helpRows.length" class="help-entry-list">

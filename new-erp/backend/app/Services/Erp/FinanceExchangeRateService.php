@@ -54,11 +54,6 @@ class FinanceExchangeRateService
         return $this->snapshot($sourceCurrency, $this->baseCurrency()->currency_code, $date, self::TYPE_VALUATION);
     }
 
-    public function settlementSnapshot(string $sourceCurrency, string $date): array
-    {
-        return $this->snapshot($sourceCurrency, $this->baseCurrency()->currency_code, $date, self::TYPE_SETTLEMENT);
-    }
-
     public function snapshot(string $sourceCurrency, string $targetCurrency, string $date, string $type): array
     {
         $sourceCurrency = strtoupper(trim($sourceCurrency));

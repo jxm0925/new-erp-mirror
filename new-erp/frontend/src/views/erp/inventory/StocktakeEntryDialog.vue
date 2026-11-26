@@ -70,7 +70,7 @@
     </div>
     <span slot="footer">
       <el-button size="small" :disabled="saving" @click="close()">取消</el-button>
-      <el-button v-if="editable" size="small" type="primary" :loading="saving" @click="save">保存逐件结果</el-button>
+      <el-button v-if="editable" size="small" type="success" :loading="saving" @click="save">保存逐件结果</el-button>
     </span>
   </el-dialog>
 </template>

@@ -150,7 +150,7 @@
         </nav>
 
         <section class="erp-content-container">
-          <router-view v-if="isRouterAlive" :key="['/finance/payables', '/sales/leads'].includes($route.path) ? $route.path : $route.fullPath" />
+          <router-view v-if="isRouterAlive" :key="routeViewKey" />
         </section>
       </main>
     </template>
@@ -186,6 +186,16 @@ export default {
     isRouterAlive: true
   }),
   computed: {
+    routeViewKey() {
+      if (['/finance/payables', '/sales/leads'].includes(this.$route.path)) return this.$route.path
+      if (/^\/sales\/orders\/[^/]+\/detail$/.test(this.$route.path)) {
+        const query = { ...this.$route.query }
+        delete query.confirm_production
+        // 一次性生产确认标记清除时保留详情实例，否则刚打开的弹窗会随 fullPath 变化被销毁。
+        return this.$router.resolve({ path: this.$route.path, query, hash: this.$route.hash }).route.fullPath
+      }
+      return this.$route.fullPath
+    },
     isPublicDisplay() {
       return this.$route.path === '/display/assembly' && this.$route.meta.public === true
     },

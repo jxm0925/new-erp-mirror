@@ -1,7 +1,7 @@
 <template>
   <div class="work-order-detail-page" v-loading="loading">
     <template v-if="wo">
-      <cancellation-dispositions v-if="$can('production.work_order.view')" :work-order-id="wo.id" @changed="load" />
+      <cancellation-dispositions v-if="$can('production.work_order.view') || $can('production.work_order.edit')" :work-order-id="wo.id" @changed="load" />
       <!-- 页面全局头部卡片 -->
       <header class="page-head">
         <div class="head-left">

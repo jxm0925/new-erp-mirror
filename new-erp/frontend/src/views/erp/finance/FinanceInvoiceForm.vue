@@ -6,7 +6,7 @@
       <div class="heading-actions">
         <el-button class="btn-default" @click="back">返回列表</el-button>
         <el-button v-if="editable" class="btn-default" :loading="saving" @click="saveDraft">保存草稿</el-button>
-        <el-button v-if="editable" type="primary" class="btn-green" :loading="saving" @click="saveAndMatch">
+        <el-button v-if="editable" type="success" class="btn-green" :loading="saving" @click="saveAndMatch">
           保存并进入匹配
         </el-button>
       </div>

@@ -15,20 +15,15 @@ use App\Models\Erp\SalesOrderLog;
 use App\Models\Erp\SalesOrderVersion;
 use App\Models\Erp\SalesOrderAttachment;
 use App\Models\Erp\ShipmentDispatch;
-use App\Models\Erp\SalesCustomer;
 use App\Models\Erp\SalesChannel;
 use App\Models\Erp\SalesFundingPolicy;
 use App\Models\Erp\PaymentMethod;
 use App\Models\Erp\Sku;
 use App\Models\Erp\SkuItemRelation;
-use App\Models\Erp\Unit;
 use App\Services\Erp\AuthContextService;
 use App\Services\Erp\BomMatcher;
-use App\Services\Erp\DocumentNumberService;
 use App\Services\Erp\InventoryReservationService;
 use App\Services\Erp\InventoryAvailabilityService;
-use App\Services\Erp\LengthCutRequirementService;
-use App\Services\Erp\SalesOrderSnapshotService;
 use App\Services\Erp\SalesOrderDraftService;
 use App\Services\Erp\SalesOrderAttachmentService;
 use App\Services\Erp\SalesOrderFundingGateService;
@@ -43,7 +38,6 @@ use App\Services\Erp\Sales\SalesOrderProgressQueryService;
 use App\Services\Erp\ErpUserProjectionService;
 use App\Services\Erp\SalesCostVisibilityService;
 use App\Services\Erp\Crm\CrmOpportunityOrderService;
-use App\Services\Erp\SkuItemMatcher;
 use App\Services\Erp\UnitConversionDomainService;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
@@ -62,7 +56,7 @@ class SalesOrderController extends Controller
     {
         $invoke = fn () => $this->{$method}(...array_values($parameters));
         // 附件写入也须在同一事务内持有代开授权锁，撤销不能穿过上传或删除检查。
-        $response = in_array($method, ['uploadDraftAttachment', 'deleteDraftAttachment', 'uploadAttachment', 'deleteAttachment'], true)
+        $response = in_array($method, ['uploadDraftAttachment', 'deleteDraftAttachment'], true)
             ? DB::transaction($invoke) : $invoke();
         if ($response instanceof JsonResponse) {
             $response->setData(app(\App\Services\Erp\InventoryAmountVisibilityService::class)->forResponse($response->getData()));
@@ -374,6 +368,7 @@ class SalesOrderController extends Controller
             $service->submitForConfirmation($order, $this->operatorName($request), app(AuthContextService::class)->currentUser($request));
         }
         $confirmed = $this->performFormalConfirm($request, $id);
+        $confirmed->setAttribute('allowed_actions', $this->orderAllowedActions($request, $confirmed));
         $result['order'] = $confirmed;
         $result['confirmed'] = true;
         $result['message'] = '订单已确认。请核实订单后执行“生产确认”；生产确认后修改订单必须提交审核。';
@@ -543,24 +538,6 @@ class SalesOrderController extends Controller
         return $attachment;
     }
 
-    public function customers(Request $request)
-    {
-        $this->abortUnlessPermission($request, 'sales_order.view');
-        $keyword = trim((string) $request->input('keyword'));
-        $query = SalesCustomer::query()->where('status', '<>', 'disabled');
-        app(\App\Services\Erp\Crm\CrmCustomerAccessService::class)->applyVisible($query, app(AuthContextService::class)->currentUser($request));
-        if ($keyword !== '') {
-            $query->where(function (Builder $q) use ($keyword) {
-                $q->where('customer_name', 'like', "%{$keyword}%")
-                    ->orWhere('contact_name', 'like', "%{$keyword}%")
-                    ->orWhere('contact_phone', 'like', "%{$keyword}%")
-                    ->orWhere('full_address', 'like', "%{$keyword}%");
-            });
-        }
-
-        return response()->json($query->orderByDesc('updated_at')->paginate($this->perPage($request)));
-    }
-
     public function orders(Request $request)
     {
         $this->abortUnlessPermission($request, 'sales_order.view');
@@ -658,45 +635,6 @@ class SalesOrderController extends Controller
                 ->orderBy('id')
                 ->get(['id', 'policy_code', 'policy_name', 'policy_type', 'production_threshold_type', 'production_threshold_value', 'shipment_requires_full_payment']),
         ]);
-    }
-
-    public function store(Request $request)
-    {
-        $this->abortUnlessPermission($request, 'sales.order.create');
-        $payload = $this->validateOrder($request);
-        $this->assertTradePlatform($payload, null, true);
-        $payload = $this->attachCurrentOperator($payload, $request, true);
-
-        return DB::transaction(function () use ($payload, $request) {
-            $lines = $payload['lines'];
-            $opportunityId = $payload['opportunity_id'] ?? null;
-            $draftToken = $payload['draft_token'] ?? null;
-            unset($payload['lines']);
-            unset($payload['draft_token'], $payload['deleted_line_ids']);
-            app(SalesOrderVisibilityService::class)->prepareCreation($payload, app(AuthContextService::class)->currentUser($request));
-            $payload = $this->normalizeOrderPayload($payload, $request);
-            unset($payload['opportunity_id']);
-            $payload['sales_order_no'] = $payload['sales_order_no'] ?? $this->nextNo('SO');
-            $payload['order_status'] = 'draft';
-            $payload['confirm_status'] = 'unconfirmed';
-            $payload['fulfillment_status'] = 'pending';
-            $payload['production_confirm_status'] = 'not_required';
-            $payload['shipment_status'] = 'not_shipped';
-
-            $order = SalesOrder::create($payload);
-            app(CrmOpportunityOrderService::class)->attachNew($order, $opportunityId, app(AuthContextService::class)->currentUser($request));
-            app(SalesOrderVisibilityService::class)->recordCreation($order, app(AuthContextService::class)->currentUser($request));
-            $this->saveLines($order, $lines, $draftToken);
-            $this->bindDraftOrderAttachments($order, $draftToken);
-            $this->refreshOrderTotals($order->id);
-            $this->version($order->id, 'create', null, $order->fresh('lines')->toArray(), $payload['created_by'] ?? 'system');
-            $this->log($order->id, null, 'create', null, 'draft', '新增销售订单');
-
-            return response()->json([
-                'message' => '销售订单已保存',
-                'data' => $order->fresh(['lines.product', 'lines.sku', 'lines.item']),
-            ], 201);
-        });
     }
 
     public function progressTree(Request $request, int $id, SalesOrderProgressQueryService $progress)
@@ -845,60 +783,12 @@ class SalesOrderController extends Controller
         return response()->json($history->history($order, $filters));
     }
 
-    public function update(Request $request, int $id)
-    {
-        $this->abortUnlessPermission($request, 'sales.order.edit');
-        $order = SalesOrder::with('lines')->findOrFail($id);
-        $this->abortUnlessOrderVisible($request, $order);
-        abort_if($order->order_status !== 'draft', 422, '已确认订单禁止普通编辑，请走订单变更或正式撤回确认流程');
-        abort_if($order->shipment_status !== 'not_shipped', 422, '已有发货记录的订单不能直接编辑，请走订单变更或售后流程');
-
-        $payload = $this->validateOrder($request, true);
-        $this->assertTradePlatform($payload, $order, true);
-        $payload = $this->attachCurrentOperator($payload, $request);
-        $operator = $this->operatorName($request);
-
-        return DB::transaction(function () use ($order, $payload, $operator, $request) {
-            $order = SalesOrder::query()->lockForUpdate()->findOrFail($order->id);
-            $this->abortUnlessOrderVisible($request, $order);
-            abort_if($order->order_status !== 'draft', 422, '已确认订单禁止普通编辑，请走订单变更或正式撤回确认流程');
-            abort_if($order->shipment_status !== 'not_shipped', 422, '已有发货记录的订单不能直接编辑，请走订单变更或售后流程');
-            $before = $order->fresh(['lines', 'fulfillments'])->toArray();
-            $lines = $payload['lines'];
-            $deletedLineIds = $payload['deleted_line_ids'] ?? [];
-            $draftToken = $payload['draft_token'] ?? null;
-            unset($payload['lines']);
-            unset($payload['draft_token'], $payload['deleted_line_ids']);
-            app(CrmOpportunityOrderService::class)->guardOrderUpdate($order, $payload, app(AuthContextService::class)->currentUser($request));
-            $payload = $this->normalizeOrderPayload($payload, $request, $order);
-            app(\App\Services\Erp\SalesOrderConfirmedDrawingService::class)->assertCustomer($order, $lines, (int) ($payload['customer_id'] ?? $order->customer_id), $deletedLineIds);
-            $payload = app(SalesCostVisibilityService::class)->preserveStoredCosts($payload, $order->attributesToArray());
-            $order->update($payload);
-            $this->syncDraftLines($order, $lines, $deletedLineIds, $draftToken);
-            $this->bindDraftOrderAttachments($order, $draftToken);
-            $this->refreshOrderTotals($order->id);
-            $order->update([
-                'order_status' => 'draft',
-                'confirm_status' => 'unconfirmed',
-                'fulfillment_status' => 'pending',
-                'production_confirm_status' => 'not_required',
-            ]);
-            $after = $order->fresh(['lines'])->toArray();
-            $this->version($order->id, 'update', $before, $after, $operator);
-            $this->log($order->id, null, 'update', $before['order_status'] ?? null, $order->order_status, '编辑销售订单，原备货和生产安排已撤回待重新确认');
-
-            return response()->json([
-                'message' => '销售订单已更新',
-                'data' => $order->fresh(['lines.product', 'lines.sku', 'lines.item']),
-            ]);
-        });
-    }
-
     /** 兼容旧入口：对已处于待确认状态的订单执行正式确认；新流程请用 orders/{id}/confirm 一步确认。 */
     public function confirm(Request $request, int $id)
     {
         $this->abortUnlessAnyPermission($request, ['sales_order.submit_confirmation', 'sales_order.formal_confirm']);
         $confirmed = $this->performFormalConfirm($request, $id);
+        $confirmed->setAttribute('allowed_actions', $this->orderAllowedActions($request, $confirmed));
         return response()->json([
             'message' => '订单已确认，请核实后执行生产确认。',
             'data' => $confirmed,
@@ -1154,12 +1044,6 @@ class SalesOrderController extends Controller
         return $preview;
     }
 
-    public function cancel(Request $request, int $id)
-    {
-        $request->merge(['reason' => trim((string) $request->input('reason')) ?: '业务取消']);
-        return $this->cancelWithReason($request, $id);
-    }
-
     public function logs(Request $request, int $id)
     {
         $this->abortUnlessPermission($request, 'sales_order.view');
@@ -1189,85 +1073,6 @@ class SalesOrderController extends Controller
                 ->latest('id')
                 ->paginate($this->perPage($request))
         );
-    }
-
-    public function uploadAttachment(Request $request)
-    {
-        $this->abortUnlessAnyPermission($request, ['sales.order.create', 'sales.order.edit']);
-        $payload = $request->validate([
-            'file' => 'required|file|max:51200',
-            'attachment_scope' => ['required', Rule::in(['order', 'line'])],
-            'attachment_type' => ['required', Rule::in(['contract', 'public_attachment', 'customer_agreement', 'design_drawing', 'customer_drawing', 'technical_agreement', 'configuration_note', 'other'])],
-            'sales_order_id' => 'nullable|integer|exists:erp_sales_orders,id',
-            'sales_order_line_id' => 'nullable|integer|exists:erp_sales_order_lines,id',
-            'draft_token' => 'nullable|string|max:120',
-            'line_uuid' => 'nullable|string|max:80',
-        ]);
-        abort_if($payload['attachment_scope'] === 'line' && empty($payload['sales_order_line_id']) && (empty($payload['draft_token']) || empty($payload['line_uuid'])), 422, '订单行附件必须绑定 sales_order_line_id 或 draft_token + line_uuid');
-
-        if (!empty($payload['sales_order_line_id'])) {
-            $lineOrderId = (int) SalesOrderLine::findOrFail($payload['sales_order_line_id'])->sales_order_id;
-            abort_if(!empty($payload['sales_order_id']) && (int) $payload['sales_order_id'] !== $lineOrderId, 422, '订单行不属于当前订单');
-            $payload['sales_order_id'] = $lineOrderId;
-        }
-        if (!empty($payload['sales_order_id'])) {
-            $order = SalesOrder::with('lines')->lockForUpdate()->findOrFail($payload['sales_order_id']);
-            $this->abortUnlessOrderVisible($request, $order);
-            abort_if($order->order_status !== 'draft', 422, '订单确认后不能直接上传附件，请走订单变更流程');
-            if (!empty($payload['sales_order_line_id'])) {
-                abort_if(!$order->lines->contains('id', (int) $payload['sales_order_line_id']), 422, '订单行不属于当前订单');
-            }
-        }
-
-        $file = $request->file('file');
-        $hash = hash_file('sha256', $file->getRealPath());
-        $storedName = \Illuminate\Support\Str::uuid().'.'.$file->getClientOriginalExtension();
-        $path = $file->storeAs('erp/sales-order/'.date('Ymd'), $storedName, 'public');
-        $user = app(AuthContextService::class)->currentUser($request);
-        $attachment = SalesOrderAttachment::create([
-            'draft_token' => $payload['draft_token'] ?? null,
-            'line_uuid' => $payload['line_uuid'] ?? null,
-            'sales_order_id' => $payload['sales_order_id'] ?? null,
-            'sales_order_line_id' => $payload['sales_order_line_id'] ?? null,
-            'attachment_scope' => $payload['attachment_scope'],
-            'attachment_type' => $payload['attachment_type'],
-            'original_name' => $file->getClientOriginalName(),
-            'stored_name' => $storedName,
-            'storage_disk' => 'public',
-            'storage_path' => $path,
-            'url' => preg_match('#^https?://#i', Storage::disk('public')->url($path))
-                ? preg_replace('#^https?://[^/]+#i', $request->getSchemeAndHttpHost(), Storage::disk('public')->url($path))
-                : rtrim($request->getSchemeAndHttpHost(), '/').'/'.ltrim(Storage::disk('public')->url($path), '/'),
-            'mime_type' => $file->getMimeType(),
-            'file_size' => $file->getSize(),
-            'file_hash' => $hash,
-            'uploaded_by_legacy_id' => $user->legacy_id ?? null,
-            'uploaded_by' => $user ? ($user->nickname ?: $user->username) : null,
-            'uploaded_at' => now(),
-            'status' => 'active',
-        ]);
-
-        return response()->json(['message' => '附件已上传', 'data' => $attachment], 201);
-    }
-
-    public function deleteAttachment(Request $request, int $id)
-    {
-        $this->abortUnlessAnyPermission($request, ['sales.order.create', 'sales.order.edit']);
-        $attachment = SalesOrderAttachment::where('status', 'active')->findOrFail($id);
-
-        $orderId = $attachment->sales_order_id ?: optional($attachment->line)->sales_order_id;
-        if ($orderId) {
-            $order = SalesOrder::query()->lockForUpdate()->findOrFail($orderId);
-            $this->abortUnlessOrderVisible($request, $order);
-            abort_if($order->order_status !== 'draft', 422, '订单确认后不能直接删除附件，请走订单变更流程');
-        }
-
-        $attachment->update(['status' => 'deleted']);
-        if ($attachment->storage_disk && $attachment->storage_path) {
-            Storage::disk($attachment->storage_disk)->delete($attachment->storage_path);
-        }
-
-        return response()->json(['message' => '附件已删除', 'data' => ['id' => $attachment->id]]);
     }
 
     public function interfaceContract(Request $request)
@@ -1468,34 +1273,6 @@ class SalesOrderController extends Controller
         return app(SalesCostVisibilityService::class)->redact($validated);
     }
 
-    private function normalizeOrderPayload(array $payload, Request $request, ?SalesOrder $order = null): array
-    {
-        foreach (['is_urgent', 'is_customized', 'is_special_customized', 'is_delay', 'need_pump', 'is_share'] as $field) {
-            $payload[$field] = (bool) ($payload[$field] ?? false);
-        }
-        $payload['share_user'] = $payload['is_share']
-            ? app(SalesOrderVisibilityService::class)->normalizeShareUsers($payload['share_user'] ?? null,
-                (int) ($payload['sales_user_legacy_id'] ?? $order?->sales_user_legacy_id),
-                (int) app(AuthContextService::class)->currentUser($request)?->legacy_id, $order) : null;
-        $payload['order_source'] = $payload['order_source'] ?? 'manual';
-        $payload['currency'] = $payload['currency'] ?? 'CNY';
-        $payload['freight_amount'] = $payload['freight_amount'] ?? 0;
-        $shipping = is_array($payload['shipping_snapshot'] ?? null) ? $payload['shipping_snapshot'] : [];
-        foreach (['shipment_no', 'tracking_no', 'actual_freight', 'shipped_at', 'shipment_status'] as $field) {
-            unset($shipping[$field]);
-        }
-        $shipping['default_carrier_id'] = $payload['carrier_id'] ?? ($shipping['default_carrier_id'] ?? null);
-        $shipping['default_carrier_name'] = $shipping['carrier_name'] ?? ($shipping['default_carrier_name'] ?? null);
-        unset($shipping['carrier_name']);
-        $payload['shipping_snapshot'] = $shipping;
-        $logistics = is_array($payload['logistics_snapshot'] ?? null) ? $payload['logistics_snapshot'] : [];
-        foreach (['shipment_no', 'tracking_no', 'express_no', 'actual_freight', 'shipped_at'] as $field) {
-            unset($logistics[$field]);
-        }
-        $payload['logistics_snapshot'] = $logistics;
-        return app(SalesOrderSnapshotService::class)->lockCustomer($payload, $order, app(AuthContextService::class)->currentUser($request));
-    }
-
     private function applySalesOrderVisibility(Builder $query, Request $request, bool $includeShared = false): void
     {
         $legacyAdminId = $this->currentLegacyAdminId($request);
@@ -1563,6 +1340,7 @@ class SalesOrderController extends Controller
             'adjust_priority' => ! in_array($order->order_status, ['cancelled', 'closed'], true)
                 && in_array('sales_order.priority', $codes, true),
         ];
+        $actions['confirm_production'] = $actions['production_confirmation'];
         if ($order->isLegacyHistory()) {
             $order->setAttribute('read_only', true);
             $order->makeHidden('legacy_payload');
@@ -1775,175 +1553,6 @@ class SalesOrderController extends Controller
         return $payload;
     }
 
-    private function resolveLineUnit(array $line, Sku $sku, Product $product, ?Item $item): ?Unit
-    {
-        $unitId = $line['unit_id'] ?? null;
-        if ($unitId) return Unit::find($unitId);
-        if ($item?->unit_id) return Unit::find($item->unit_id);
-        if ($product->unit_id) return Unit::find($product->unit_id);
-        return Unit::where('unit_code', 'PCS')->orWhere('unit_name', '台')->first();
-    }
-
-    private function bindDraftLineAttachments(SalesOrder $order, SalesOrderLine $line, ?string $draftToken, ?string $lineUuid): void
-    {
-        if (!$draftToken || !$lineUuid) return;
-        SalesOrderAttachment::where('draft_token', $draftToken)
-            ->where('line_uuid', $lineUuid)
-            ->whereNull('sales_order_line_id')
-            ->where('status', 'active')
-            ->update([
-                'sales_order_id' => $order->id,
-                'sales_order_line_id' => $line->id,
-                'updated_at' => now(),
-            ]);
-    }
-
-    private function bindDraftOrderAttachments(SalesOrder $order, ?string $draftToken): void
-    {
-        if (!$draftToken) return;
-        SalesOrderAttachment::where('draft_token', $draftToken)
-            ->where('attachment_scope', 'order')
-            ->whereNull('sales_order_id')
-            ->where('status', 'active')
-            ->update([
-                'sales_order_id' => $order->id,
-                'updated_at' => now(),
-            ]);
-    }
-
-    private function saveLines(SalesOrder $order, array $lines, ?string $draftToken = null): void
-    {
-        foreach (array_values($lines) as $index => $line) {
-            $created = SalesOrderLine::create($this->buildLinePayload($order, $line, $index));
-            $this->bindDraftLineAttachments($order, $created, $draftToken, $created->line_uuid);
-        }
-    }
-
-    private function syncDraftLines(SalesOrder $order, array $lines, array $deletedLineIds = [], ?string $draftToken = null): void
-    {
-        if ($deletedLineIds) {
-            $deletable = SalesOrderLine::where('sales_order_id', $order->id)
-                ->whereIn('id', $deletedLineIds)
-                ->where('line_status', 'open')
-                ->pluck('id')
-                ->all();
-            SalesOrderAttachment::whereIn('sales_order_line_id', $deletable)->update(['status' => 'deleted']);
-            SalesOrderLine::whereIn('id', $deletable)->delete();
-        }
-
-        foreach (array_values($lines) as $index => $line) {
-            $existing = null;
-            $line = app(SalesCostVisibilityService::class)->redact($line);
-            if (!empty($line['id'])) {
-                $existing = SalesOrderLine::where('sales_order_id', $order->id)->lockForUpdate()->findOrFail($line['id']);
-            }
-            if ($existing) {
-                $data = $this->buildLinePayload($order, $line, $index, $existing);
-                $existing->update(app(SalesCostVisibilityService::class)->preserveStoredCosts($data, $existing->attributesToArray()));
-                $this->bindDraftLineAttachments($order, $existing->fresh(), $draftToken, $existing->line_uuid);
-            } else {
-                $created = SalesOrderLine::create($this->buildLinePayload($order, $line, $index));
-                $this->bindDraftLineAttachments($order, $created, $draftToken, $created->line_uuid);
-            }
-        }
-    }
-
-    private function buildLinePayload(SalesOrder $order, array $line, int $index, ?SalesOrderLine $existing = null): array
-    {
-        $sku = isset($line['sku_id']) ? Sku::with('product')->find($line['sku_id']) : null;
-        abort_if(!$sku, 422, '订单行必须选择有效 SKU');
-        abort_if($sku->status !== 'enabled', 422, 'SKU 已停用，不能用于销售订单');
-        abort_if(!$sku->is_sale_item, 422, 'SKU 未启用销售属性，不能用于销售订单');
-
-        $product = isset($line['product_id']) ? Product::find($line['product_id']) : $sku->product;
-        abort_if(!$product, 422, '订单行必须选择有效 Product');
-        abort_if($product->status !== 'enabled', 422, 'Product 已停用，不能用于销售订单');
-        abort_if((int) $sku->product_id !== (int) $product->id, 422, 'SKU 不属于当前 Product');
-
-        $isCustomized = (bool) ($line['is_customized'] ?? false);
-        $isSpecialCustomized = (bool) ($line['is_special_customized'] ?? false);
-        abort_if($isCustomized && !$sku->allow_customized, 422, '当前 SKU 不允许普通定制。');
-        abort_if($isSpecialCustomized && !$sku->allow_special_customized, 422, '当前 SKU 不允许特殊定制。');
-        abort_if($isCustomized && !$sku->is_customizable && !$sku->is_custom_sku, 422, '当前 SKU 不允许普通定制');
-        abort_if($isSpecialCustomized && !$sku->is_customizable && !$sku->is_custom_sku, 422, '当前 SKU 不允许特殊定制');
-
-        $electric = trim((string) ($line['electric'] ?? '')) ?: null;
-        $needPump = array_key_exists('need_pump', $line) && $line['need_pump'] !== null
-            ? (bool) $line['need_pump']
-            : null;
-        $configuration = is_array($line['configuration_snapshot'] ?? null) ? $line['configuration_snapshot'] : [];
-        unset($configuration['electric'], $configuration['need_pump']);
-        $configuration = app(LengthCutRequirementService::class)->normalizeConfiguration($configuration);
-
-        if ($electric !== null && $sku->supports_electric && !empty($sku->electric_options) && !in_array($electric, $sku->electric_options, true)) {
-            abort(422, '当前 SKU 不支持所选电压');
-        }
-
-        $match = app(SkuItemMatcher::class)->match([
-            'product_id' => $product->id,
-            'sku_id' => $sku->id,
-        ]);
-        $item = $match['matched_item_id'] ? Item::with('unit')->find($match['matched_item_id']) : null;
-        $unit = app(\App\Services\Erp\UnitConversionDomainService::class)
-            ->canonicalUnit($this->resolveLineUnit($line, $sku, $product, $item));
-        $qty = (float) $line['order_qty'];
-        $price = (float) ($line['unit_price'] ?? 0);
-        $lineType = $this->normalizeLineType(null, $line['legacy_goods_type'] ?? null, $sku, $product);
-        $commercialRole = $line['commercial_role'] ?? $existing?->commercial_role ?? 'sale';
-        $lineUuid = $line['line_uuid'] ?? $existing?->line_uuid ?? (string) \Illuminate\Support\Str::uuid();
-
-        return [
-            'sales_order_id' => $order->id,
-            'line_uuid' => $lineUuid,
-            'line_no' => $line['line_no'] ?? ($index + 1),
-            'legacy_order_product_id' => $line['legacy_order_product_id'] ?? $existing?->legacy_order_product_id,
-            'legacy_goods_id' => $line['legacy_goods_id'] ?? $existing?->legacy_goods_id,
-            'legacy_sku_id' => $line['legacy_sku_id'] ?? $existing?->legacy_sku_id,
-            'product_id' => $product->id,
-            'sku_id' => $sku->id,
-            'item_id' => $item?->id,
-            'item_match_status' => $match['match_status'],
-            'item_match_rule' => $match['match_rule'],
-            'item_match_block_reason' => $match['block_reason'],
-            'item_match_snapshot' => ['candidates' => $match['conflict_candidates']],
-            'product_name' => $product->product_name,
-            'sku_name' => $sku->sku_name,
-            'item_name' => $item?->item_name,
-            'legacy_goods_type' => $line['legacy_goods_type'] ?? null,
-            'line_type' => $lineType,
-            'commercial_role' => $commercialRole,
-            'order_qty' => $qty,
-            'unit_id' => $unit?->id,
-            'unit_name_snapshot' => $unit?->unit_name,
-            'unit_code_snapshot' => $unit?->unit_code,
-            'unit_conversion_ratio_snapshot' => 1,
-            'unit_price' => $price,
-            'amount' => $qty * $price,
-            'need_pump' => $needPump,
-            'electric' => $electric,
-            'is_customized' => $isCustomized || (bool) $sku->is_custom_sku,
-            'is_special_customized' => $isSpecialCustomized,
-            'configuration_snapshot' => [
-                'need_pump' => $needPump,
-                'electric' => $electric,
-                'is_customized' => $isCustomized || (bool) $sku->is_custom_sku,
-                'is_special_customized' => $isSpecialCustomized,
-            ] + $configuration,
-            'product_snapshot' => null,
-            'sku_snapshot' => null,
-            'item_snapshot' => null,
-            'bom_snapshot' => null,
-            'routing_snapshot' => null,
-            'drawing_snapshot' => app(\App\Services\Erp\SalesOrderConfirmedDrawingService::class)->snapshot($order, $line, $existing,
-                app(AuthContextService::class)->currentUser(request()), null, $index),
-            'technical_attachment_snapshot' => $line['technical_attachment_snapshot'] ?? $existing?->technical_attachment_snapshot,
-            'inspection_snapshot' => ['delivery_inspection_required' => (bool) $sku->delivery_inspection_required],
-            'image' => null,
-            'design' => null,
-            'remark' => $line['remark'] ?? null,
-        ];
-    }
-
     private function assertLineOrderAttributes(SalesOrderLine $line): void
     {
         $sku = $line->sku ?: Sku::find($line->sku_id);
@@ -2094,24 +1703,6 @@ class SalesOrderController extends Controller
         ][$planStatus]);
     }
 
-    private function refreshOrderTotals(int $orderId): void
-    {
-        app(\App\Services\Erp\SalesOrderAmountService::class)->refresh(SalesOrder::findOrFail($orderId));
-    }
-
-    private function version(int $orderId, string $changeType, ?array $before, ?array $after, string $operator): void
-    {
-        $next = (int) SalesOrderVersion::where('sales_order_id', $orderId)->max('version_no') + 1;
-        SalesOrderVersion::create([
-            'sales_order_id' => $orderId,
-            'version_no' => $next,
-            'change_type' => $changeType,
-            'before_snapshot' => $before,
-            'after_snapshot' => $after,
-            'operator' => $operator,
-        ]);
-    }
-
     private function log(int $orderId, ?int $lineId, string $action, ?string $before, ?string $after, string $content, array $payload = []): void
     {
         SalesOrderLog::create([
@@ -2129,11 +1720,6 @@ class SalesOrderController extends Controller
     private function perPage(Request $request): int
     {
         return min(100, max(5, (int) $request->input('per_page', 10)));
-    }
-
-    private function nextNo(string $prefix): string
-    {
-        return app(DocumentNumberService::class)->next($prefix, $prefix);
     }
 
     private function operatorName(Request $request): string

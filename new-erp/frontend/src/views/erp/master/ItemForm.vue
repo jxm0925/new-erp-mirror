@@ -729,7 +729,7 @@
       <div class="footer-actions">
         <el-button size="small" @click="$router.push(entryListPath)">取消并返回</el-button>
         <el-button size="small" :loading="saving" :disabled="loading || uploadingImage || categoriesLoading || !!pageError" @click="save(false)">保存为草稿</el-button>
-        <el-button type="primary" size="small" :loading="saving" :disabled="loading || uploadingImage || categoriesLoading || !!pageError" class="btn-theme-submit" @click="save(true)">
+        <el-button type="success" size="small" :loading="saving" :disabled="loading || uploadingImage || categoriesLoading || !!pageError" class="btn-theme-submit" @click="save(true)">
           {{ isEdit ? '保存并启用' : '保存并启用' }}
         </el-button>
       </div>

@@ -31,25 +31,5 @@ class AftersalesReservedController extends Controller
         ]);
     }
 
-    public function indexCases() { return $this->reserved('售后案例列表'); }
-    public function storeCase() { return $this->reserved('新建售后案例'); }
-    public function showCase(int $id) { return $this->reserved('售后案例详情', $id); }
-    public function acceptCase(int $id) { return $this->reserved('受理售后案例', $id); }
-    public function resolveCase(int $id) { return $this->reserved('处理售后案例', $id); }
-    public function indexReturns() { return $this->reserved('退货单列表'); }
-    public function storeReturn() { return $this->reserved('新建退货单'); }
-    public function showReturn(int $id) { return $this->reserved('退货单详情', $id); }
-    public function receiveReturn(int $id) { return $this->reserved('退货收货', $id); }
-    public function postReturn(int $id) { return $this->reserved('退货入库过账', $id); }
-
-    private function reserved(string $name, ?int $id = null)
-    {
-        return response()->json([
-            'reserved' => true,
-            'id' => $id,
-            'name' => $name,
-            'message' => '接口已预留，当前批次不实现售后/退货业务逻辑。',
-        ]);
-    }
 }
 

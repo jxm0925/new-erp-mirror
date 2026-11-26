@@ -6,7 +6,7 @@
     <view class="note">{{item.work_order_no}} · {{item.sales_order_no}}</view>
     <view class="note">本次处理：{{item.unitText}}</view>
     <view class="note">实际接单人：{{item.deciders}}</view>
-    <button wx:if="{{item.can_decide || item.can_record_labor}}" class="button outline" data-id="{{item.id}}" bindtap="open">办理处置 / 处理计时</button>
+    <button wx:if="{{item.can_decide || item.can_record_labor}}" class="button outline" data-id="{{item.id}}" bindtap="open">{{item.can_proxy_decide ? '生产管理代办' : '办理处置 / 处理计时'}}</button>
   </view>
   <view wx:if="{{lastPage > 1}}" class="actions"><button class="button outline" disabled="{{page <= 1}}" data-step="-1" bindtap="page">上一页</button><text>{{page}} / {{lastPage}}</text><button class="button outline" disabled="{{page >= lastPage}}" data-step="1" bindtap="page">下一页</button></view>
 </view>
@@ -18,7 +18,7 @@
       <view class="note">本次只处理这个编号，其余设备继续原来的安排。</view>
       <view class="note">暂停等待不计工时。退料和拆回物料经仓库接收入库后办结。</view>
       <view class="actions"><button wx:for="{{selected.actions}}" wx:key="value" class="button outline {{action === item.value ? 'chosen' : ''}}" data-action="{{item.value}}" bindtap="chooseAction" disabled="{{busy || uploading}}">{{item.label}}</button></view>
-      <textarea wx:if="{{action}}" class="reason" value="{{reason}}" maxlength="500" placeholder="请填写处理原因" bindinput="reasonInput" />
+      <textarea wx:if="{{action}}" class="reason" value="{{reason}}" maxlength="500" placeholder="{{selected.can_proxy_decide ? '请说明代接单人办理处置的原因（必填）' : '请填写处理原因'}}" bindinput="reasonInput" />
       <picker wx:if="{{action === 'postpone'}}" mode="date" value="{{due}}" bindchange="dueInput"><view class="note">下次处理日期：{{due || '请选择'}}</view></picker>
       <block wx:if="{{action === 'scrap'}}">
         <view class="note">本次报废设备：{{selected.unitText}}</view>

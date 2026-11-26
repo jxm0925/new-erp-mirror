@@ -9,6 +9,7 @@ use App\Services\Erp\AuthContextService;
 use App\Services\Erp\CustomerRegionService;
 use App\Services\Erp\TradePlatformApplicationService;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\QueryException;
 use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -28,6 +29,7 @@ final class CrmLeadApplicationService
         'customer_tags', 'custom_tags', 'is_new_inquiry', 'customer_pool', 'expected_amount', 'currency', 'content', 'demand_summary',
         'platform_legacy_id', 'platform_buyer_id', 'next_contact_at', 'next_plan',
     ];
+    private ?array $recycleDepartmentOptions = null;
 
     public function __construct(
         private readonly AuthContextService $auth,
@@ -37,11 +39,13 @@ final class CrmLeadApplicationService
         private readonly CrmCustomerDedupeService $dedupe,
         private readonly CrmCustomerApplicationService $customerApp,
         private readonly CrmPlatformIdentityService $identities,
+        private readonly CrmCustomerLogService $customerLogs,
     ) {}
 
     public function permission(object $actor, string $code): void
     {
-        $allowed = $this->customers->can($actor, $code) || ($code === 'sales.customer' && $this->customers->can($actor, 'sales.customer.view'));
+        $allowed = $this->customers->can($actor, $code) || ($code === 'sales.customer' && $this->customers->can($actor, 'sales.customer.view'))
+            || ($code === 'crm.lead.recycle' && $this->customers->can($actor, 'crm.lead.release'));
         abort_unless($allowed, 403, '没有该操作权限。');
     }
 
@@ -51,15 +55,17 @@ final class CrmLeadApplicationService
         $query->where(fn ($q) => $q->where('status', '!=', 'draft')->orWhere('created_by_legacy_id', $id));
         if ($this->customers->dataScope($actor, 'crm.lead.view') === 'all') return;
         $dept = $this->staff->departmentOf($id);
+        $poolDepartments = $this->assignments->visiblePoolDepartments($actor, $dept, $this->customers->dataScope($actor, 'crm.lead.view'));
         $departmentUsers = $this->customers->dataScope($actor, 'crm.lead.view') === 'department' ? $this->auth->departmentUserIds($actor) : [];
         $grant = $this->assignments->activeGrant($actor);
         $reviewDepartments = $grant && in_array('verify', $grant->actions, true) && $this->customers->can($actor, 'sales.customer.verify')
             ? $this->assignments->expandDepartments($grant->department_ids) : [];
-        $query->where(function ($q) use ($actor, $id, $dept, $departmentUsers, $grant, $reviewDepartments) {
+        $query->where(function ($q) use ($actor, $id, $poolDepartments, $departmentUsers, $grant, $reviewDepartments) {
             $q->where('owner_legacy_id', $id)->orWhere('pending_user_legacy_id', $id)
                 ->orWhere(fn ($created) => $created->where('created_by_legacy_id', $id)->whereIn('status', ['draft', 'pending_review', 'pending_assignment']));
-            if ($departmentUsers) $q->orWhereIn('owner_legacy_id', $departmentUsers)->orWhereIn('created_by_legacy_id', $departmentUsers);
-            if ($dept) $q->orWhere(fn ($pool) => $pool->where('status', 'public_pool')->where('department_legacy_id', $dept));
+            if ($departmentUsers) $q->orWhere(fn ($department) => $department->where('status', '!=', 'public_pool')
+                ->where(fn ($people) => $people->whereIn('owner_legacy_id', $departmentUsers)->orWhereIn('created_by_legacy_id', $departmentUsers)));
+            if ($poolDepartments) $q->orWhere(fn ($pool) => $pool->where('status', 'public_pool')->whereIn('department_legacy_id', $poolDepartments));
             if ($grant && in_array('claim', $grant->actions, true) && $this->customers->can($actor, 'crm.lead.claim')) {
                 $q->orWhere(function ($pool) use ($grant) {
                     $pool->where('status', 'public_pool')->whereIn('department_legacy_id', $this->assignments->expandDepartments($grant->department_ids));
@@ -111,25 +117,41 @@ final class CrmLeadApplicationService
         $query->whereExists(fn ($c) => $this->collaborationQuery($c, (int) $actor->legacy_id)->whereColumn('c.customer_id', 'erp_crm_leads.customer_id'));
     }
 
-    public function abilities(CrmLead $lead, object $actor): array
+    public function abilities(CrmLead $lead, object $actor, bool $lock = false): array
     {
         $own = (int) $lead->owner_legacy_id === (int) $actor->legacy_id;
-        $draft = $lead->status === 'draft' && (int) $lead->created_by_legacy_id === (int) $actor->legacy_id;
+        $draft = $lead->status === 'draft';
+        $creator = (int) $lead->created_by_legacy_id === (int) $actor->legacy_id;
+        $isSales = !$this->auth->isSuperAdmin($actor) && $this->staff->isActiveSales((int) $actor->legacy_id);
         $can = fn ($action) => $this->customers->can($actor, 'crm.lead.'.$action);
-        $scope = fn ($action, $target = null) => $this->assignments->allows($actor, $action, $lead->department_legacy_id, $lead->source_channel, $target);
-        $delegated = $this->delegated($lead, $actor);
+        $scope = fn ($action, $target = null) => $this->assignments->allows($actor, $action, $lead->department_legacy_id, $lead->source_channel, $target, $lock);
+        $assign = $scope('assign');
+        $delegated = $this->delegated($lead, $actor, $lock);
         $handles = $own || $delegated;
         $receives = (int) $lead->pending_user_legacy_id === (int) $actor->legacy_id || $delegated;
-        $manages = $handles || $scope('assign');
-        $editable = $can('edit') && ($draft || ($lead->status === 'active' && $manages));
+        $manages = $handles || $assign;
+        $managerRecycle = $can('recycle') && in_array($lead->status, ['active', 'pending_acceptance', 'pending_assignment'], true) && $scope('recycle');
+        $selfRelease = ($can('release') || $can('recycle')) && $lead->status === 'active' && $handles;
+        $editable = $can('edit') && match ($lead->status) {
+            'draft' => $creator,
+            'pending_assignment' => !$isSales && ($creator || $assign),
+            'pending_acceptance', 'public_pool' => !$isSales && $assign,
+            'active' => $manages,
+            default => false,
+        };
+        $exclusive = $editable && !$draft && $this->isExclusivePotentialCustomer($lead, $lead->customer, $lock);
         return [
             'edit' => $editable,
+            'edit_identity' => $draft || $exclusive,
+            'edit_department' => $draft ? !$isSales : ($exclusive && !$isSales && in_array($lead->status, ['pending_assignment', 'pending_acceptance', 'public_pool'], true) && $assign),
+            'edit_channel' => $draft || ($exclusive && ($lead->status === 'active' || $assign)),
             'edit_custom_tags' => $editable && (int) $lead->created_by_legacy_id === (int) $actor->legacy_id,
-            'assign' => $can('assign') && in_array($lead->status, ['pending_assignment', 'public_pool'], true) && $scope('assign'),
+            'assign' => $can('assign') && in_array($lead->status, ['pending_assignment', 'public_pool'], true) && $assign,
             'accept' => $can('accept') && $lead->status === 'pending_acceptance' && $receives,
             'return' => $can('return') && $lead->status === 'pending_acceptance' && $receives,
             'transfer' => $can('transfer') && $lead->status === 'active' && $scope('transfer'),
-            'recycle' => $can('recycle') && in_array($lead->status, ['active', 'pending_acceptance', 'pending_assignment'], true) && $scope('recycle'),
+            'recycle' => $managerRecycle || $selfRelease,
+            'self_release' => !$managerRecycle && $selfRelease,
             'claim' => $can('claim') && $lead->status === 'public_pool' && $scope('claim', (int) $actor->legacy_id),
             'pool' => $can('pool') && in_array($lead->status, ['active', 'converted'], true) && $handles,
             'invalidate' => $can('invalidate') && in_array($lead->status, ['active', 'pending_assignment'], true) && $manages,
@@ -139,10 +161,76 @@ final class CrmLeadApplicationService
         ];
     }
 
+    public function recycleTargetDepartments(CrmLead $lead, object $actor, bool $lock = false): array
+    {
+        return $this->recycleTargets($lead, $actor, $this->abilities($lead, $actor, $lock), $lock);
+    }
+
+    private function recycleTargets(CrmLead $lead, object $actor, array $abilities, bool $lock = false, ?int $target = null): array
+    {
+        if (!$abilities['recycle']) return [];
+        $ids = null;
+        if ($abilities['self_release']) {
+            $ids = $this->assignments->ancestorDepartments($lead->department_legacy_id ?: $this->staff->departmentOf((int) $actor->legacy_id, $lock), $lock);
+        } elseif (!$this->auth->isSuperAdmin($actor)) {
+            $grant = $this->assignments->activeGrant($actor, $lock);
+            if (!$grant || !in_array('recycle', $grant->actions, true)) return [];
+            $ids = $this->assignments->ancestorDepartments($lead->department_legacy_id, $lock);
+            if ($target === null) {
+                $ids = array_unique(array_merge($ids, $this->assignments->expandDepartments($grant->department_ids, $lock)));
+            } elseif (!in_array($target, $ids, true) && $this->assignments->grantContainsDepartment($grant, $target, $lock)) {
+                $ids[] = $target;
+            }
+        } elseif ($target !== null) {
+            $ids = [$target];
+        }
+        if ($target !== null) return in_array($target, $ids, true) ? [$target] : [];
+        if ($lock) {
+            if ($ids !== null) return array_values($ids);
+            return DB::table('erp_departments')->whereNull('deleted_at')->where('status', 'normal')
+                ->orderBy('legacy_id')->pluck('legacy_id')->map(fn ($id) => (int) $id)->all();
+        }
+        $activeIds = array_column($this->recycleDepartmentOptions(), 'id');
+        return $ids === null ? $activeIds : array_values(array_intersect($activeIds, $ids));
+    }
+
+    private function recycleDepartmentOptions(): array
+    {
+        return $this->recycleDepartmentOptions ??= DB::table('erp_departments')->whereNull('deleted_at')->where('status', 'normal')
+            ->orderBy('sort')->orderBy('legacy_id')->get(['legacy_id', 'parent_legacy_id', 'name'])
+            ->map(fn ($department) => ['id' => (int) $department->legacy_id, 'parent_id' => (int) $department->parent_legacy_id, 'name' => $department->name])->all();
+    }
+
+    public function withRecycleOrigin(Builder $query): void
+    {
+        $query->addSelect(['recycle_origin_department_id' => DB::table('erp_crm_lead_logs')
+            ->selectRaw("JSON_UNQUOTE(JSON_EXTRACT(before_snapshot, '$.department_legacy_id'))")
+            ->whereColumn('lead_id', 'erp_crm_leads.id')->whereIn('action', ['claim', 'accept'])->orderByDesc('id')->limit(1)]);
+    }
+
+    /** 仅独占潜在客户可随线索纠错；保存时以持锁读取复核共享业务，避免覆盖其他业务档案。 */
+    private function isExclusivePotentialCustomer(CrmLead $lead, ?SalesCustomer $customer, bool $lock = false): bool
+    {
+        if (!$customer || $customer->status !== 'potential' || (int) $customer->id !== (int) $lead->customer_id) return false;
+        $owner = match ($lead->status) {
+            'active' => (int) $lead->owner_legacy_id,
+            'pending_assignment', 'pending_acceptance', 'public_pool' => (int) $lead->previous_owner_legacy_id,
+            default => null,
+        };
+        if ($owner === null || ($customer->owner_legacy_id !== null && (int) $customer->owner_legacy_id !== $owner)) return false;
+        $otherLeads = DB::table('erp_crm_leads')->where('customer_id', $customer->id)->where('id', '!=', $lead->id);
+        if ($otherLeads->when($lock, fn ($q) => $q->lockForUpdate())->first(['id'])) return false;
+        foreach (['erp_crm_opportunities', 'erp_sales_orders', 'erp_sales_invoice_requests', 'erp_sales_returns', 'erp_aftersales_cases', 'erp_customization_records'] as $table) {
+            if (DB::table($table)->where('customer_id', $customer->id)->when($lock, fn ($q) => $q->lockForUpdate())->first(['id'])) return false;
+        }
+        return DB::table('erp_crm_customer_collaborators')->where('customer_id', $customer->id)->where('status', 'active')
+            ->when($lock, fn ($q) => $q->lockForUpdate())->first(['id']) === null;
+    }
+
     public function present(CrmLead $lead, object $actor): array
     {
         $row = $lead->toArray();
-        unset($row['customer_input_snapshot'], $row['legacy_payload']);
+        unset($row['customer_input_snapshot'], $row['legacy_payload'], $row['recycle_origin_department_id']);
         if ((int) $lead->created_by_legacy_id !== (int) $actor->legacy_id) $row['custom_tags'] = [];
         if ($lead->status === 'pending_review' && (int) $lead->created_by_legacy_id !== (int) $actor->legacy_id) {
             foreach (['mobile', 'contact_value2'] as $field) if ($row[$field]) $row[$field] = mb_strlen($row[$field]) >= 7 ? mb_substr($row[$field], 0, 3).'****'.mb_substr($row[$field], -4) : '***';
@@ -152,6 +240,17 @@ final class CrmLeadApplicationService
         $row['department_name'] = $this->customers->departmentName($lead->department_legacy_id);
         $row['status_label'] = self::STATUSES[$lead->status] ?? $lead->status;
         $row['abilities'] = $this->abilities($lead, $actor);
+        $recycleDepartments = $this->recycleTargets($lead, $actor, $row['abilities']);
+        $row['recycle_departments'] = $recycleDepartments
+            ? array_values(array_filter($this->recycleDepartmentOptions(), fn ($department) => in_array($department['id'], $recycleDepartments, true))) : [];
+        $row['default_recycle_department_id'] = null;
+        if ($recycleDepartments) {
+            $origin = array_key_exists('recycle_origin_department_id', $lead->getAttributes()) ? $lead->getAttribute('recycle_origin_department_id')
+                : DB::table('erp_crm_lead_logs')->where('lead_id', $lead->id)->whereIn('action', ['claim', 'accept'])->orderByDesc('id')
+                    ->selectRaw("JSON_UNQUOTE(JSON_EXTRACT(before_snapshot, '$.department_legacy_id')) as department_id")->value('department_id');
+            $default = in_array((int) $origin, $recycleDepartments, true) ? (int) $origin : (int) $lead->department_legacy_id;
+            if (in_array($default, $recycleDepartments, true)) $row['default_recycle_department_id'] = $default;
+        }
         $row['delegated'] = $this->delegated($lead, $actor);
         $row['delegated_owner'] = $row['delegated'] ? ['id' => (int) ($lead->pending_user_legacy_id ?: $lead->owner_legacy_id),
             'name' => $lead->pending_user_name ?: $lead->owner_name] : null;
@@ -186,33 +285,84 @@ final class CrmLeadApplicationService
             // 平台设置、身份绑定、线索提交统一先锁平台计数器，避免边查重边改变识别规则。
             app(TradePlatformApplicationService::class)->lockIdentityCounter();
             $lead = $id ? $this->visible($id, $actor, true) : new CrmLead;
+            $formal = $id && $lead->status !== 'draft';
+            $mode = $data['mode'] ?? ($formal ? 'submit' : 'draft');
+            $customer = null;
+            $exclusiveCustomer = false;
             if ($id) {
                 $this->version($lead, $data);
-                abort_unless($this->abilities($lead, $actor)['edit'], 403, '当前线索不能编辑。');
-                if ($this->delegated($lead, $actor) && !$this->assignments->allows($actor, 'assign', $lead->department_legacy_id, $lead->source_channel)
+                if ($formal) abort_unless($mode === 'submit' && in_array($lead->status, ['pending_assignment', 'pending_acceptance', 'public_pool', 'active'], true), 422, '当前状态不能保存，正式线索不能存回草稿。');
+                if ($formal) {
+                    $customer = $lead->customer_id ? SalesCustomer::query()->lockForUpdate()->findOrFail($lead->customer_id) : null;
+                    $lead->setRelation('customer', $customer);
+                }
+                $abilities = $this->abilities($lead, $actor, true);
+                abort_unless($abilities['edit'], 403, '当前线索不能编辑。');
+                $exclusiveCustomer = $formal && $abilities['edit_identity'];
+                if ($this->delegated($lead, $actor, true) && !$this->assignments->allows($actor, 'assign', $lead->department_legacy_id, $lead->source_channel, null, true)
                     && array_key_exists('contact_id', $data)) {
                     abort_unless((int) $data['contact_id'] === (int) $lead->contact_id, 422, '代班只能使用该线索已关联的联系人。');
                 }
             }
             $before = $id ? $this->snapshot($lead) : null;
+            $beforeInput = $formal ? $this->input($lead) : [];
             $values = array_intersect_key($data, array_flip(self::EDITABLE));
             // 共享线索不会共享创建人的个人标签，编辑时的空数组也不能清除他人的值。
             if ($id && (int) $lead->created_by_legacy_id !== (int) $actor->legacy_id) unset($values['custom_tags']);
-            if ($id && $lead->status !== 'draft') {
-                // 已正式关联的客户/渠道/所属部门不通过编辑重新归属，改动需走转交或核实动作。
-                foreach (['customer_id', 'department_legacy_id', 'source_channel', 'platform_legacy_id', 'platform_buyer_id'] as $field) {
-                    if (array_key_exists($field, $values) && (string) $values[$field] !== (string) $lead->$field) {
-                        throw ValidationException::withMessages([$field => '正式线索不能直接修改客户身份或分配范围，请通过对应业务操作处理。']);
+            if ($formal) {
+                $changed = fn ($field) => array_key_exists($field, $values) && (string) ($values[$field] ?? '') !== (string) ($lead->$field ?? '');
+                if ($changed('customer_id')) throw ValidationException::withMessages(['customer_id' => '正式线索不能替换或解除关联客户。']);
+                if (!$exclusiveCustomer) {
+                    foreach (['customer_kind', 'customer_name', 'credit_code', 'department_legacy_id', 'source_channel', 'platform_legacy_id', 'platform_buyer_id'] as $field) {
+                        if ($changed($field)) throw ValidationException::withMessages([$field => '该客户已被其他业务共用，不能通过线索修改客户身份或分配范围。']);
                     }
                 }
+                $departmentChanged = $changed('department_legacy_id');
+                $channelChanged = $changed('source_channel') || $changed('platform_legacy_id') || $changed('platform_buyer_id');
+                $department = array_key_exists('department_legacy_id', $values) ? $values['department_legacy_id'] : $lead->department_legacy_id;
+                $channel = array_key_exists('source_channel', $values) ? $values['source_channel'] : $lead->source_channel;
+                if ($departmentChanged) {
+                    abort_unless($abilities['edit_department'] ?? false, 403, '没有修改线索所属部门的权限。');
+                    abort_unless($department && $this->assignments->activeDepartment((int) $department, true), 422, '所属部门不存在或已停用。');
+                }
+                if ($channelChanged) abort_unless($abilities['edit_channel'] ?? false, 403, '没有修改线索来源渠道或平台身份的权限。');
+                if (($departmentChanged || $channelChanged) && $lead->status === 'pending_acceptance') {
+                    abort_unless($this->assignments->allows($actor, 'assign', $department ? (int) $department : null, $channel,
+                        (int) $lead->pending_user_legacy_id, true), 422, '先退回待分配后再调整部门或渠道');
+                }
+                $handles = ($lead->status === 'active' && (int) $lead->owner_legacy_id === (int) $actor->legacy_id) || $this->delegated($lead, $actor, true);
+                if ($departmentChanged || ($channelChanged && !$handles)) {
+                    $this->assignments->assert($actor, 'assign', $department ? (int) $department : null, $channel);
+                }
             }
+            $clearedRegion = $formal && $lead->region_id && array_key_exists('region_id', $values) && !$values['region_id'];
+            $addressChanged = false;
+            if ($formal) {
+                foreach (['province', 'city', 'district', 'detail_address'] as $field) {
+                    if (array_key_exists($field, $values) && (string) ($values[$field] ?? '') !== (string) ($lead->$field ?? '')) $addressChanged = true;
+                }
+            }
+            $contactChanged = $formal && array_key_exists('contact_id', $values) && (int) ($values['contact_id'] ?? 0) !== (int) $lead->contact_id;
             $lead->fill($values);
+            if ($contactChanged && $lead->contact_id) {
+                $contact = DB::table('erp_sales_customer_contacts')->where('id', $lead->contact_id)->where('customer_id', $lead->customer_id)->lockForUpdate()->first(['id']);
+                if (!$contact) {
+                    throw ValidationException::withMessages(['contact_id' => '联系人不存在或不属于当前客户。']);
+                }
+            }
             if ($lead->region_id) {
                 $address = app(CustomerRegionService::class)->address((int) $lead->region_id, (string) $lead->detail_address,
                     $id ? (int) $lead->getRawOriginal('region_id') : null);
                 $lead->fill(array_intersect_key($address, array_flip(['province', 'city', 'district', 'full_address'])));
+            } elseif ($clearedRegion || ($formal && $addressChanged)) {
+                // 仅修改地址组成时重算，避免旧汇总覆盖本次修改；未动的历史整段地址继续保留。
+                if ($clearedRegion) $lead->fill(['province' => null, 'city' => null, 'district' => null]);
+                $lead->full_address = trim(implode('', [$lead->province, $lead->city, $lead->district, $lead->detail_address])) ?: null;
             } elseif (!trim((string) $lead->full_address)) {
                 $lead->full_address = trim(implode('', [$lead->province, $lead->city, $lead->district, $lead->detail_address])) ?: null;
+            }
+            if ($formal && mb_strlen((string) $lead->full_address) > 500) {
+                throw ValidationException::withMessages(['full_address' => '完整地址不能超过500字，请缩短详细地址。']);
             }
             if (!$id) {
                 $lead->lead_no = 'LD'.now()->format('Ymd').strtoupper(substr((string) Str::ulid(), -12));
@@ -234,7 +384,6 @@ final class CrmLeadApplicationService
                 $this->assignments->assert($actor, 'assign', $lead->department_legacy_id, $lead->source_channel);
             }
             $lead->customer_input_snapshot = $this->input($lead);
-            $mode = $data['mode'] ?? ($id && $lead->status !== 'draft' ? 'submit' : 'draft');
             if ($mode === 'review') {
                 abort_unless($lead->status === 'draft', 422, '只有草稿可以申请身份核实。');
                 abort_if(trim((string) ($data['review_note'] ?? '')) === '', 422, '请填写申请说明。');
@@ -245,8 +394,11 @@ final class CrmLeadApplicationService
                 app(CrmDuplicateReviewApplicationService::class)->createForLead($lead, $matches, $data['review_note'], $actor);
             } elseif ($mode === 'submit' && $lead->status === 'draft') {
                 $this->formalize($lead, $data, $actor);
+            } elseif ($formal) {
+                $this->validateFormalEdit($lead, $data, $actor, $customer, $exclusiveCustomer, $beforeInput);
+                if ($exclusiveCustomer) $this->syncExclusiveCustomer($lead, $customer, $actor, $address['country'] ?? null);
             } else {
-                abort_unless($mode === 'draft' || ($mode === 'submit' && $lead->status === 'active'), 422, '当前状态不能保存。');
+                abort_unless($mode === 'draft', 422, '当前状态不能保存。');
             }
             if ($id) $lead->version++;
             $lead->save();
@@ -257,13 +409,52 @@ final class CrmLeadApplicationService
         }, 3);
     }
 
+    private function validateFormalEdit(CrmLead $lead, array $data, object $actor, ?SalesCustomer $customer, bool $exclusiveCustomer, array $beforeInput): void
+    {
+        abort_unless(in_array($lead->customer_kind, ['individual', 'enterprise'], true), 422, '请选择有效的客户类型。');
+        abort_if(trim((string) $lead->customer_name) === '' || !$lead->department_legacy_id || trim((string) $lead->source_channel) === '', 422, '请补齐客户姓名、所属部门和来源渠道。');
+        abort_unless(DB::table('erp_departments')->where('legacy_id', $lead->department_legacy_id)->exists(), 422, '所属部门不存在。');
+        abort_unless(isset(self::CHANNELS[$lead->source_channel]), 422, '请选择有效的来源渠道。');
+        $online = $this->isOnlineLead($lead);
+        if ($online) {
+            abort_unless($lead->platform_legacy_id && trim((string) $lead->platform_buyer_id) !== '', 422, '线上线索请填写接待店铺和平台买家ID。');
+            abort_unless(DB::table('erp_sales_order_trade_platforms')->where('legacy_id', $lead->platform_legacy_id)->where('enabled', true)->where('parent_legacy_id', 0)->exists(), 422, '接待店铺已停用或不存在。');
+            try {
+                $resolved = $this->identities->assertCustomer((int) ($customer?->id ?? 0), $lead->platform_legacy_id, $lead->platform_buyer_id, true);
+            } catch (HttpResponseException $error) {
+                throw ValidationException::withMessages(['platform_buyer_id' => '该平台买家ID已属于其他客户，不能重复绑定。']);
+            }
+            abort_unless($resolved['key'], 422, '该平台未设置买家ID识别方式，不能保存正式线索。');
+        }
+        if (!$exclusiveCustomer || !$customer) return;
+        $input = $this->input($lead);
+        foreach (['region_id', 'platform_legacy_id'] as $field) {
+            $beforeInput[$field] = !empty($beforeInput[$field]) ? (int) $beforeInput[$field] : null;
+            $input[$field] = !empty($input[$field]) ? (int) $input[$field] : null;
+        }
+        if ($beforeInput === $input) return;
+        $matches = $this->dedupe->match($input, $customer->id, true);
+        foreach ($matches as $match) {
+            if (!$match['strong']) continue;
+            $field = in_array('credit_code', $match['reasons'], true) ? 'credit_code' : 'platform_buyer_id';
+            throw ValidationException::withMessages([$field => '统一社会信用代码或平台身份已属于其他客户，不能重复使用。']);
+        }
+        if ($matches && (empty($data['duplicate_confirmed']) || trim((string) ($data['duplicate_reason'] ?? '')) === '')) {
+            throw new HttpResponseException(response()->json([
+                'message' => '发现疑似客户，请确认是否为同一客户。', 'duplicates' => $this->dedupe->present($matches, $actor),
+                'requires_confirmation' => true, 'review_required' => false,
+            ], 422));
+        }
+    }
+
     public function act(int $id, string $action, array $data, object $actor): CrmLead
     {
         $this->permission($actor, 'crm.lead.'.$action);
         return DB::transaction(function () use ($id, $action, $data, $actor) {
             $lead = $this->visible($id, $actor, true);
             $this->version($lead, $data);
-            abort_unless($this->abilities($lead, $actor)[$action] ?? false, 403, '当前线索状态或授权范围不允许该操作，请刷新后重试。');
+            $abilities = $this->abilities($lead, $actor, true);
+            abort_unless($abilities[$action] ?? false, 403, '当前线索状态或授权范围不允许该操作，请刷新后重试。');
             $before = $this->snapshot($lead);
             $reason = trim((string) ($data['reason'] ?? ''));
             if (in_array($action, ['assign', 'transfer', 'return', 'recycle', 'invalidate', 'pool'], true)) {
@@ -308,7 +499,14 @@ final class CrmLeadApplicationService
                     $lead->status = 'pending_assignment';
                     break;
                 case 'recycle':
-                    $this->assignments->assert($actor, 'recycle', $lead->department_legacy_id, $lead->source_channel);
+                    if (!$abilities['self_release']) $this->assignments->assert($actor, 'recycle', $lead->department_legacy_id, $lead->source_channel);
+                    $target = (int) ($data['target_department_legacy_id'] ?? $lead->department_legacy_id);
+                    abort_unless(in_array($target, $this->recycleTargets($lead, $actor, $abilities, true, $target), true), 422, '所选目标公海层级不在允许范围内。');
+                    $targetDepartment = DB::table('erp_departments')->where('legacy_id', $target)->whereNull('deleted_at')->where('status', 'normal')
+                        ->lockForUpdate()->first(['name']);
+                    abort_unless($targetDepartment, 422, '所选目标公海层级不在允许范围内。');
+                    $recycleSummary = ($abilities['self_release'] ? '释放线索到公海：' : '人工回收到公海：').$targetDepartment->name;
+                    $lead->department_legacy_id = $target;
                     $lead->previous_owner_legacy_id = $lead->owner_legacy_id ?: $lead->pending_user_legacy_id;
                     $lead->previous_owner_name = $lead->owner_name ?: $lead->pending_user_name;
                     $lead->owner_legacy_id = null;
@@ -342,7 +540,7 @@ final class CrmLeadApplicationService
             }
             $lead->version++;
             $lead->save();
-            $labels = ['assign' => '分配线索', 'transfer' => '转交线索，待新负责人接收', 'accept' => '接收线索', 'return' => '退回待分配', 'recycle' => '人工回收到公海', 'claim' => '领取公海线索', 'pool' => '人工调整客户池', 'invalidate' => '标记线索无效', 'confirm' => '确认为有效线索'];
+            $labels = ['assign' => '分配线索', 'transfer' => '转交线索，待新负责人接收', 'accept' => '接收线索', 'return' => '退回待分配', 'recycle' => $recycleSummary ?? '人工回收到公海', 'claim' => '领取公海线索', 'pool' => '人工调整客户池', 'invalidate' => '标记线索无效', 'confirm' => '确认为有效线索'];
             $this->log($lead, $action, $labels[$action], $before, $this->snapshot($lead), trim($reason.' '.($data['note'] ?? '')) ?: null, $actor);
             if ($lead->customer_id) app(CrmFollowupApplicationService::class)->refreshContactFacts($lead->customer_id, $lead->id, false);
             return $lead->fresh();
@@ -401,13 +599,96 @@ final class CrmLeadApplicationService
         }
     }
 
+    /** 调用方已锁定线索、客户及平台规则并确认独占；不走全量子表同步，保留其余联系人和地址。 */
+    private function syncExclusiveCustomer(CrmLead $lead, SalesCustomer $customer, object $actor, ?string $country): void
+    {
+        $contactName = $lead->contact_name ?: $lead->customer_name;
+        if (mb_strlen((string) $contactName) > 80) {
+            throw ValidationException::withMessages(['contact_name' => '请填写不超过80字的实际联系人姓名。']);
+        }
+        $contact = $lead->contact_id ? $customer->contacts()->whereKey($lead->contact_id)->lockForUpdate()->first() : null;
+        $contact ??= $customer->contacts()->where('is_default', true)->where('status', 'enabled')->orderBy('id')->lockForUpdate()->first();
+        $address = $customer->addresses()->where('is_default', true)->where('status', 'enabled')->orderBy('id')->lockForUpdate()->first();
+        $contactFields = ['id', 'contact_name', 'mobile', 'phone', 'wechat', 'email', 'position', 'is_default', 'status'];
+        $addressFields = ['id', 'region_id', 'country', 'province', 'city', 'district', 'detail_address', 'full_address', 'receiver_name', 'receiver_phone', 'is_default', 'status'];
+        $customerFields = ['customer_name', 'customer_kind', 'credit_code', 'dedupe_name_key', 'region_id', 'customer_grade', 'industry', 'purchasing_power',
+            'business_lines', 'first_source', 'contact_name', 'contact_phone', 'province', 'city', 'district', 'full_address', 'dedupe_address_key'];
+        // 快照只比较业务字段；版本和更新时间变化不能让相同资料重复产生客户编辑日志。
+        $snapshot = fn ($contact, $address) => $customer->only($customerFields)
+            + ['contact' => $contact?->only($contactFields), 'default_address' => $address?->only($addressFields)];
+        $before = $snapshot($contact, $address);
+        $contact ??= $customer->contacts()->make(['is_default' => true, 'status' => 'enabled']);
+        $contact->fill([
+            'contact_name' => $contactName, 'mobile' => $lead->mobile, 'phone' => $lead->contact_value2,
+            'wechat' => $lead->wechat, 'email' => $lead->email, 'position' => $lead->contact_role,
+        ]);
+        $hasAddress = $lead->region_id || trim(implode('', [$lead->province, $lead->city, $lead->district, $lead->detail_address, $lead->full_address])) !== '';
+        if ($hasAddress) {
+            $address ??= $customer->addresses()->make(['is_default' => true, 'status' => 'enabled']);
+            // 只有未拆分地区的存量整段地址才回退为详情，地区本身不能重复写进街道地址。
+            $hasRegion = $lead->region_id || trim(implode('', [$lead->province, $lead->city, $lead->district])) !== '';
+            $address->fill([
+                'region_id' => $lead->region_id, 'province' => $lead->province, 'city' => $lead->city, 'district' => $lead->district,
+                'detail_address' => (string) ($lead->detail_address ?: ($hasRegion ? '' : $lead->full_address)),
+                'full_address' => $lead->full_address ?: trim(implode('', [$lead->province, $lead->city, $lead->district, $lead->detail_address])),
+                'receiver_name' => $contactName, 'receiver_phone' => $lead->mobile,
+            ]);
+        } elseif ($address) {
+            $address->fill(['is_default' => false, 'status' => 'disabled']);
+        }
+        // 没有关联地区的存量地址保留人工国家，清除原地区时则同步清空国家。
+        if ($address && ($lead->region_id || $lead->getRawOriginal('region_id'))) $address->country = $country;
+        $customer->fill($lead->only(['customer_name', 'customer_kind', 'region_id', 'customer_grade', 'industry', 'purchasing_power']) + [
+            'credit_code' => $this->dedupe->normalizeCode($lead->credit_code),
+            'dedupe_name_key' => CrmCustomerDedupeService::dedupeKey($lead->customer_name),
+            'business_lines' => $lead->customer_business_lines, 'first_source' => $lead->source_channel,
+            'contact_name' => $contact->contact_name, 'contact_phone' => $contact->mobile ?: $contact->phone,
+            'province' => $hasAddress ? $address->province : null, 'city' => $hasAddress ? $address->city : null,
+            'district' => $hasAddress ? $address->district : null, 'full_address' => $hasAddress ? $address->full_address : null,
+            'dedupe_address_key' => CrmCustomerDedupeService::dedupeKey($hasAddress ? $address->full_address : null),
+        ]);
+        $changed = $customer->isDirty() || $contact->isDirty() || ($address && $address->isDirty());
+        $customer->crm_version++;
+        try {
+            $customer->save();
+        } catch (QueryException $error) {
+            if ((int) ($error->errorInfo[1] ?? 0) === 1062 && str_contains($error->getMessage(), 'credit_code')) {
+                throw ValidationException::withMessages(['credit_code' => '该统一社会信用代码已属于其他客户。']);
+            }
+            throw $error;
+        }
+        if ($contact->isDirty()) $contact->save();
+        if ($address && $address->isDirty()) $address->save();
+        $lead->contact_id = $contact->id;
+
+        $online = $this->isOnlineLead($lead);
+        $identityKey = $online ? $this->identities->resolve($lead->platform_legacy_id, $lead->platform_buyer_id, true)['key'] : null;
+        $oldIdentities = $customer->identities()->where('source', 'lead')->where('status', 'confirmed')->orderBy('id')->lockForUpdate()->get();
+        foreach ($oldIdentities as $oldIdentity) {
+            if (!$online || $oldIdentity->identity_key !== $identityKey) {
+                $this->identities->disable($oldIdentity, $actor, '线索线上身份更正');
+            }
+        }
+        if ($online) {
+            $this->identities->bind($customer, (int) $lead->platform_legacy_id, $lead->platform_buyer_id, 'lead', $actor, '线索编辑同步');
+        }
+        if ($changed) {
+            $this->customerLogs->write($customer->id, 'edit', '随线索修改同步客户资料', $before, $snapshot($contact, $address), null, $actor);
+        }
+    }
+
+    private function isOnlineLead(CrmLead $lead): bool
+    {
+        return $lead->source_channel === '线上平台' || $lead->platform_legacy_id || trim((string) $lead->platform_buyer_id) !== '';
+    }
+
     private function formalize(CrmLead $lead, array $data, object $actor, bool $reviewed = false): void
     {
         $selfEntry = $lead->entry_method === 'self';
         if ($selfEntry) abort_unless($this->staff->isActiveSales((int) $lead->created_by_legacy_id), 422, '录入销售已失效，请退回修改后由运营重新分配。');
         abort_if(trim((string) $lead->customer_name) === '' || !$lead->department_legacy_id || trim((string) $lead->source_channel) === '', 422, '请补齐客户姓名、所属部门和来源渠道。');
         abort_unless(DB::table('erp_departments')->where('legacy_id', $lead->department_legacy_id)->exists(), 422, '所属部门不存在。');
-        $online = $lead->source_channel === '线上平台' || $lead->platform_legacy_id || trim((string) $lead->platform_buyer_id) !== '';
+        $online = $this->isOnlineLead($lead);
         if ($online) {
             abort_unless($lead->platform_legacy_id && trim((string) $lead->platform_buyer_id) !== '', 422, '线上线索请填写成交平台和平台买家ID，可先保存草稿。');
             abort_unless(DB::table('erp_sales_order_trade_platforms')->where('legacy_id', $lead->platform_legacy_id)->where('enabled', true)->where('parent_legacy_id', 0)->exists(), 422, '接待店铺已停用或不存在。');
@@ -427,7 +708,7 @@ final class CrmLeadApplicationService
                 'duplicates' => $this->dedupe->present($matches, $actor), 'requires_confirmation' => !$strongIds, 'review_required' => (bool) ($conflict || $strongMismatch)], 422));
         }
         if ($customer) {
-            if (!$reviewed) abort_unless($this->customers->relation($customer, $actor) !== null, 403, '该客户不在可见范围，请先申请核实或协作。');
+            if (!$reviewed) $this->customers->assert($customer, $actor, 'link_lead', '该客户当前不能新增线索，请先领取所属公海线索、申请核实或协作。');
             abort_if(in_array($customer->status, ['disabled', 'blacklisted'], true), 422, '该客户已停用或列入黑名单。');
             if ($online) $this->identities->assertCustomer($customer->id, $lead->platform_legacy_id, $lead->platform_buyer_id, true);
             // 在客户锁内复核，避免选择客户后新出现的线索被直接重复录入；只提示本人有权查看的记录。

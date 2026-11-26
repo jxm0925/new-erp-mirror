@@ -49,7 +49,7 @@
 
     <section class="table-card">
       <el-table v-loading="loading" :data="rows" class="transfer-table" border size="small" empty-text="暂无资金转账/换汇记录">
-        <el-table-column prop="transfer_no" label="单据编号" min-width="162"><template slot-scope="{row}"><el-link type="primary" @click="open(row)">{{ row.transfer_no }}</el-link></template></el-table-column>
+        <el-table-column prop="transfer_no" label="单据编号" min-width="162"><template slot-scope="{row}"><el-link type="success" @click="open(row)">{{ row.transfer_no }}</el-link></template></el-table-column>
         <el-table-column label="业务类型" width="108"><template slot-scope="{row}">{{ typeLabel(row) }}</template></el-table-column>
         <el-table-column label="业务日期" width="110"><template slot-scope="{row}">{{ row.business_date || '—' }}</template></el-table-column>
         <el-table-column label="转出账户" min-width="158"><template slot-scope="{row}">{{ accountLabel(row.source_account, row.source_currency) }}</template></el-table-column>

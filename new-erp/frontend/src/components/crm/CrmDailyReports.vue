@@ -319,12 +319,12 @@ export default {
   gap: 8px;
   flex-wrap: wrap;
 }
-.crm-daily-dialog .sheet-toolbar .el-dropdown .el-button--primary {
+.crm-daily-dialog .sheet-toolbar .el-dropdown .el-button--success {
   background-color: #0d9488;
   border-color: #0d9488;
 }
-.crm-daily-dialog .sheet-toolbar .el-dropdown .el-button--primary:hover,
-.crm-daily-dialog .sheet-toolbar .el-dropdown .el-button--primary:focus {
+.crm-daily-dialog .sheet-toolbar .el-dropdown .el-button--success:hover,
+.crm-daily-dialog .sheet-toolbar .el-dropdown .el-button--success:focus {
   background-color: #0f766e;
   border-color: #0f766e;
 }

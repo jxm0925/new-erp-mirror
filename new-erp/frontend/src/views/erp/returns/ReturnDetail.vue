@@ -29,8 +29,9 @@
         <el-button size="small" icon="el-icon-back" @click="$router.push(basePath)">返回列表</el-button>
         <el-button v-if="canCancel" size="small" type="danger" plain @click="cancelReturn">取消退货单</el-button>
         <el-button v-if="canClose" size="small" plain @click="closeReturn">关闭</el-button>
-        <el-button v-if="kind === 'purchase' && !managementScopeIssue && row.return_status === 'draft' && $can('purchase_return.submit')" size="small" type="success" icon="el-icon-s-promotion" @click="submitPurchase">提交审核</el-button>
-        <el-button v-if="kind === 'purchase' && !managementScopeIssue && row.return_status === 'submitted' && $can('purchase_return.approve')" size="small" type="success" icon="el-icon-check" @click="approve">审核通过</el-button>
+        <el-button v-if="kind === 'purchase' && !managementScopeIssue && row.return_status === 'draft' && $can('purchase_return.submit')" size="small" type="success" icon="el-icon-s-promotion" @click="submitPurchase">提交退货</el-button>
+        <el-button v-if="kind === 'purchase' && row.approval_task && $can('approval.task.view')" size="small" icon="el-icon-time" @click="$router.push(`/approvals/tasks/${row.approval_task.id}`)">查看审核进度</el-button>
+        <el-button v-if="kind === 'purchase' && !managementScopeIssue && row.return_status === 'submitted' && !approvalPending && $can('purchase_return.approve')" size="small" type="success" icon="el-icon-check" @click="approve">审核通过</el-button>
         <el-button v-if="kind === 'purchase' && !managementScopeIssue && row.return_status === 'pending_outbound' && $can('purchase_return.post')" size="small" type="success" icon="el-icon-box" @click="postPurchase">
           {{ isRejectedBeforePosting ? '确认已退回供应商' : '退货出库过账' }}
         </el-button>
@@ -306,9 +307,9 @@
       </el-table>
     </div>
 
-    <!-- 销售退货抽屉与弹窗（保持全部功能） -->
-    <el-drawer title="登记退货到货" :visible.sync="receiveVisible" size="520px" append-to-body>
-      <div class="drawer-body">
+    <!-- 销售退货弹窗（保持全部功能） -->
+    <el-dialog title="登记退货到货" :visible.sync="receiveVisible" width="640px" top="5vh" custom-class="master-style-dialog return-receive-dialog" append-to-body>
+      <div>
         <div v-for="line in receiveItems" :key="line.sales_return_item_id" class="receipt-line">
           <h4>{{ line.item_label }}</h4>
           <el-form label-width="100px" size="small">
@@ -328,9 +329,9 @@
             </template>
           </el-form>
         </div>
-        <div class="drawer-actions"><el-button @click="receiveVisible = false">取消</el-button><el-button type="success" :loading="saving" @click="saveReceipt">保存</el-button></div>
       </div>
-    </el-drawer>
+      <div slot="footer"><el-button @click="receiveVisible = false">取消</el-button><el-button type="success" :loading="saving" @click="saveReceipt">保存</el-button></div>
+    </el-dialog>
 
     <el-dialog title="处置待处理数量" :visible.sync="disposeVisible" width="480px" custom-class="master-style-dialog" append-to-body>
       <el-form label-width="100px" size="small">
@@ -418,7 +419,8 @@ export default {
         { label: this.isRejectedBeforePosting ? '确认退回供应商' : '退货出库过账', value: this.row.return_status === 'completed' ? '已执行' : '待执行', time: this.fmt(this.row.posted_at) }
       ]
     },
-    canCancel() { return this.kind === 'purchase' ? ['draft', 'submitted'].includes(this.row.return_status) && this.$can('purchase_return.cancel') : ['draft', 'pending_receipt'].includes(this.row.return_status) && this.$can('sales_return.cancel') && !(this.row.items || []).some(i => Number(i.received_base_qty) > 0) },
+    approvalPending() { return this.kind === 'purchase' && this.row.approval_task && this.row.approval_task.task_status === 'PENDING' },
+    canCancel() { return this.kind === 'purchase' ? !this.approvalPending && ['draft', 'submitted'].includes(this.row.return_status) && this.$can('purchase_return.cancel') : ['draft', 'pending_receipt'].includes(this.row.return_status) && this.$can('sales_return.cancel') && !(this.row.items || []).some(i => Number(i.received_base_qty) > 0) },
     canClose() { return this.kind === 'purchase' ? this.row.return_status === 'pending_outbound' && this.$can('purchase_return.close') : ['pending_receipt', 'partial_received', 'received'].includes(this.row.return_status) && this.$can('sales_return.close') }
   },
   created() { this.load() },
@@ -433,11 +435,12 @@ export default {
       } finally { this.loading = false }
     },
     statusText(v) {
+      if (this.kind === 'purchase' && v === 'cancelled' && this.row.audit_status === 'rejected') return '已驳回'
       if (v === 'pending_outbound' && this.isRejectedBeforePosting) return '待退回供应商'
       return ({ draft: '草稿', submitted: '待审核', approved: '已审核', pending_outbound: '待出库', pending_receipt: '待收货', partial_received: '部分收货', received: '已收货', completed: '已完成', cancelled: '已取消', closed: '已关闭' })[v] || v || '-'
     },
     statusType(v) { return ({ completed: 'success', approved: 'success', received: 'success', cancelled: 'danger', closed: 'info', submitted: 'warning', pending_outbound: 'warning', pending_receipt: 'warning', partial_received: 'warning' })[v] || 'info' },
-    actionText(v) { return ({ create: '创建退货单', submit: '提交审核', approve: '审核通过', confirm: '确认', confirm_supplier_return: '确认已退回供应商', receive: '登记退货到货', post_receipt: '退货入库过账', post: '退货出库过账', apply_ap_offset: '退货抵扣应付', dispose: '处置待处理', cancel: '取消', close: '关闭' })[v] || v || '-' },
+    actionText(v) { return ({ create: '创建退货单', submit: '提交审核', approve: '审核通过', reject: '审核驳回', confirm: '确认', confirm_supplier_return: '确认已退回供应商', receive: '登记退货到货', post_receipt: '退货入库过账', post: '退货出库过账', apply_ap_offset: '退货抵扣应付', dispose: '处置待处理', cancel: '取消', close: '关闭' })[v] || v || '-' },
     creatorName() { const log = (this.row.logs || []).find(item => item.action === 'create'); return log && log.operator_name || '-' },
     operatorName(action) { const log = (this.row.logs || []).find(item => item.action === action); return log && log.operator_name || '-' },
     receiptPostText(v) { return ({ posted: '已过账', not_required: '无需过账', pending: '未过账' })[v] || v || '-' },
@@ -455,7 +458,7 @@ export default {
     receiptLocation(r) { const i = (r.items || [])[0] || {}; return `${i.warehouse && i.warehouse.warehouse_name || '-'} / ${i.location && i.location.location_name || '-'} / ${i.batch_no || '-'}` },
     async cancelReturn() { await this.$confirm('取消后不会产生库存流水，确认取消该退货单？', '取消退货单', { type: 'warning' }); await (this.kind === 'purchase' ? cancelPurchaseReturn(this.row.id) : cancelSalesReturn(this.row.id)); this.$message.success('退货单已取消'); this.load() },
     async closeReturn() { await this.$confirm('确认关闭剩余未执行数量？已发生的业务事实不会被删除。', '关闭未完成数量', { type: 'warning' }); await (this.kind === 'purchase' ? closePurchaseReturn(this.row.id) : closeSalesReturn(this.row.id)); this.$message.success('退货单已关闭'); this.load() },
-    async submitPurchase() { if (this.managementScopeIssue) return this.$message.warning(this.managementScopeIssue); await this.$confirm('确认提交该采购退货单进入审核？', '提交审核'); await submitPurchaseReturn(this.row.id); this.$message.success('已提交审核'); this.load() },
+    async submitPurchase() { if (this.managementScopeIssue) return this.$message.warning(this.managementScopeIssue); await this.$confirm('确认提交该采购退货单？匹配已发布审核流程时进入审核，否则直接通过，进入待执行。', '提交退货'); const { data } = await submitPurchaseReturn(this.row.id); this.$message.success(data.message || '采购退货已提交'); await this.load() },
     async approve() { if (this.managementScopeIssue) return this.$message.warning(this.managementScopeIssue); await this.$confirm('确认审核通过该采购退货单？', '审核确认'); await approvePurchaseReturn(this.row.id); this.$message.success('审核通过'); this.load() },
     async postPurchase() {
       if (this.managementScopeIssue) return this.$message.warning(this.managementScopeIssue)
@@ -879,11 +882,7 @@ export default {
   margin-top: 4px;
 }
 
-/* 抽屉与弹窗辅助样式 */
-.drawer-body {
-  padding: 0 20px 20px;
-}
-
+/* 弹窗辅助样式 */
 .receipt-line {
   padding: 16px 0;
   border-bottom: 1px solid #e2e8f0;
@@ -895,14 +894,6 @@ export default {
 
 .receipt-line .el-select {
   width: 100%;
-}
-
-.drawer-actions {
-  position: sticky;
-  bottom: 0;
-  padding: 14px 0;
-  background: #fff;
-  text-align: right;
 }
 
 .serial-tag {
@@ -969,14 +960,14 @@ export default {
 }
 
 .return-detail-page ::v-deep .el-button--success,
-.drawer-body ::v-deep .el-button--success {
+::v-deep .return-receive-dialog .el-button--success {
   background-color: #008b4b;
   border-color: #008b4b;
 }
 
 .return-detail-page ::v-deep .el-button--success:hover,
 .return-detail-page ::v-deep .el-button--success:focus,
-.drawer-body ::v-deep .el-button--success:hover {
+::v-deep .return-receive-dialog .el-button--success:hover {
   background-color: #00763f;
   border-color: #00763f;
 }

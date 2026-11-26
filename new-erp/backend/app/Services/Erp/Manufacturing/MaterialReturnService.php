@@ -108,8 +108,8 @@ final class MaterialReturnService
             $disposition = null;
             if ($type === 'cancellation') {
                 $disposition = Disposition::whereKey((int) ($data['disposition_id'] ?? 0))->where('work_order_id', $wo->id)->lockForUpdate()->first();
-                abort_unless($disposition && !$disposition->resolved_at && $disposition->status === 'terminating', 422, '请先由接单人选择本台取消、拆解退料或报废，再申请停产退料。');
-                abort_unless(CancellationProductionService::canDecide($disposition, $actor), 403, '请由这张工单的实际接单人申请停产退料。');
+                abort_unless($disposition && !$disposition->resolved_at && $disposition->status === 'terminating', 422, '请先由接单人或生产主管选择本台取消、拆解退料或报废，再申请停产退料。');
+                abort_unless(CancellationProductionService::canDecide($disposition, $actor), 403, '请由这张工单的实际接单人或具有工单管理权限的生产主管申请停产退料。');
             }
             $rows = $this->buildLines($wo, $op, $type, $data['lines'], null, null, $disposition);
             $plan = ! empty($data['disposition_plan']) ? $this->buildPlan($wo, $type, $rows, $data['disposition_plan'], $actor) : null;

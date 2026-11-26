@@ -251,6 +251,14 @@
                   {{ kind === 'purchase' ? '提交' : '确认' }}
                 </el-button>
                 <el-button
+                  v-if="kind === 'purchase' && row.approval_task_id && row.return_status === 'submitted' && $can('approval.task.view')"
+                  class="action-link-theme"
+                  type="text"
+                  size="mini"
+                  icon="el-icon-time"
+                  @click="$router.push(`/approvals/tasks/${row.approval_task_id}`)"
+                >审核进度</el-button>
+                <el-button
                   v-if="kind === 'purchase' && !scopeIssue(row) && row.return_status === 'pending_outbound' && $can('purchase_return.post')"
                   class="action-link-theme is-strong"
                   type="text"
@@ -376,16 +384,16 @@ export default {
     receivedQty(row) { return (row.items || []).reduce((sum, item) => sum + Number(item.received_base_qty || 0), 0).toFixed(2) },
     restockQty(row) { return (row.items || []).reduce((sum, item) => sum + Number(item.restock_base_qty || 0), 0).toFixed(2) },
     scopeText(value) { return value === 'rejected_before_posting' ? '到货拒收（未入库）' : '已入库退货' },
-    rowStatusText(row) { return row.return_status === 'pending_outbound' && row.return_scope === 'rejected_before_posting' ? '待退回供应商' : this.statusText(row.return_status) },
+    rowStatusText(row) { return this.kind === 'purchase' && row.audit_status === 'rejected' && row.return_status === 'cancelled' ? '已驳回' : row.return_status === 'pending_outbound' && row.return_scope === 'rejected_before_posting' ? '待退回供应商' : this.statusText(row.return_status) },
     statusText(value) { return ({ draft: '草稿', submitted: '待审核', approved: '已审核', pending_outbound: '待执行', pending_receipt: '待收货', partial_received: '部分收货', received: '已收货', completed: '已完成', cancelled: '已取消', closed: '已关闭' })[value] || value || '-' },
     statusType(value) { return ({ completed: 'success', approved: 'success', received: 'success', cancelled: 'danger', closed: 'info', submitted: 'warning', pending_outbound: 'warning', pending_receipt: 'warning', partial_received: 'warning' })[value] || 'info' },
     fmt(value) { return value ? erpDateTime(value, 16) : '-' },
     async advance(row) {
       if (this.scopeIssue(row)) return this.$message.warning(this.scopeIssue(row))
-      await this.$confirm(`确认${this.kind === 'purchase' ? '提交审核' : '提交确认'}？`, '操作确认')
-      await (this.kind === 'purchase' ? submitPurchaseReturn(row.id) : confirmSalesReturn(row.id))
-      this.$message.success('操作成功')
-      this.load()
+      await this.$confirm(this.kind === 'purchase' ? '确认提交退货？匹配已发布审核流程时进入审核，否则直接通过，进入待执行。' : '确认提交确认？', '操作确认')
+      const { data } = await (this.kind === 'purchase' ? submitPurchaseReturn(row.id) : confirmSalesReturn(row.id))
+      this.$message.success(data.message || '操作成功')
+      await this.load()
     },
     async post(row) {
       if (this.scopeIssue(row)) return this.$message.warning(this.scopeIssue(row))

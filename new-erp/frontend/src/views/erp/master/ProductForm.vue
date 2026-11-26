@@ -319,7 +319,7 @@
       <div class="footer-actions">
         <el-button size="small" @click="back">取消</el-button>
         <el-button size="small" :loading="saving" @click="save('draft')">保存为草稿</el-button>
-        <el-button type="primary" size="small" :loading="saving" class="btn-theme-submit" @click="save('save')">
+        <el-button type="success" size="small" :loading="saving" class="btn-theme-submit" @click="save('save')">
           {{ isEdit ? '保存修改' : '保存商品与SKU' }}
         </el-button>
       </div>

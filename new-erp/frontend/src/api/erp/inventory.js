@@ -15,9 +15,6 @@ export const listInventoryBalanceSerials = (balanceId, params) => api.get(`/v1/e
 export const getInventoryQualityContext = balanceId => api.get(`/v1/erp/inventory/quality-events/context/${balanceId}`)
 export const listInventoryQualityEvents = params => api.get('/v1/erp/inventory/quality-events', { params })
 export const createInventoryQualityEvent = data => api.post('/v1/erp/inventory/quality-events', data)
-export const getInventoryQualityEvent = id => api.get(`/v1/erp/inventory/quality-events/${id}`)
-export const startInventoryQualityEvent = id => api.post(`/v1/erp/inventory/quality-events/${id}/start`)
-export const completeInventoryQualityEvent = (id, data) => api.post(`/v1/erp/inventory/quality-events/${id}/complete`, data)
 
 export const listInventoryTransactions = params => api.get('/v1/erp/inventory/transactions', { params })
 export const getInventoryTransaction = id => api.get(`/v1/erp/inventory/transactions/${id}`)

@@ -27,18 +27,6 @@ final class PerformancePlanRateService
         return $map;
     }
 
-    /** 按 (operation_id, occurrence) 在路线快照某执行域节点里找第几次出现的身份；找不到返回 null。 */
-    public function snapshotIdentity(array $snapshotOps, int $operationId, string $context): ?array
-    {
-        $occ = 0;
-        foreach ($snapshotOps as $op) {
-            if (($op['execution_context'] ?? 'production') !== $context) continue;
-            if ((int) ($op['operation_id'] ?? 0) !== $operationId) continue;
-            $occ++;
-        }
-        return $occ ? ['operation_id' => $operationId, 'occurrence' => $occ] : null;
-    }
-
     /** 查某个 identity（op_id 第 occ 次出现）在快照节点数组里的下标。 */
     public function snapshotIndex(array $snapshotOps, int $operationId, int $occurrence, string $context): ?int
     {
@@ -49,16 +37,6 @@ final class PerformancePlanRateService
             if (++$occ === $occurrence) return $i;
         }
         return null;
-    }
-
-    /** 根工单自己冻结的节点比例：routing_snapshot 里按身份找 operation 行。 */
-    public function rootOwnRate(object $rootWo, int $operationId, int $occurrence): array
-    {
-        $ops = is_array($rootWo->routing_snapshot ?? null) ? ($rootWo->routing_snapshot['operations'] ?? []) : (json_decode((string) $rootWo->routing_snapshot, true)['operations'] ?? []);
-        $index = $this->snapshotIndex($ops, $operationId, $occurrence, 'production');
-        $op = $index !== null ? $ops[$index] : null;
-        if (! $op) return ['rate' => null, 'source' => 'missing'];
-        return ['rate' => $op['performance_rate'] ?? null, 'source' => $op['performance_source'] ?? ($op['performance_rate'] !== null ? 'frozen' : 'missing')];
     }
 
     /** 子工单节点比例 = 根工单 performance_plan.positions[path].nodes 里按身份查。 */

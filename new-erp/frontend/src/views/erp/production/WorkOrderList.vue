@@ -221,7 +221,7 @@
           </el-checkbox>
         </div>
         <div class="filter-actions">
-          <el-button size="small" type="primary" icon="el-icon-search" class="btn-primary-search" @click="search">查询</el-button>
+          <el-button size="small" type="success" icon="el-icon-search" class="btn-primary-search" @click="search">查询</el-button>
           <el-button size="small" icon="el-icon-refresh-left" class="btn-reset" @click="resetFilters">重置</el-button>
         </div>
       </div>

@@ -3,7 +3,7 @@
     <div class="invoice-toolbar">
       <div><b>给客户开发票</b><span class="muted">销售提交申请，财务开票后在这里能看到发票号和发票文件</span></div>
       <div>
-        <el-button v-if="info.can_create" size="small" type="primary" icon="el-icon-plus" :disabled="!info.can_request || availableZero" @click="openCreate">申请开票</el-button>
+        <el-button v-if="info.can_create" size="small" type="success" icon="el-icon-plus" :disabled="!info.can_request || availableZero" @click="openCreate">申请开票</el-button>
         <el-button size="small" @click="load">刷新</el-button>
       </div>
     </div>
@@ -60,7 +60,7 @@
         <el-form-item label="备注"><el-input v-model.trim="form.remark" type="textarea" :rows="2" maxlength="500" placeholder="例如：开票内容写“机械设备”、随货寄出纸票等" /></el-form-item>
         <el-form-item label=""><el-checkbox v-model="form.save_to_customer">同时保存为该客户的开票资料，下次自动带出</el-checkbox></el-form-item>
       </el-form>
-      <span slot="footer"><el-button @click="dialogVisible = false">取消</el-button><el-button type="primary" :loading="saving" @click="submit">提交申请</el-button></span>
+      <span slot="footer"><el-button @click="dialogVisible = false">取消</el-button><el-button type="success" :loading="saving" @click="submit">提交申请</el-button></span>
     </el-dialog>
   </div>
 </template>

@@ -29,44 +29,6 @@ class SalesOrderFulfillmentApplicationService
         private readonly SalesOrderSnapshotService $snapshots,
     ) {}
 
-    public function confirmOrderAndFulfill(int $orderId, string $operatorName, object $operator): SalesOrder
-    {
-        return DB::transaction(function () use ($orderId, $operatorName, $operator): SalesOrder {
-            $current = SalesOrder::query()->with('fulfillments')->whereKey($orderId)->lockForUpdate()->firstOrFail();
-            $current->assertCurrentBusiness();
-            if ($current->order_status === 'confirmed'
-                && in_array($current->production_confirm_status, ['confirmed', 'blocked'], true)
-                && $current->fulfillments->where('demand_status', 'confirmed')->isNotEmpty()) {
-                return $current->fresh(['lines', 'fulfillments']);
-            }
-            if ($current->order_status === 'draft') {
-                $this->confirmOrder($orderId, $operatorName, $operator);
-            } elseif ($current->order_status !== 'confirmed') {
-                throw ValidationException::withMessages(['order_status' => '当前销售订单状态不能执行正式确认。']);
-            }
-            $preview = $this->preview($orderId);
-            $decisions = collect($preview['lines'])->map(fn (array $line): array => [
-                'sales_order_line_id' => $line['sales_order_line_id'],
-                'confirm_qty' => $line['confirm_qty'],
-                'inventory_qty' => $line['system_suggested_inventory_qty'],
-                'production_qty' => $line['system_suggested_production_qty'],
-                'purchase_qty' => $line['system_suggested_purchase_qty'],
-                'service_qty' => $line['service_qty'],
-                'no_delivery_qty' => $line['no_delivery_qty'],
-            ])->all();
-
-            return $this->confirmProduction(
-                $orderId,
-                $decisions,
-                '销售订单正式确认后由系统实时锁定库存并建立生产层级。',
-                $operatorName,
-                null,
-                true,
-                $operator,
-            );
-        }, 5);
-    }
-
     public function confirmOrder(int $orderId, string $operatorName, ?object $actor = null): SalesOrder
     {
         return DB::transaction(function () use ($orderId, $operatorName, $actor) {
@@ -547,20 +509,19 @@ class SalesOrderFulfillmentApplicationService
                 // 生产行一行一张工单，资料齐全就自动下达并生成序列号；BOM/路线缺失的停在“计划”等补齐。
                 $workOrderIds = app(\App\Services\Erp\Manufacturing\WorkOrderService::class)
                     ->createForSalesFulfillments($order, $batchFulfillmentIds, $operator, $productionPlans);
-                $shipment = app(SalesShipmentApplicationService::class)->issueForOrder($order, $operatorName);
+                $shipment = app(SalesShipmentApplicationService::class)->issueForOrderWithReservedItems($order, $operatorName);
                 // 生产确认已按库存锁定备货，锁库状态同步回写，避免订单仍显示“待锁库”。
                 $lockStatus = app(SalesOrderInventoryLockService::class)->lockStatus($order->fresh(['lines', 'fulfillments']));
                 $order->update([
                     'inventory_lock_status' => $lockStatus,
                     'inventory_locked_at' => in_array($lockStatus, ['locked', 'partial'], true) ? now() : $order->inventory_locked_at,
                     'inventory_locked_by_legacy_id' => in_array($lockStatus, ['locked', 'partial'], true) ? (int) ($operator->legacy_id ?? 0) ?: null : $order->inventory_locked_by_legacy_id,
-                    // Production confirmation allocates the fulfillment plan only. Actual
-                    // fulfillment starts when downstream execution posts a real result.
-                    'fulfillment_status' => 'pending',
                     'production_confirm_status' => $productionConfirmStatus,
                     'shipment_status' => SalesOrderFulfillmentPolicy::shipmentStatus($order->lines->map(fn ($line) => $line->getAttributes())->all()),
                     'business_version' => (int) $order->business_version + 1,
                 ]);
+                // 分批确认须保留此前的真实交付进度，并同步本次转入发货的预留状态。
+                $this->inventoryReservations->refreshSalesOrderExecution($orderId);
                 // 免发货/费用订单可能先收齐款再做生产确认：确认后立即按完结规则判定一次。
                 app(SalesOrderStateCoordinator::class)->handle(SalesOrderStateCoordinator::PRODUCTION_CONFIRMED, $order);
                 $this->log($order, 'production_confirm', 'pending', $productionConfirmStatus, $automatic

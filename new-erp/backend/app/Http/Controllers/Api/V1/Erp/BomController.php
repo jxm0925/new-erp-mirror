@@ -8,6 +8,7 @@ use App\Services\Erp\AuthContextService;
 use App\Services\Erp\BomLifecycleApplicationService;
 use App\Services\Erp\DocumentNumberService;
 use App\Services\Erp\ItemManagementScopeService;
+use App\Services\Erp\Manufacturing\WorkOrderService;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
@@ -167,6 +168,7 @@ class BomController extends Controller
             $this->assertNoCycle($bom);
             $bom->update(['audit_status' => 'approved']);
             $this->log($bom, 'approve', '审核通过', (int) $operator->legacy_id);
+            app(WorkOrderService::class)->retryBlockedForMasterDataAfterCommit((int) $bom->id, null, $operator);
             return response()->json(['message' => 'BOM 已审核通过', 'data' => $bom->fresh(self::RELATIONS)]);
         }, 5);
     }
@@ -196,6 +198,7 @@ class BomController extends Controller
             $this->assertNoCycle($bom);
             $bom->update(['status' => 'active']);
             $this->log($bom, 'activate', '启用 BOM', (int) $operator->legacy_id);
+            app(WorkOrderService::class)->retryBlockedForMasterDataAfterCommit((int) $bom->id, null, $operator);
             return response()->json(['message' => 'BOM 已启用', 'data' => $bom->fresh(self::RELATIONS)]);
         }, 5);
     }
@@ -232,6 +235,7 @@ class BomController extends Controller
             $scope->where('id', '!=', $bom->id)->each->update(['is_default' => false]);
             $bom->update(['is_default' => true]);
             $this->log($bom, 'set_default', '设为默认 BOM', (int) $operator->legacy_id);
+            app(WorkOrderService::class)->retryBlockedForMasterDataAfterCommit((int) $bom->id, null, $operator);
             return response()->json(['message' => '默认 BOM 已更新', 'data' => $bom->fresh(self::RELATIONS)]);
         }, 5);
     }
@@ -320,6 +324,7 @@ class BomController extends Controller
     {
         $operator = $this->authorizePermission($request, 'bom.manage.delete');
         $bom = app(BomLifecycleApplicationService::class)->restore($id, (int) $operator->legacy_id);
+        if ($bom->wasChanged('deleted_at')) app(WorkOrderService::class)->retryBlockedForMasterDataAfterCommit((int) $bom->id, null, $operator);
         return response()->json(['message' => 'BOM 已恢复', 'data' => $bom->load(self::RELATIONS)]);
     }
 

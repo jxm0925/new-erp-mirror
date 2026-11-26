@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1\Erp;
 
 use App\Http\Controllers\Controller;
 use App\Models\Erp\InventoryBalance;
+use App\Models\Erp\ApprovalTask;
 use App\Models\Erp\InventorySerial;
 use App\Models\Erp\InventoryTransaction;
 use App\Models\Erp\InventoryTransactionItem;
@@ -59,7 +60,16 @@ class PurchaseReturnController extends Controller
         if ($request->filled('date_from')) $query->whereDate('return_date', '>=', $request->input('date_from'));
         if ($request->filled('date_to')) $query->whereDate('return_date', '<=', $request->input('date_to'));
 
-        return response()->json($query->paginate($this->perPage($request)));
+        $page = $query->paginate($this->perPage($request));
+        $tasks = ApprovalTask::query()->select(['id', 'business_id', 'task_status'])->where('business_type', 'PURCHASE_RETURN')
+            ->where('task_status', 'PENDING')->whereIn('business_id', $page->getCollection()->pluck('id'))
+            ->latest('id')->get()->unique('business_id')->keyBy('business_id');
+        $page->getCollection()->each(function (PurchaseReturn $return) use ($tasks): void {
+            $task = $tasks->get($return->id);
+            $return->setAttribute('approval_task_id', $task?->id);
+            $return->setAttribute('approval_task_status', $task?->task_status);
+        });
+        return response()->json($page);
     }
 
     public function sources(Request $request, InventoryAvailabilityService $availability)
@@ -247,6 +257,8 @@ class PurchaseReturnController extends Controller
             'items.physicalLinks',
             'logs',
         ])->findOrFail($id);
+        $purchaseReturn->setAttribute('approval_task', ApprovalTask::query()->select(['id', 'business_id', 'task_status'])->where('business_type', 'PURCHASE_RETURN')
+            ->where('business_id', $id)->latest('id')->first());
 
         $purchaseReturn->items->each(function (PurchaseReturnItem $item) use ($purchaseReturn): void {
             if (!$item->warehouse_id || !$item->location_id || !$item->batch_no) {
@@ -328,7 +340,11 @@ class PurchaseReturnController extends Controller
     public function submit(Request $request, int $id, PurchaseReturnApplicationService $service)
     {
         $this->authorizePermission($request, 'purchase_return.submit');
-        return $this->action($request, $service->submit($id, ...$this->operator($request)), '采购退货单已提交审批');
+        $return = $service->submit($id, ...$this->operator($request));
+        $message = $return->return_status === 'pending_outbound'
+            ? ($return->return_scope === 'rejected_before_posting' ? '采购退货已通过，等待退回供应商' : '采购退货已通过，等待仓库出库')
+            : ($return->getAttribute('approval_task') ? '采购退货已提交审核中心' : '采购退货单已提交审批');
+        return $this->action($request, $return, $message);
     }
 
     public function approve(Request $request, int $id, PurchaseReturnApplicationService $service)

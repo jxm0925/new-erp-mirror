@@ -8,13 +8,9 @@ use App\Services\Erp\SkuItemDefaultRelationService;
 use App\Services\Erp\SkuItemRelationAuditService;
 use App\Services\Erp\AuthContextService;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
-use Illuminate\Validation\Rule;
 
 class SkuItemRelationController extends Controller
 {
-    private const TYPES = ['finished_product', 'sales_bundle_item', 'shipping_accessory', 'packaging', 'service_none'];
-
     /** Stage 4 list: one row per SKU; never exposes legacy mapping/role concepts. */
     public function defaultRelationIndex(Request $request, SkuItemRelationAuditService $audit)
     {
@@ -103,119 +99,6 @@ class SkuItemRelationController extends Controller
         if ($request->filled('sku_id')) $query->where('sku_id', $request->integer('sku_id'));
         if ($request->filled('status')) $query->where('status', $request->status);
         return response()->json($query->latest()->paginate(min(100, max(5, $request->integer('per_page', 10)))));
-    }
-
-    public function store(Request $request)
-    {
-        $data = $this->validated($request);
-        $relation = DB::transaction(function () use ($data, $request) {
-            $sku = Sku::lockForUpdate()->findOrFail($data['sku_id']);
-            $data = $this->normalize($data, $sku);
-            $existing = SkuItemRelation::where('sku_id', $data['sku_id'])->where('status', 'active')->lockForUpdate()->get();
-            if ($existing->isNotEmpty()) {
-                abort_unless($request->boolean('multi_item_confirmed'), 409, 'SECOND_ITEM_CONFIRMATION_REQUIRED');
-                abort_unless(in_array($data['relation_type'], ['sales_bundle_item', 'shipping_accessory', 'packaging'], true), 422, '第二个 Item 仅允许套装、组合销售或固定随货配件');
-                $data['is_primary'] = false;
-            }
-            if ($this->isEnabledPrimary($data)) {
-                SkuItemRelation::where('sku_id', $data['sku_id'])->where('status', 'active')->where('is_primary', true)->update(['is_primary' => false, 'status' => 'inactive', 'expired_at' => now(), 'operator_name' => $this->operatorName($request)]);
-            }
-            return SkuItemRelation::create($data + ['effective_at' => now(), 'operator_name' => $this->operatorName($request)]);
-        });
-        return response()->json(['message' => '关系保存成功', 'data' => $relation->load(['sku.product', 'item', 'unit', 'baseRelation'])], 201);
-    }
-
-    public function update(Request $request, int $id)
-    {
-        $relation = SkuItemRelation::findOrFail($id);
-        $data = $this->validated($request, $id);
-        abort_if($relation->status === 'active' && $relation->is_primary && (int) $relation->item_id !== (int) ($data['item_id'] ?? 0), 422, '默认物料更换必须使用“替换默认物料”，以保留历史关系。');
-        DB::transaction(function () use ($relation, &$data, $request) {
-            $sku = Sku::lockForUpdate()->findOrFail($data['sku_id']);
-            $data = $this->normalize($data, $sku);
-            SkuItemRelation::where('sku_id', $data['sku_id'])->lockForUpdate()->get();
-            if ($this->isEnabledPrimary($data)) {
-                SkuItemRelation::where('sku_id', $data['sku_id'])->where('status', 'active')->where('is_primary', true)->whereKeyNot($relation->id)->update(['is_primary' => false, 'status' => 'inactive', 'expired_at' => now(), 'operator_name' => $this->operatorName($request)]);
-            }
-            if (($data['status'] ?? 'active') === 'inactive' && $relation->status === 'active') $data['expired_at'] = now();
-            $data['operator_name'] = $this->operatorName($request);
-            $relation->update($data);
-        });
-        return response()->json(['message' => '关系保存成功', 'data' => $relation->fresh()->load(['sku.product', 'item', 'unit', 'baseRelation'])]);
-    }
-
-    public function destroy(Request $request, int $id)
-    {
-        SkuItemRelation::findOrFail($id)->update([
-            'status' => 'inactive',
-            'is_primary' => false,
-            'expired_at' => now(),
-            'operator_name' => $this->operatorName($request),
-        ]);
-        return response()->json(['message' => '关系已删除']);
-    }
-
-    public function replacePrimary(Request $request)
-    {
-        $data = $request->validate([
-            'sku_id' => 'required|exists:erp_skus,id', 'item_id' => 'required|exists:erp_items,id',
-            'unit_id' => 'nullable|exists:erp_units,id', 'remark' => 'nullable|string',
-        ]);
-        $relation = DB::transaction(function () use ($data, $request) {
-            $sku = Sku::lockForUpdate()->findOrFail($data['sku_id']);
-            abort_if($this->orderLineType($sku) !== 'physical', 422, '服务或无需发货 SKU 无需默认物料');
-            $item = \App\Models\Erp\Item::whereKey($data['item_id'])->where('status', 'enabled')->lockForUpdate()->first();
-            abort_unless($item, 422, '默认物料必须处于启用状态');
-            app(\App\Services\Erp\ItemManagementScopeService::class)->assertProductionAllowed($item, 'item_id');
-            SkuItemRelation::where('sku_id', $sku->id)->where('status', 'active')->where('is_primary', true)->lockForUpdate()->get();
-            SkuItemRelation::where('sku_id', $sku->id)->where('status', 'active')->where('is_primary', true)->update(['is_primary' => false, 'status' => 'inactive', 'expired_at' => now(), 'operator_name' => $this->operatorName($request)]);
-            return SkuItemRelation::create([
-                'sku_id' => $sku->id, 'item_id' => $data['item_id'], 'unit_id' => $data['unit_id'] ?? null,
-                'relation_type' => 'finished_product', 'qty' => 1, 'is_primary' => true, 'status' => 'active',
-                'remark' => $data['remark'] ?? null, 'effective_at' => now(), 'operator_name' => $this->operatorName($request),
-            ]);
-        });
-        return response()->json(['message' => '默认物料已更新，旧关系已进入历史', 'data' => $relation->load(['item', 'unit'])]);
-    }
-
-    private function validated(Request $request, ?int $id = null): array
-    {
-        return $request->validate([
-            'sku_id' => 'required|exists:erp_skus,id', 'item_id' => 'nullable|exists:erp_items,id',
-            'relation_type' => ['required', Rule::in(self::TYPES)], 'qty' => 'required|numeric|min:0.0001',
-            'unit_id' => 'nullable|exists:erp_units,id', 'is_primary' => 'boolean', 'is_bundle_item' => 'boolean',
-            'relation_context' => 'nullable|in:standard,custom',
-            'base_relation_id' => 'nullable|exists:erp_sku_item_relations,id',
-            'custom_source_type' => 'nullable|in:sales_order,manual,import',
-            'custom_source_id' => 'nullable|integer|min:0',
-            'status' => 'required|in:active,inactive', 'remark' => 'nullable|string',
-        ]);
-    }
-
-    private function normalize(array $data, Sku $sku): array
-    {
-        $data['is_primary'] = (bool) ($data['is_primary'] ?? true);
-        if ($data['relation_type'] === 'service_none') {
-            abort_unless($this->orderLineType($sku) !== 'physical', 422, '实体 SKU 不能使用无实体服务关系');
-            $data['item_id'] = null;
-            $data['is_primary'] = false;
-        } else {
-            abort_if(empty($data['item_id']), 422, '请选择 Item');
-            $item = \App\Models\Erp\Item::query()->lockForUpdate()->findOrFail($data['item_id']);
-            app(\App\Services\Erp\ItemManagementScopeService::class)->assertProductionAllowed($item, 'item_id');
-        }
-        return $data;
-    }
-
-    private function isEnabledPrimary(array $data): bool
-    {
-        return ($data['status'] ?? 'active') === 'active' && !empty($data['is_primary']);
-    }
-
-    private function orderLineType(Sku $sku): string
-    {
-        $type = $sku->order_line_type ?: $sku->fulfillment_type;
-        return $type === 'virtual' ? 'no_delivery' : (string) $type;
     }
 
     /**

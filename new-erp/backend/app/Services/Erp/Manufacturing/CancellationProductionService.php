@@ -3,6 +3,7 @@
 namespace App\Services\Erp\Manufacturing;
 
 use App\Models\Erp\{SalesOrder, MfgWorkOrder, MfgWorkOrderLink, MfgLaborSession, MfgTaskParticipant, MfgWorkOrderOperation, MfgWorkOrderUnit, MfgWorkOrderMaterial, MfgMaterialReturn, CancellationProductionDisposition as Disposition};
+use App\Services\Erp\AuthContextService;
 use Carbon\CarbonInterface;
 use Illuminate\Support\Facades\DB;
 
@@ -50,7 +51,7 @@ final class CancellationProductionService
         $blocked = self::blockedUnitIds($workOrderId);
         if ($unitIds !== null) {
             $ids = array_values(array_unique(array_map('intval', $unitIds)));
-            abort_if(array_intersect($ids, $blocked), 422, '所选编号正在办理原订单变更处置，请先由该台的接单人选择去向。');
+            abort_if(array_intersect($ids, $blocked), 422, '所选编号正在办理原订单变更处置，请先由该台的接单人或生产主管选择去向。');
             return;
         }
         abort_if($blocked && !self::productionUnitIds($workOrderId), 422, '本工单尚可生产的编号都在办理订单变更处置，请先选择去向。');
@@ -140,11 +141,22 @@ final class CancellationProductionService
         return collect($owners)->unique('id')->values()->all();
     }
 
-    public static function canDecide(Disposition $row, object $actor): bool
+    public static function isOriginalDecider(Disposition $row, object $actor): bool
     {
         $ids = data_get($row->history, '0.permitted_decider_ids');
         if ($ids === null) $ids = array_column(self::deciders((int) $row->work_order_id), 'id');
         return in_array((int) ($actor->legacy_id ?? $actor->id ?? 0), array_map('intval', $ids), true);
+    }
+
+    public static function canProxyDecide(object $actor): bool
+    {
+        $auth = app(AuthContextService::class);
+        return $auth->isSuperAdmin($actor) || in_array('production.work_order.edit', $auth->permissionCodes($actor), true);
+    }
+
+    public static function canDecide(Disposition $row, object $actor): bool
+    {
+        return self::isOriginalDecider($row, $actor) || self::canProxyDecide($actor);
     }
 
     public function begin(SalesOrder $order, string $reason, ?object $actor, ?array $lineIds = null, ?int $changeId = null,
@@ -246,11 +258,25 @@ final class CancellationProductionService
             $unit = $identity->work_order_unit_id ? MfgWorkOrderUnit::whereKey($identity->work_order_unit_id)->lockForUpdate()->firstOrFail() : null;
             $row = Disposition::whereKey($id)->lockForUpdate()->firstOrFail();
             abort_if($row->resolved_at || $row->business_version !== (int) $data['expected_version'], 409, '该编号处置已变化，请刷新。');
-            abort_unless(self::canDecide($row, $actor), 403, '只有这张工单的实际接单人可以决定该编号的去向。');
+            $originalDecider = self::isOriginalDecider($row, $actor);
+            $proxy = !$originalDecider && self::canProxyDecide($actor);
+            abort_unless($originalDecider || $proxy, 403, '请由这张工单的实际接单人或具有工单管理权限的生产主管决定该编号的去向。');
             abort_unless($unit, 422, '这条旧记录没有设备编号，请先核对原实物记录，不能把整张工单代替某一台处置。');
-            $action = $data['action']; $reason = trim($data['reason']);
+            $action = $data['action']; $reason = trim((string) ($data['reason'] ?? ''));
+            abort_if($reason === '', 422, $proxy ? '生产主管代接单人办理处置必须填写原因说明。' : '请填写处理原因。');
+            // 代办不改写原接单人资格；每次代办单独留存原允许人员，保留责任追溯。
+            $proxySnapshot = [];
+            if ($proxy) {
+                $originalIds = data_get($row->history, '0.permitted_decider_ids');
+                $deciders = data_get($row->history, '0.deciders', []);
+                if ($originalIds === null) {
+                    $deciders = self::deciders((int) $wo->id);
+                    $originalIds = array_column($deciders, 'id');
+                }
+                $proxySnapshot = ['proxy_by_manager' => true, 'original_permitted_decider_ids' => $originalIds, 'original_deciders' => $deciders];
+            }
             $history = [...$row->history, ['action' => $action, 'reason' => $reason, 'operator' => $actor->nickname ?: $actor->username,
-                'operator_legacy_id' => (int) ($actor->legacy_id ?? $actor->id ?? 0), 'unit_id' => (int) $unit->id, 'at' => now()->toISOString()]];
+                'operator_legacy_id' => (int) ($actor->legacy_id ?? $actor->id ?? 0), 'unit_id' => (int) $unit->id, 'at' => now()->toISOString(), ...$proxySnapshot]];
             $changes = ['reason' => $reason, 'history' => $history, 'business_version' => $row->business_version + 1];
             if ($action === 'stock') {
                 abort_if($row->status === 'terminating', 422, '该编号已进入取消、拆解或报废处置，请先完成实物事项。');
@@ -276,7 +302,7 @@ final class CancellationProductionService
                 $ids = array_values(array_unique(array_map('intval', $data['unit_ids'] ?? [$unit->id])));
                 abort_unless($ids === [(int) $unit->id], 422, '本次只处理这条处置记录所指的一个编号。');
                 $changes += ['status' => 'terminating'];
-                app(TaskService::class)->scrapForCancellation($wo, $ids, $reason, $data['media'] ?? [], $actor);
+                app(TaskService::class)->scrapForCancellation($wo, $ids, $reason, $data['media'] ?? [], $actor, $proxy);
             } elseif ($action === 'finish_termination') {
                 abort_unless($row->status === 'terminating', 422, '请先选择该编号的取消、拆解退料或报废去向。');
                 abort_if($this->unitHasOpenDocuments($row, $unit), 422, '这个编号还有待审核退料、报废或入库申请，请先办结。');
@@ -291,7 +317,8 @@ final class CancellationProductionService
             $this->refreshWorkOrder($wo->refresh(), $actor);
             TaskService::syncWorkStatus([(int) $wo->id]);
             app(WorkOrderService::class)->log($wo, 'cancellation_disposition', $wo->status, $wo->status,
-                $unit->serial_no.' 处置 '.$action.'：'.$reason, $actor, ['disposition_id' => $row->id], (int) $unit->id);
+                $unit->serial_no.' 处置'.($proxy ? '（生产管理代办）' : '').' '.$action.'：'.$reason, $actor,
+                ['disposition_id' => $row->id, ...$proxySnapshot], (int) $unit->id);
             return $row->fresh();
         }, 5);
     }
@@ -310,8 +337,10 @@ final class CancellationProductionService
         app(DispositionLaborService::class)->closeForDisposition((int) $row->id);
         if (!in_array($unit->status, ['scrapped', 'stored'], true)) $unit->update(['status' => 'cancelled', 'current_operation_id' => null]);
         $row->update(['status' => 'cancelled', 'resolved_at' => now(), 'reason' => $reason, 'history' => $history, 'business_version' => $row->business_version + 1]);
+        $event = $history[array_key_last($history)] ?? [];
         app(WorkOrderService::class)->log($wo, 'cancellation_unit_closed', $unit->status, $unit->status,
-            $unit->serial_no.' 已办结：'.$reason, $actor, ['disposition_id' => $row->id], (int) $unit->id);
+            $unit->serial_no.' 已办结'.(!empty($event['proxy_by_manager']) ? '（生产管理代办）' : '').'：'.$reason, $actor,
+            ['disposition_id' => $row->id, ...array_intersect_key($event, array_flip(['proxy_by_manager', 'original_permitted_decider_ids', 'original_deciders']))], (int) $unit->id);
     }
 
     private function refreshWorkOrder(MfgWorkOrder $wo, ?object $actor): void

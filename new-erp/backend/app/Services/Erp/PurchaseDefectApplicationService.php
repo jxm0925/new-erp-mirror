@@ -88,12 +88,14 @@ class PurchaseDefectApplicationService
 
             if ($handling->handling_method === 'return_supplier') {
                 $purchaseReturn = $this->returns->createRejectedFromDefect($line, $handling, $quantity, $operatorId, $operatorName);
+                $returnStep = $purchaseReturn->return_status === 'pending_outbound' ? 'return_pending_outbound' : 'return_pending_approval';
                 $handling->update([
                     'business_doc_type' => 'purchase_return',
                     'business_doc_no' => $purchaseReturn->return_no,
-                    'current_step' => 'return_pending_approval',
+                    'current_step' => $returnStep,
                 ]);
-                $this->log($handling, 'create_return', $step, 'return_pending_approval', $operatorName, '已生成采购退货单，等待审核。', ['purchase_return_id' => $purchaseReturn->id]);
+                $this->log($handling, 'create_return', $step, $returnStep, $operatorName,
+                    $purchaseReturn->return_status === 'pending_outbound' ? '采购退货单已通过，等待退回供应商。' : '已生成采购退货单，等待审核。', ['purchase_return_id' => $purchaseReturn->id]);
             }
 
             if ($handling->handling_method === 'exchange') {
@@ -103,7 +105,12 @@ class PurchaseDefectApplicationService
                     '已生成正式采购换货单，等待登记原货退回。', ['purchase_exchange_order_id' => $exchange->id]);
             }
 
-            return $this->load($handling);
+            $result = $this->load($handling);
+            if (isset($purchaseReturn)) {
+                $result->setAttribute('purchase_return_status', $purchaseReturn->return_status);
+                $result->setAttribute('approval_task', $purchaseReturn->getAttribute('approval_task'));
+            }
+            return $result;
         }, 5);
     }
 

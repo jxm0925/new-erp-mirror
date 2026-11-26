@@ -475,7 +475,7 @@
               <el-button
                 v-if="canEditBom(detailDialog.data)"
                 size="mini"
-                type="primary"
+                type="success"
                 icon="el-icon-edit"
                 @click="editFromDetail(detailDialog.data)"
               >
@@ -697,7 +697,7 @@
                       <div class="version-head">
                         <strong class="code-mono">{{ v.version }}</strong>
                         <el-tag v-if="v.is_default" size="mini" type="success">默认</el-tag>
-                        <el-tag v-if="v.id === detailDialog.data.id" size="mini" type="primary">当前</el-tag>
+                        <el-tag v-if="v.id === detailDialog.data.id" size="mini" type="success">当前</el-tag>
                       </div>
                       <div class="version-no code-mono">{{ v.bom_no }}</div>
                       <div class="version-sub">

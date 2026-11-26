@@ -345,15 +345,6 @@ final class ShortageService
         return $out;
     }
 
-    /**
-     * 未指定工单时只返回共享备货在途（基本单位），专属数量必须经 compute 按工单分配。
-     * @return array<int, float>
-     */
-    public function inTransit(array $ids): array
-    {
-        return array_map(fn ($p) => (float) ($p['shared']['total'] ?? 0), app(PurchaseSupplyProjectionService::class)->project($ids));
-    }
-
     /** 分配记录保留到具体供给行，同一份备货被前单取走后不能再抵后单。 */
     private function takeTransit(array &$documents, float $wanted): array
     {

@@ -9,6 +9,7 @@ use App\Models\Erp\PurchaseOrderItem;
 use App\Models\Erp\PurchasePriceHistory;
 use App\Models\Erp\PurchaseReceipt;
 use App\Models\Erp\PurchaseReceiptItem;
+use App\Services\Erp\Inventory\PurchaseInventoryPosting;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
@@ -24,12 +25,14 @@ class PurchaseReceiptConfirmationApplicationService
         private readonly PurchaseExchangeApplicationService $exchanges,
         private readonly SupplierPerformanceService $performance,
         private readonly SupplierCapabilityService $capabilities,
+        private readonly PurchaseReceiptPostingEligibilityService $postingEligibility,
+        private readonly PurchaseInventoryPosting $posting,
     ) {
     }
 
-    public function confirm(int $receiptId, ?int $operatorId, ?string $operatorName): PurchaseReceipt
+    public function confirm(int $receiptId, ?int $operatorId, ?string $operatorName, ?object $actor = null): PurchaseReceipt
     {
-        return DB::transaction(function () use ($receiptId, $operatorId, $operatorName): PurchaseReceipt {
+        return DB::transaction(function () use ($receiptId, $operatorId, $operatorName, $actor): PurchaseReceipt {
             $orderId = PurchaseReceipt::query()->whereKey($receiptId)->value('order_id');
             $sourceOrder = $orderId ? PurchaseOrder::query()->lockForUpdate()->findOrFail($orderId) : null;
             $receipt = PurchaseReceipt::query()
@@ -92,17 +95,37 @@ class PurchaseReceiptConfirmationApplicationService
                 'finance_fact_status' => 'frozen',
             ]);
 
-            $this->settlements->refresh($receipt);
+            $receipt = $this->settlements->refresh($receipt);
+            $auth = app(AuthContextService::class);
+            $autoPosted = false;
+            // 自动入库只处理库存行全部合格且拥有过账权限的到货；部分合格等情形仍走原人工过账入口。
+            if ($requiresPosting && $receipt->stock_post_status === 'pending'
+                && $actor && (int) ($actor->legacy_id ?? 0) > 0
+                && ($auth->isSuperAdmin($actor) || in_array('inventory.post.execute', $auth->permissionCodes($actor), true))
+                && !$receipt->items->contains(fn (PurchaseReceiptItem $line) => $line->is_stock_item_snapshot
+                    && ((float) $line->unqualified_base_qty > 0 || $line->settlement_status === 'quality_hold'))
+                && $this->postingEligibility->evaluate($receipt)['can_post']) {
+                // 与确认共用外层事务，过账失败必须一起回滚，不能留下“确认成功、库存失败”的半完成状态。
+                $this->posting->postPurchaseReceipt($receipt->id, (int) $actor->legacy_id);
+                $receipt->refresh();
+                $autoPosted = true;
+            }
             $this->settlementSources->syncReceipt($receipt->id, $operatorId, $operatorName);
             $this->exchanges->syncReplacementReceiptConfirmed($receipt->fresh(), $operatorName ?: '系统');
             if ($receipt->order_id && !$isReplacement) $this->refreshOrderReceiptStatus((int) $receipt->order_id);
+            // 整单确认后再按物料刷新，避免尚为草稿的本单漏统计，同物料多行也只刷新一次。
+            foreach ($receipt->items->pluck('item_id')->unique() as $itemId) {
+                $this->performance->refresh((int) $receipt->supplier_id, (int) $itemId);
+            }
             PurchaseLog::create([
                 'target_type' => 'purchase_receipt',
                 'target_id' => $receipt->id,
                 'action' => 'confirm',
-                'content' => $requiresPosting
-                    ? '确认到货；库存物料进入待库存过账。'
-                    : '确认到货；非库存物料验收后直接履约完成，不进入库存。',
+                'content' => $autoPosted
+                    ? '确认到货并自动完成库存入库过账'
+                    : ($hasStockItems
+                        ? '确认到货；库存物料进入待库存过账。'
+                        : '确认到货；非库存物料验收后直接履约完成，不进入库存。'),
                 'operator' => $operatorName ?: '系统',
             ]);
 
@@ -215,7 +238,6 @@ class PurchaseReceiptConfirmationApplicationService
         Item::whereKey($line->item_id)->update([
             'last_purchase_price' => $this->units->calculateBaseUnitPrice($line->unit_price, $line->conversion_factor_snapshot),
         ]);
-        $this->performance->refresh((int) $receipt->supplier_id, (int) $line->item_id);
         $this->capabilities->saveItemRelation((int) $receipt->supplier_id, [
             'item_id' => $line->item_id,
             'capability_source' => 'purchase_history',

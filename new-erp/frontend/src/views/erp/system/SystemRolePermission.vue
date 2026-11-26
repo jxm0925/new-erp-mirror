@@ -478,7 +478,7 @@
         <el-button
           v-if="membersRole && membersRole.enabled"
           size="small"
-          type="primary"
+          type="success"
           icon="el-icon-plus"
           class="btn-theme-member"
           @click="userPickerVisible = true"

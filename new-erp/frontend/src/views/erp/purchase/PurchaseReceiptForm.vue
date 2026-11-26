@@ -48,7 +48,7 @@
     />
     <div v-else class="erp-page-tip">
       <i class="el-icon-info" />
-      <span>{{ form.order_id ? '到货确认只生成待过账记录；到货金额保存时按采购订单剩余成交金额分摊。' : '到货确认只生成待过账记录，库存过账仅关联已登记编号。' }}</span>
+      <span>库存物料全部合格，且入库分配和过账权限检查通过时，确认到货自动完成库存过账；其余库存物料保持待过账。{{ form.order_id ? '到货金额保存时按采购订单剩余成交金额分摊。' : '库存过账仅关联已登记编号。' }}</span>
     </div>
 
     <section class="form-card basic-info-card">

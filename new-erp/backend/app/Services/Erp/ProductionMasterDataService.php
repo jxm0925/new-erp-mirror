@@ -10,6 +10,7 @@ use App\Models\Erp\ProductionPackagingScheme;
 use App\Models\Erp\ProductionRouting;
 use App\Models\Erp\ProductionRoutingApplicability;
 use App\Models\Erp\Sku;
+use App\Services\Erp\Manufacturing\WorkOrderService;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
@@ -770,6 +771,11 @@ class ProductionMasterDataService
                 'request_hash' => $hash, 'initiated_by_legacy_id' => $this->userId($user), 'created_at' => now(), 'updated_at' => now(),
             ]);
             $entity = $action();
+            // 仅资料变为可用后重试；适用范围编辑仍遵守草稿限制，不提前下达工单。
+            if ($entityType === 'routing' && $entity->status === 'active'
+                && in_array($type, ['activate_routing', 'default_routing', 'update_routing'], true)) {
+                app(WorkOrderService::class)->retryBlockedForMasterDataAfterCommit(null, (int) $entity->id, $user);
+            }
             $responseSnapshot = ['id' => $entity->id];
             DB::table('erp_production_master_commands')->where('client_command_id', $id)->update([
                 'entity_id' => $entity->id, 'response_snapshot' => json_encode($responseSnapshot, JSON_UNESCAPED_UNICODE | JSON_PRESERVE_ZERO_FRACTION), 'updated_at' => now(),

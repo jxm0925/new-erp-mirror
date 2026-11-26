@@ -23,7 +23,7 @@
         <el-button
           v-if="!$can || $can('sales.customer.create')"
           size="small"
-          type="primary"
+          type="success"
           icon="el-icon-plus"
           class="btn-emerald-primary"
           @click="openCreateCustomer"

@@ -316,9 +316,10 @@ export default {
         const res = await saveDefectHandling(this.handleForm)
         const handling = (res && res.data && res.data.data) || {}
         this.drawerVisible = false
-        // 告诉用户生成了哪张单据，并可一键跳转继续办理（如退货单还需审核、确认退回）。
+        // 按真实提交结果提示下一步，避免无需审核时仍引导用户重复找审核入口。
         if (handling.business_doc_type === 'purchase_return' && handling.business_doc_no) {
-          this.$confirm(`已生成采购退货单 ${handling.business_doc_no}，需继续审核并确认退回供应商。`, '处理已执行', { type: 'success', confirmButtonText: '去处理退货单', cancelButtonText: '留在本页' })
+          const nextStep = handling.purchase_return_status === 'pending_outbound' ? '已通过，待确认退回供应商。' : '已提交审核，审核通过后确认退回供应商。'
+          this.$confirm(`已生成采购退货单 ${handling.business_doc_no}，${nextStep}`, '处理已执行', { type: 'success', confirmButtonText: '去处理退货单', cancelButtonText: '留在本页' })
             .then(() => this.$router.push({ path: '/purchase/returns', query: { return_no: handling.business_doc_no } }))
             .catch(() => {})
         } else {

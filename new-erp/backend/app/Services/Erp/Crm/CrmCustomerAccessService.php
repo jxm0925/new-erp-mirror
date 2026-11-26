@@ -20,7 +20,11 @@ final class CrmCustomerAccessService
 
     private array $contexts = [];
 
-    public function __construct(private readonly AuthContextService $auth) {}
+    public function __construct(
+        private readonly AuthContextService $auth,
+        private readonly CrmAssignmentAccessService $assignments,
+        private readonly CrmSalesStaffService $staff,
+    ) {}
 
     public function context(object $user): array
     {
@@ -84,6 +88,14 @@ final class CrmCustomerAccessService
             if ($ctx['scope'] === 'department') $visible->orWhereIn("$table.owner_legacy_id", $ctx['department_users']);
             $visible->orWhereIn("$table.owner_legacy_id", app(CrmSalesDelegationService::class)->activeOwners($user));
             $visible->orWhereExists(fn ($collab) => $this->activeCollaboration($collab, $ctx['actor'])->whereColumn('c.customer_id', "$table.id"));
+            // 释放只清线索负责人，客户原归属仍保留；公海共享不能据此取得客户管理或建单权限。
+            $visible->orWhere(function ($poolCustomer) use ($table, $user, $ctx) {
+                $poolCustomer->where("$table.status", 'potential')
+                    ->whereExists(function ($lead) use ($table, $user, $ctx) {
+                        $this->formalLeads($lead)->whereColumn('l.customer_id', "$table.id");
+                        $this->applyVisiblePoolLead($lead, $user, $ctx);
+                    });
+            });
         });
     }
 
@@ -96,6 +108,12 @@ final class CrmCustomerAccessService
 
     /** 返回当前用户与客户的关系；null 表示不可见。 */
     public function relation(SalesCustomer $customer, object $user): ?string
+    {
+        $relation = $this->customerRelation($customer, $user);
+        return $relation === 'public_pool' ? 'lead' : $relation;
+    }
+
+    private function customerRelation(SalesCustomer $customer, object $user): ?string
     {
         $ctx = $this->context($user);
         $owner = $customer->owner_legacy_id ? (int) $customer->owner_legacy_id : null;
@@ -110,6 +128,11 @@ final class CrmCustomerAccessService
             $this->applyRelatedLead($leads, $user, $ctx);
             if ($leads->exists()) return 'lead';
         }
+        if ($customer->status === 'potential') {
+            $leads = $this->formalLeads(DB::query())->where('l.customer_id', $customer->id);
+            $this->applyVisiblePoolLead($leads, $user, $ctx);
+            if ($leads->exists()) return 'public_pool';
+        }
         return null;
     }
 
@@ -122,15 +145,17 @@ final class CrmCustomerAccessService
     /** 权限按钮与对象关系同时成立才可操作；前端按钮只读这里的结果。 */
     public function abilities(SalesCustomer $customer, object $user): array
     {
-        $relation = $this->relation($customer, $user);
+        $relation = $this->customerRelation($customer, $user);
+        $poolReadOnly = $relation === 'public_pool';
+        if ($poolReadOnly) $relation = 'lead';
         $ctx = $this->context($user);
         $protected = !$customer->owner_legacy_id && $this->hasFormalLeads($customer->id);
         $department = $customer->owner_legacy_id
             ? in_array((int) $customer->owner_legacy_id, $ctx['department_users'], true)
             : ($protected && $this->formalLeads(DB::query())->where('l.customer_id', $customer->id)->whereIn('l.department_legacy_id', $ctx['department_ids'])->exists());
-        $manages = function (string $permission) use ($customer, $user, $ctx, $relation, $protected, $department): bool {
+        $manages = function (string $permission) use ($customer, $user, $ctx, $relation, $protected, $department, $poolReadOnly): bool {
             $scope = $this->dataScope($user, $permission);
-            return $relation !== null && ($ctx['super'] || $scope === 'all' || (int) $customer->owner_legacy_id === $ctx['actor']
+            return !$poolReadOnly && $relation !== null && ($ctx['super'] || $scope === 'all' || (int) $customer->owner_legacy_id === $ctx['actor']
                 || ($scope === 'department' && $department) || (!$customer->owner_legacy_id && !$protected));
         };
         $collab = $this->collaboration($customer->id, (int) $user->legacy_id);
@@ -140,7 +165,8 @@ final class CrmCustomerAccessService
         return [
             'relation' => $relation,
             'view' => $relation !== null,
-            'select' => $relation !== null && !$protected,
+            'link_lead' => $relation !== null && !$poolReadOnly,
+            'select' => $relation !== null && $relation !== 'lead' && !$protected,
             'edit' => $edit,
             'follow' => $manages('crm.lead.follow') || !empty($collabActions['follow']),
             'bind_identity' => $edit && $this->can($user, 'sales.customer.identity') && ($manages('sales.customer.identity') || !empty($collabActions['edit_master'])),
@@ -167,7 +193,32 @@ final class CrmCustomerAccessService
             $related->where('l.owner_legacy_id', $ctx['actor'])->orWhere('l.pending_user_legacy_id', $ctx['actor'])
                 ->orWhere(fn ($creator) => $creator->where('l.created_by_legacy_id', $ctx['actor'])->where('l.status', 'pending_assignment'));
             if ($ctx['scope'] === 'department') $related->orWhereIn('l.department_legacy_id', $ctx['department_ids']);
-            $related->orWhere(fn ($assigned) => app(CrmAssignmentAccessService::class)->applyVisible($assigned, $user, 'l'));
+            $related->orWhere(fn ($assigned) => $this->assignments->applyVisible($assigned, $user, 'l'));
+        });
+    }
+
+    /** 只复用公海可见谓词，不能反向依赖含客户服务的线索应用服务。 */
+    private function applyVisiblePoolLead(QueryBuilder $query, object $user, array $ctx): void
+    {
+        $assignments = $this->assignments;
+        $query->where('l.status', 'public_pool');
+        if (!$this->can($user, 'crm.lead.view') || !$assignments->activeAccount($ctx['actor'])) {
+            $query->whereRaw('1 = 0');
+            return;
+        }
+        $scope = $this->dataScope($user, 'crm.lead.view');
+        if ($scope === 'all') return;
+        $departments = $assignments->visiblePoolDepartments($user, $this->staff->departmentOf($ctx['actor']), $scope);
+        $grant = $assignments->activeGrant($user);
+        $query->where(function ($pool) use ($assignments, $user, $departments, $grant) {
+            $pool->whereIn('l.department_legacy_id', $departments)
+                ->orWhere(fn ($assigned) => $assignments->applyVisible($assigned, $user, 'l'));
+            if ($grant && in_array('claim', $grant->actions, true) && $this->can($user, 'crm.lead.claim')) {
+                $pool->orWhere(function ($claimed) use ($assignments, $grant) {
+                    $claimed->whereIn('l.department_legacy_id', $assignments->expandDepartments($grant->department_ids));
+                    if ($grant->channels) $claimed->whereIn('l.source_channel', $grant->channels);
+                });
+            }
         });
     }
 

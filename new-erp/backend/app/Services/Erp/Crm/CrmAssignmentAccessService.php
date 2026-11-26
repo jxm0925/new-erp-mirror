@@ -7,11 +7,14 @@ use App\Models\Erp\CrmStaffProfile;
 use App\Services\Erp\AuthContextService;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Query\Builder as QueryBuilder;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
 /** 分配授权只允许办理指定部门/渠道的动作，不增加客户资料、金额或财务查看权限。 */
 final class CrmAssignmentAccessService
 {
+    private ?Collection $departmentRows = null;
+
     public const ACTIONS = [
         'self_entry' => '自行录入', 'assign' => '分配线索', 'transfer' => '部门内转交',
         'recycle' => '人工回收', 'claim' => '公海领取', 'verify' => '重复客户核实', 'collab' => '管理协作',
@@ -41,14 +44,22 @@ final class CrmAssignmentAccessService
         if (!$this->activeAccount((int) $actor->legacy_id, $lock) || !isset(self::PERMISSIONS[$action])
             || !$this->hasPermission($actor, self::PERMISSIONS[$action])) return false;
         if (!$departmentId || !$this->activeDepartment($departmentId, $lock)) return false;
+        if ($action === 'claim') {
+            if ($assigneeId !== null && $assigneeId !== (int) $actor->legacy_id) return false;
+            $assigneeId = (int) $actor->legacy_id;
+        }
         if ($assigneeId !== null && (!$this->activeSales($assigneeId, $lock) || ($action !== 'self_entry' && !$this->accepting($assigneeId, $lock))
-            || !$this->departmentContains($departmentId, $this->staff->departmentOf($assigneeId, $lock)))) return false;
-        // 销售本人自录不依赖运营分配授权；公海领取仍必须显式授权。
+            || !$this->departmentContains($departmentId, $this->staff->departmentOf($assigneeId, $lock), $lock))) return false;
+        // 本人自录不依赖运营授权；领取只能承接本人部门及祖先公海，不能借显式授权领取平级线索。
         if ($action === 'self_entry' && $assigneeId === (int) $actor->legacy_id && $this->activeSales($assigneeId)
             && $this->staff->departmentOf($assigneeId, $lock) === $departmentId) return true;
         if ($this->auth->isSuperAdmin($actor)) return true;
         $grant = $this->activeGrant($actor, $lock);
-        return $grant && in_array($action, $grant->actions, true) && $this->grantContainsDepartment($grant, $departmentId)
+        // 只有其他动作授权时仍保留本人领取，但不能绕过该账号已配置的渠道限制。
+        if ($action === 'claim' && (!$grant || !in_array('claim', $grant->actions, true))) {
+            return !$grant || !$grant->channels || in_array($channel, $grant->channels, true);
+        }
+        return $grant && in_array($action, $grant->actions, true) && $this->grantContainsDepartment($grant, $departmentId, $lock)
             && (!$grant->channels || in_array($channel, $grant->channels, true))
             && ($assigneeId === null || $grant->assignee_mode === 'all' || in_array($assigneeId, $grant->assignee_ids, true));
     }
@@ -111,19 +122,64 @@ final class CrmAssignmentAccessService
             ->when($lock, fn ($q) => $q->lockForUpdate())->first(['legacy_id']) !== null;
     }
 
-    public function departmentContains(int $parentId, ?int $id): bool
+    public function departmentContains(int $parentId, ?int $id, bool $lock = false): bool
     {
+        if ($lock) return in_array($parentId, $this->ancestorDepartments($id, true), true);
         return $id !== null && in_array($id, $this->expandDepartments([$parentId]), true);
     }
 
-    public function grantContainsDepartment(CrmAssignGrant $grant, int $id): bool
+    public function grantContainsDepartment(CrmAssignGrant $grant, int $id, bool $lock = false): bool
     {
+        if ($lock) return (bool) array_intersect(array_map('intval', $grant->department_ids), $this->ancestorDepartments($id, true));
         return in_array($id, $this->expandDepartments($grant->department_ids), true);
     }
 
-    public function expandDepartments(array $ids): array
+    /** 公海沿有效组织链向下共享；断开的层级和异常循环不能扩大范围。 */
+    public function ancestorDepartments(?int $id, bool $lock = false): array
     {
-        $rows = DB::table('erp_departments')->whereNull('deleted_at')->where('status', 'normal')->get(['legacy_id', 'parent_legacy_id']);
+        if ($lock) $this->departmentRows = null;
+        if (!$id) return [];
+        $rows = $lock ? null : $this->departments()->keyBy('legacy_id');
+        $result = [];
+        while ($id && !in_array($id, $result, true)) {
+            // 锁内按实际路径当前读，不把页面目录缓存用于最终组织校验，也不锁无关部门。
+            $row = $lock ? DB::table('erp_departments')->where('legacy_id', $id)->whereNull('deleted_at')->where('status', 'normal')
+                ->sharedLock()->first(['legacy_id', 'parent_legacy_id']) : ($rows[$id] ?? null);
+            if (!$row) break;
+            $result[] = $id;
+            $id = $row->parent_legacy_id ? (int) $row->parent_legacy_id : null;
+        }
+        return $result;
+    }
+
+    public function visiblePoolDepartments(object $actor, ?int $dept, string $scope): array
+    {
+        $ids = $this->ancestorDepartments($dept);
+        if ($scope === 'department') {
+            $departments = DB::table('erp_department_users')->where('user_legacy_id', $actor->legacy_id)
+                ->pluck('department_legacy_id')->all();
+            if ($dept) $departments[] = $dept;
+            $ids = array_merge($ids, $this->expandDepartments($departments));
+        }
+        return array_values(array_unique($ids));
+    }
+
+    public function expandDepartments(array $ids, bool $lock = false): array
+    {
+        if ($lock) {
+            $this->departmentRows = null;
+            $result = DB::table('erp_departments')->whereNull('deleted_at')->where('status', 'normal')->whereIn('legacy_id', $ids)
+                ->orderBy('legacy_id')->sharedLock()->pluck('legacy_id')->map(fn ($id) => (int) $id)->all();
+            $pending = $result;
+            while ($pending) {
+                $children = DB::table('erp_departments')->whereNull('deleted_at')->where('status', 'normal')->whereIn('parent_legacy_id', $pending)
+                    ->orderBy('legacy_id')->sharedLock()->pluck('legacy_id')->map(fn ($id) => (int) $id)->all();
+                $pending = array_values(array_diff($children, $result));
+                $result = array_merge($result, $pending);
+            }
+            return $result;
+        }
+        $rows = $this->departments();
         $result = array_values(array_intersect(array_map('intval', $ids), $rows->pluck('legacy_id')->map(fn ($id) => (int) $id)->all()));
         do {
             $before = count($result);
@@ -131,6 +187,16 @@ final class CrmAssignmentAccessService
             $result = array_values(array_unique($result));
         } while (count($result) !== $before);
         return $result;
+    }
+
+    private function departments(): Collection
+    {
+        // 只读列表复用组织目录；一旦进入写事务就丢弃，重试和后续读取不能沿用事务前快照。
+        if (DB::transactionLevel() > 0) $this->departmentRows = null;
+        $rows = $this->departmentRows ?? DB::table('erp_departments')->whereNull('deleted_at')->where('status', 'normal')
+            ->get(['legacy_id', 'parent_legacy_id']);
+        if (DB::transactionLevel() === 0) $this->departmentRows = $rows;
+        return $rows;
     }
 
     /** 团队资料沿正式组织范围；财务客户 view_all 不参与团队管理范围。 */

@@ -668,13 +668,12 @@ select {
 }
 
 /* 页面与局部卡片加载遮罩层严格限制在内容区内，层级低于侧边菜单栏(1000)、顶栏(50)与标签栏(40)，
-   防止页面打开加载时遮罩越界或覆盖侧边菜单栏边缘；弹窗/抽屉内部遮罩保持原高层级。 */
+   防止页面打开加载时遮罩越界或覆盖侧边菜单栏边缘；弹窗内部遮罩保持原高层级。 */
 .erp-content-container .el-loading-mask:not(.is-fullscreen) {
   z-index: 30;
 }
 
-.el-dialog__wrapper .el-loading-mask:not(.is-fullscreen),
-.el-drawer__wrapper .el-loading-mask:not(.is-fullscreen) {
+.el-dialog__wrapper .el-loading-mask:not(.is-fullscreen) {
   z-index: 2000;
 }
 
@@ -754,6 +753,77 @@ select {
 .el-button--success {
   background: var(--green);
   border-color: var(--green);
+}
+
+.el-button--primary {
+  color: #ffffff;
+  background-color: #008b4b;
+  border-color: #008b4b;
+}
+
+.el-radio-button__orig-radio:enabled:not(:checked) + .el-radio-button__inner:hover {
+  color: #008b4b;
+}
+
+.el-radio-button__orig-radio:enabled:checked + .el-radio-button__inner {
+  color: #ffffff;
+  background-color: #008b4b;
+  border-color: #008b4b;
+  box-shadow: -1px 0 0 0 #008b4b;
+}
+
+.el-button--primary:hover,
+.el-button--primary:focus {
+  color: #ffffff;
+  background-color: #00763f;
+  border-color: #00763f;
+}
+
+.el-button--primary:active,
+.el-button--primary.is-active {
+  color: #ffffff;
+  background-color: #006334;
+  border-color: #006334;
+}
+
+.el-button--primary.is-plain {
+  color: #008b4b;
+  background-color: #f0fdf4;
+  border-color: #bbf7d0;
+}
+
+.el-button--primary.is-plain:hover,
+.el-button--primary.is-plain:focus {
+  color: #ffffff;
+  background-color: #00763f;
+  border-color: #00763f;
+}
+
+.el-button--primary.is-plain:active,
+.el-button--primary.is-plain.is-active {
+  color: #ffffff;
+  background-color: #006334;
+  border-color: #006334;
+}
+
+.el-button--primary.is-disabled,
+.el-button--primary.is-disabled:hover,
+.el-button--primary.is-disabled:focus,
+.el-button--primary.is-disabled:active,
+.el-button--primary.is-disabled.is-active {
+  color: #52685a;
+  background-color: #bbf7d0;
+  border-color: #bbf7d0;
+}
+
+.el-button--primary.is-disabled.is-plain,
+.el-button--primary.is-disabled.is-plain:hover,
+.el-button--primary.is-disabled.is-plain:focus,
+.el-button--primary.is-disabled.is-plain:active,
+.el-button--primary.is-disabled.is-plain.is-active {
+  color: #52685a;
+  background-color: #f0fdf4;
+  border-color: #bbf7d0;
 }
 
 .el-button--text {
@@ -1073,9 +1143,6 @@ select {
     padding-left: 10px;
   }
 
-  .el-drawer {
-    max-width: 100vw;
-  }
 }
 
 /* Preserve the compact/off-canvas behavior on every ERP route, including when
@@ -1226,17 +1293,6 @@ select {
   border-color: #008b4b !important;
 }
 
-
-/* 确认框主按钮统一使用系统主题绿，避免默认浅蓝看起来像不可点击 */
-.el-message-box__btns .el-button--primary {
-  background-color: #008b4b;
-  border-color: #008b4b;
-}
-.el-message-box__btns .el-button--primary:hover,
-.el-message-box__btns .el-button--primary:focus {
-  background-color: #00a85a;
-  border-color: #00a85a;
-}
 
 /* 窄屏（平板竖屏/手机）下取消表格固定列：固定的操作列会盖住整张表，看不到单号和内容；
    改为跟随表格横向滚动，所有列都能看到。 */

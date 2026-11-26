@@ -320,7 +320,16 @@ class PurchaseController extends Controller
         $this->keyword($query, $request, ['plan_no']);
         if ($request->filled('status')) $query->where('plan_status', $request->input('status'));
         $this->filterManagementScope($query, $request);
-        return response()->json($query->paginate($this->perPage($request)));
+        $page = $query->paginate($this->perPage($request));
+        $tasks = ApprovalTask::query()->select(['id', 'business_id', 'task_status'])->where('business_type', 'PURCHASE_PLAN')
+            ->where('task_status', 'PENDING')->whereIn('business_id', $page->getCollection()->pluck('id'))
+            ->latest('id')->get()->unique('business_id')->keyBy('business_id');
+        $page->getCollection()->each(function (PurchasePlan $plan) use ($tasks): void {
+            $task = $tasks->get($plan->id);
+            $plan->setAttribute('approval_task_id', $task?->id);
+            $plan->setAttribute('approval_task_status', $task?->task_status);
+        });
+        return response()->json($page);
     }
 
     public function storePlan(Request $request, DocumentNumberService $numbers)
@@ -352,7 +361,12 @@ class PurchaseController extends Controller
     public function showPlan(Request $request, int $id)
     {
         $this->erpAuthorize($request, 'purchase.plan.view');
-        return response()->json(PurchasePlan::with(['items.item.unit', 'items.request', 'items.requestItem', 'items.splits.supplier', 'items.splits.item', 'items.splits.order', 'items.splits.orderItem', 'orders.supplier', 'orders.items'])->findOrFail($id));
+        $plan = PurchasePlan::with(['items.item.unit', 'items.request', 'items.requestItem', 'items.splits.supplier', 'items.splits.item', 'items.splits.order', 'items.splits.orderItem', 'orders.supplier', 'orders.items'])->findOrFail($id);
+        $task = ApprovalTask::query()->select(['id', 'business_id', 'task_status'])->where('business_type', 'PURCHASE_PLAN')->where('business_id', $id)->latest('id')->first();
+        $plan->setAttribute('approval_task', $task);
+        $plan->setAttribute('approval_task_id', $task?->id);
+        $plan->setAttribute('approval_task_status', $task?->task_status);
+        return response()->json($plan);
     }
 
     public function updatePlan(Request $request, int $id)
@@ -380,7 +394,8 @@ class PurchaseController extends Controller
     public function submitPlan(Request $request, int $id, PurchaseWorkflowApplicationService $workflow)
     {
         $actor = $this->erpAuthorize($request, 'purchase.plan.edit');
-        return response()->json(['message' => '采购计划已提交', 'data' => $workflow->submitPlan($id, $this->operatorName($request), $actor)]);
+        $plan = $workflow->submitPlan($id, $this->operatorName($request), $actor);
+        return response()->json(['message' => $plan->audit_status === 'approved' ? '采购计划已通过，可生成采购订单' : ($plan->getAttribute('approval_task') ? '采购计划已提交审核中心' : '采购计划已提交'), 'data' => $plan]);
     }
 
     public function approvePlan(Request $request, int $id, PurchaseWorkflowApplicationService $workflow)
@@ -823,12 +838,14 @@ class PurchaseController extends Controller
     {
         $this->authorizePermission($request, 'purchase.receipt.confirm');
         $user = app(AuthContextService::class)->currentUser($request);
-        $receipt = $service->confirm($id, $user?->legacy_id, $user?->username ?: '系统');
+        $receipt = $service->confirm($id, $user?->legacy_id, $user?->username ?: '系统', $user);
 
         return response()->json([
-            'message' => $receipt->stock_post_status === 'not_required'
-                ? '到货已确认，非库存物料已完成采购履约'
-                : '到货已确认，库存物料等待库存过账',
+            'message' => $receipt->stock_post_status === 'posted'
+                ? '到货已确认并自动完成库存过账'
+                : ($receipt->stock_post_status === 'not_required'
+                    ? '到货已确认，非库存物料已完成采购履约'
+                    : '到货已确认，库存物料等待库存过账'),
             'data' => $receipt,
         ]);
     }

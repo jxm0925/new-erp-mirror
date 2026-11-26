@@ -6,7 +6,7 @@ Progress design: 用户确认的订单产品树、单台整链路与工单聚合
   <section class="sales-detail-page">
     <sales-order-cancellation-dialog v-if="!order.is_legacy_history" :visible.sync="cancelDialogVisible" :order-id="order.id" @changed="load" />
     <el-alert v-if="order.order_status === 'cancelled' && order.cancellation" :title="'订单已取消 · ' + (order.cancellation.finance_status === 'settled' ? '资金已结清' : '资金待处理') + (order.cancellation.production_pending ? ' · ' + order.cancellation.production_pending + '个编号待生产处理' : '')" type="warning" :closable="false" show-icon />
-    <cancellation-dispositions v-if="!order.is_legacy_history && order.id && $can('production.work_order.view')" :sales-order-id="order.id" @changed="load" />
+    <cancellation-dispositions v-if="!order.is_legacy_history && order.id && ($can('production.work_order.view') || $can('production.work_order.edit'))" :sales-order-id="order.id" @changed="load" />
     <aftersales-case-form v-if="!order.is_legacy_history && ($can('aftersales.view') || $can('aftersales.create'))" ref="caseForm" :order="order" @saved="onAftersalesSaved" />
     <!-- 顶部主控导航与操作栏 -->
     <div class="detail-header-card">
@@ -29,9 +29,8 @@ Progress design: 用户确认的订单产品树、单台整链路与工单聚合
         <el-button v-if="canCreatePendingShipment" size="small" :loading="creatingPendingShipment" @click="prepareShipment">{{ openShipmentId ? '打开待发单' : '建立待发单' }}</el-button>
         <el-button v-if="canCreateAftersales" size="small" type="success" plain icon="el-icon-service" @click="$refs.caseForm.open()">售后</el-button>
         <el-button v-if="!order.is_legacy_history && order.allowed_actions && order.allowed_actions.edit" size="small" icon="el-icon-edit" @click="openRelatedRoute(`/sales/orders/${order.id}/edit`)">修改订单</el-button>
-        <el-button v-if="!order.is_legacy_history && order.allowed_actions && order.allowed_actions.lock_inventory" size="small" type="success" plain icon="el-icon-lock" @click="openInventoryLock">锁库存</el-button>
         <el-button v-if="!order.is_legacy_history && order.allowed_actions && order.allowed_actions.submit_confirmation" size="small" type="success" icon="el-icon-check" @click="doConfirm">确认订单</el-button>
-        <el-button v-if="!order.is_legacy_history && order.allowed_actions && order.allowed_actions.production_confirmation" size="small" type="success" icon="el-icon-s-operation" @click="openRelatedRoute(`/sales/orders/${order.id}/production-confirmation`)">生产确认</el-button>
+        <el-button v-if="!order.is_legacy_history && order.allowed_actions && order.allowed_actions.confirm_production" size="small" type="success" icon="el-icon-s-operation" @click="productionConfirmationVisible = true">生产确认</el-button>
         <el-button v-if="canRequestInvoice" size="small" :type="hasStageAction ? '' : 'success'" icon="el-icon-tickets" @click="openInvoiceRequest">申请开票</el-button>
         <el-dropdown v-if="moreActions.length" trigger="click" @command="runMoreAction">
           <el-button size="small" :loading="shortClose.loading || cancelling">更多<i class="el-icon-arrow-down el-icon--right" /></el-button>
@@ -61,24 +60,8 @@ Progress design: 用户确认的订单产品树、单台整链路与工单聚合
       </span>
     </el-dialog>
 
-    <!-- 锁定库存弹窗 -->
-    <el-dialog v-if="!order.is_legacy_history" title="确认锁定库存" :visible.sync="inventoryLockVisible" width="min(1180px, calc(100vw - 32px))" :close-on-click-modal="false">
-      <el-alert type="info" :closable="false" show-icon title="系统将按当前可用库存、仓库、库位和批次进行正式占用，不会重复锁定。" />
-      <el-alert v-if="inventoryLockError" type="error" :closable="false" show-icon :title="inventoryLockError" />
-      <el-table v-else v-loading="inventoryLockLoading" :data="lockLines" border size="mini" max-height="360">
-        <el-table-column prop="line_no" label="行" width="48" align="center" />
-        <el-table-column label="商品" min-width="160"><template slot-scope="{row}"><b>{{ row.product_name || row.item_name || '-' }}</b><div v-if="row.inventory_pool_shared" class="text-muted">同物料行共用库存</div></template></el-table-column>
-        <el-table-column label="规格" min-width="150"><template slot-scope="{row}">{{ row.spec_text || row.sku_name || '-' }}</template></el-table-column>
-        <el-table-column prop="fulfillment_label" label="备货方式" min-width="96" />
-        <el-table-column label="销售需求" min-width="96" align="right"><template slot-scope="{row}">{{ lockQuantity(row.order_qty, row.sales_unit_name) }}<div v-if="row.requires_delivery" class="text-muted">已发 {{ lockQuantity(row.shipped_qty, row.sales_unit_name) }}<br>待发 {{ lockQuantity(row.pending_fulfillment_qty, row.sales_unit_name) }}</div></template></el-table-column>
-        <el-table-column label="订单库存需求" min-width="96" align="right"><template slot-scope="{row}">{{ row.requires_delivery ? lockQuantity(row.required_base_qty, row.base_unit_name) : '—' }}</template></el-table-column>
-        <el-table-column label="库存余额" min-width="96" align="right"><template slot-scope="{row}">{{ row.requires_delivery ? lockQuantity(row.inventory_on_hand_qty, row.sales_unit_name) : '—' }}</template></el-table-column>
-        <el-table-column label="可再锁库存" min-width="110" align="right"><template slot-scope="{row}">{{ row.requires_delivery ? lockQuantity(row.inventory_available_qty, row.sales_unit_name) : '—' }}<div v-if="row.quantity_notice" class="text-muted">{{ row.quantity_notice }}</div></template></el-table-column>
-        <el-table-column label="本行已锁" min-width="96" align="right"><template slot-scope="{row}"><b class="green">{{ row.requires_delivery ? lockQuantity(row.locked_inventory_qty, row.sales_unit_name) : '—' }}</b></template></el-table-column>
-        <el-table-column label="生产待补" min-width="96" align="right"><template slot-scope="{row}"><b class="orange">{{ row.fulfillment_strategy === 'production' || Number(row.pending_production_qty) > 0 ? lockQuantity(row.pending_production_qty, row.sales_unit_name) : '—' }}</b></template></el-table-column>
-        <el-table-column label="外购待补" min-width="96" align="right"><template slot-scope="{row}"><b class="orange">{{ row.fulfillment_strategy === 'purchase' || Number(row.pending_purchase_qty) > 0 ? lockQuantity(row.pending_purchase_qty, row.sales_unit_name) : '—' }}</b></template></el-table-column>
-      </el-table>
-      <span slot="footer"><el-button @click="inventoryLockVisible=false">取消</el-button><el-button type="success" :loading="inventoryLockBusy" :disabled="inventoryLockLoading || !!inventoryLockError || !order.allowed_actions || !order.allowed_actions.lock_inventory" @click="confirmInventoryLock">确认锁库存</el-button></span>
+    <el-dialog v-if="!order.is_legacy_history" title="订单生产确认" :visible.sync="productionConfirmationVisible" width="min(1480px, calc(100vw - 48px))" :close-on-click-modal="false" append-to-body destroy-on-close>
+      <sales-production-confirmation v-if="productionConfirmationVisible" :embedded-order-id="order.id" @close="productionConfirmationVisible = false" @changed="load" />
     </el-dialog>
 
     <!-- 短交关闭弹窗：剩余未发不再发，应收改为实发金额 + 运费 -->
@@ -425,7 +408,7 @@ Progress design: 用户确认的订单产品树、单台整链路与工单聚合
                 <div class="expand-kv"><span class="lbl">工作电压</span><span class="val">{{ row.electric || '未选' }}</span></div>
                 <div class="expand-kv"><span class="lbl">原水泵</span><span class="val">{{ row.need_pump === true ? '需要' : (row.need_pump === false ? '不需要' : '未配置') }}</span></div>
                 <div class="expand-kv"><span class="lbl">报价有效期</span><span class="val">{{ (row.configuration_snapshot && row.configuration_snapshot.valid_days) ? `${row.configuration_snapshot.valid_days} 天` : '未设定' }}</span></div>
-                <div class="expand-kv"><span class="lbl">库存余额</span><span class="val">{{ lineLockQuantities(row).requires_delivery ? `${numberText(lineLockQuantities(row).inventory_on_hand_qty)} ${row.unit_name_snapshot || ''}（可再锁 ${numberText(lineLockQuantities(row).inventory_available_qty)}）` : '—' }}</span></div>
+                <div class="expand-kv"><span class="lbl">库存余额</span><span class="val">{{ lineLockQuantities(row).requires_delivery ? `${numberText(lineLockQuantities(row).inventory_on_hand_qty)} ${row.unit_name_snapshot || ''}` : '—' }}</span></div>
                 <div class="expand-kv"><span class="lbl">行备注</span><span class="val" :class="{ 'text-muted': !row.remark }">{{ row.remark || '无' }}</span></div>
                 <div v-if="(row.configuration_snapshot && row.configuration_snapshot.special_custom_description) || row.customization_description" class="expand-kv expand-kv--full"><span class="lbl">特殊定制说明</span><span class="val">{{ (row.configuration_snapshot && row.configuration_snapshot.special_custom_description) || row.customization_description }}</span></div>
               </div>
@@ -850,7 +833,7 @@ Progress design: 用户确认的订单产品树、单台整链路与工单聚合
 <script>
 import { formatMoney as displayMoney } from '../../../utils/money.js'
 import { erpDateTime } from '../../../utils/dateTime'
-import { confirmSalesOrder, formalConfirmSalesOrder, previewShortCloseSalesOrder, shortCloseSalesOrder, deleteSalesOrderAttachment, deleteSalesOrderDraft, downloadSalesOrderAttachment, getSalesOrder, listSalesOrderChanges, lockSalesOrderInventory, adjustSalesOrderPriority } from '@/api/erp/sales'
+import { confirmSalesOrder, previewShortCloseSalesOrder, shortCloseSalesOrder, deleteSalesOrderAttachment, deleteSalesOrderDraft, downloadSalesOrderAttachment, getSalesOrder, listSalesOrderChanges, adjustSalesOrderPriority } from '@/api/erp/sales'
 import { createPendingShipment } from '@/api/erp/shipment-packing'
 import SalesOrderCancellationDialog from '@/components/sales/SalesOrderCancellationDialog.vue'
 import CancellationDispositions from '@/components/production/CancellationDispositions.vue'
@@ -860,6 +843,7 @@ import SalesOrderConfirmedDrawings from '@/components/sales/SalesOrderConfirmedD
 import SalesOrderFinancePanel from '@/components/sales/SalesOrderFinancePanel.vue'
 import SalesOrderInvoicePanel from '@/components/sales/SalesOrderInvoicePanel.vue'
 import OrderProgress from './components/OrderProgress.vue'
+import SalesProductionConfirmation from './SalesProductionConfirmation.vue'
 import LegacyOrderHistory from './components/LegacyOrderHistory.vue'
 import AftersalesCaseForm from '../aftersales/AftersalesCaseForm.vue'
 import { listOrderAftersales, getAftersalesEligible } from '@/api/erp/aftersales'
@@ -870,7 +854,7 @@ import { listSalesOrderWorkOrders } from '@/api/erp/production'
 
 export default {
   props: { embeddedOrderId: { type: [Number, String], default: null }, initialTab: { type: String, default: '' } },
-  components: { SalesOrderCancellationDialog, CancellationDispositions, SalesOrderChangeLabor, SalesOrderAttachmentPreviewDialog, SalesOrderConfirmedDrawings, SalesOrderFinancePanel, SalesOrderInvoicePanel, OrderProgress, LegacyOrderHistory, AftersalesCaseForm },
+  components: { SalesOrderCancellationDialog, CancellationDispositions, SalesOrderChangeLabor, SalesOrderAttachmentPreviewDialog, SalesOrderConfirmedDrawings, SalesOrderFinancePanel, SalesOrderInvoicePanel, OrderProgress, SalesProductionConfirmation, LegacyOrderHistory, AftersalesCaseForm },
   data() { return {
     pageRoute: this.embeddedOrderId ? { ...this.$route, params: { id: this.embeddedOrderId }, query: { tab: this.initialTab } } : this.$route,
     cancelDialogVisible: false,
@@ -889,11 +873,7 @@ export default {
     changeDetailVisible: false,
     selectedCandidate: null,
     candidateDetailVisible: false,
-    inventoryLockVisible: false,
-    inventoryLockBusy: false,
-    inventoryLockLoading: false,
-    inventoryLockError: '',
-    inventoryLockSequence: 0,
+    productionConfirmationVisible: false,
     cancelling: false,
     creatingPendingShipment: false,
     shortClose: { visible: false, loading: false, saving: false, preview: null, reason: '' },
@@ -901,8 +881,6 @@ export default {
     priority: { visible: false, saving: false, value: 3, reason: '' },
     priorityOptions: [{ value: 1, label: '特急' }, { value: 2, label: '加急' }, { value: 3, label: '普通' }, { value: 4, label: '可延后' }],
     expandedLineRowKeys: [],
-    inventoryLockPending: null,
-    inventoryLockStorageKey: '',
     aftersales: { rows: [], loading: false, loaded: false },
     eligible: { rows: [], loading: false },
     loadSequence: 0,
@@ -1051,9 +1029,14 @@ export default {
     await this.load()
   },
   activated() { if (this.order.id) this.load() },
-  beforeDestroy() { this.loadSequence += 1; this.inventoryLockSequence += 1 },
+  beforeDestroy() { this.loadSequence += 1 },
   watch: {
-    $route(route) { if (!this.embeddedOrderId && route.path === this.pageRoute.path) this.pageRoute = route },
+    $route(route) {
+      if (!this.embeddedOrderId && route.path === this.pageRoute.path) {
+        this.pageRoute = route
+        if (route.query.confirm_production === '1') this.load()
+      }
+    },
     'pageRoute.params.id'(next, previous) { if (next !== previous) this.load() },
     activeTab(tab) { if (tab === 'aftersales') this.loadAftersalesTab() }
   },
@@ -1186,6 +1169,7 @@ export default {
       const { data } = await getSalesOrder(id)
       if (sequence !== this.loadSequence) return
       this.order = data
+      this.consumeProductionConfirmation()
       if (data.is_legacy_history && (['finance', 'aftersales'].includes(this.activeTab) || (this.activeTab === 'production' && !this.$can('production.work_order.view')))) this.activeTab = 'info'
       if (this.$refs.changeLabor) this.$refs.changeLabor.load()
       if (this.contractFiles.length) this.attachmentsOpen = true
@@ -1194,10 +1178,6 @@ export default {
         .map(line => line.id)
       const progress = this.$refs.orderProgress
       if (progress && progress.orderId === data.id) progress.loadTree()
-      let actor = 0
-      try { actor = JSON.parse(localStorage.getItem('erp_user') || '{}').legacy_id || 0 } catch (_) { /* Local profile unavailable. */ }
-      this.inventoryLockStorageKey = `erp_pending_sales_inventory_lock_${actor}_${id}`
-      try { this.inventoryLockPending = JSON.parse(localStorage.getItem(this.inventoryLockStorageKey) || 'null') } catch (_) { this.inventoryLockPending = null }
       await this.loadChanges(1)
       if (this.embeddedOrderId && !this.initialSectionOpened && this.initialTab === 'delivery') {
         this.initialSectionOpened = true
@@ -1233,13 +1213,15 @@ export default {
       } catch (error) {
         return
       }
-      const response = await confirmSalesOrder(this.order.id)
+      const orderId = this.order.id
+      const response = await confirmSalesOrder(orderId)
       const result = response.data && response.data.data ? response.data.data : response.data
       const blocked = (result.checks || []).find(item => item.status === 'blocked')
       const passed = Boolean(result.passed) && !blocked
       if (passed) {
-        this.$message.success('订单已确认，请核实后执行“生产确认”')
+        this.$message.success('订单已确认')
         await this.load()
+        if (Number(this.order.id) === Number(orderId) && this.order.allowed_actions?.confirm_production) this.productionConfirmationVisible = true
         return
       }
       const content = (result.checks || []).map(item => `<li class="${item.status}"><b>${item.status === 'passed' ? '通过' : '阻塞'}</b> ${item.message}</li>`).join('')
@@ -1257,67 +1239,13 @@ export default {
         query: blocked && blocked.field ? { focus: blocked.field } : {}
       })
     },
-    async doFormalConfirm() {
-      await this.$confirm('正式确认后将锁定本次销售单位、默认库存物料、物料基本单位和单位换算比例，并进入订单生产确认。是否继续？', '正式确认订单', { type: 'warning' })
-      await formalConfirmSalesOrder(this.order.id)
-      this.$message.success('订单已正式确认，单位换算信息已锁定')
-      await this.load()
-    },
-    lockQuantity(value, unit) { return value == null ? '—' : `${this.numberText(value)} ${unit || ''}` },
-    async openInventoryLock() {
-      const sequence = ++this.inventoryLockSequence
-      const orderId = this.order.id
-      const token = localStorage.getItem('erp_token')
-      this.inventoryLockVisible = true
-      this.inventoryLockLoading = true
-      this.inventoryLockError = ''
-      try {
-        const { data } = await getSalesOrder(orderId)
-        if (this._isDestroyed || sequence !== this.inventoryLockSequence || !this.inventoryLockVisible || Number(this.order.id) !== Number(orderId) || Number(this.pageRoute.params.id) !== Number(orderId)) return
-        if (localStorage.getItem('erp_token') !== token) {
-          this.inventoryLockError = '登录账号已变化，请重新打开订单'
-          return
-        }
-        this.order = data
-      } catch (error) {
-        if (sequence === this.inventoryLockSequence && Number(this.order.id) === Number(orderId) && Number(this.pageRoute.params.id) === Number(orderId)) this.inventoryLockError = error.userMessage || '库存数量加载失败，请关闭后重新打开'
-      } finally {
-        if (sequence === this.inventoryLockSequence) this.inventoryLockLoading = false
-      }
-    },
-    async confirmInventoryLock() {
-      if (this.inventoryLockBusy || this.inventoryLockLoading || this.inventoryLockError || !this.order.allowed_actions?.lock_inventory) return
-      this.inventoryLockBusy = true
-      const orderId = this.order.id
-      const storageKey = this.inventoryLockStorageKey
-      try {
-        if (!this.inventoryLockPending) {
-          const version = Number(this.order.business_version)
-          if (!Number.isSafeInteger(version) || version < 1 || !this.inventoryLockStorageKey) throw new Error('订单版本无效，请刷新后重试')
-          const payload = { client_command_id: `sales-inventory-lock-${this.order.id}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`, expected_version: version }
-          localStorage.setItem(this.inventoryLockStorageKey, JSON.stringify(payload))
-          this.inventoryLockPending = payload
-        }
-        const response = await lockSalesOrderInventory(orderId, this.inventoryLockPending)
-        const result = response.data && response.data.data ? response.data.data : response.data
-        localStorage.removeItem(storageKey)
-        if (Number(this.pageRoute.params.id) === Number(orderId)) {
-          this.inventoryLockPending = null
-          this.inventoryLockVisible = false
-          this.$message.success(Number(result.created_fulfillment_count || 0) > 0 ? '库存已正式锁定，待外购及生产缺口已重新核对' : '没有新增可锁库存，未重复占用')
-          await this.load()
-        }
-      } catch (error) {
-        const status = Number(error.response?.status || 0)
-        if (status >= 400 && status < 500 && !['command_processing', 'command_recovery_required', 'recovery_required'].includes(error.errorCode)) {
-          localStorage.removeItem(storageKey)
-          if (Number(this.pageRoute.params.id) === Number(orderId)) {
-            this.inventoryLockPending = null
-            if ([403, 404, 409].includes(status)) await this.load()
-          }
-        }
-        if (Number(this.pageRoute.params.id) === Number(orderId)) this.$message.error(error.userMessage || error.message || '库存锁定失败，请重试原操作')
-      } finally { this.inventoryLockBusy = false }
+    consumeProductionConfirmation() {
+      if (this.embeddedOrderId || !this.isPageRouteActive || this.pageRoute.query.confirm_production !== '1') return
+      const query = { ...this.pageRoute.query }
+      delete query.confirm_production
+      this.pageRoute = { ...this.pageRoute, query }
+      this.$router.replace({ path: this.pageRoute.path, query, hash: this.pageRoute.hash }).catch(() => {})
+      if (!this.order.is_legacy_history && this.order.allowed_actions?.confirm_production) this.productionConfirmationVisible = true
     },
     priorityTagType(p) {
       return { 1: 'danger', 2: 'warning', 4: 'info' }[p] || ''
@@ -2690,35 +2618,6 @@ export default {
   margin: 5px 0 0;
   white-space: pre-wrap;
   line-height: 1.6;
-}
-
-.inventory-lock-summary {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  margin: 16px 0;
-  border: 1px solid #edf0f4;
-  border-radius: 6px;
-}
-
-.inventory-lock-summary > div {
-  padding: 14px;
-  text-align: center;
-}
-
-.inventory-lock-summary > div + div {
-  border-left: 1px solid #edf0f4;
-}
-
-.inventory-lock-summary span {
-  color: #64748b;
-  font-size: 12px;
-  display: block;
-}
-
-.inventory-lock-summary b {
-  margin-top: 7px;
-  font-size: 22px;
-  display: block;
 }
 
 .green { color: #008b4b; }
