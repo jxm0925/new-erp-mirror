@@ -79,6 +79,21 @@ class ErpApprovalConfigurationSeeder extends Seeder
     private function businessObjects(): array
     {
         return [
+            'BOM' => [
+                'name' => '物料清单(BOM)',
+                'view_permission' => 'bom.manage.view',
+                'module' => '生产基础配置',
+                'table' => 'erp_boms',
+                'route' => '/bom/{id}/detail',
+                'provider' => 'App\\Services\\Erp\\ApprovalProviders\\DatabaseBusinessObjectProvider',
+                'display_fields' => ['bom_no', 'bom_name', 'version', 'status', 'audit_status'],
+                'search_fields' => ['bom_no', 'bom_name'],
+                'display' => ['id', 'bom_no', 'bom_name', 'product_id', 'sku_id', 'output_item_id', 'routing_id', 'bom_type', 'version', 'is_default', 'status', 'audit_status', 'submitted_at', 'effective_date', 'expire_date', 'remark'],
+                'condition' => ['id', 'bom_no', 'bom_name', 'product_id', 'sku_id', 'output_item_id', 'routing_id', 'bom_type', 'version', 'is_default', 'status', 'audit_status', 'effective_date', 'expire_date', 'created_by'],
+                'reference' => ['created_by', 'product_id', 'sku_id', 'output_item_id', 'routing_id'],
+                'writable' => ['remark'],
+                'field_labels' => ['id' => '记录编号', 'bom_no' => 'BOM 编码', 'bom_name' => '方案名称', 'product_id' => '归属商品', 'sku_id' => '关联 SKU', 'output_item_id' => '产出物料', 'routing_id' => '工艺路线', 'bom_type' => '方案类型', 'version' => '版本', 'is_default' => '默认版本', 'status' => '启用状态', 'audit_status' => '审核状态', 'submitted_at' => '提交时间', 'effective_date' => '生效日期', 'expire_date' => '失效日期', 'created_by' => '创建人', 'remark' => '备注'],
+            ],
             'PURCHASE_ORDER' => [
                 'name' => '采购订单',
                 'view_permission' => 'purchase.order.view',
@@ -227,7 +242,7 @@ class ErpApprovalConfigurationSeeder extends Seeder
                 'business_object_id' => $objectId,
                 'field_code' => $field,
             ], [
-                'field_name' => $column->COLUMN_COMMENT ?: $field,
+                'field_name' => $config['field_labels'][$field] ?? ($column->COLUMN_COMMENT ?: $field),
                 'field_type' => $type,
                 'source_path' => $field,
                 'options' => null,
@@ -243,6 +258,8 @@ class ErpApprovalConfigurationSeeder extends Seeder
     private function businessActions(): array
     {
         return [
+            ['BOM', 'bom.approve', '审批通过后生效 BOM 并按提交选择设为默认', 'approved', 'App\\Services\\Erp\\ApprovalActions\\BomAction'],
+            ['BOM', 'bom.reject', '驳回 BOM 生效申请并返回草稿', 'rejected', 'App\\Services\\Erp\\ApprovalActions\\BomAction'],
             [null, 'approval.complete', '完成审核并保留申请结果', 'approved', 'App\\Services\\Erp\\ApprovalActions\\CompleteApplicationAction'],
             [null, 'approval.reject', '驳回申请并保留审核记录', 'rejected', 'App\\Services\\Erp\\ApprovalActions\\CompleteApplicationAction'],
             [null, 'generic.approve.update_fields', '审核通过后更新允许字段', 'approved', 'App\\Services\\Erp\\ApprovalActions\\UpdateRegisteredFieldsAction'],
@@ -270,6 +287,7 @@ class ErpApprovalConfigurationSeeder extends Seeder
             ->pluck('id', 'object_code');
 
         foreach ([
+            ['BOM', 'submit_approval', '提交 BOM 生效审批', false, true],
             ['PURCHASE_ORDER', 'submit_approval', '提交采购订单审核', true, true],
             ['PURCHASE_PLAN', 'submit_approval', '提交采购计划审核', false, true],
             ['PURCHASE_RETURN', 'submit_approval', '提交采购退货审核', false, true],

@@ -16,7 +16,7 @@
           </div>
         </div>
         <div class="head-actions">
-          <el-button size="small" type="success" icon="el-icon-plus" class="btn-theme-create" @click="openWarehouseCreate">新增仓库</el-button>
+          <el-button v-if="$can('master.warehouse.create')" size="small" type="success" icon="el-icon-plus" class="btn-theme-create" @click="openWarehouseCreate">新增仓库</el-button>
         </div>
       </header>
 
@@ -52,7 +52,7 @@
               prefix-icon="el-icon-search"
               placeholder="搜索编码 / 名称 / 负责人..."
             />
-            <el-select v-model="warehouseManagementScope" size="small" clearable placeholder="管理范围" @change="changeWarehouseScope">
+            <el-select v-model="warehouseManagementScope" size="small" clearable placeholder="管理范围" popper-class="wl-select-popper" @change="changeWarehouseScope">
               <el-option label="工厂物料仓" value="factory" />
               <el-option label="办公用品仓" value="office" />
             </el-select>
@@ -100,8 +100,9 @@
                   <span>负责人：<strong>{{ managerName(wh) || '未指定' }}</strong></span>
                 </div>
                 <div class="wh-card-actions" @click.stop>
-                  <el-button type="text" size="mini" class="btn-action-edit" icon="el-icon-edit" @click="editWarehouse(wh)">编辑</el-button>
+                  <el-button v-if="$can('master.warehouse.edit')" type="text" size="mini" class="btn-action-edit" icon="el-icon-edit" @click="editWarehouse(wh)">编辑</el-button>
                   <el-button
+                    v-if="$can('master.warehouse.edit')"
                     type="text"
                     size="mini"
                     :class="wh.status === 'enabled' ? 'btn-action-disable' : 'btn-action-enable'"
@@ -110,7 +111,7 @@
                     {{ wh.status === 'enabled' ? '停用' : '启用' }}
                   </el-button>
                   <el-button
-                    v-if="wh.status !== 'enabled'"
+                    v-if="wh.status !== 'enabled' && $can('master.warehouse.delete')"
                     type="text"
                     size="mini"
                     class="btn-action-delete"
@@ -198,11 +199,12 @@
                 </template>
               </el-table-column>
 
-              <el-table-column label="操作" width="165" align="center">
+              <el-table-column label="操作" width="180" align="center">
                 <template slot-scope="{ row }">
                   <div class="row-actions">
-                    <el-button type="text" size="mini" class="btn-action-edit" icon="el-icon-edit" @click.stop="editWarehouse(row)">编辑</el-button>
+                    <el-button v-if="$can('master.warehouse.edit')" type="text" size="mini" class="btn-action-edit" icon="el-icon-edit" @click.stop="editWarehouse(row)">编辑</el-button>
                     <el-button
+                      v-if="$can('master.warehouse.edit')"
                       type="text"
                       size="mini"
                       :class="row.status === 'enabled' ? 'btn-action-disable' : 'btn-action-enable'"
@@ -211,7 +213,7 @@
                       {{ row.status === 'enabled' ? '停用' : '启用' }}
                     </el-button>
                     <el-button
-                      v-if="row.status !== 'enabled'"
+                      v-if="row.status !== 'enabled' && $can('master.warehouse.delete')"
                       type="text"
                       size="mini"
                       class="btn-action-delete"
@@ -264,10 +266,10 @@
                 <el-button size="small" icon="el-icon-refresh" class="btn-wh-refresh" :loading="inventoryLoading" @click="refreshWarehouseProfile">
                   刷新
                 </el-button>
-                <el-button size="small" icon="el-icon-edit" class="btn-wh-edit" @click="editWarehouse(selectedWarehouse)">
+                <el-button v-if="$can('master.warehouse.edit')" size="small" icon="el-icon-edit" class="btn-wh-edit" @click="editWarehouse(selectedWarehouse)">
                   编辑主仓库
                 </el-button>
-                <el-button size="small" type="success" icon="el-icon-plus" class="btn-theme-create" @click="openLocationCreate">
+                <el-button v-if="$can('master.location.create')" size="small" type="success" icon="el-icon-plus" class="btn-theme-create" @click="openLocationCreate">
                   新增库位
                 </el-button>
               </div>
@@ -453,13 +455,13 @@
               </div>
               <div class="filter-item">
                 <span class="filter-label">区域</span>
-                <el-select v-model="filters.area" size="small" clearable placeholder="全部区域">
+                <el-select v-model="filters.area" size="small" clearable placeholder="全部区域" popper-class="wl-select-popper">
                   <el-option v-for="a in areaOptions" :key="a" :label="a" :value="a" />
                 </el-select>
               </div>
               <div class="filter-item">
                 <span class="filter-label">状态</span>
-                <el-select v-model="filters.status" size="small" clearable placeholder="全部状态">
+                <el-select v-model="filters.status" size="small" clearable placeholder="全部状态" popper-class="wl-select-popper">
                   <el-option label="正常启用" value="enabled" />
                   <el-option label="已停用" value="disabled" />
                 </el-select>
@@ -494,7 +496,7 @@
               <el-table-column type="selection" width="45" :reserve-selection="true" />
               <el-table-column prop="location_code" label="库位编码" width="130">
                 <template slot-scope="{ row }">
-                  <span class="font-tabular code-chip" @click.stop="editLocation(row)">{{ row.location_code }}</span>
+                  <span class="font-tabular code-chip" @click.stop="$can('master.warehouse.edit') && editLocation(row)">{{ row.location_code }}</span>
                 </template>
               </el-table-column>
 
@@ -552,11 +554,12 @@
                 </template>
               </el-table-column>
 
-              <el-table-column label="操作" width="165" align="center">
+              <el-table-column label="操作" width="180" align="center">
                 <template slot-scope="{ row }">
                   <div class="row-actions">
-                    <el-button type="text" size="mini" class="btn-action-edit" icon="el-icon-edit" @click.stop="editLocation(row)">编辑</el-button>
+                    <el-button v-if="$can('master.warehouse.edit')" type="text" size="mini" class="btn-action-edit" icon="el-icon-edit" @click.stop="editLocation(row)">编辑</el-button>
                     <el-button
+                      v-if="$can('master.warehouse.edit')"
                       type="text"
                       size="mini"
                       :class="row.status === 'enabled' ? 'btn-action-disable' : 'btn-action-enable'"
@@ -565,7 +568,7 @@
                       {{ row.status === 'enabled' ? '停用' : '启用' }}
                     </el-button>
                     <el-button
-                      v-if="row.status !== 'enabled'"
+                      v-if="row.status !== 'enabled' && $can('master.location.delete')"
                       type="text"
                       size="mini"
                       class="btn-action-delete"
@@ -589,6 +592,7 @@
 
     <!-- 弹窗 1：新增 / 编辑仓库档案（免滚动紧凑弹窗） -->
     <el-dialog
+      class="wl-dialog-shell"
       :visible.sync="warehouseDialogVisible"
       :title="warehouseDialogTitle"
       width="min(580px, calc(100vw - 32px))"
@@ -608,7 +612,7 @@
 
         <div class="form-grid-2">
           <el-form-item label="仓库类型">
-            <el-select v-model="warehouseForm.warehouse_type" class="full">
+            <el-select v-model="warehouseForm.warehouse_type" class="full" popper-class="wl-select-popper">
               <el-option label="综合仓 (多业务混合周转)" value="general" />
               <el-option label="原材料仓 (采购原料与备料)" value="raw_material" />
               <el-option label="成品仓 (完工产出与发货)" value="finished_goods" />
@@ -627,7 +631,7 @@
         </div>
 
         <el-form-item label="管理范围" prop="management_scope">
-          <el-select v-model="warehouseForm.management_scope" class="full" placeholder="选择工厂物料仓或办公用品仓" :disabled="warehouseScopeLocked">
+          <el-select v-model="warehouseForm.management_scope" class="full" placeholder="选择工厂物料仓或办公用品仓" popper-class="wl-select-popper" :disabled="warehouseScopeLocked">
             <el-option label="工厂物料仓" value="factory" />
             <el-option label="办公用品仓" value="office" />
           </el-select>
@@ -657,6 +661,7 @@
 
     <!-- 弹窗 2：新增 / 编辑库位档案（免滚动紧凑弹窗） -->
     <el-dialog
+      class="wl-dialog-shell"
       :visible.sync="locationDialogVisible"
       :title="locationDialogTitle"
       width="680px"
@@ -696,7 +701,7 @@
         </div>
 
         <el-form-item label="库位用途">
-          <el-select v-model="locationForm.location_purpose" class="full">
+          <el-select v-model="locationForm.location_purpose" class="full" popper-class="wl-select-popper">
             <el-option v-for="(label, value) in locationPurposes" :key="value" :value="value" :label="label" />
           </el-select>
         </el-form-item>
@@ -1261,6 +1266,21 @@ export default {
 </script>
 
 <style scoped>
+.wl-page,
+.wl-dialog-shell,
+.wl-page ::v-deep *,
+.wl-dialog-shell ::v-deep * {
+  box-sizing: border-box;
+}
+
+.wl-workspace *,
+.wl-dialog-shell,
+.wl-dialog-shell *,
+.compact-modal-form,
+.compact-modal-form * {
+  min-width: 0;
+}
+
 .wl-page {
   position: relative;
   min-height: calc(100vh - 52px);
@@ -1280,8 +1300,10 @@ export default {
 /* 页面头部 */
 .page-head {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
   align-items: center;
+  gap: 12px 16px;
   padding: 16px 20px;
   background: #ffffff;
   border: 1px solid #e2e8f0;
@@ -1294,11 +1316,13 @@ export default {
   display: flex;
   align-items: center;
   gap: 12px;
+  flex: 1 1 280px;
 }
 
 .head-icon {
   width: 38px;
   height: 38px;
+  flex-shrink: 0;
   border-radius: 8px;
   background: #f0fdf4;
   color: #008b4b;
@@ -1317,6 +1341,7 @@ export default {
 
 .title-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 10px;
 }
@@ -1325,12 +1350,28 @@ export default {
 .sub-total-tag {
   border-radius: 4px;
   font-weight: 500;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .head-actions {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 10px;
+  flex-shrink: 0;
+  margin-left: auto;
+  max-width: 100%;
+}
+
+.head-actions .el-button,
+.wh-profile-actions .el-button,
+.wh-card-actions .el-button,
+.filter-actions .el-button,
+.dialog-footer .el-button {
+  margin-left: 0;
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .btn-theme-create {
@@ -1357,10 +1398,10 @@ export default {
   background: #dcfce7 !important;
 }
 
-/* 布局栅格：左仓库 (420px) + 右库位与主仓库详情 (1fr) */
+/* 左侧仓库列表与可收缩的主仓库详情 */
 .board-layout-grid {
   display: grid;
-  grid-template-columns: 420px 1fr;
+  grid-template-columns: minmax(300px, 340px) minmax(0, 1fr);
   gap: 16px;
   align-items: start;
 }
@@ -1390,6 +1431,10 @@ export default {
   gap: 8px;
 }
 
+.card-header-right {
+  flex-shrink: 0;
+}
+
 .card-title-icon {
   color: #008b4b;
   font-size: 16px;
@@ -1409,7 +1454,11 @@ export default {
   background: #ffffff;
   border-bottom: 1px solid #f1f5f9;
 }
-.card-search-bar .el-input, .card-search-bar .el-select { width: 100%; min-width: 0; }
+.card-search-bar .el-input,
+.card-search-bar .el-select {
+  width: 100%;
+  min-width: 0;
+}
 
 .view-toggle ::v-deep .el-radio-button__inner {
   padding: 5px 8px;
@@ -1419,6 +1468,10 @@ export default {
   background-color: #008b4b;
   border-color: #008b4b;
   box-shadow: -1px 0 0 0 #008b4b;
+}
+
+.view-toggle ::v-deep .el-radio-button:focus:not(.is-focus):not(:active):not(.is-disabled) .el-radio-button__inner {
+  box-shadow: 0 0 2px 2px rgba(0, 139, 75, 0.4);
 }
 
 /* 左侧仓库卡片式列表 */
@@ -1432,7 +1485,13 @@ export default {
   background: #f8fafc;
 }
 
+.warehouse-card > .table-wrap {
+  max-height: 720px;
+  overflow-y: auto;
+}
+
 .wh-item-card {
+  flex-shrink: 0;
   background: #ffffff;
   border: 1px solid #e2e8f0;
   border-radius: 6px;
@@ -1462,16 +1521,25 @@ export default {
 
 .wh-card-title-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
 }
 
 .wh-card-title {
+  flex: 1 1 150px;
   margin: 0;
   font-size: 14px;
   font-weight: 700;
   color: #0f172a;
+  overflow-wrap: anywhere;
+}
+
+.wh-card-title-row .el-tag,
+.wh-card-badges-row > * {
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .wh-item-card.is-active .wh-card-title {
@@ -1495,6 +1563,8 @@ export default {
   display: inline-flex;
   align-items: center;
   gap: 3px;
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .wh-card-area-pill {
@@ -1521,8 +1591,10 @@ export default {
 
 .wh-card-bottom {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
+  gap: 8px 12px;
   padding-top: 8px;
   border-top: 1px dashed #e2e8f0;
   font-size: 12px;
@@ -1533,6 +1605,12 @@ export default {
   display: flex;
   align-items: center;
   gap: 4px;
+  flex: 1 1 130px;
+  overflow-wrap: anywhere;
+}
+
+.wh-card-manager i {
+  flex-shrink: 0;
 }
 
 .wh-card-manager strong {
@@ -1543,6 +1621,8 @@ export default {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-shrink: 0;
+  margin-left: auto;
 }
 
 .empty-wh-list {
@@ -1569,7 +1649,7 @@ export default {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 16px;
+  gap: 12px 16px;
   flex-wrap: wrap;
 }
 
@@ -1577,7 +1657,7 @@ export default {
   display: flex;
   align-items: flex-start;
   gap: 14px;
-  flex: 1;
+  flex: 1 1 280px;
   min-width: 0;
 }
 
@@ -1607,7 +1687,7 @@ export default {
 .wh-title-row {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   flex-wrap: wrap;
 }
 
@@ -1617,6 +1697,15 @@ export default {
   font-weight: 700;
   color: #0f172a;
   letter-spacing: -0.01em;
+  overflow-wrap: anywhere;
+}
+
+.wh-main-code,
+.wh-type-badge,
+.wh-status-pill,
+.wh-id-pill {
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .wh-main-code {
@@ -1660,6 +1749,7 @@ export default {
   height: 6px;
   border-radius: 50%;
   background: #10b981;
+  flex-shrink: 0;
 }
 
 .wh-status-pill.disabled .status-indicator-dot {
@@ -1681,19 +1771,24 @@ export default {
   color: #64748b;
   line-height: 1.5;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 5px;
 }
 
 .wh-type-desc i {
   color: #008b4b;
+  flex-shrink: 0;
+  line-height: inherit;
 }
 
 .wh-profile-actions {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   flex-shrink: 0;
+  margin-left: auto;
+  max-width: 100%;
 }
 
 .btn-wh-refresh {
@@ -1723,7 +1818,7 @@ export default {
 .wh-specs-grid {
   margin-top: 14px;
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
   gap: 12px;
 }
 
@@ -1745,8 +1840,10 @@ export default {
 
 .spec-card-head {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
+  gap: 6px 8px;
   margin-bottom: 8px;
   padding-bottom: 6px;
   border-bottom: 1px dashed #e2e8f0;
@@ -1759,6 +1856,8 @@ export default {
   display: flex;
   align-items: center;
   gap: 5px;
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .spec-card-title i {
@@ -1773,6 +1872,8 @@ export default {
   padding: 1px 6px;
   border-radius: 10px;
   border: 1px solid #dcfce7;
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .spec-card-body {
@@ -1783,23 +1884,24 @@ export default {
 
 .spec-row {
   display: flex;
-  align-items: center;
+  flex-wrap: wrap;
+  align-items: flex-start;
   justify-content: space-between;
   font-size: 12px;
-  gap: 8px;
+  gap: 4px 8px;
 }
 
 .spec-k {
   color: #64748b;
   flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .spec-v {
   color: #0f172a;
   text-align: right;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  flex: 1 1 100px;
+  overflow-wrap: anywhere;
 }
 
 .code-text {
@@ -1838,7 +1940,7 @@ export default {
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
-  flex: 1;
+  flex: 1 1 260px;
 }
 
 .zone-nav-title {
@@ -1860,6 +1962,7 @@ export default {
   align-items: center;
   gap: 6px;
   flex-wrap: wrap;
+  flex: 1 1 220px;
 }
 
 .zone-pill-btn {
@@ -1875,6 +1978,8 @@ export default {
   gap: 5px;
   transition: all 0.15s ease;
   font-family: inherit;
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 
 .zone-pill-btn:hover {
@@ -1897,6 +2002,7 @@ export default {
   background: #f1f5f9;
   color: #475569;
   font-family: inherit;
+  flex-shrink: 0;
 }
 
 .zone-pill-btn.is-active .zone-count-pill {
@@ -1906,6 +2012,7 @@ export default {
 
 .zone-nav-right {
   flex-shrink: 0;
+  max-width: 100%;
 }
 
 .capacity-stat {
@@ -1914,6 +2021,7 @@ export default {
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  flex-wrap: wrap;
 }
 
 .capacity-stat i {
@@ -1942,7 +2050,7 @@ export default {
   display: flex;
   align-items: center;
   gap: 8px;
-  flex: 1;
+  flex: 1 1 280px;
   min-width: 0;
 }
 
@@ -1973,6 +2081,7 @@ export default {
 .remark-content-text {
   color: #334155;
   line-height: 1.4;
+  overflow-wrap: anywhere;
 }
 
 .remark-rules-badges {
@@ -1981,6 +2090,7 @@ export default {
   gap: 8px;
   flex-wrap: wrap;
   flex-shrink: 0;
+  max-width: 100%;
 }
 
 .rule-badge {
@@ -2013,30 +2123,42 @@ export default {
   align-items: center;
   gap: 12px;
   flex-wrap: wrap;
+  flex: 1 1 480px;
+  max-width: 100%;
 }
 
 .filter-item {
   display: flex;
   align-items: center;
   gap: 8px;
+  max-width: 100%;
 }
 
 .filter-label {
   font-size: 12px;
   color: #64748b;
   white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .filter-item .el-input {
   width: 180px;
+  max-width: 100%;
 }
 
 .filter-item .el-select {
   width: 125px;
+  max-width: 100%;
 }
 
 .filter-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
   margin-left: auto;
+  max-width: 100%;
 }
 
 .btn-theme-reset {
@@ -2052,6 +2174,7 @@ export default {
 /* 表格主体通用 */
 .table-wrap {
   width: 100%;
+  max-width: 100%;
   overflow-x: auto;
 }
 
@@ -2148,6 +2271,7 @@ export default {
 /* 操作列排版：无挤压、绝对无蓝色 */
 .row-actions {
   display: flex;
+  flex-wrap: nowrap;
   align-items: center;
   justify-content: center;
   gap: 8px;
@@ -2161,6 +2285,8 @@ export default {
   align-items: center;
   gap: 2px;
   margin-left: 0 !important;
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .btn-action-edit {
@@ -2210,8 +2336,10 @@ export default {
   background: #ffffff;
   border-top: 1px solid #f1f5f9;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
+  gap: 8px;
 }
 
 .footer-count-text {
@@ -2235,44 +2363,50 @@ export default {
   margin-bottom: 12px;
 }
 
-/* 弹窗系统（免滚动紧凑卡片排版） */
-.erp-modal-dialog ::v-deep .el-dialog {
+/* 弹窗通过自身外壳定位样式，移到 body 后仍保留作用域。 */
+.wl-dialog-shell ::v-deep .erp-modal-dialog {
+  min-width: 0;
   border-radius: 8px;
   overflow: hidden;
   box-shadow: 0 12px 32px rgba(15, 23, 42, 0.12);
 }
 
-.erp-modal-dialog ::v-deep .el-dialog__header {
-  padding: 14px 20px;
+.wl-dialog-shell ::v-deep .el-dialog__header {
+  padding: 14px 44px 14px 20px;
   border-bottom: 1px solid #e2e8f0;
   background: #ffffff;
 }
 
-.erp-modal-dialog ::v-deep .el-dialog__title {
+.wl-dialog-shell ::v-deep .el-dialog__title {
+  display: block;
   font-size: 15px;
   font-weight: 700;
   color: #0f172a;
+  overflow-wrap: anywhere;
 }
 
-.erp-modal-dialog ::v-deep .el-dialog__body {
+.wl-dialog-shell ::v-deep .el-dialog__headerbtn:hover .el-dialog__close,
+.wl-dialog-shell ::v-deep .el-dialog__headerbtn:focus .el-dialog__close {
+  color: #008b4b;
+}
+
+.wl-dialog-shell ::v-deep .el-dialog__body {
   padding: 16px 20px 8px;
   background: #ffffff;
-  overflow: visible;
+  min-width: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
-.erp-modal-dialog ::v-deep .el-dialog__footer {
+.wl-dialog-shell ::v-deep .el-dialog__footer {
   padding: 12px 20px;
   border-top: 1px solid #e2e8f0;
   background: #f8fafc;
 }
 
-::v-deep .warehouse-account-dialog .el-dialog__body {
-  max-height: calc(76vh - 120px);
-  overflow-y: auto;
-}
-
 .dialog-footer {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: flex-end;
   gap: 10px;
@@ -2292,19 +2426,19 @@ export default {
 
 .form-grid-2 {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0 16px;
 }
 
 .form-grid-3 {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 0 16px;
 }
 
 .form-grid-4 {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 0 12px;
 }
 
@@ -2313,10 +2447,15 @@ export default {
 }
 
 .status-radio-compact {
-  height: 32px;
+  min-height: 32px;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 16px;
+  gap: 8px 16px;
+}
+
+.status-radio-compact ::v-deep .el-radio {
+  margin-right: 0;
 }
 
 .text-success {
@@ -2341,11 +2480,13 @@ export default {
   align-items: center;
   gap: 6px;
   margin-bottom: 14px;
+  overflow-wrap: anywhere;
 }
 
 .warehouse-anchor-banner i {
   color: #008b4b;
   font-size: 14px;
+  flex-shrink: 0;
 }
 
 .dialog-note {
@@ -2361,6 +2502,70 @@ export default {
   margin-top: 4px;
 }
 
+.dialog-note i {
+  flex-shrink: 0;
+}
+
+.wl-page ::v-deep .el-tag--primary {
+  color: #008b4b;
+  border-color: #bbf7d0;
+  background-color: #f0fdf4;
+}
+
+.wl-page ::v-deep .el-loading-spinner .path {
+  stroke: #008b4b;
+}
+
+.wl-page ::v-deep .el-loading-spinner i,
+.wl-page ::v-deep .el-loading-text {
+  color: #008b4b;
+}
+
+.wl-page ::v-deep .el-input__inner:focus,
+.wl-page ::v-deep .el-textarea__inner:focus,
+.wl-page ::v-deep .el-select .el-input.is-focus .el-input__inner,
+.compact-modal-form ::v-deep .el-input__inner:focus,
+.compact-modal-form ::v-deep .el-textarea__inner:focus,
+.compact-modal-form ::v-deep .el-input-number__increase:hover:not(.is-disabled) ~ .el-input .el-input__inner,
+.compact-modal-form ::v-deep .el-input-number__decrease:hover:not(.is-disabled) ~ .el-input .el-input__inner,
+.compact-modal-form ::v-deep .el-select .el-input.is-focus .el-input__inner {
+  border-color: #008b4b;
+}
+
+.compact-modal-form ::v-deep .el-radio:focus:not(.is-focus):not(:active):not(.is-disabled) .el-radio__inner {
+  box-shadow: 0 0 2px 2px rgba(0, 139, 75, 0.4);
+}
+
+.wl-page ::v-deep .el-checkbox__input.is-checked .el-checkbox__inner,
+.wl-page ::v-deep .el-checkbox__input.is-indeterminate .el-checkbox__inner,
+.compact-modal-form ::v-deep .el-radio__input.is-checked .el-radio__inner {
+  background-color: #008b4b;
+  border-color: #008b4b;
+}
+
+.wl-page ::v-deep .el-checkbox__input.is-focus .el-checkbox__inner,
+.wl-page ::v-deep .el-checkbox__inner:hover,
+.compact-modal-form ::v-deep .el-radio__inner:hover {
+  border-color: #008b4b;
+}
+
+.wl-page ::v-deep .el-button--text,
+.compact-modal-form ::v-deep .el-button--text,
+.compact-modal-form ::v-deep .el-input-number__increase:hover,
+.compact-modal-form ::v-deep .el-input-number__decrease:hover,
+.compact-modal-form ::v-deep .el-radio__input.is-checked + .el-radio__label {
+  color: #008b4b;
+}
+
+.wl-page ::v-deep .el-button--default:not(.is-disabled):hover,
+.wl-page ::v-deep .el-button--default:not(.is-disabled):focus,
+.wl-dialog-shell ::v-deep .el-button--default:not(.is-disabled):hover,
+.wl-dialog-shell ::v-deep .el-button--default:not(.is-disabled):focus {
+  color: #008b4b;
+  border-color: #008b4b;
+  background-color: #f0fdf4;
+}
+
 .btn-dialog-cancel {
   border-color: #cbd5e1 !important;
   color: #475569 !important;
@@ -2372,37 +2577,25 @@ export default {
 }
 
 /* 响应式断点适配 */
-@media (max-width: 1440px) {
-  .wh-specs-grid {
-    grid-template-columns: repeat(2, 1fr);
-  }
-}
-
-@media (max-width: 1100px) {
+@media (max-width: 1240px) {
   .board-layout-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .wh-card-list,
+  .warehouse-card > .table-wrap {
+    max-height: 360px;
   }
 }
 
-@media (max-width: 768px) {
+@media (max-width: 780px) {
   .wl-workspace {
     padding: 12px;
-  }
-
-  .page-head {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 12px;
   }
 
   .head-actions {
     width: 100%;
     justify-content: flex-end;
-  }
-
-  .wh-profile-top {
-    flex-direction: column;
-    align-items: flex-start;
   }
 
   .wh-profile-actions {
@@ -2412,17 +2605,7 @@ export default {
   }
 
   .wh-specs-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .wh-zone-nav-bar {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .wh-profile-remark-banner {
-    flex-direction: column;
-    align-items: stretch;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .location-filter-toolbar {
@@ -2433,6 +2616,7 @@ export default {
   .filter-fields {
     flex-direction: column;
     align-items: stretch;
+    flex-basis: auto;
   }
 
   .filter-item {
@@ -2454,7 +2638,18 @@ export default {
   .form-grid-2,
   .form-grid-3,
   .form-grid-4 {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
+}
+</style>
+
+<style>
+.wl-select-popper .el-select-dropdown__item.selected {
+  color: #008b4b;
+}
+
+.wl-select-popper .el-select-dropdown__item.hover,
+.wl-select-popper .el-select-dropdown__item:hover {
+  background-color: #f0fdf4;
 }
 </style>

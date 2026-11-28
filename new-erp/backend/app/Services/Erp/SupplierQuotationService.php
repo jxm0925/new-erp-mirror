@@ -7,6 +7,7 @@ use App\Models\Erp\{Item, ItemSupplierPrice, Supplier, SupplierCategoryCapabilit
 use App\Models\Erp\SupplierQuotationHistory;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Validator;
 
 class SupplierQuotationService
 {
@@ -35,11 +36,50 @@ class SupplierQuotationService
             ->when($supplierId, fn (Builder $query) => $query->where('supplier_id', $supplierId));
     }
 
-    public function saveQuote(array $data, ?int $operatorId): ItemSupplierPrice
+    public function updateQuotation(int $supplierId, int $quotationId, array $data, ?int $operatorId): ItemSupplierPrice
     {
-        return DB::transaction(function () use ($data, $operatorId) {
+        abort_if(isset($data['supplier_id']) && (int) $data['supplier_id'] !== $supplierId, 422, '不能改变报价的供应商。');
+        $data['supplier_id'] = $supplierId;
+        return $this->saveQuote($data, $operatorId, $quotationId);
+    }
+
+    public function saveQuote(array $data, ?int $operatorId, ?int $quotationId = null): ItemSupplierPrice
+    {
+        return DB::transaction(function () use ($data, $operatorId, $quotationId) {
             $supplier = Supplier::lockForUpdate()->findOrFail($data['supplier_id']);
+            if ($quotationId !== null) {
+                $itemId = ItemSupplierPrice::where('supplier_id', $supplier->id)->whereKey($quotationId)->value('item_id');
+                abort_unless($itemId, 404);
+                abort_if(isset($data['item_id']) && (int) $data['item_id'] !== (int) $itemId, 422, '不能改变报价的物料，请为新物料另建报价。');
+                $data['item_id'] = (int) $itemId;
+            }
             $item = Item::lockForUpdate()->findOrFail($data['item_id']);
+            $quote = ItemSupplierPrice::where('supplier_id', $supplier->id)->where('item_id', $item->id)
+                ->when($quotationId !== null, fn ($query) => $query->whereKey($quotationId))
+                ->lockForUpdate()->first();
+            abort_if($quotationId !== null && !$quote, 404);
+            $quote ??= new ItemSupplierPrice();
+            if ($quote->exists) {
+                $data += [
+                    'use_supplier_factor' => $quote->factor_source === 'supplier_specific',
+                    'supplier_factor_reason' => $quote->supplier_factor_reason,
+                    'tier_prices' => $quote->tier_prices,
+                ];
+                if ($quote->factor_source === 'supplier_specific') $data += ['supplier_conversion_factor' => $quote->final_conversion_factor];
+            }
+            if ($quotationId !== null) {
+                // Read editable values only after locking; the history accessor preserves eight-place prices.
+                $quote->load('latestPriceHistory');
+                $data += array_intersect_key($quote->attributesToArray(), array_flip([
+                    'unit_id', 'price', 'currency', 'tax_mode', 'tax_rate', 'lead_time_days', 'min_order_qty',
+                    'max_order_qty', 'valid_from', 'valid_until', 'tier_prices', 'remark',
+                    'status', 'quote_status', 'approved_by', 'approved_at', 'data_source',
+                ]));
+            }
+            Validator::make($data, [
+                'max_order_qty' => 'nullable|numeric|gte:min_order_qty',
+                'valid_until' => 'nullable|date|after_or_equal:valid_from',
+            ])->validate();
             $eligible = $supplier->status === 'enabled'
                 && $supplier->approval_status === 'approved'
                 && !$supplier->is_blacklisted
@@ -77,11 +117,8 @@ class SupplierQuotationService
             $finance = app(PurchaseFinancialFactService::class);
             $finance->assertUnitPrice($data['price']);
             $finance->assertUnitPrice($data['base_unit_price']);
+            $data['tier_prices'] = $this->normalizeTiers($data['tier_prices'] ?? null, $finalFactor);
             unset($data['change_reason'], $data['use_supplier_factor'], $data['supplier_conversion_factor']);
-            $quote = ItemSupplierPrice::where('supplier_id', $data['supplier_id'])
-                ->where('item_id', $data['item_id'])
-                ->lockForUpdate()
-                ->first() ?: new ItemSupplierPrice();
             $action = $quote->exists ? 'update' : 'create';
 
             $quote->fill($data + [
@@ -110,6 +147,10 @@ class SupplierQuotationService
     public function disableQuote(int $supplierId, int $quotationId, string $reason, ?int $operatorId): ItemSupplierPrice
     {
         return DB::transaction(function () use ($supplierId, $quotationId, $reason, $operatorId) {
+            Supplier::whereKey($supplierId)->lockForUpdate()->firstOrFail();
+            $itemId = ItemSupplierPrice::where('supplier_id', $supplierId)->whereKey($quotationId)->value('item_id');
+            abort_unless($itemId, 404);
+            Item::whereKey($itemId)->lockForUpdate()->firstOrFail();
             $quote = ItemSupplierPrice::where('supplier_id', $supplierId)
                 ->whereKey($quotationId)
                 ->lockForUpdate()
@@ -128,5 +169,39 @@ class SupplierQuotationService
 
             return $quote->fresh(['supplier', 'item.unit', 'unit', 'latestPriceHistory']);
         });
+    }
+
+    private function normalizeTiers(?array $tiers, string|int|float $factor): ?array
+    {
+        if ($tiers === null) return null;
+        abort_unless(array_is_list($tiers), 422, '阶梯报价必须按起订数量排序后提交列表。');
+        Validator::make(['tiers' => $tiers], [
+            'tiers.*' => 'required|array:min_qty,max_qty,price,base_unit_price',
+            'tiers.*.min_qty' => 'required|numeric|min:0|decimal:0,8',
+            'tiers.*.max_qty' => 'nullable|numeric|min:0|decimal:0,8',
+            'tiers.*.price' => 'required|numeric|gt:0|decimal:0,8|max:9999999999.99999999',
+        ])->validate();
+        $previousMin = null;
+        $previousMax = null;
+        $decimal = fn ($value) => Money::normalize(is_float($value) ? sprintf('%.8F', $value) : (string) $value, 8);
+        $finance = app(PurchaseFinancialFactService::class);
+        foreach ($tiers as &$tier) {
+            $min = $decimal($tier['min_qty']);
+            $max = isset($tier['max_qty']) ? $decimal($tier['max_qty']) : null;
+            abort_if($max !== null && bccomp($max, $min, 8) < 0, 422, '阶梯报价的上限数量不能小于起订数量。');
+            abort_if($previousMin !== null && (bccomp($min, $previousMin, 8) <= 0
+                || ($previousMax !== null && bccomp($min, $previousMax, 8) <= 0)),
+                422, '阶梯起订数量必须递增，数量区间不能重叠。');
+            // An omitted upper bound ends at the next tier's threshold; only the final tier is open-ended.
+            $tier = ['min_qty' => $min, ...(array_key_exists('max_qty', $tier) ? ['max_qty' => $max] : []),
+                'price' => $decimal($tier['price'])];
+            $tier['base_unit_price'] = $this->conversions->calculateBaseUnitPrice($tier['price'], $factor);
+            $finance->assertUnitPrice($tier['price']);
+            $finance->assertUnitPrice($tier['base_unit_price']);
+            $previousMin = $min;
+            $previousMax = $max;
+        }
+        unset($tier);
+        return $tiers;
     }
 }

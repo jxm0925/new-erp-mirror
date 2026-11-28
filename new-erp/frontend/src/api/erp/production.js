@@ -12,6 +12,7 @@ export const updateProductionOperation = (id, data) => api.put(`/v1/erp/producti
 export const enableProductionOperation = (id, data) => api.post(`/v1/erp/production/operations/${id}/enable`, data)
 export const getOperationReferences = id => api.get(`/v1/erp/production/operations/${id}/references`)
 export const disableProductionOperation = (id, data) => api.post(`/v1/erp/production/operations/${id}/disable`, data)
+export const deleteProductionOperation = (id, data) => api.delete(`/v1/erp/production/operations/${id}`, { data })
 export const listProductionRoutings = params => api.get('/v1/erp/production/routings', { params })
 export const getProductionRouting = id => api.get(`/v1/erp/production/routings/${id}`)
 export const createProductionRouting = data => api.post('/v1/erp/production/routings', data)
@@ -20,6 +21,7 @@ export const activateProductionRouting = (id, data) => api.post(`/v1/erp/product
 export const setDefaultProductionRouting = (id, data) => api.post(`/v1/erp/production/routings/${id}/set-default`, data)
 export const copyProductionRouting = (id, data) => api.post(`/v1/erp/production/routings/${id}/copy-version`, data)
 export const retireProductionRouting = (id, data) => api.post(`/v1/erp/production/routings/${id}/retire`, data)
+export const deleteProductionRouting = (id, data) => api.delete(`/v1/erp/production/routings/${id}`, { data })
 
 export default api
 export const listPerformanceTemplates = params => api.get('/v1/erp/production/performance/templates', { params })
@@ -28,6 +30,7 @@ export const createPerformanceTemplate = data => api.post('/v1/erp/production/pe
 export const updatePerformanceTemplate = (id, data) => api.put(`/v1/erp/production/performance/templates/${id}`, data)
 export const deletePerformanceTemplate = id => api.delete(`/v1/erp/production/performance/templates/${id}`)
 export const bindPerformanceTemplateCategories = (id, data) => api.post(`/v1/erp/production/performance/templates/${id}/categories`, data)
+export const syncPerformanceTemplateCategories = (id, data) => api.put(`/v1/erp/production/performance/templates/${id}/categories`, data)
 export const unbindPerformanceTemplateCategories = (id, data) => api.post(`/v1/erp/production/performance/templates/${id}/categories/unbind`, data)
 export const setDefaultPerformanceTemplate = id => api.post(`/v1/erp/production/performance/templates/${id}/set-default`)
 export const listPerformanceTemplateOperations = params => api.get('/v1/erp/production/performance/template-operations', { params })

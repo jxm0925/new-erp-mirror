@@ -23,7 +23,6 @@ use App\Http\Controllers\Api\V1\Erp\PhysicalInventoryController;
 use App\Http\Controllers\Api\V1\Erp\InventoryMeasureController;
 use App\Http\Controllers\Api\V1\Erp\ItemCategoryController;
 use App\Http\Controllers\Api\V1\Erp\ItemPurchaseConversionController;
-use App\Http\Controllers\Api\V1\Erp\ItemMaterialPolicyController;
 use App\Http\Controllers\Api\V1\Erp\ItemIntegratedFormController;
 use App\Http\Controllers\Api\V1\Erp\MasterDataController;
 use App\Http\Controllers\Api\V1\Erp\PurchaseController;
@@ -393,6 +392,15 @@ Route::prefix('v1/erp/bom')->group(function () {
 
 Route::get('v1/erp/sales-orders/{id}/change-production-units', [SalesOrderController::class, 'changeProductionUnits'])->whereNumber('id');
 Route::prefix('v1/erp/crm')->group(function () {
+    Route::get('customer-pools/catalog', [\App\Http\Controllers\Api\V1\Erp\CrmCustomerPoolController::class, 'catalog']);
+    Route::get('customer-pools', [\App\Http\Controllers\Api\V1\Erp\CrmCustomerPoolController::class, 'index']);
+    Route::post('customer-pools', [\App\Http\Controllers\Api\V1\Erp\CrmCustomerPoolController::class, 'store']);
+    Route::put('customer-pools/{id}', [\App\Http\Controllers\Api\V1\Erp\CrmCustomerPoolController::class, 'update']);
+    Route::post('customer-pools/{id}/status', [\App\Http\Controllers\Api\V1\Erp\CrmCustomerPoolController::class, 'status']);
+    Route::delete('customer-pools/{id}', [\App\Http\Controllers\Api\V1\Erp\CrmCustomerPoolController::class, 'destroy']);
+    Route::post('customers/{id}/progress', [\App\Http\Controllers\Api\V1\Erp\CrmCustomerController::class, 'progress'])->whereNumber('id');
+    Route::post('opportunities/{id}/progress', [\App\Http\Controllers\Api\V1\Erp\CrmOpportunityController::class, 'progress'])->whereNumber('id');
+    Route::post('leads/{id}/progress', [\App\Http\Controllers\Api\V1\Erp\CrmLeadController::class, 'progress'])->whereNumber('id');
     Route::get('drawing-requests/metadata', [\App\Http\Controllers\Api\V1\Erp\CrmDrawingRequestController::class, 'metadata']);
     Route::get('drawing-requests/technicians', [\App\Http\Controllers\Api\V1\Erp\CrmDrawingRequestController::class, 'technicians']);
     Route::get('drawing-requests/reference-candidates', [\App\Http\Controllers\Api\V1\Erp\CrmDrawingRequestController::class, 'references']);
@@ -464,7 +472,6 @@ Route::prefix('v1/erp/crm')->group(function () {
     Route::post('leads/{id}/claim', [\App\Http\Controllers\Api\V1\Erp\CrmLeadController::class, 'claim'])->whereNumber('id');
     Route::post('leads/{id}/pool', [\App\Http\Controllers\Api\V1\Erp\CrmLeadController::class, 'changePool'])->whereNumber('id');
     Route::post('leads/{id}/invalidate', [\App\Http\Controllers\Api\V1\Erp\CrmLeadController::class, 'invalidate'])->whereNumber('id');
-    Route::post('leads/{id}/confirm', [\App\Http\Controllers\Api\V1\Erp\CrmLeadController::class, 'confirm'])->whereNumber('id');
     Route::get('followups', [\App\Http\Controllers\Api\V1\Erp\CrmLeadController::class, 'followups']);
     Route::post('followups', [\App\Http\Controllers\Api\V1\Erp\CrmLeadController::class, 'storeFollowup']);
     Route::put('followups/{id}', [\App\Http\Controllers\Api\V1\Erp\CrmLeadController::class, 'updateFollowup'])->whereNumber('id');
@@ -616,6 +623,7 @@ Route::prefix('v1/erp/production')->group(function () {
     Route::post('routings/{id}/retire', [ProductionMasterDataController::class, 'retireRouting'])->whereNumber('id');
     Route::delete('routings/{id}', [ProductionMasterDataController::class, 'destroyRouting'])->whereNumber('id');
     Route::get('{type}', [ProductionProcessCatalogController::class, 'index'])->whereIn('type', ['stages', 'packaging-schemes']);
+    Route::get('{type}/{id}', [ProductionProcessCatalogController::class, 'show'])->whereIn('type', ['stages', 'packaging-schemes'])->whereNumber('id');
     Route::post('{type}', [ProductionProcessCatalogController::class, 'store'])->whereIn('type', ['stages', 'packaging-schemes']);
     Route::put('{type}/{id}', [ProductionProcessCatalogController::class, 'update'])->whereIn('type', ['stages', 'packaging-schemes'])->whereNumber('id');
     Route::delete('{type}/{id}', [ProductionProcessCatalogController::class, 'destroy'])->whereIn('type', ['stages', 'packaging-schemes'])->whereNumber('id');
@@ -632,6 +640,7 @@ Route::prefix('v1/erp/production')->group(function () {
     Route::put('performance/templates/{id}', [ProductionPerformanceTemplateController::class, 'update'])->whereNumber('id');
     Route::delete('performance/templates/{id}', [ProductionPerformanceTemplateController::class, 'destroy'])->whereNumber('id');
     Route::post('performance/templates/{id}/categories', [ProductionPerformanceTemplateController::class, 'bindCategories'])->whereNumber('id');
+    Route::put('performance/templates/{id}/categories', [ProductionPerformanceTemplateController::class, 'syncCategories'])->whereNumber('id');
     Route::post('performance/templates/{id}/categories/unbind', [ProductionPerformanceTemplateController::class, 'unbindCategories'])->whereNumber('id');
     Route::post('performance/templates/{id}/set-default', [ProductionPerformanceTemplateController::class, 'setDefault'])->whereNumber('id');
     // 新生产工单（第 1 阶段）
@@ -722,8 +731,8 @@ Route::prefix('v1/erp/production')->group(function () {
     Route::post('receipts/{id}/confirm', [MfgTaskController::class, 'confirmReceipt'])->whereNumber('id');
     Route::post('receipts/{id}/reject', [MfgTaskController::class, 'rejectReceipt'])->whereNumber('id');
     Route::post('receipts/{id}/cancel', [MfgTaskController::class, 'cancelReceipt'])->whereNumber('id');
-    Route::get('operations/{id}/workers', [MfgTaskController::class, 'workers'])->whereNumber('id');
-    Route::put('operations/{id}/workers', [MfgTaskController::class, 'saveWorkers'])->whereNumber('id');
+    Route::get('operations/{id}/workers', [ProductionMasterDataController::class, 'operationWorkers'])->whereNumber('id');
+    Route::put('operations/{id}/workers', [ProductionMasterDataController::class, 'updateOperationWorkers'])->whereNumber('id');
     Route::get('technical-drawings/metadata', [TechnicalDrawingController::class, 'metadata']);
     Route::get('technical-drawings/employees', [TechnicalDrawingController::class, 'employees']);
     Route::get('technical-drawings/candidates', [TechnicalDrawingController::class, 'candidates']);
@@ -791,6 +800,7 @@ Route::prefix('v1/erp/crm/daily-reports')->controller(\App\Http\Controllers\Api\
     Route::get('access', 'access');
     Route::get('candidates', 'candidates');
     Route::get('sales', 'sales');
+    Route::post('sales/sync-followups', 'syncFollowups');
     Route::put('sales/coordination/{id}', 'resubmit')->whereNumber('id');
     Route::put('sales/supervisor-note', 'saveSupervisorNote');
     Route::put('sales', 'saveSales');
@@ -862,6 +872,16 @@ Route::prefix('v1/erp/aftersales')->group(function () {
 });
 
 Route::prefix('v1/erp/master')->group(function () {
+    Route::get('customer-pools/catalog', [\App\Http\Controllers\Api\V1\Erp\CrmCustomerPoolController::class, 'catalog']);
+    Route::get('customer-pools', [\App\Http\Controllers\Api\V1\Erp\CrmCustomerPoolController::class, 'index']);
+    Route::post('customer-pools', [\App\Http\Controllers\Api\V1\Erp\CrmCustomerPoolController::class, 'store']);
+    Route::put('customer-pools/{id}', [\App\Http\Controllers\Api\V1\Erp\CrmCustomerPoolController::class, 'update']);
+    Route::post('customer-pools/{id}/status', [\App\Http\Controllers\Api\V1\Erp\CrmCustomerPoolController::class, 'status']);
+    Route::delete('customer-pools/{id}', [\App\Http\Controllers\Api\V1\Erp\CrmCustomerPoolController::class, 'destroy']);
+    Route::get('business-lines', [\App\Http\Controllers\Api\V1\Erp\BusinessLineController::class, 'index']);
+    Route::post('business-lines', [\App\Http\Controllers\Api\V1\Erp\BusinessLineController::class, 'store']);
+    Route::put('business-lines/{id}', [\App\Http\Controllers\Api\V1\Erp\BusinessLineController::class, 'update'])->whereNumber('id');
+    Route::post('business-lines/{id}/status', [\App\Http\Controllers\Api\V1\Erp\BusinessLineController::class, 'status'])->whereNumber('id');
     Route::get('carriers', [\App\Http\Controllers\Api\V1\Erp\CarrierController::class, 'index']);
     Route::post('carriers', [\App\Http\Controllers\Api\V1\Erp\CarrierController::class, 'store']);
     Route::put('carriers/{id}', [\App\Http\Controllers\Api\V1\Erp\CarrierController::class, 'update'])->whereNumber('id');
@@ -874,10 +894,6 @@ Route::prefix('v1/erp/master')->group(function () {
     Route::get('items/{itemId}/integrated-form', [ItemIntegratedFormController::class, 'show'])->whereNumber('itemId');
     Route::post('items/integrated-form', [ItemIntegratedFormController::class, 'store']);
     Route::put('items/{itemId}/integrated-form', [ItemIntegratedFormController::class, 'update'])->whereNumber('itemId');
-    Route::get('items/{itemId}/material-policy', [ItemMaterialPolicyController::class, 'show'])->whereNumber('itemId');
-    Route::get('items/{itemId}/material-policy/history', [ItemMaterialPolicyController::class, 'history'])->whereNumber('itemId');
-    Route::put('items/{itemId}/material-policy/draft', [ItemMaterialPolicyController::class, 'saveDraft'])->whereNumber('itemId');
-    Route::post('items/{itemId}/material-policy/activate', [ItemMaterialPolicyController::class, 'activate'])->whereNumber('itemId');
     Route::get('items/unit-options', [ItemPurchaseConversionController::class, 'unitOptions']);
     Route::get('items/{itemId}/purchase-conversions/options', [ItemPurchaseConversionController::class, 'options'])->whereNumber('itemId');
     Route::get('items/{itemId}/purchase-conversions', [ItemPurchaseConversionController::class, 'index'])->whereNumber('itemId');
@@ -895,14 +911,19 @@ Route::prefix('v1/erp/master')->group(function () {
     Route::post('items/image-upload', [MasterDataController::class, 'uploadItemImage']);
     Route::post('products/image-upload', [MasterDataController::class, 'uploadProductImage']);
     Route::post('products/{id}/sku-matrix', [MasterDataController::class, 'storeSkuMatrix'])->whereNumber('id');
+    Route::get('products/{id}/sku-specs', [MasterDataController::class, 'productSkuSpecs'])->whereNumber('id');
     Route::post('skus/image-upload', [MasterDataController::class, 'uploadSkuImage']);
+    Route::post('skus/integrated', [MasterDataController::class, 'storeIntegratedSku'])->defaults('entity', 'skus');
+    Route::put('skus/{id}/integrated', [MasterDataController::class, 'updateIntegratedSku'])->defaults('entity', 'skus')->whereNumber('id');
     Route::get('suppliers/{supplierId}/capabilities', [SupplierCapabilityController::class, 'summary'])->whereNumber('supplierId');
     Route::put('suppliers/{supplierId}/capabilities/categories', [SupplierCapabilityController::class, 'syncCategories'])->whereNumber('supplierId');
     Route::get('suppliers/{supplierId}/item-relations', [SupplierCapabilityController::class, 'itemRelations'])->whereNumber('supplierId');
     Route::post('suppliers/{supplierId}/item-relations', [SupplierCapabilityController::class, 'storeItemRelation'])->whereNumber('supplierId');
+    Route::put('suppliers/{supplierId}/item-relations/{relationId}', [SupplierCapabilityController::class, 'updateItemRelation'])->whereNumber('supplierId')->whereNumber('relationId');
     Route::post('suppliers/{supplierId}/item-relations/{relationId}/disable', [SupplierCapabilityController::class, 'disableItemRelation'])->whereNumber('supplierId')->whereNumber('relationId');
     Route::get('suppliers/{supplierId}/quotations', [SupplierCapabilityController::class, 'quotations'])->whereNumber('supplierId');
     Route::post('suppliers/{supplierId}/quotations', [SupplierCapabilityController::class, 'storeQuotation'])->whereNumber('supplierId');
+    Route::put('suppliers/{supplierId}/quotations/{quotationId}', [SupplierCapabilityController::class, 'updateQuotation'])->whereNumber('supplierId')->whereNumber('quotationId');
     Route::post('suppliers/{supplierId}/quotations/{quotationId}/disable', [SupplierCapabilityController::class, 'disableQuotation'])->whereNumber('supplierId')->whereNumber('quotationId');
     Route::get('suppliers/{supplierId}/quotation-history', [SupplierCapabilityController::class, 'quotationHistory'])->whereNumber('supplierId');
     Route::get('suppliers/{supplierId}/purchase-history', [SupplierCapabilityController::class, 'purchaseHistory'])->whereNumber('supplierId');
@@ -924,9 +945,7 @@ Route::prefix('v1/erp/master')->group(function () {
     Route::post('sku-item-relations/{skuId}/set-primary', [SkuItemRelationController::class, 'setDefaultItem'])->whereNumber('skuId');
     Route::post('sku-item-relations/{skuId}/resolve-duplicate', [SkuItemRelationController::class, 'resolveDuplicate'])->whereNumber('skuId');
     Route::post('sku-item-relations/{skuId}/remove-wrong-binding', [SkuItemRelationController::class, 'removeWrongBinding'])->whereNumber('skuId');
-    Route::get('sku-item-relations', [SkuItemRelationController::class, 'index']);
-    Route::post('sku-item-relations', [SkuItemRelationController::class, 'legacySetDefaultItem']);
-    Route::post('sku-item-relations/replace-primary', [SkuItemRelationController::class, 'legacySetDefaultItem']);
+    Route::get('imports/template', [ImportController::class, 'template']);
     Route::post('imports/upload', [ImportController::class, 'upload']);
     Route::post('imports/{id}/preview', [ImportController::class, 'preview']);
     Route::post('imports/{id}/confirm', [ImportController::class, 'confirm']);

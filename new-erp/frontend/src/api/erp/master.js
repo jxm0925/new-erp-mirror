@@ -10,6 +10,10 @@ export const uploadSkuImage = form => api.post('/v1/erp/master/skus/image-upload
 export const saveEntity = (entity, data) => data.id
   ? api.put(`/v1/erp/master/${entity}/${data.id}`, data)
   : api.post(`/v1/erp/master/${entity}`, data)
+export const saveIntegratedSku = (id, data) => id
+  ? api.put(`/v1/erp/master/skus/${id}/integrated`, data)
+  : api.post('/v1/erp/master/skus/integrated', data)
+export const listProductSkuSpecs = productId => api.get(`/v1/erp/master/products/${productId}/sku-specs`)
 export const saveProductSkuMatrix = (productId, rows) => api.post(`/v1/erp/master/products/${productId}/sku-matrix`, { sku_matrix: rows })
 export const disableEntity = (entity, id, params) => api.post(`/v1/erp/master/${entity}/${id}/disable`, undefined, { params })
 export const enableEntity = (entity, id, params) => api.post(`/v1/erp/master/${entity}/${id}/enable`, undefined, { params })
@@ -34,10 +38,14 @@ export const disableDocumentNumberRule = id => api.post(`/v1/erp/document-number
 export const getSupplierCapabilities = supplierId => api.get(`/v1/erp/master/suppliers/${supplierId}/capabilities`)
 export const saveSupplierCategories = (supplierId, data) => api.put(`/v1/erp/master/suppliers/${supplierId}/capabilities/categories`, data)
 export const listSupplierItemRelations = (supplierId, params) => api.get(`/v1/erp/master/suppliers/${supplierId}/item-relations`, { params })
-export const saveSupplierItemRelation = (supplierId, data) => api.post(`/v1/erp/master/suppliers/${supplierId}/item-relations`, data)
+export const saveSupplierItemRelation = (supplierId, data) => data.id
+  ? api.put(`/v1/erp/master/suppliers/${supplierId}/item-relations/${data.id}`, data)
+  : api.post(`/v1/erp/master/suppliers/${supplierId}/item-relations`, data)
 export const disableSupplierItemRelation = (supplierId, relationId, data) => api.post(`/v1/erp/master/suppliers/${supplierId}/item-relations/${relationId}/disable`, data)
 export const listSupplierQuotations = (supplierId, params) => api.get(`/v1/erp/master/suppliers/${supplierId}/quotations`, { params })
-export const saveSupplierQuotation = (supplierId, data) => api.post(`/v1/erp/master/suppliers/${supplierId}/quotations`, data)
+export const saveSupplierQuotation = (supplierId, data) => data.id
+  ? api.put(`/v1/erp/master/suppliers/${supplierId}/quotations/${data.id}`, data)
+  : api.post(`/v1/erp/master/suppliers/${supplierId}/quotations`, data)
 export const disableSupplierQuotation = (supplierId, quotationId, data) => api.post(`/v1/erp/master/suppliers/${supplierId}/quotations/${quotationId}/disable`, data)
 export const listSupplierPurchaseHistory = (supplierId, params) => api.get(`/v1/erp/master/suppliers/${supplierId}/purchase-history`, { params })
 export const listSupplierRelationHistory = (supplierId, params) => api.get(`/v1/erp/master/suppliers/${supplierId}/relation-history`, { params })
@@ -49,9 +57,6 @@ export const setDefaultSkuItem = (skuId, data) => api.post(`/v1/erp/master/sku-i
 export const auditDefaultSkuItemRelations = params => api.post('/v1/erp/master/sku-item-relations/audit', params)
 export const resolveDuplicateSkuItemRelation = (skuId, data) => api.post(`/v1/erp/master/sku-item-relations/${skuId}/resolve-duplicate`, data)
 export const removeWrongSkuItemBinding = (skuId, data) => api.post(`/v1/erp/master/sku-item-relations/${skuId}/remove-wrong-binding`, data)
-// Compatibility readers used by existing SKU/detail/dashboard areas. New Stage 4 pages use the explicit APIs above.
-export const listRelations = params => api.get('/v1/erp/master/sku-item-relations', { params })
-export const replacePrimaryRelation = data => api.post('/v1/erp/master/sku-item-relations/replace-primary', data)
 export const listItemPurchaseConversions = (itemId, params) => api.get(`/v1/erp/master/items/${itemId}/purchase-conversions`, { params })
 export const listItemUnitOptions = ids => api.get('/v1/erp/master/items/unit-options', { params: { ids } })
 export const listItemPurchaseConversionOptions = (itemId, params) => api.get(`/v1/erp/master/items/${itemId}/purchase-conversions/options`, { params })
@@ -59,25 +64,20 @@ export const saveItemPurchaseConversion = (itemId, data) => data.id
   ? api.put(`/v1/erp/master/items/${itemId}/purchase-conversions/${data.id}`, data)
   : api.post(`/v1/erp/master/items/${itemId}/purchase-conversions`, data)
 export const disableItemPurchaseConversion = (itemId, id, data) => api.post(`/v1/erp/master/items/${itemId}/purchase-conversions/${id}/disable`, data)
-export const getItemMaterialPolicy = itemId => api.get(`/v1/erp/master/items/${itemId}/material-policy`)
 export const getItemIntegratedForm = (itemId, params) => api.get(`/v1/erp/master/items/${itemId}/integrated-form`, { params })
 export const listItemStorageLocationOptions = params => api.get('/v1/erp/master/items/storage-location-options', { params })
 export const saveItemIntegratedForm = (itemId, data, params) => itemId
   ? api.put(`/v1/erp/master/items/${itemId}/integrated-form`, data, { params })
   : api.post('/v1/erp/master/items/integrated-form', data, { params })
-export const listItemMaterialPolicyHistory = (itemId, params) => api.get(`/v1/erp/master/items/${itemId}/material-policy/history`, { params })
-export const saveItemMaterialPolicyDraft = (itemId, data) => api.put(`/v1/erp/master/items/${itemId}/material-policy/draft`, data)
-export const activateItemMaterialPolicy = (itemId, data) => api.post(`/v1/erp/master/items/${itemId}/material-policy/activate`, data)
 export const uploadImport = form => api.post('/v1/erp/master/imports/upload', form, { headers: { 'Content-Type': 'multipart/form-data' } })
 export const previewImport = id => api.post(`/v1/erp/master/imports/${id}/preview`)
 export const importRows = (id, params) => api.get(`/v1/erp/master/imports/${id}/rows`, { params })
 export const confirmImport = id => api.post(`/v1/erp/master/imports/${id}/confirm`)
+export const deleteImportBatch = id => api.delete(`/v1/erp/master/imports/${id}`)
 export const errorExportUrl = id => `${api.defaults.baseURL}/v1/erp/master/imports/${id}/errors/export`
 
-// 使用同一鉴权客户端下载，令牌留在请求头，不能放进URL或依赖 window.open。
-export const downloadImportErrors = async (id, filename) => {
-  const response = await api.get(`/v1/erp/master/imports/${id}/errors/export`, { responseType: 'blob' })
-  const url = URL.createObjectURL(response.data)
+const triggerBlobDownload = (blob, filename) => {
+  const url = URL.createObjectURL(blob)
   const link = document.createElement('a')
   link.href = url
   link.download = filename
@@ -85,6 +85,17 @@ export const downloadImportErrors = async (id, filename) => {
   link.click()
   link.remove()
   setTimeout(() => URL.revokeObjectURL(url), 1000)
+}
+
+// 使用同一鉴权客户端下载，令牌留在请求头，不能放进URL或依赖 window.open。
+export const downloadImportErrors = async (id, filename) => {
+  const response = await api.get(`/v1/erp/master/imports/${id}/errors/export`, { responseType: 'blob' })
+  triggerBlobDownload(response.data, filename)
+}
+
+export const downloadImportTemplate = async (params, filename) => {
+  const response = await api.get('/v1/erp/master/imports/template', { params, responseType: 'blob' })
+  triggerBlobDownload(response.data, filename)
 }
 
 export default api

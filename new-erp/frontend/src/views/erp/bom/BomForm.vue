@@ -6,9 +6,9 @@
         <span class="head-icon"><i class="el-icon-tickets" /></span>
         <div class="head-title-wrap">
           <div class="title-row">
-            <h1 class="page-title">{{ isEdit ? '编辑' : '新增' }}BOM方案</h1>
+            <h1 class="page-title">{{ isEdit ? (canEdit ? '编辑' : '查看') : '新增' }}BOM方案</h1>
             <el-tag size="small" type="success" effect="plain" class="head-tag">
-              {{ isEdit ? '编辑模式' : '录入新BOM' }}
+              {{ isEdit ? (canEdit ? '编辑模式' : '只读模式') : '录入新BOM' }}
             </el-tag>
             <el-tag size="small" type="success" effect="plain">{{ bomTypeLabel }}</el-tag>
             <span v-if="form.bom_no" class="head-code-chip">
@@ -25,42 +25,21 @@
       </div>
       <div class="head-actions">
         <el-button size="small" icon="el-icon-back" @click="$router.push('/bom/boms')">返回列表</el-button>
-        <el-button
-          v-if="canEdit"
-          size="small"
-          icon="el-icon-folder"
-          class="btn-save-draft"
-          :loading="saving"
-          @click="save(false)"
-        >
-          保存草稿
-        </el-button>
-        <el-button
-          v-if="canSubmit"
-          type="success"
-          size="small"
-          icon="el-icon-check"
-          class="btn-theme-submit"
-          :loading="saving"
-          @click="save(true)"
-        >
-          提交审核
-        </el-button>
       </div>
     </header>
 
     <!-- 全局统一页面提示条 (紧凑收纳) -->
     <div class="erp-page-tip">
       <i class="el-icon-info" />
-      <span>{{ form.status === 'inactive' && canEdit ? '停用方案保存后转为草稿，需重新提交审核。' : '维护生产装配与半成品 BOM 结构清单、产出物料与关联SKU、版本有效周期及子件物料组成配比。带 * 为必填项。' }}</span>
+      <span>{{ form.status === 'inactive' && canEdit ? '停用方案保存后转为草稿，需重新提交生效。' : '维护生产装配与半成品 BOM 结构清单、产出物料与关联SKU、版本有效周期及子件物料组成配比。带 * 为必填项。' }}</span>
     </div>
 
     <!-- 只读状态警示提示条 (针对待审核/已审核/已启用不可编辑单据) -->
     <div v-if="!canEdit" class="readonly-alert-banner">
       <div class="alert-icon"><i class="el-icon-warning-outline" /></div>
       <div class="alert-content">
-        <strong class="alert-title">当前 BOM 方案已处于【{{ displayStatusText }} / {{ displayAuditText }}】状态，已被系统锁定为只读。</strong>
-        <span class="alert-desc">已提交审核或已启用的 BOM 配方不能直接就地修改，以保证生产历史工单数据的一致性。如需调整配方定额或下料要求，请在列表中点击“复制新版本”生成新版本草稿后进行修改。</span>
+        <strong class="alert-title">{{ !hasEditPermission ? '当前账号仅可查看 BOM 方案。' : `当前 BOM 方案已处于【${displayStatusText} / ${displayAuditText}】状态，已被系统锁定为只读。` }}</strong>
+        <span class="alert-desc">{{ !hasEditPermission ? '查看方案信息和物料明细；修改方案需要对应的 BOM 编辑权限。' : '已提交审核或已启用的 BOM 配方不能直接就地修改。如需调整配方定额或下料要求，请在列表中复制新版本后进行修改。' }}</span>
       </div>
       <div class="alert-action">
         <el-button size="mini" type="success" plain @click="$router.push('/bom/boms')">返回列表查看</el-button>
@@ -366,7 +345,6 @@
           </div>
           <div class="card-header-right">
             <el-button :disabled="!canEdit" size="small" type="success" plain icon="el-icon-plus" @click="addLine">添加组成物料</el-button>
-            <el-button :disabled="!canEdit" size="small" plain icon="el-icon-upload2" class="btn-default">批量导入</el-button>
           </div>
         </div>
 
@@ -542,7 +520,7 @@
                 <el-tag size="small" :type="displayAuditType" effect="plain">{{ displayAuditText }}</el-tag>
               </div>
               <div class="status-desc-text">
-                {{ canEdit ? (form.status === 'inactive' ? '保存后转为草稿，需重新审核。' : '当前方案可直接保存草稿或提交审核。') : '当前方案已生效或待审核，不可直接变更。' }}
+                {{ canEdit ? (form.status === 'inactive' ? '保存后转为草稿，需重新提交生效。' : '当前方案可保存草稿或提交生效。') : '当前方案已生效或待审核，不可直接变更。' }}
               </div>
             </div>
             <div class="form-field-unit flex-1">
@@ -576,6 +554,7 @@
       </div>
       <div class="footer-actions">
         <el-button size="small" @click="$router.push('/bom/boms')">返回列表</el-button>
+        <el-checkbox v-if="canSubmit && $can('bom.manage.toggle_status')" v-model="setDefaultAfterApproval" :disabled="saving">生效后设为默认版本</el-checkbox>
         <el-button
           v-if="canEdit"
           size="small"
@@ -595,7 +574,7 @@
           :loading="saving"
           @click="save(true)"
         >
-          提交审核
+          保存并提交生效
         </el-button>
       </div>
     </footer>
@@ -609,10 +588,11 @@ import PagedRecordSelect from '@/components/common/PagedRecordSelect.vue'
 import BomItemPicker from '@/components/bom/BomItemPicker.vue'
 import TechnicalDrawingSourcePanel from '@/components/technical-drawings/TechnicalDrawingSourcePanel.vue'
 import { listEntity } from '@/api/erp/master'
-import { listBoms, getBom, saveBom, submitBom, getBomOperationOptions } from '@/api/erp/bom'
+import { listBoms, getBom, saveBom, getBomOperationOptions } from '@/api/erp/bom'
 import { listProductionRoutings, getProductionRouting } from '@/api/erp/production'
 import { clearCreatePageReservation, reserveForCreatePage } from '@/utils/documentNumberReservation'
 import { cuttingUnitKind, cuttingQuantityBasis, previewCuttingQuantity, totalLengthMetres, totalLengthMillimetres } from '@/utils/cutting-quantity.mjs'
+import { executeProductionDecision, pendingProductionDecision } from '@/api/erp/production-decisions'
 
 const emptyLine = i => ({
   line_no: i + 1,
@@ -692,6 +672,7 @@ export default {
     performancePermissions: { view: false, edit: false },
     bomColumns: [{ prop: 'bom_no', label: 'BOM编码' }, { prop: 'bom_name', label: 'BOM名称' }, { prop: 'version', label: '版本' }],
     numberReservation: null,
+    setDefaultAfterApproval: false,
     saving: false,
     picker: {
       visible: false,
@@ -724,6 +705,7 @@ export default {
     isEdit() {
       return Boolean(this.$route.params.id)
     },
+    hasEditPermission() { return this.$can(this.isEdit ? 'bom.manage.edit' : 'bom.manage.create') },
     canEdit() {
       if (!this.isEdit) return this.$can('bom.manage.create')
       return this.$can('bom.manage.edit') && !this.form.deleted_at && !this.isPendingAudit && (this.isDraftEditable || this.form.status === 'inactive')
@@ -794,7 +776,8 @@ export default {
       if (!this.form.bom_name) return '请填写 BOM 方案名称'
       if (!this.form.output_item_id) return '请选择最终产出物料'
       if (!this.form.items || !this.form.items.length) return '请至少添加 1 行组成物料'
-      return '核心必填信息已完善，可保存草稿或提交审核'
+      if (!this.canEdit) return this.isPendingAudit ? '当前方案待审批，审批通过后生效' : '当前方案只读'
+      return '核心必填信息已完善，可保存草稿或提交生效'
     },
     outputItemLabel() {
       return this.form.output_item ? [this.form.output_item.item_code, this.form.output_item.item_name, this.form.output_item.spec].filter(Boolean).join('　') : '请选择产出物料'
@@ -1254,8 +1237,11 @@ export default {
     },
     async save(andSubmit = false) {
       if (this.saving || !this.canEdit || (andSubmit && !this.canSubmit)) return
+      const fields = ['id', 'bom_no', 'bom_name', 'product_id', 'sku_id', 'output_item_id', 'routing_id', 'bom_type', 'version', 'effective_date', 'expire_date', 'source_product_id', 'source_sku_id', 'source_standard_bom_id', 'custom_description', 'remark']
       const payload = {
-        ...this.form,
+        ...Object.fromEntries(fields.map(field => [field, this.form[field]])),
+        submit_after_save: Boolean(andSubmit),
+        set_default: Boolean(andSubmit && this.setDefaultAfterApproval && this.$can('bom.manage.toggle_status')),
         items: this.form.items.map((line, index) => ({
           ...line,
           child_bom_id: line.child_bom_id || null,
@@ -1303,18 +1289,22 @@ export default {
       if (payload.items.some(item => item.cutting_mode === 'sheet' && ['cut_length_mm', 'cut_width_mm', 'cut_thickness_mm', 'piece_qty'].some(key => !(Number(item[key]) > 0)))) return this.$message.error('板材必须填写单件长、宽、厚和每份产出的件数')
       if (!this.validateStandards()) return
       this.saving = true
-      let savedId = null
       try {
-        const { data } = await saveBom(payload)
-        savedId = data.data.id
+        const decisionKey = 'bom_save_' + (this.form.id || this.numberReservation.creation_session_id)
+        const pending = pendingProductionDecision(decisionKey)
+        if (pending) {
+          const previous = { ...pending }
+          delete previous.client_command_id
+          if (JSON.stringify(previous) !== JSON.stringify(payload)) return this.$message.warning('上次保存结果尚未确认，请先刷新核对 BOM 状态；继续重试时须保持上次内容和操作一致。')
+        }
+        const { data } = await executeProductionDecision(decisionKey, payload, saveBom)
+        const savedId = data.data.id
         this.initPosPerf((data.data && data.data.position_performance) || {})
         if (!this.isEdit) clearCreatePageReservation(this.numberReservation)
-        if (andSubmit) await submitBom(savedId)
-        this.$message.success(andSubmit ? 'BOM 已保存并提交审核' : 'BOM 草稿已保存')
+        this.$message.success(data.message || 'BOM 草稿已保存')
         this.$router.push({ path: '/bom/boms', query: { view_id: savedId } })
       } catch (error) {
         this.$message.error(error.userMessage || 'BOM 保存失败，请稍后重试')
-        if (savedId) this.$router.push({ path: '/bom/boms', query: { view_id: savedId } })
       } finally {
         this.saving = false
       }
@@ -2148,6 +2138,7 @@ export default {
   display: flex;
   align-items: center;
   gap: 10px;
+  flex-wrap: wrap;
   flex-shrink: 0;
 }
 

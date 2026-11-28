@@ -3,9 +3,9 @@
 namespace App\Http\Controllers\Api\V1\Erp;
 
 use App\Http\Controllers\Controller;
-use App\Models\Erp\{ImportBatch, ImportRow, Item, Location, Product, Sku, SkuItemRelation, Supplier, Warehouse};
+use App\Models\Erp\{ImportBatch, ImportRow};
 use App\Services\Erp\AuthContextService;
-use App\Services\Erp\ItemImportApplicationService;
+use App\Services\Erp\Imports\MasterImportPipeline;
 use App\Services\Erp\ItemManagementScopeService;
 use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
@@ -14,12 +14,25 @@ use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
-use PhpOffice\PhpSpreadsheet\IOFactory;
+use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class ImportController extends Controller
 {
-    private const TYPES = ['Product', 'SKU', 'Item', 'Supplier', 'Warehouse', 'Location', 'SKU-Item Relation'];
+    public function template(Request $request, MasterImportPipeline $pipeline): StreamedResponse
+    {
+        $this->authorizeAnyPermission($request, ['master.import.upload', 'master.import']);
+        $data = $request->validate(['import_type' => 'required|in:'.implode(',', MasterImportPipeline::types()),
+            'management_scope' => 'nullable|in:factory,office']);
+        $book = $pipeline->template($data['import_type'], $data['management_scope'] ?? null);
+        return response()->streamDownload(function () use ($book): void {
+            try {
+                (new Xlsx($book))->save('php://output');
+            } finally {
+                $book->disconnectWorksheets();
+            }
+        }, $data['import_type'].'-标准导入模板.xlsx', ['Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet']);
+    }
 
     public function upload(Request $request)
     {
@@ -28,7 +41,7 @@ class ImportController extends Controller
         // A real UTF-8 CSV can be detected as text/plain; its original extension must still be csv.
         $mimes = $file instanceof UploadedFile && strtolower($file->getClientOriginalExtension()) === 'csv' ? 'csv,txt' : 'xlsx,xls';
         $data = $request->validate(['file' => 'required|file|extensions:xlsx,xls,csv|mimes:'.$mimes.'|max:10240',
-            'import_type' => 'required|in:'.implode(',', self::TYPES)]);
+            'import_type' => 'required|in:'.implode(',', MasterImportPipeline::types())]);
         $queryScope = app(ItemManagementScopeService::class)->requestScope($request);
         $body = Validator::make($request->post(), ['management_scope' => 'sometimes|required|in:factory,office'])->validate();
         $bodyScope = $body['management_scope'] ?? null;
@@ -36,7 +49,7 @@ class ImportController extends Controller
             throw ValidationException::withMessages(['management_scope' => '上传表单与请求参数的管理范围不一致。']);
         }
         $scope = $bodyScope ?? $queryScope;
-        abort_if($scope !== null && $data['import_type'] !== 'Item', 422, '管理范围只适用于 Item 导入批次。');
+        abort_if($scope !== null && !MasterImportPipeline::supportsScope($data['import_type']), 422, '管理范围只适用于物料或仓库导入批次。');
         $path = $request->file('file')->store('erp-imports');
         $batch = ImportBatch::create([
             'batch_no' => 'IMP-'.now()->format('YmdHis').'-'.Str::upper(Str::random(4)),
@@ -46,36 +59,12 @@ class ImportController extends Controller
         return response()->json(['message' => '上传成功', 'data' => $batch], 201);
     }
 
-    public function preview(Request $request, int $id)
+    public function preview(Request $request, int $id, MasterImportPipeline $pipeline)
     {
         $this->authorizePermission($request, 'master.import.upload');
         $batch = ImportBatch::findOrFail($id);
         $this->assertBatchContext($request, $batch);
-        $fullPath = Storage::path($batch->stored_path);
-        if (!is_file($fullPath)) $fullPath = storage_path('app/private/'.$batch->stored_path);
-        if (!is_file($fullPath)) $fullPath = storage_path('app/'.$batch->stored_path);
-        abort_unless(is_file($fullPath), 404, '导入文件不存在');
-        $sheet = IOFactory::load($fullPath)->getActiveSheet()->toArray(null, true, true, false);
-        abort_if(count($sheet) < 2, 422, '文件没有可导入的数据');
-        $headers = array_map(fn ($value) => trim((string) $value), array_shift($sheet));
-        $batch->rows()->delete();
-        $counts = ['valid' => 0, 'warning' => 0, 'error' => 0];
-        foreach ($sheet as $index => $values) {
-            if (!array_filter($values, fn ($v) => $v !== null && trim((string) $v) !== '')) continue;
-            $raw = [];
-            foreach ($headers as $i => $header) if ($header !== '') $raw[$header] = $values[$i] ?? null;
-            [$status, $field, $type, $reason, $suggestion] = $this->validateRow($batch->import_type, $raw, $batch->management_scope);
-            $counts[$status]++;
-            ImportRow::create([
-                'batch_id' => $batch->id, 'row_no' => $index + 2, 'raw_data' => $raw, 'normalized_data' => $raw,
-                'validation_status' => $status, 'error_field' => $field, 'error_type' => $type,
-                'error_reason' => $reason, 'suggestion' => $suggestion,
-            ]);
-        }
-        $batch->update([
-            'status' => 'previewed', 'total_rows' => array_sum($counts), 'valid_rows' => $counts['valid'],
-            'warning_rows' => $counts['warning'], 'error_rows' => $counts['error'],
-        ]);
+        $batch = $pipeline->preview($batch, app(AuthContextService::class)->currentUser($request));
         return response()->json(['message' => '预检完成', 'data' => $batch->fresh(), 'rows' => $batch->rows()->orderBy('row_no')->orderBy('id')->paginate(10)]);
     }
 
@@ -88,24 +77,13 @@ class ImportController extends Controller
         return response()->json($query->orderBy('row_no')->orderBy('id')->paginate(min(200, max(10, $request->integer('per_page', 10)))));
     }
 
-    public function confirm(Request $request, int $id, ItemImportApplicationService $itemImporter)
+    public function confirm(Request $request, int $id, MasterImportPipeline $pipeline)
     {
         $this->authorizePermission($request, 'master.import.execute');
-        $operatorId = (int) app(AuthContextService::class)->currentUser($request)->legacy_id;
-        $batch = DB::transaction(function () use ($request, $id, $itemImporter, $operatorId) {
-            $batch = ImportBatch::query()->lockForUpdate()->findOrFail($id);
-            $this->assertBatchContext($request, $batch);
-            abort_unless($batch->status === 'previewed', 422, '请先完成预检；已经确认的批次不能重复导入。');
-            abort_if($batch->rows()->where('validation_status', 'error')->where('error_type', 'management_scope')->exists(), 422, '导入批次存在管理范围冲突，请修正文件并重新预检。');
-            $batch->load(['rows' => fn ($q) => $q->whereIn('validation_status', ['valid', 'warning'])->orderBy('row_no')->orderBy('id')]);
-            foreach ($batch->rows as $row) {
-                $target = $this->persist($batch->import_type, $row->normalized_data ?? $row->raw_data, $itemImporter, $batch->management_scope, $operatorId);
-                if ($target) $row->update(['target_id' => $target->id]);
-            }
-            $batch->update(['status' => 'confirmed', 'confirmed_at' => now()]);
-            return $batch;
-        }, 5);
-        return response()->json(['message' => "已导入 {$batch->rows->count()} 条正确数据", 'data' => $batch->fresh()]);
+        $batch = ImportBatch::findOrFail($id);
+        $this->assertBatchContext($request, $batch);
+        $result = $pipeline->confirm($batch, app(AuthContextService::class)->currentUser($request));
+        return response()->json(['message' => "已导入 {$result['imported_rows']} 条正确数据", 'data' => $result['batch']]);
     }
 
     public function exportErrors(Request $request, int $id): StreamedResponse
@@ -155,13 +133,18 @@ class ImportController extends Controller
 
     private function authorizePermission(Request $request, string $permission): void
     {
+        $this->authorizeAnyPermission($request, [$permission]);
+    }
+
+    private function authorizeAnyPermission(Request $request, array $permissions): void
+    {
         $auth = app(AuthContextService::class);
         $user = $auth->currentUser($request);
         abort_unless($user, 401, '未登录或登录已过期。');
         abort_unless(
-            $auth->isSuperAdmin($user) || in_array($permission, $auth->permissionCodes($user), true),
+            $auth->isSuperAdmin($user) || array_intersect($permissions, $auth->permissionCodes($user)),
             403,
-            '无按钮权限：'.$permission
+            '无导入操作权限。'
         );
     }
 
@@ -181,85 +164,8 @@ class ImportController extends Controller
             abort_unless($request->isMethodSafe(), 422, '历史迁移批次只供追溯，不能通过普通导入入口重新处理。');
         }
         $scope = app(ItemManagementScopeService::class)->requestScope($request);
-        if ($scope !== null && ($batch->import_type !== 'Item' || $batch->management_scope !== $scope)) {
+        if ($scope !== null && (!MasterImportPipeline::supportsScope($batch->import_type) || $batch->management_scope !== $scope)) {
             throw ValidationException::withMessages(['management_scope' => '该导入批次不属于当前管理范围，请从原上传入口打开。']);
         }
-    }
-
-    private function validateRow(string $type, array $row, ?string $batchScope = null): array
-    {
-        $definitions = [
-            'Product' => ['code' => ['product_code', '商品编码'], 'name' => ['product_name', '商品名称']],
-            'SKU' => ['code' => ['sku_code', 'SKU编码'], 'name' => ['sku_name', 'SKU名称'], 'parent' => ['product_code', '商品编码']],
-            'Item' => ['code' => ['item_code', '物料编码'], 'name' => ['item_name', '物料名称'], 'unit' => ['unit_code', '单位编码', '基本单位']],
-            'Supplier' => ['code' => ['supplier_code', '供应商编码'], 'name' => ['supplier_name', '供应商名称']],
-            'Warehouse' => ['code' => ['warehouse_code', '仓库编码'], 'name' => ['warehouse_name', '仓库名称']],
-            'Location' => ['code' => ['location_code', '库位编码'], 'name' => ['location_name', '库位名称'], 'warehouse' => ['warehouse_code', '仓库编码']],
-            'SKU-Item Relation' => ['sku' => ['sku_code', 'SKU编码'], 'item' => ['item_code', '物料编码'], 'relation' => ['relation_type', '关系类型']],
-        ];
-        $def = $definitions[$type];
-        $get = fn (array $keys) => collect($keys)->map(fn ($k) => $row[$k] ?? null)->first(fn ($v) => $v !== null && trim((string) $v) !== '');
-        foreach ($def as $label => $keys) {
-            if ($get($keys) === null) return ['error', $keys[0], 'required', "{$keys[1]}不能为空", "补充{$keys[1]}"];
-        }
-        $code = isset($def['code']) ? trim((string) $get($def['code'])) : null;
-        $duplicates = ['Product' => [Product::class, 'product_code'], 'SKU' => [Sku::class, 'sku_code'], 'Item' => [Item::class, 'item_code'],
-            'Supplier' => [Supplier::class, 'supplier_code'], 'Warehouse' => [Warehouse::class, 'warehouse_code'], 'Location' => [Location::class, 'location_code']];
-        if ($code && isset($duplicates[$type]) && $duplicates[$type][0]::where($duplicates[$type][1], $code)->exists()) {
-            return ['error', $duplicates[$type][1], 'duplicate', "编码 {$code} 已存在", '使用唯一编码或改为编辑现有数据'];
-        }
-        if ($type === 'Item') {
-            $itemType = trim((string) ($row['item_type'] ?? $row['物料类型'] ?? $row['物料类型（中文选择）'] ?? ''));
-            if (! in_array($itemType, ['成品', '半成品', '原材料', '包装物', '服务', '办公耗材', '办公用品', 'finished_product', 'semi_finished', 'raw_material', 'packaging', 'service', 'office_consumable'], true)) {
-                return ['error', 'item_type', 'invalid', '物料类型不合法', '填写成品、半成品、原材料、包装物、服务或办公用品'];
-            }
-            try {
-                app(ItemImportApplicationService::class)->validateScopeRow($row, $batchScope);
-            } catch (ValidationException $error) {
-                $errors = $error->errors();
-                $field = (string) array_key_first($errors);
-                return ['error', $field, 'management_scope', $errors[$field][0], '修正管理范围、物料类型或所属类目后重新预检'];
-            }
-        }
-        if ($type === 'SKU' && !Product::where('product_code', $get($def['parent']))->exists()) return ['error', 'product_code', 'not_found', 'Product 不存在', '先导入 Product'];
-        if ($type === 'Location' && !Warehouse::where('warehouse_code', $get($def['warehouse']))->exists()) return ['error', 'warehouse_code', 'not_found', '仓库不存在', '先导入 Warehouse'];
-        if ($type === 'SKU-Item Relation') {
-            if (!Sku::where('sku_code', $get($def['sku']))->exists()) return ['error', 'sku_code', 'not_found', 'SKU 不存在', '先导入 SKU'];
-            $item = Item::where('item_code', $get($def['item']))->first();
-            if (! $item) return ['error', 'item_code', 'not_found', 'Item 不存在', '先导入 Item'];
-            try {
-                app(ItemManagementScopeService::class)->assertProductionAllowed($item, 'item_code');
-            } catch (ValidationException $error) {
-                return ['error', 'item_code', 'management_scope', $error->errors()['item_code'][0], '商品映射只能选择工厂物料'];
-            }
-            if (!in_array($get($def['relation']), ['finished_product', 'sales_bundle_item', 'shipping_accessory', 'packaging', 'service_none'], true)) return ['error', 'relation_type', 'invalid', '关系类型不合法', '使用允许的关系类型'];
-        }
-        return ['valid', null, null, null, null];
-    }
-
-    private function persist(string $type, array $row, ItemImportApplicationService $itemImporter, ?string $batchScope = null, ?int $operatorId = null)
-    {
-        $value = fn (...$keys) => collect($keys)->map(fn ($k) => $row[$k] ?? null)->first(fn ($v) => $v !== null && $v !== '');
-        return match ($type) {
-            'Product' => Product::create(['product_code' => $value('product_code', '商品编码'), 'product_name' => $value('product_name', '商品名称'), 'product_type' => $value('product_type', '商品类型') ?: 'standard', 'status' => 'enabled']),
-            'SKU' => Sku::create(['product_id' => Product::where('product_code', $value('product_code', '商品编码'))->value('id'), 'sku_code' => $value('sku_code', 'SKU编码'), 'sku_name' => $value('sku_name', 'SKU名称'), 'spec_text' => $value('spec_text', '规格'), 'order_line_type' => ($value('order_line_type', '订单行类型') ?: ($value('fulfillment_type', '履约方式') ?: 'physical')) === 'virtual' ? 'no_delivery' : ($value('order_line_type', '订单行类型') ?: ($value('fulfillment_type', '履约方式') ?: 'physical')), 'fulfillment_type' => $value('fulfillment_type', '履约方式') ?: 'physical', 'status' => 'draft']),
-            'Item' => $itemImporter->create($row, $batchScope, $operatorId),
-            'Supplier' => Supplier::create(['supplier_code' => $value('supplier_code', '供应商编码'), 'supplier_name' => $value('supplier_name', '供应商名称'), 'supplier_type' => 'manufacturer', 'status' => 'enabled']),
-            'Warehouse' => Warehouse::create(['warehouse_code' => $value('warehouse_code', '仓库编码'), 'warehouse_name' => $value('warehouse_name', '仓库名称'), 'warehouse_type' => 'general', 'status' => 'enabled']),
-            'Location' => Location::create(['location_code' => $value('location_code', '库位编码'), 'location_name' => $value('location_name', '库位名称'), 'warehouse_id' => Warehouse::where('warehouse_code', $value('warehouse_code', '仓库编码'))->value('id'), 'status' => 'enabled']),
-            'SKU-Item Relation' => $this->persistSkuRelation($row),
-        };
-    }
-
-    private function persistSkuRelation(array $row): SkuItemRelation
-    {
-        $value = fn (...$keys) => collect($keys)->map(fn ($key) => $row[$key] ?? null)->first(fn ($value) => $value !== null && $value !== '');
-        $item = Item::where('item_code', $value('item_code', '物料编码'))->lockForUpdate()->firstOrFail();
-        app(ItemManagementScopeService::class)->assertProductionAllowed($item, 'item_code');
-        return SkuItemRelation::create([
-            'sku_id' => Sku::where('sku_code', $value('sku_code', 'SKU编码'))->firstOrFail()->id,
-            'item_id' => $item->id, 'relation_type' => $value('relation_type', '关系类型'),
-            'qty' => $value('qty', '数量') ?: 1, 'is_primary' => (bool) ($value('is_primary', '是否主Item') ?? true), 'status' => 'active',
-        ]);
     }
 }

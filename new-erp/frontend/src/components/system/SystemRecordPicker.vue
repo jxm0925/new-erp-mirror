@@ -148,11 +148,29 @@ export default {
   padding-right: 12px;
   box-sizing: border-box;
 }
+.record-picker-categories ::v-deep .el-tree--highlight-current .el-tree-node.is-current > .el-tree-node__content {
+  color: #008b4b;
+  background: #f0fdf4;
+}
 .record-picker-table {
   min-width: 0;
 }
 .system-picker-shell ::v-deep .paged-record-picker {
   width: min(960px, calc(100vw - 32px)) !important;
+}
+.system-picker-shell ::v-deep .el-input__inner:focus,
+.system-picker-shell ::v-deep .el-checkbox__inner:hover,
+.system-picker-shell ::v-deep .el-checkbox__input.is-focus .el-checkbox__inner {
+  border-color: #008b4b;
+}
+.system-picker-shell ::v-deep .el-button--default:hover,
+.system-picker-shell ::v-deep .el-button--default:focus {
+  color: #008b4b;
+  border-color: #bbf7d0;
+  background: #f0fdf4;
+}
+.system-picker-shell ::v-deep .el-loading-spinner .path {
+  stroke: #008b4b;
 }
 .picker-search {
   display: flex;
@@ -184,6 +202,13 @@ export default {
   gap: 8px;
   padding-top: 12px;
   border-top: 1px solid #e2e8f0;
+}
+.selected-records ::v-deep .el-tag__close {
+  color: #008b4b;
+}
+.selected-records ::v-deep .el-tag__close:hover {
+  color: #fff;
+  background: #008b4b;
 }
 @media (max-width: 600px) {
   .record-picker-body.with-categories {

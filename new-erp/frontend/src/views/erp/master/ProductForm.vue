@@ -59,9 +59,9 @@
           </el-form-item>
 
           <el-form-item label="商品类型" prop="product_type">
-            <el-select v-model="form.product_type" class="full-width">
+            <el-select v-model="form.product_type" class="full-width" :disabled="form.product_type === 'bundle'">
               <el-option label="标准商品 (单件/产成品)" value="standard" />
-              <el-option label="套装商品 (组合销售件)" value="bundle" />
+              <el-option v-if="form.product_type === 'bundle'" label="套装商品 (历史保留)" value="bundle" disabled />
             </el-select>
           </el-form-item>
 
@@ -161,8 +161,8 @@
         </div>
       </section>
 
-      <!-- 模块三：规格与 SKU 矩阵生成器 (全宽独立区域，告别狭窄挤压) -->
-      <section class="form-card matrix-section-card">
+      <!-- 模块三：规格与 SKU 矩阵生成器 (仅新增商品时开启，编辑态统一在列表展开行/详情弹窗管理) -->
+      <section v-if="!isEdit && $can('master.sku.create')" class="form-card matrix-section-card">
         <div class="card-header">
           <div class="header-main">
             <span class="card-icon-badge"><i class="el-icon-s-grid" /></span>
@@ -257,9 +257,6 @@
                 <strong>SKU 组合预览清单</strong>
                 <span class="table-sub-count">（共 {{ matrixRows.length }} 款组合）</span>
               </div>
-              <el-button type="text" size="mini" icon="el-icon-refresh" class="theme-link-btn" @click="refreshPreview">
-                刷新预览数据
-              </el-button>
             </div>
 
             <el-table
@@ -309,8 +306,11 @@
           <i class="el-icon-goods" />
           {{ form.product_name || '未命名商品' }}
         </span>
-        <span v-if="matrixRows.length" class="footer-sku-hint">
+        <span v-if="!isEdit && matrixRows.length" class="footer-sku-hint">
           将自动生成并绑定 <strong>{{ matrixRows.length }}</strong> 款草稿 SKU
+        </span>
+        <span v-else-if="isEdit" class="footer-sku-hint">
+          商品规格 SKU 请在商品档案列表展开行或详情弹窗中维护
         </span>
         <span v-else class="footer-sku-hint">
           未设置规格矩阵，仅保存商品主档案
@@ -329,7 +329,7 @@
 
 <script>
 import PagedRecordSelect from '@/components/common/PagedRecordSelect.vue'
-import { getEntity, listEntity, saveEntity, uploadProductImage } from '../../../api/erp/master'
+import { getEntity, saveEntity, uploadProductImage } from '../../../api/erp/master'
 import { clearCreatePageReservation, reserveForCreatePage } from '../../../utils/documentNumberReservation'
 
 const empty = () => ({
@@ -435,9 +435,6 @@ export default {
         this.matrix.dimensions.push({ name: '', valuesText: '' })
       }
     },
-    refreshPreview() {
-      this.$forceUpdate()
-    },
     async uploadImage(request) {
       try {
         const form = new FormData()
@@ -466,23 +463,17 @@ export default {
             productPayload.reservation_token = this.reservation.reservation_token
             productPayload.creation_session_id = this.reservation.creation_session_id
           }
-          const matrix = mode === 'save' ? this.matrixRows : []
-          const matrixReservations = []
+          const matrix = mode === 'save' && !this.isEdit && this.$can('master.sku.create') ? this.matrixRows : []
           if (matrix.length) {
-            productPayload.sku_matrix = []
-            const productKey = this.isEdit ? this.$route.params.id : `new:${this.reservation.creation_session_id}`
-            for (const row of matrix) {
-              const specKey = String(row.spec_text || '').replace(/\s+/g, '').toLowerCase()
-              const reservation = await reserveForCreatePage('sku', '/master/products/new#sku-matrix', `/master/products/${productKey}#sku-matrix:${specKey}`)
-              matrixReservations.push(reservation)
-              productPayload.sku_matrix.push({ ...row, sku_code: reservation.document_no,
-                reservation_token: reservation.reservation_token, creation_session_id: reservation.creation_session_id })
-            }
+            productPayload.sku_matrix = matrix.map(row => ({
+              sku_name: row.sku_name,
+              spec_text: row.spec_text,
+              sale_price: row.sale_price
+            }))
           }
           await saveEntity('products', productPayload)
-          matrixReservations.forEach(clearCreatePageReservation)
           if (!this.isEdit) clearCreatePageReservation(this.reservation)
-          if (matrix.length) this.$message.success(`商品已保存，并成功生成 ${matrix.length} 款规格 SKU`)
+          if (matrix.length) this.$message.success(`商品已保存，并单事务生成 ${matrix.length} 款规格 SKU`)
           else this.$message.success('商品档案保存成功')
           this.$router.push('/master/products')
         } catch (e) {

@@ -20,7 +20,7 @@
         <el-button size="small" icon="el-icon-refresh" class="btn-refresh" :loading="listLoading" @click="load">
           刷新
         </el-button>
-        <el-button size="small" type="success" icon="el-icon-plus" class="btn-theme-create" @click="createNew">
+        <el-button v-if="canEdit" size="small" type="success" icon="el-icon-plus" class="btn-theme-create" :disabled="saving" @click="createNew">
           新建模板
         </el-button>
       </div>
@@ -33,7 +33,7 @@
           <div class="card-title">模板列表</div>
         </div>
         <el-input v-model="keyword" size="small" clearable prefix-icon="el-icon-search" placeholder="搜索模板名称" @change="search" />
-        <div v-if="!templates.length" class="perf-tpl-empty">暂无提成模板，点击右上角「新建模板」</div>
+        <div v-if="!templates.length" class="perf-tpl-empty">{{ canEdit ? '暂无提成模板，点击右上角「新建模板」' : '暂无提成模板' }}</div>
         <div class="tpl-cards-scroll">
           <div v-for="row in templates" :key="row.id" :class="['perf-tpl-card', { active: form && form.id === row.id }]" @click="select(row)">
             <div class="perf-tpl-card-title">
@@ -54,10 +54,10 @@
       </aside>
 
       <!-- 右侧模板配置器 -->
-      <main class="form-card perf-tpl-editor" v-loading="saving">
+      <main class="form-card perf-tpl-editor" v-loading="saving || detailLoading">
         <div v-if="!form" class="perf-tpl-empty big">
           <i class="el-icon-document" />
-          <p class="empty-title">请选择左侧模板查看与编辑，或新建提成模板</p>
+          <p class="empty-title">{{ canEdit ? '请选择左侧模板查看与编辑，或新建提成模板' : '请选择左侧模板查看' }}</p>
           <p class="hint">提成比例按“订单折后金额 × 工序比例”计算工序总提成，并根据各工序实际报工工时加权分摊至作业人员。</p>
         </div>
 
@@ -69,15 +69,15 @@
             <div class="perf-tpl-form">
               <label>
                 <span>模板名称</span>
-                <el-input v-model="form.template_name" size="small" maxlength="120" placeholder="例如：内贸标准设备提成模板" />
+                <el-input v-model="form.template_name" :disabled="!canEdit || detailLoading || saving" size="small" maxlength="120" placeholder="例如：内贸标准设备提成模板" />
               </label>
               <label>
                 <span>启用状态</span>
-                <el-switch v-model="form.enabled" active-color="#008b4b" active-text="启用" inactive-text="停用" />
+                <el-switch v-model="form.enabled" :disabled="!canEdit || detailLoading || saving" active-color="#008b4b" active-text="启用" inactive-text="停用" />
               </label>
               <label class="wide">
                 <span>模板说明</span>
-                <el-input v-model="form.remark" size="small" maxlength="500" placeholder="说明适用的产品系列、工艺类型或销售业务范围（选填）" />
+                <el-input v-model="form.remark" :disabled="!canEdit || detailLoading || saving" size="small" maxlength="500" placeholder="说明适用的产品系列、工艺类型或销售业务范围（选填）" />
               </label>
             </div>
           </div>
@@ -90,7 +90,7 @@
             <el-table :data="form.lines" border size="small" class="perf-tpl-table">
               <el-table-column label="工序名称" min-width="180">
                 <template slot-scope="{ row }">
-                  <el-select v-model="row.operation_id" filterable placeholder="选择工序" size="small" class="full">
+                  <el-select v-model="row.operation_id" :disabled="!canEdit || detailLoading || saving" filterable placeholder="选择工序" size="small" class="full">
                     <el-option v-for="op in operations" :key="op.id" :label="op.operation_name" :value="op.id" :disabled="usedOperation(op.id, row)">
                       <span>{{ op.operation_name }}</span>
                       <span class="op-no">{{ op.operation_no }}</span>
@@ -100,7 +100,7 @@
               </el-table-column>
               <el-table-column label="提成比例" width="160">
                 <template slot-scope="{ row }">
-                  <el-input v-model="row.percent" size="small" placeholder="如 1.5">
+                  <el-input v-model="row.percent" :disabled="!canEdit || detailLoading || saving" size="small" placeholder="如 1.5">
                     <template slot="append">%</template>
                   </el-input>
                 </template>
@@ -110,14 +110,14 @@
                   <span class="money">约 {{ sample(row.percent) }} 元</span>
                 </template>
               </el-table-column>
-              <el-table-column label="操作" width="70" align="center">
+              <el-table-column v-if="canEdit" label="操作" width="70" align="center">
                 <template slot-scope="{ $index }">
-                  <el-button type="text" class="danger-btn" icon="el-icon-delete" @click="form.lines.splice($index, 1)" />
+                  <el-button type="text" class="danger-btn" icon="el-icon-delete" :disabled="detailLoading || saving" @click="form.lines.splice($index, 1)" />
                 </template>
               </el-table-column>
             </el-table>
             <div class="perf-tpl-total">
-              <el-button size="small" type="success" plain class="btn-theme-plain" icon="el-icon-plus" @click="addLine">添加工序</el-button>
+              <el-button v-if="canEdit" size="small" type="success" plain class="btn-theme-plain" icon="el-icon-plus" :disabled="detailLoading || saving" @click="addLine">添加工序</el-button>
               <span class="total-summary">提成比例合计: <b>{{ totalPercent }}%</b>，每 1 万元订单提成额约 <b class="total-money">{{ sample(totalPercent) }}</b> 元</span>
             </div>
           </div>
@@ -135,19 +135,18 @@
             </div>
             <div class="scope-row">
               <span class="scope-label">商品分类</span>
-              <el-tag v-for="c in detail.categories" :key="c.id" size="small" type="success" effect="plain" closable class="scope-tag" @close="unbindCategory(c)">
+              <el-tag v-for="c in detail.categories" :key="c.id" size="small" type="success" effect="plain" :closable="canEdit" class="scope-tag" @close="unbindCategory(c)">
                 {{ c.category_name }}
               </el-tag>
               <span v-if="!detail.categories.length" class="empty-hint">暂无绑定的商品分类</span>
-              <el-button size="mini" type="success" plain class="btn-theme-plain" icon="el-icon-plus" @click="openCategoryPicker">选择商品分类</el-button>
+              <el-button v-if="canEdit" size="mini" type="success" plain class="btn-theme-plain" icon="el-icon-plus" :disabled="detailLoading" @click="openCategoryPicker">选择商品分类</el-button>
             </div>
             <div class="scope-tip">商品未填分类时按默认模板计提成。</div>
           </div>
 
-          <div class="form-actions">
+          <div v-if="canEdit" class="form-actions">
             <el-button v-if="form.id" type="danger" plain class="btn-danger-plain" @click="remove">删除模板</el-button>
             <el-button v-if="form.id" icon="el-icon-star-off" :disabled="detail.is_default" @click="makeDefault">{{ detail.is_default ? '已是默认模板' : '设为默认模板' }}</el-button>
-            <el-button icon="el-icon-connection" :disabled="!form.id" @click="openCategoryPicker">选择商品分类</el-button>
             <el-button type="success" icon="el-icon-check" class="btn-theme-create" @click="save">保存模板</el-button>
           </div>
         </template>
@@ -155,7 +154,7 @@
     </div>
 
     <!-- 选择商品分类弹窗 -->
-    <el-dialog :visible.sync="categoryPicker.open" title="选择商品分类" width="560px" custom-class="perf-tpl-dialog" append-to-body>
+    <el-dialog :visible.sync="categoryPicker.open" title="选择商品分类" width="560px" custom-class="perf-tpl-dialog" append-to-body :close-on-click-modal="false" :before-close="closeCategoryPicker">
       <p class="perf-tpl-tip">勾选使用本模板的商品分类；取消已勾选的分类将解除该分类与本模板的绑定。下级分类未单独指定时自动沿用上级的模板。</p>
       <div class="category-tree-box" v-loading="categoryPicker.loading">
         <el-tree
@@ -165,21 +164,22 @@
           show-checkbox
           check-strictly
           node-key="id"
-          :props="{ label: 'category_name', children: 'children' }"
+          :props="{ label: 'category_name', children: 'children', disabled: categoryNodeDisabled }"
           :default-checked-keys="categoryPicker.checked"
+          @check="checkCategories"
         />
         <div v-else-if="!categoryPicker.loading" class="perf-tpl-empty">暂无商品分类</div>
       </div>
       <span slot="footer">
-        <el-button size="small" @click="categoryPicker.open = false">取消</el-button>
-        <el-button size="small" type="success" :loading="categoryPicker.saving" @click="confirmCategories">确认指定</el-button>
+        <el-button size="small" :disabled="categoryPicker.saving" @click="closeCategoryPicker()">取消</el-button>
+        <el-button size="small" type="success" :loading="categoryPicker.saving" :disabled="!canEdit || categoryPicker.loading || !categoryPicker.loaded" @click="confirmCategories">确认指定</el-button>
       </span>
     </el-dialog>
   </section>
 </template>
 
 <script>
-import { listPerformanceTemplates, getPerformanceTemplate, createPerformanceTemplate, updatePerformanceTemplate, deletePerformanceTemplate, bindPerformanceTemplateCategories, unbindPerformanceTemplateCategories, setDefaultPerformanceTemplate, listPerformanceTemplateOperations } from '../../../api/erp/production'
+import { listPerformanceTemplates, getPerformanceTemplate, createPerformanceTemplate, updatePerformanceTemplate, deletePerformanceTemplate, syncPerformanceTemplateCategories, setDefaultPerformanceTemplate, listPerformanceTemplateOperations } from '../../../api/erp/production'
 import { listEntity } from '../../../api/erp/master'
 
 function percentToRate (value) {
@@ -198,10 +198,11 @@ function rateToPercent (value) {
 export default {
   name: 'ProductionPerformanceTemplates',
   data: () => ({
-    listLoading: false, saving: false, templates: [], total: 0, page: 1, keyword: '', operations: [], form: null, detail: { is_default: false, categories: [] },
-    categoryPicker: { open: false, loading: false, saving: false, tree: [], checked: [] }
+    listLoading: false, saving: false, detailLoading: false, detailRequest: 0, templates: [], total: 0, page: 1, keyword: '', operations: [], form: null, detail: { is_default: false, categories: [] },
+    categoryPicker: { open: false, loading: false, saving: false, loaded: false, tree: [], checked: [], id: null, expected_version: 0, request: 0 }
   }),
   computed: {
+    canEdit () { return this.$can('production.performance.edit') || this.$can('production.performance.manage') },
     totalPercent () { return rateToPercent(this.form ? this.form.lines.reduce((sum, row) => sum + Number(percentToRate(row.percent) || 0), 0).toFixed(6) : 0) || '0' }
   },
   created () { this.load(); listPerformanceTemplateOperations().then(r => { this.operations = r.data.data || [] }).catch(() => {}) },
@@ -216,22 +217,43 @@ export default {
     search () { this.page = 1; this.load() },
     changePage (p) { this.page = p; this.load() },
     toForm (t) { return { id: t.id, template_name: t.template_name, remark: t.remark || '', enabled: t.status === 'enabled', business_version: t.business_version, lines: t.lines.map(l => ({ operation_id: l.operation_id, percent: rateToPercent(l.performance_rate) })) } },
-    select (row) { this.form = this.toForm(row); this.detail = { is_default: row.is_default, categories: [] }; this.loadDetail(row.id) },
+    select (row) { if (this.saving || this.categoryPicker.saving) return; this.form = this.toForm(row); this.detail = { is_default: row.is_default, categories: [] }; this.loadDetail(row.id) },
     async loadDetail (id) {
-      try { const r = await getPerformanceTemplate(id); if (this.form && this.form.id === id) this.detail = { is_default: r.data.data.is_default, categories: r.data.data.categories || [] } } catch (e) { this.$message.error(e.userMessage || '使用范围加载失败') }
+      const sequence = ++this.detailRequest
+      this.detailLoading = true
+      try { const r = await getPerformanceTemplate(id); if (sequence === this.detailRequest && this.form?.id === id) { this.form = this.toForm(r.data.data); this.applyScope(r.data.data) } } catch (e) { if (sequence === this.detailRequest) this.$message.error(e.userMessage || '使用范围加载失败') }
+      finally { if (sequence === this.detailRequest) this.detailLoading = false }
+    },
+    applyScope (data) {
+      this.detail = { is_default: data.is_default, categories: data.categories || [] }
+      this.form.business_version = data.business_version
+      const index = this.templates.findIndex(row => Number(row.id) === Number(data.id))
+      if (index >= 0) this.$set(this.templates, index, data)
+    },
+    hasUnsavedChanges () {
+      const saved = this.templates.find(t => t.id === this.form.id)
+      return saved && JSON.stringify(this.toForm(saved)) !== JSON.stringify({ ...this.form, business_version: saved.business_version })
     },
     async makeDefault () {
+      if (!this.canEdit || this.saving || this.detailLoading || this.categoryPicker.saving || !this.form?.id) return
       const saved = this.templates.find(t => t.id === this.form.id)
       if (!this.form.enabled || (saved && saved.status !== 'enabled')) return this.$message.warning('模板已停用，请先启用并保存')
       try { await this.$confirm('设为默认后，未命中商品分类模板、也未在 BOM 里指定的工序都将按本模板计提成（已生成工单不受影响）。确认？', '设为默认模板', { type: 'warning' }) } catch (e) { return }
-      try { const r = await setDefaultPerformanceTemplate(this.form.id); this.$message.success(r.data.message || '已设为默认模板'); this.loadDetail(this.form.id); this.load() } catch (e) { this.$message.error(e.userMessage || '设置失败') }
+      this.saving = true
+      try { const r = await setDefaultPerformanceTemplate(this.form.id); this.$message.success(r.data.message || '已设为默认模板'); this.applyScope(r.data.data); this.load() } catch (e) { this.$message.error(e.userMessage || '设置失败') } finally { this.saving = false }
     },
     async unbindCategory (category) {
+      if (!this.canEdit || this.saving || this.detailLoading || this.categoryPicker.saving || !this.form?.id) return
+      if (this.hasUnsavedChanges()) return this.$message.warning('模板有未保存的修改，请先保存再指定')
       try { await this.$confirm(`取消后分类“${category.category_name}”及其下级将改按上级分类或默认模板计提成。确认？`, '取消指定分类', { type: 'warning' }) } catch (e) { return }
-      try { const r = await unbindPerformanceTemplateCategories(this.form.id, { category_ids: [category.id] }); this.$message.success(r.data.message || '已取消指定'); this.loadDetail(this.form.id); this.load() } catch (e) { this.$message.error(e.userMessage || '取消失败') }
+      this.saving = true
+      try {
+        const r = await syncPerformanceTemplateCategories(this.form.id, { category_ids: this.detail.categories.filter(c => Number(c.id) !== Number(category.id)).map(c => Number(c.id)), expected_version: this.form.business_version })
+        this.$message.success(r.data.message || '已取消指定'); this.applyScope(r.data.data); this.load()
+      } catch (e) { this.$message.error(e.userMessage || '取消失败') } finally { this.saving = false }
     },
-    createNew () { this.detail = { is_default: false, categories: [] }; this.form = { id: null, template_name: '', remark: '', enabled: true, business_version: 0, lines: [{ operation_id: null, percent: '' }] } },
-    addLine () { this.form.lines.push({ operation_id: null, percent: '' }) },
+    createNew () { if (!this.canEdit || this.saving || this.categoryPicker.saving) return; this.detailRequest++; this.detailLoading = false; this.detail = { is_default: false, categories: [] }; this.form = { id: null, template_name: '', remark: '', enabled: true, business_version: 0, lines: [{ operation_id: null, percent: '' }] } },
+    addLine () { if (this.canEdit && !this.saving && !this.detailLoading) this.form.lines.push({ operation_id: null, percent: '' }) },
     payload () {
       const f = this.form
       if (!f.template_name.trim()) throw new Error('请填写模板名称')
@@ -241,6 +263,7 @@ export default {
         lines: lines.map(l => { if (!l.operation_id) throw new Error('有比例未选择对应工序'); const rate = percentToRate(l.percent); if (rate === null) throw new Error('比例请填写 0 到 100 之间的数字，最多 4 位小数'); return { operation_id: l.operation_id, performance_rate: rate } }) }
     },
     async save () {
+      if (!this.canEdit || this.saving || this.detailLoading || this.categoryPicker.saving) return
       let data; try { data = this.payload() } catch (e) { return this.$message.warning(e.message) }
       this.saving = true
       try {
@@ -249,30 +272,52 @@ export default {
       } catch (e) { this.$message.error(e.userMessage || '保存失败') } finally { this.saving = false }
     },
     async remove () {
-      try { await this.$confirm('正在作为默认模板或已被工艺路线指定的模板不可删除。确认删除该模板？', '删除提成模板', { type: 'warning' }) } catch (e) { return }
-      try { await deletePerformanceTemplate(this.form.id); this.$message.success('模板已删除'); this.form = null; this.load() } catch (e) { this.$message.error(e.userMessage || '删除失败') }
+      if (!this.canEdit || this.saving || this.detailLoading || this.categoryPicker.saving || !this.form?.id) return
+      try { await this.$confirm('正在作为默认模板或已绑定商品分类的模板不可删除。确认删除该模板？', '删除提成模板', { type: 'warning' }) } catch (e) { return }
+      this.saving = true
+      try { await deletePerformanceTemplate(this.form.id); this.$message.success('模板已删除'); this.form = null; if (this.templates.length === 1 && this.page > 1) this.page--; this.load() } catch (e) { this.$message.error(e.userMessage || '删除失败') } finally { this.saving = false }
     },
     async openCategoryPicker () {
-      if (!this.form.id) return
-      const saved = this.templates.find(t => t.id === this.form.id)
-      if (saved && JSON.stringify(this.toForm(saved)) !== JSON.stringify(this.form)) return this.$message.warning('模板有未保存的修改，请先保存再指定')
+      if (!this.canEdit || this.saving || this.detailLoading || this.categoryPicker.saving || !this.form?.id) return
+      if (this.hasUnsavedChanges()) return this.$message.warning('模板有未保存的修改，请先保存再指定')
       if (!this.form.enabled) return this.$message.warning('模板已停用，请先启用并保存')
-      Object.assign(this.categoryPicker, { open: true, loading: true, checked: this.detail.categories.map(c => c.id) })
-      try { const r = await listEntity('categories', { category_type: 'product', tree: 1 }); this.categoryPicker.tree = r.data.data || [] } catch (e) { this.$message.error(e.userMessage || '商品分类加载失败') } finally { this.categoryPicker.loading = false }
+      const sequence = ++this.categoryPicker.request
+      const id = this.form.id
+      Object.assign(this.categoryPicker, { open: true, loading: true, loaded: false, tree: [], checked: [], id })
+      try {
+        const [categories, template] = await Promise.all([listEntity('categories', { category_type: 'product', status: 'enabled', tree: 1 }), getPerformanceTemplate(id)])
+        if (sequence !== this.categoryPicker.request || !this.categoryPicker.open || this.form?.id !== id) return
+        const data = template.data.data
+        this.form = this.toForm(data)
+        this.applyScope(data)
+        this.categoryPicker.checked = (data.categories || []).map(c => Number(c.id))
+        this.categoryPicker.expected_version = data.business_version
+        this.categoryPicker.tree = categories.data.data || []
+        this.categoryPicker.loaded = true
+      } catch (e) { if (sequence === this.categoryPicker.request) this.$message.error(e.userMessage || '商品分类加载失败') }
+      finally { if (sequence === this.categoryPicker.request) this.categoryPicker.loading = false }
     },
+    closeCategoryPicker (done) {
+      if (this.categoryPicker.saving) return
+      this.categoryPicker.request++
+      this.categoryPicker.open = false
+      if (typeof done === 'function') done()
+    },
+    categoryNodeDisabled (node) { return !this.canEdit || this.categoryPicker.saving || node.status !== 'enabled' },
+    checkCategories (node, state) { this.categoryPicker.checked = state.checkedKeys.map(Number) },
     async confirmCategories () {
+      if (!this.canEdit || this.categoryPicker.saving || this.categoryPicker.loading || !this.categoryPicker.loaded || this.form?.id !== this.categoryPicker.id) return
       const checked = (this.$refs.categoryTree ? this.$refs.categoryTree.getCheckedKeys() : this.categoryPicker.checked).map(Number)
       const bound = this.detail.categories.map(c => Number(c.id))
-      const add = checked.filter(id => !bound.includes(id))
-      const remove = bound.filter(id => !checked.includes(id))
-      if (!add.length && !remove.length) { this.categoryPicker.open = false; return }
+      if (checked.length === bound.length && checked.every(id => bound.includes(id))) { this.closeCategoryPicker(); return }
+      this.categoryPicker.checked = checked
       this.categoryPicker.saving = true
       try {
-        if (add.length) await bindPerformanceTemplateCategories(this.form.id, { category_ids: add })
-        if (remove.length) await unbindPerformanceTemplateCategories(this.form.id, { category_ids: remove })
+        const r = await syncPerformanceTemplateCategories(this.categoryPicker.id, { category_ids: checked, expected_version: this.categoryPicker.expected_version })
         this.$message.success('适用范围已更新')
+        this.applyScope(r.data.data)
         this.categoryPicker.open = false
-        this.load(); this.loadDetail(this.form.id)
+        this.load()
       } catch (e) { this.$message.error(e.userMessage || '指定失败') } finally { this.categoryPicker.saving = false }
     }
   }
@@ -683,6 +728,38 @@ export default {
   .form-actions {
     flex-wrap: wrap;
   }
+}
+</style>
+
+<style>
+.perf-tpl-dialog {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: column;
+  max-width: calc(100vw - 48px);
+  max-height: calc(100vh - 48px);
+  margin: 0 !important;
+}
+.perf-tpl-dialog .el-dialog__header,
+.perf-tpl-dialog .el-dialog__footer {
+  flex-shrink: 0;
+}
+.perf-tpl-dialog .el-dialog__body {
+  min-height: 0;
+  overflow: auto;
+}
+.perf-tpl-dialog .el-button--success,
+.perf-tpl-dialog .el-checkbox__input.is-checked .el-checkbox__inner,
+.perf-tpl-dialog .el-checkbox__input.is-indeterminate .el-checkbox__inner {
+  background: #008b4b;
+  border-color: #008b4b;
+}
+.perf-tpl-dialog .el-checkbox__inner:hover,
+.perf-tpl-dialog .el-checkbox__input.is-focus .el-checkbox__inner {
+  border-color: #008b4b;
 }
 </style>
 

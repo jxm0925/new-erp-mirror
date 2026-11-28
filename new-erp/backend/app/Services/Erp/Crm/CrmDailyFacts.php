@@ -2,6 +2,7 @@
 
 namespace App\Services\Erp\Crm;
 
+use App\Models\Erp\CrmFollowup;
 use App\Services\Erp\AuthContextService;
 use App\Services\Erp\CrmAnalysisProvider;
 use Illuminate\Database\Query\Builder;
@@ -26,7 +27,8 @@ final class CrmDailyFacts
             : $this->teams->expandDepartments(DB::table('erp_department_users')->where('user_legacy_id', $actor->legacy_id)
                 ->where('is_principal', true)->pluck('department_legacy_id')->all());
         return DB::table('erp_departments')->whereIn('legacy_id', $ids ?: [0])->where('status', 'normal')->whereNull('deleted_at')
-            ->orderBy('name')->get(['legacy_id as id', 'name'])->map(fn ($row) => (array) $row)->all();
+            ->orderBy('sort')->orderBy('legacy_id')->get(['legacy_id as id', 'parent_legacy_id as parent_id', 'name'])
+            ->map(fn ($row) => (array) $row)->all();
     }
 
     public function salesStaffForActor(object $actor): array
@@ -108,20 +110,28 @@ final class CrmDailyFacts
         $filters = $owner ? ['sales_user_legacy_id' => $owner] : [];
         $leads = $this->scope->leads($actor, $filters);
         $opps = $this->scope->opportunities($actor, $filters);
+        $customers = $this->scope->customers($actor, $filters);
         $amountColumn = $this->scope->abilities($actor)['amounts'] ? 'expected_amount' : 'NULL as expected_amount';
         $queries = [];
         if ($leads) {
             if ($active) $leads->where('status', 'active')->whereNotNull('customer_id');
             $queries[] = $leads->selectRaw("'lead' as kind, id, lead_no as number, customer_id, customer_name, demand_summary as project,
-                status as stage, customer_pool as pool, {$amountColumn}, currency, next_contact_at, next_plan, last_contact_at,
-                NULL as close_date, NULL as source_lead_id, owner_legacy_id as owner_id, created_at, updated_at")->toBase();
+                nine_step_stage as stage, customer_pool as pool, {$amountColumn}, currency, next_contact_at, next_plan, last_contact_at,
+                NULL as close_date, NULL as source_lead_id, owner_legacy_id as owner_id, version as subject_version, created_at, updated_at")->toBase();
         }
         if ($opps) {
             if ($active) $opps->where('status', 'open');
             $queries[] = $opps->selectRaw("'opportunity' as kind, id, opportunity_no as number, customer_id, customer_name, name as project,
-                stage, (SELECT l.customer_pool FROM erp_crm_leads l WHERE l.id = erp_crm_opportunities.source_lead_id LIMIT 1) as pool,
+                stage, COALESCE(NULLIF(customer_pool, ''), (SELECT l.customer_pool FROM erp_crm_leads l WHERE l.id = erp_crm_opportunities.source_lead_id LIMIT 1)) as pool,
                 {$amountColumn}, currency, next_contact_at, next_plan, last_contact_at, expected_close_date as close_date, source_lead_id,
-                owner_legacy_id as owner_id, created_at, updated_at")->toBase();
+                owner_legacy_id as owner_id, version as subject_version, created_at, updated_at")->toBase();
+        }
+        if ($customers) {
+            if ($active) $customers->whereNotIn('status', ['disabled', 'blacklisted']);
+            $queries[] = $customers->selectRaw("'customer' as kind, id, customer_code as number, id as customer_id, customer_name,
+                NULL as project, lifecycle_stage as stage, customer_pool as pool, NULL as expected_amount, 'CNY' as currency,
+                next_contact_at, next_plan, last_contact_at, NULL as close_date, NULL as source_lead_id,
+                owner_legacy_id as owner_id, crm_version as subject_version, created_at, updated_at")->toBase();
         }
         abort_if(!$queries, 403, '没有线索或商机查看权限。');
         $query = array_shift($queries);
@@ -145,21 +155,48 @@ final class CrmDailyFacts
     public function byKeys(object $actor, ?int $owner, array $keys, bool $active = true): array
     {
         if (!$keys) return [];
-        $query = $this->subjects($actor, $owner, $active);
+        // 历史日报按实际操作者保留事实，不能再按现任负责人截掉已转交的对象。
+        $query = $this->subjects($actor, $active ? $owner : null, $active);
         $query->where(function ($q) use ($keys) {
-            foreach (['lead','opportunity'] as $kind) {
+            foreach (['lead','opportunity','customer'] as $kind) {
                 $ids = [];
                 foreach ($keys as $key) if (str_starts_with($key, $kind.':')) $ids[] = (int) substr($key, strlen($kind) + 1);
                 $q->orWhere(fn ($part) => $part->where('kind', $kind)->whereIn('id', $ids));
             }
         });
-        return $query->get()->map(fn ($row) => $this->describe($row))->keyBy('key')->all();
+        $rows = $query->get()->map(fn ($row) => $this->describe($row))->keyBy('key')->all();
+        if (!$active && $owner) {
+            $history = $this->followupQuery($actor, $owner)->where(function ($q) use ($keys) {
+                foreach (['lead', 'opportunity', 'customer'] as $kind) {
+                    $ids = array_map(fn ($key) => (int) substr($key, strlen($kind) + 1), array_filter($keys, fn ($key) => str_starts_with($key, $kind.':')));
+                    if ($ids) $q->orWhere(fn ($s) => $s->where('subject_type', $kind)->whereIn('subject_id', $ids));
+                }
+            })->whereNotExists(function ($q) use ($owner) {
+                $q->from('erp_crm_followups as newer')->where('newer.operator_legacy_id', $owner)
+                    ->whereColumn('newer.subject_type', 'erp_crm_followups.subject_type')->whereColumn('newer.subject_id', 'erp_crm_followups.subject_id')
+                    ->where(fn ($n) => $n->whereColumn('newer.contacted_at', '>', 'erp_crm_followups.contacted_at')
+                        ->orWhere(fn ($tie) => $tie->whereColumn('newer.contacted_at', 'erp_crm_followups.contacted_at')->whereColumn('newer.id', '>', 'erp_crm_followups.id')));
+            });
+            foreach ($history->get() as $followup) {
+                $key = $followup->subject_type.':'.$followup->subject_id;
+                if (!in_array($key, $keys, true) || isset($rows[$key])) continue;
+                $snapshot = $followup->combat_snapshot ?? [];
+                $rows[$key] = ['key' => $key, 'kind' => $followup->subject_type, 'id' => (int) $followup->subject_id,
+                    'customer_id' => (int) $followup->customer_id, 'customer_name' => $snapshot['customer_name'] ?? '',
+                    'project' => $snapshot['project'] ?? '', 'number' => $snapshot['number'] ?? '',
+                    'stage' => $snapshot['stage_after'] ?? '', 'stage_label' => $snapshot['stage_after'] ?? '',
+                    'expected_amount' => null, 'currency' => 'CNY', 'historical_only' => true];
+            }
+        }
+        return $rows;
     }
 
     private function describe(object $row): array
     {
-        $labels = $row->kind === 'lead' ? CrmLeadApplicationService::STATUSES : CrmOpportunityApplicationService::STAGES;
-        return ['key' => $row->kind.':'.$row->id, 'stage_label' => $labels[$row->stage] ?? $row->stage] + (array) $row;
+        $stage = CrmNineStepCatalog::normalizeStage($row->kind, $row->stage);
+        $labels = collect(CrmNineStepCatalog::stages($row->kind))->pluck('label', 'value');
+        return ['key' => $row->kind.':'.$row->id, 'stage' => $stage, 'stage_label' => $labels[$stage] ?? $stage,
+            'pool' => app(CrmCustomerPoolService::class)->normalize($row->pool)] + (array) $row;
     }
 
     public function evidence(object $actor, array $subject, string $day): array
@@ -288,50 +325,61 @@ final class CrmDailyFacts
         return $out;
     }
 
+    /** 本人当日实际跟进按对象合并，不受对象后来关闭或转交影响。 */
     public function poolOthers(object $actor, string $day, int $ownerId, string $salesName): array
     {
         $start = Carbon::parse($day)->startOfDay();
-        $query = $this->subjects($actor, $ownerId, true)
-            ->where('updated_at', '>=', $start)->where('updated_at', '<', $start->copy()->addDay())
-            ->whereNotNull('pool')->whereNotIn('pool', ['', '今日成交池']);
-        $twoDaysLater = Carbon::parse($day)->addDays(2)->startOfDay();
-        $nextDay = Carbon::parse($day)->addDay()->toDateString();
-        $rows = $query
-            ->orderByRaw('CASE WHEN DATE(last_contact_at) = ? THEN 0 WHEN next_contact_at IS NOT NULL AND next_contact_at < ? THEN 1 WHEN close_date IS NOT NULL AND close_date <= ? THEN 2 WHEN pool IS NOT NULL AND pool != "" THEN 3 ELSE 4 END',
-                [$day, $twoDaysLater, $nextDay])
-            ->orderByDesc('last_contact_at')
-            ->orderBy('kind')
-            ->orderBy('id')
-            ->limit(40)
-            ->get();
-
-        $out = [];
-        foreach ($rows as $row) {
-            $desc = $this->describe($row);
-            $out[] = [
-                'key' => $desc['key'],
-                'kind' => $desc['kind'],
-                'id' => (int) $desc['id'],
-                'number' => (string) $desc['number'],
-                'pool' => (string) ($desc['pool'] ?: ($desc['kind'] === 'opportunity' ? '商机推进池' : '跟进池')),
-                'customer_name' => (string) ($desc['customer_name'] ?: ''),
-                'project' => (string) ($desc['project'] ?: ''),
-                'expected_amount' => $desc['expected_amount'] !== null ? round((float) $desc['expected_amount'], 2) : null,
-                'currency' => (string) ($desc['currency'] ?: 'CNY'),
-                'stage' => (string) ($desc['stage_label'] ?: ''),
-                'stage_label' => (string) ($desc['stage_label'] ?: ''),
-                'probability' => '',
-                'tmr_must_action' => '',
-                'action_type' => '',
-                'contact_time' => $desc['next_contact_at'] ? Carbon::parse($desc['next_contact_at'])->format('H:i') : '',
-                'tmr_advance_to' => '',
-                'expected_pay_time' => $desc['close_date'] ? (string) $desc['close_date'] : '',
-                'max_blocker' => '',
-                'owner' => $salesName,
-                'status' => '待推进',
+        $end = $start->copy()->addDay();
+        $followups = $this->followupQuery($actor, $ownerId)->where('contacted_at', '<', $end)
+            ->where(fn ($q) => $q->whereBetween('contacted_at', [$start, $end->copy()->subSecond()])
+                ->orWhereBetween('created_at', [$start, $end->copy()->subSecond()])
+                ->orWhereBetween('updated_at', [$start, $end->copy()->subSecond()]))
+            ->orderBy('contacted_at')->orderBy('id')->get();
+        $keys = $followups->map(fn ($f) => $f->subject_type.':'.$f->subject_id)->unique()->all();
+        $subjects = $this->byKeys($actor, $ownerId, $keys, false);
+        $rows = [];
+        foreach ($followups->groupBy(fn ($f) => $f->subject_type.':'.$f->subject_id) as $key => $actions) {
+            $last = $actions->last();
+            $snapshot = $last->combat_snapshot ?? [];
+            $subject = $subjects[$key] ?? [];
+            $stage = $snapshot['stage_after'] ?? $subject['stage'] ?? '';
+            $labels = collect(CrmNineStepCatalog::stages($last->subject_type))->pluck('label', 'value');
+            $scheduled = ($last->followup_schedule_mode ?? ($last->next_contact_at ? 'scheduled' : 'nurture')) === 'scheduled';
+            $rows[] = [
+                'key' => $key, 'row_ref' => 'followup:'.$key, 'source' => 'followup',
+                'kind' => $last->subject_type, 'id' => (int) $last->subject_id,
+                'subject_version' => $subject['subject_version'] ?? null,
+                'number' => $snapshot['number'] ?? $subject['number'] ?? '',
+                'pool' => app(CrmCustomerPoolService::class)->normalize($snapshot['pool_after'] ?? $subject['pool'] ?? null) ?? '',
+                'customer_name' => $snapshot['customer_name'] ?? $subject['customer_name'] ?? '',
+                'project' => $snapshot['project'] ?? $subject['project'] ?? '',
+                'expected_amount' => $subject['expected_amount'] ?? null, 'currency' => $subject['currency'] ?? 'CNY',
+                'stage' => $stage, 'stage_label' => $labels[$stage] ?? $stage, 'nine_step' => $labels[$stage] ?? $stage,
+                'probability' => $snapshot['probability'] ?? '',
+                'today_action' => $actions->map(fn ($f) => $f->contacted_at->format('H:i').' '.$f->method.'：'.$f->content)->implode('；'),
+                'today_result' => $actions->pluck('result')->filter()->implode('；'),
+                'action_type' => $last->method, 'promise' => $snapshot['customer_promise'] ?? '',
+                'max_blocker' => $snapshot['blocker'] ?? '', 'expected_pay_time' => $snapshot['expected_pay_date'] ?? '',
+                'tmr_must_action' => $scheduled ? (string) $last->next_plan : '',
+                'contact_time' => $scheduled && $last->next_contact_at ? $last->next_contact_at->toDateTimeString() : '',
+                'followup_schedule_mode' => $scheduled ? 'scheduled' : ($last->followup_schedule_mode ?? 'nurture'),
+                'followup_ids' => $actions->pluck('id')->map(fn ($id) => (int) $id)->all(),
+                'followup_fingerprint' => hash('sha256', json_encode($actions->map(fn ($f) => [$f->id, $f->version, $f->contacted_at->toDateTimeString()])->all())),
+                'owner' => $salesName, 'status' => $scheduled ? '待推进' : '暂不排期',
             ];
+            $lastIndex = count($rows) - 1;
+            $rows[$lastIndex]['auto_snapshot'] = array_intersect_key($rows[$lastIndex], array_flip(['pool', 'nine_step', 'stage', 'stage_label', 'probability', 'max_blocker', 'promise']));
         }
-        return $out;
+        return $rows;
+    }
+
+    private function followupQuery(object $actor, int $operator): \Illuminate\Database\Eloquent\Builder
+    {
+        abort_unless($this->canInspectSales($actor, $operator), 403, '无权读取该销售的跟进事实。');
+        // 自己填写的历史记录属于个人日报事实；主管仍受原对象可见范围约束。
+        $query = $operator === (int) $actor->legacy_id ? CrmFollowup::query()
+            : ($this->scope->followups($actor) ?? CrmFollowup::query()->whereRaw('1 = 0'));
+        return $query->where('operator_legacy_id', $operator);
     }
 
     public function leadResponseStats(object $actor, string $day, int $ownerId): array
@@ -399,8 +447,12 @@ final class CrmDailyFacts
             fn ($join) => $join->on('s.id','=','a.subject_id')->on('s.kind','=','a.subject_type'))
             ->where('a.owner_id', $actor->legacy_id)->whereIn('a.priority', ['primary','backup'])
             ->whereNotExists(fn ($f) => $f->selectRaw('1')->from('erp_crm_followups as f')->whereColumn('f.subject_type','a.subject_type')
-                ->whereColumn('f.subject_id','a.subject_id')->whereColumn('f.operator_legacy_id','a.owner_id')
-                ->whereRaw('f.contacted_at >= DATE(a.planned_at)')->whereColumn('f.created_at','>=','a.created_at'));
+                ->whereColumn('f.subject_id','a.subject_id')
+                ->where(fn ($closed) => $closed->where(fn ($actual) => $actual->whereRaw('f.contacted_at >= DATE(a.planned_at)')->whereColumn('f.created_at','>=','a.created_at'))
+                    ->orWhere(fn ($cancelled) => $cancelled->whereIn('f.followup_schedule_mode', ['nurture', 'completed'])->whereColumn('f.updated_at','>=','a.created_at')
+                        ->whereNotExists(fn ($newer) => $newer->from('erp_crm_followups as newer')->whereColumn('newer.subject_type', 'f.subject_type')
+                            ->whereColumn('newer.subject_id', 'f.subject_id')->where(fn ($n) => $n->whereColumn('newer.contacted_at', '>', 'f.contacted_at')
+                                ->orWhere(fn ($tie) => $tie->whereColumn('newer.contacted_at', 'f.contacted_at')->whereColumn('newer.id', '>', 'f.id')))))));
         if ($period === 'tomorrow') $q->where('a.planned_at','>=',today()->addDay())->where('a.planned_at','<',today()->addDays(2));
         elseif ($period === 'today') $q->where('a.planned_at','>=',today())->where('a.planned_at','<',today()->addDay());
         elseif ($period === 'overdue') $q->where('a.planned_at','<',now());

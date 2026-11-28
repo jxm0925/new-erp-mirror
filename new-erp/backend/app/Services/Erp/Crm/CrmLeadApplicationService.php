@@ -19,7 +19,7 @@ use Illuminate\Validation\ValidationException;
 final class CrmLeadApplicationService
 {
     public const CHANNELS = ['线上平台' => '线上平台', '线下咨询' => '线下咨询', '客户介绍' => '客户介绍', '展会活动' => '展会活动', '主动开发' => '主动开发', '其他' => '其他'];
-    public const POOLS = ['明日成交池', '补位池', '48小时推进池', '老客户转介绍/复购', '老线索补位池', '新线索快转池', '发货池', '观察池', '本周跟进池', '本月跟进池', '农改水客户池'];
+
     public const STATUSES = ['draft' => '草稿', 'pending_review' => '待核实', 'pending_assignment' => '待分配', 'pending_acceptance' => '待接收', 'active' => '跟进中', 'converted' => '已转商机', 'public_pool' => '公海', 'invalid' => '无效'];
     private const DELEGATED_OWNER_STATUSES = ['active', 'converted', 'invalid'];
     public const EDITABLE = [
@@ -155,7 +155,7 @@ final class CrmLeadApplicationService
             'claim' => $can('claim') && $lead->status === 'public_pool' && $scope('claim', (int) $actor->legacy_id),
             'pool' => $can('pool') && in_array($lead->status, ['active', 'converted'], true) && $handles,
             'invalidate' => $can('invalidate') && in_array($lead->status, ['active', 'pending_assignment'], true) && $manages,
-            'confirm' => $can('confirm') && $lead->status === 'active' && !$lead->confirmed_at && $handles,
+            'progress' => $lead->status === 'active' && ($editable || ($can('follow') && ($handles || ($lead->customer_id && $this->canFollowCustomer($lead->customer_id, $actor))))),
             'follow' => $can('follow') && $lead->status === 'active' && ($handles || ($lead->customer_id && $this->canFollowCustomer($lead->customer_id, $actor))),
             'convert' => $this->customers->can($actor, 'crm.opportunity.create') && app(CrmOpportunityApplicationService::class)->canConvert($lead, $actor),
         ];
@@ -230,6 +230,10 @@ final class CrmLeadApplicationService
     public function present(CrmLead $lead, object $actor): array
     {
         $row = $lead->toArray();
+        unset($row['latest_followup']);
+        if (!$row['latest_followup_summary']) $row['latest_followup_summary'] = $lead->latestFollowup?->content;
+        $row['latest_followup_content'] = $lead->latestFollowup?->content;
+        $row['latest_followup_at'] = $lead->latestFollowup?->contacted_at?->toDateTimeString() ?? $lead->last_contact_at?->toDateTimeString();
         unset($row['customer_input_snapshot'], $row['legacy_payload'], $row['recycle_origin_department_id']);
         if ((int) $lead->created_by_legacy_id !== (int) $actor->legacy_id) $row['custom_tags'] = [];
         if ($lead->status === 'pending_review' && (int) $lead->created_by_legacy_id !== (int) $actor->legacy_id) {
@@ -237,6 +241,8 @@ final class CrmLeadApplicationService
             $row['wechat'] = $row['wechat'] ? '***' : null;
             $row['email'] = $row['email'] ? '***' : null;
         }
+        $row['customer_pool'] = app(CrmCustomerPoolService::class)->normalize($lead->customer_pool);
+        $row['nine_step_stage'] = CrmNineStepCatalog::normalizeStage('lead', $lead->nine_step_stage);
         $row['department_name'] = $this->customers->departmentName($lead->department_legacy_id);
         $row['status_label'] = self::STATUSES[$lead->status] ?? $lead->status;
         $row['abilities'] = $this->abilities($lead, $actor);
@@ -267,7 +273,7 @@ final class CrmLeadApplicationService
         if ($lead->customer_id) {
             $customer = $lead->customer;
             $row['customer'] = $customer && $this->customers->relation($customer, $actor) !== null
-                ? $customer->only(['id', 'customer_code', 'customer_name', 'owner_name', 'crm_version'])
+                ? $customer->only(['id', 'customer_code', 'customer_name', 'owner_name', 'crm_version', 'business_lines'])
                 : ($customer ? $this->customers->masked($customer) : null);
             $row['abilities']['transfer_customer'] = $customer && $this->customers->abilities($customer, $actor)['transfer'];
         }
@@ -373,7 +379,7 @@ final class CrmLeadApplicationService
                 $lead->version = 1;
                 $lead->customer_kind = $lead->customer_kind ?: 'individual';
                 $lead->currency = $lead->currency ?: 'CNY';
-                $lead->customer_pool = $lead->customer_pool ?: '新线索快转池';
+                $lead->customer_pool = $lead->customer_pool ?: '新线索4小时快转池';
                 $lead->is_new_inquiry = $lead->is_new_inquiry ?? true;
             }
             if ($lead->entry_method === 'self' && $lead->status === 'draft') {
@@ -382,6 +388,13 @@ final class CrmLeadApplicationService
             } elseif ($lead->status === 'draft') {
                 $lead->department_legacy_id = $lead->department_legacy_id ?: $this->staff->departmentOf((int) $actor->legacy_id);
                 $this->assignments->assert($actor, 'assign', $lead->department_legacy_id, $lead->source_channel);
+            }
+            $lead->customer_pool = app(CrmCustomerPoolService::class)->assertSelectable($lead->customer_pool, 'lead', $id ? $lead->getOriginal('customer_pool') : null);
+            if (!$lead->trade_type || $lead->isDirty('department_legacy_id')) $lead->trade_type = CrmNineStepCatalog::tradeType($lead->department_legacy_id);
+            if (!$id || !$formal || $lead->isDirty(['customer_id', 'customer_name', 'mobile', 'wechat', 'platform_legacy_id', 'platform_buyer_id'])) {
+                $lead->is_new_inquiry = $this->isNewInquiry($lead->customer_id, $this->input($lead), $id);
+            } else {
+                $lead->is_new_inquiry = $lead->getOriginal('is_new_inquiry');
             }
             $lead->customer_input_snapshot = $this->input($lead);
             if ($mode === 'review') {
@@ -457,8 +470,9 @@ final class CrmLeadApplicationService
             abort_unless($abilities[$action] ?? false, 403, '当前线索状态或授权范围不允许该操作，请刷新后重试。');
             $before = $this->snapshot($lead);
             $reason = trim((string) ($data['reason'] ?? ''));
-            if (in_array($action, ['assign', 'transfer', 'return', 'recycle', 'invalidate', 'pool'], true)) {
-                abort_if($reason === '', 422, '请填写操作原因。');
+            if (in_array($action, ['assign', 'transfer', 'return', 'recycle', 'invalidate'], true)) {
+                abort_if($reason === '', 422, '请选择操作原因。');
+                abort_if($reason === '其他' && trim((string) ($data['note'] ?? '')) === '', 422, '选择其他原因时请补充说明。');
             }
             switch ($action) {
                 case 'assign':
@@ -488,8 +502,11 @@ final class CrmLeadApplicationService
                 case 'accept':
                     $owner = (int) $lead->pending_user_legacy_id;
                     abort_unless($this->staff->isActiveSales($owner), 422, '销售员档案已失效，不能接收线索。');
+                    $now = now();
                     $this->setOwner($lead, $owner);
-                    $lead->accepted_at = now();
+                    $lead->accepted_at = $now;
+                    $lead->nine_step_stage ??= CrmNineStepCatalog::LEAD[0];
+                    $lead->win_probability ??= CrmNineStepCatalog::probability($lead->nine_step_stage);
                     $lead->status = 'active';
                     $this->customerApp->claimIfUnowned($lead->customer_id, $owner, '接收线索', $actor, $lead->id);
                     break;
@@ -521,26 +538,25 @@ final class CrmLeadApplicationService
                 case 'claim':
                     // 先锁行再查授权与状态，两个销售同时领取只允许第一个版本成功。
                     $this->assignments->assert($actor, 'claim', $lead->department_legacy_id, $lead->source_channel, (int) $actor->legacy_id);
+                    $now = now();
                     $this->setOwner($lead, (int) $actor->legacy_id);
                     $lead->status = 'active';
-                    $lead->accepted_at = now();
+                    $lead->accepted_at = $now;
+                    $lead->nine_step_stage ??= CrmNineStepCatalog::LEAD[0];
+                    $lead->win_probability ??= CrmNineStepCatalog::probability($lead->nine_step_stage);
                     $this->customerApp->claimIfUnowned($lead->customer_id, (int) $actor->legacy_id, '领取线索', $actor, $lead->id);
                     break;
                 case 'pool':
-                    abort_unless(in_array($data['customer_pool'] ?? null, self::POOLS, true), 422, '请选择有效客户池。');
-                    $lead->customer_pool = $data['customer_pool'];
+                    $lead->customer_pool = app(CrmCustomerPoolService::class)->assertSelectable($data['customer_pool'] ?? null, 'lead', $lead->customer_pool);
                     break;
                 case 'invalidate':
                     $lead->status = 'invalid';
                     $lead->invalid_reason = $reason;
                     break;
-                case 'confirm':
-                    $lead->confirmed_at = now();
-                    break;
             }
             $lead->version++;
             $lead->save();
-            $labels = ['assign' => '分配线索', 'transfer' => '转交线索，待新负责人接收', 'accept' => '接收线索', 'return' => '退回待分配', 'recycle' => $recycleSummary ?? '人工回收到公海', 'claim' => '领取公海线索', 'pool' => '人工调整客户池', 'invalidate' => '标记线索无效', 'confirm' => '确认为有效线索'];
+            $labels = ['assign' => '分配线索', 'transfer' => '转交线索，待新负责人接收', 'accept' => '接收线索', 'return' => '退回待分配', 'recycle' => $recycleSummary ?? '人工回收到公海', 'claim' => '领取公海线索', 'pool' => '人工调整客户池', 'invalidate' => '标记线索无效'];
             $this->log($lead, $action, $labels[$action], $before, $this->snapshot($lead), trim($reason.' '.($data['note'] ?? '')) ?: null, $actor);
             if ($lead->customer_id) app(CrmFollowupApplicationService::class)->refreshContactFacts($lead->customer_id, $lead->id, false);
             return $lead->fresh();
@@ -578,6 +594,16 @@ final class CrmLeadApplicationService
             'after_snapshot' => $after === null ? null : json_encode($after, JSON_UNESCAPED_UNICODE),
             'reason' => $reason, 'operator_legacy_id' => $actor->legacy_id, 'operator_name' => $this->actorName($actor), 'created_at' => now(),
         ]);
+    }
+
+    public function isNewInquiry(?int $customerId, array $input, ?int $excludeLeadId = null): bool
+    {
+        $ids = array_values(array_unique(array_filter(array_merge([$customerId], array_column($this->dedupe->match($input), 'customer_id')))));
+        if (!$ids) return true;
+        if (CrmLead::query()->whereIn('customer_id', $ids)->when($excludeLeadId, fn ($q) => $q->where('id', '!=', $excludeLeadId))->where('status', '!=', 'draft')->exists()) return false;
+        foreach (['erp_crm_opportunities', 'erp_sales_orders'] as $table) if (DB::table($table)->whereIn('customer_id', $ids)->exists()) return false;
+        if (DB::table('erp_crm_followups')->whereIn('customer_id', $ids)->where('subject_type', 'customer')->exists()) return false;
+        return true;
     }
 
     public function input(CrmLead $lead): array
@@ -747,9 +773,13 @@ final class CrmLeadApplicationService
         }
         if (!$customer->first_source && ($newCustomer || $this->customers->abilities($customer, $actor)['edit'])) $customer->update(['first_source' => $lead->source_channel]);
         if ($selfEntry) {
+            $now = now();
             $this->setOwner($lead, (int) $lead->created_by_legacy_id);
-            $lead->accepted_at = now();
+            $lead->accepted_at = $now;
+            $lead->confirmed_at ??= $now;
             $lead->status = 'active';
+            $lead->nine_step_stage ??= CrmNineStepCatalog::LEAD[0];
+            $lead->win_probability ??= CrmNineStepCatalog::probability($lead->nine_step_stage);
             $this->customerApp->claimIfUnowned($customer->id, $lead->owner_legacy_id, '录入线索', $actor, $lead->id);
         } else {
             $lead->owner_legacy_id = null;

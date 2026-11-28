@@ -19,11 +19,11 @@ use Illuminate\Validation\ValidationException;
 final class CrmOpportunityApplicationService
 {
     private array $managementDepartments = [];
-    public const STAGES = ['requirement' => '客户需求确认', 'solution' => '客户方案生成', 'product' => '产品方案确认', 'price' => '订单价格确认', 'contract' => '订单合同确认'];
+    public const STAGES = CrmNineStepCatalog::OPPORTUNITY;
     public const STATUSES = ['open' => '进行中', 'won' => '已成交', 'lost' => '已丢单'];
     public const FILE_CATEGORIES = ['requirement' => '需求', 'solution' => '方案', 'quotation' => '报价', 'contract' => '合同'];
     public const FILE_STATUSES = ['current' => '当前版', 'pending' => '待客户确认', 'history' => '历史版'];
-    public const EDITABLE = ['name', 'contact_id', 'business_line', 'owner_legacy_id', 'expected_amount', 'currency', 'expected_close_date', 'demand_summary', 'next_contact_at', 'next_plan'];
+    public const EDITABLE = ['name', 'contact_id', 'business_line', 'owner_legacy_id', 'expected_amount', 'currency', 'expected_close_date', 'demand_summary', 'next_contact_at', 'next_plan', 'customer_pool', 'trade_type'];
 
     public function __construct(
         private readonly CrmCustomerAccessService $customers,
@@ -139,7 +139,6 @@ final class CrmOpportunityApplicationService
     public function applyConvertible(Builder $query, object $actor): void
     {
         $query->where('erp_crm_leads.status', 'active')->whereNotNull('erp_crm_leads.customer_id')
-            ->whereNotNull('erp_crm_leads.accepted_at')->whereNotNull('erp_crm_leads.confirmed_at')
             ->whereNotExists(fn ($q) => $q->from('erp_crm_opportunities as converted')->whereColumn('converted.source_lead_id', 'erp_crm_leads.id'));
         if (!$this->customers->can($actor, 'crm.opportunity.create') || !$this->customers->can($actor, 'crm.lead.view')) { $query->whereRaw('1 = 0'); return; }
         $query->where(fn ($allowed) => $allowed->where(fn ($managed) => $this->applyManagementRange($managed, $actor, 'erp_crm_leads', 'crm.opportunity.create'))
@@ -149,7 +148,7 @@ final class CrmOpportunityApplicationService
     public function canConvert(CrmLead $lead, object $actor): bool
     {
         return $this->customers->can($actor, 'crm.opportunity.create') && $this->customers->can($actor, 'crm.lead.view')
-            && $lead->status === 'active' && $lead->accepted_at && $lead->confirmed_at
+            && $lead->status === 'active'
             && $lead->customer_id && ($this->managesOwner((int) $lead->owner_legacy_id, (int) $lead->department_legacy_id, $actor, 'crm.opportunity.create') || $this->leads->delegated($lead, $actor))
             && !CrmOpportunity::query()->where('source_lead_id', $lead->id)->exists();
     }
@@ -184,7 +183,7 @@ final class CrmOpportunityApplicationService
                         $converted = CrmOpportunity::query()->where('source_lead_id', $lead->id)->first();
                         if ($converted) return $this->visible((int) $converted->id, $actor);
                         $this->leads->version($lead, ['version' => $data['source_lead_version'] ?? 0]);
-                        abort_unless($this->canConvert($lead, $actor), 403, '线索须已接收并确认为有效线索，且由负责人或其管理人员转商机。');
+                        abort_unless($this->canConvert($lead, $actor), 403, '线索须已接收或领用，且由负责人或其管理人员转商机。');
                         abort_unless((int) $lead->customer_id === (int) $data['customer_id'], 422, '来源线索不属于当前客户。');
                     }
                 }
@@ -211,10 +210,14 @@ final class CrmOpportunityApplicationService
                     $defaults = $lead ? ['contact_id' => $lead->contact_id,
                         'expected_amount' => $lead->expected_amount, 'currency' => $lead->currency, 'demand_summary' => $lead->demand_summary,
                         'next_contact_at' => $lead->next_contact_at, 'next_plan' => $lead->next_plan] : [];
+                    if ($lead && trim((string) ($data['business_line'] ?? '')) === '') {
+                        $leadLines = CrmBusinessLineOptions::normalize(is_array($lead->customer_business_lines) ? $lead->customer_business_lines : []);
+                        if (count($leadLines) === 1) $data['business_line'] = $leadLines[0];
+                    }
                     $opportunity->fill($defaults + ['currency' => 'CNY']);
                     $opportunity->fill(['opportunity_no' => 'OP'.now()->format('Ymd').strtoupper(Str::random(10)), 'request_key' => $data['request_key'],
                         'customer_id' => $customer->id, 'customer_name' => $customer->customer_name, 'source_lead_id' => $lead?->id,
-                        'source_lead_no' => $lead?->lead_no, 'source_snapshot' => $lead?->attributesToArray(), 'stage' => 'requirement', 'status' => 'open',
+                        'source_lead_no' => $lead?->lead_no, 'source_snapshot' => $lead?->attributesToArray(), 'stage' => 'step_4_solution', 'win_probability' => '50%｜方案匹配中', 'customer_pool' => '48小时推进池', 'trade_type' => $lead?->trade_type, 'status' => 'open',
                         'stage_entered_at' => now(), 'created_by_legacy_id' => $actor->legacy_id, 'created_by_name' => $this->actorName($actor), 'version' => 1]);
                 }
                 $opportunity->fill(array_intersect_key($data, array_flip(self::EDITABLE)));
@@ -230,6 +233,8 @@ final class CrmOpportunityApplicationService
                     }
                 }
                 $this->setOwner($opportunity, $delegatedOwner ?? (int) ($data['owner_legacy_id'] ?? $opportunity->owner_legacy_id ?? $lead?->owner_legacy_id ?? $actor->legacy_id), $actor, $delegatedOwner);
+                $opportunity->customer_pool = app(CrmCustomerPoolService::class)->assertSelectable($opportunity->customer_pool, 'opportunity', $id ? $opportunity->getOriginal('customer_pool') : null);
+                if (!$opportunity->trade_type || ($id && $opportunity->isDirty('department_legacy_id') && !array_key_exists('trade_type', $data))) $opportunity->trade_type = CrmNineStepCatalog::tradeType($opportunity->department_legacy_id);
                 $this->validateContactAndPlan($opportunity);
                 if ($id) $opportunity->version++;
                 $opportunity->save();
@@ -243,6 +248,7 @@ final class CrmOpportunityApplicationService
                         ->update(['opportunity_id' => $opportunity->id, 'version' => DB::raw('version + 1'), 'updated_at' => now()]);
                     // 后续待办由商机接续，原线索的计划和沟通历史仍完整保留。
                     $leadBefore = $this->leads->snapshot($lead);
+                    $lead->confirmed_at ??= now();
                     $lead->status = 'converted';
                     $lead->version++;
                     $lead->save();
@@ -264,28 +270,15 @@ final class CrmOpportunityApplicationService
 
     public function stage(int $id, array $data, object $actor): CrmOpportunity
     {
-        $this->permission($actor, 'crm.opportunity.stage');
-        return DB::transaction(function () use ($id, $data, $actor) {
-            $opportunity = $this->visible($id, $actor, true);
-            $this->version($opportunity, $data);
-            abort_unless($this->abilities($opportunity, $actor, true)['stage'], 403, '当前商机不允许调整阶段。');
-            abort_if(trim((string) ($data['reason'] ?? '')) === '', 422, '请填写阶段说明。');
-            abort_unless(in_array($data['direction'] ?? null, ['forward', 'backward'], true), 422, '请选择推进或退回。');
-            $stages = array_keys(self::STAGES);
-            $position = array_search($opportunity->stage, $stages, true);
-            $target = ($position === false ? -10 : $position) + (($data['direction'] ?? '') === 'forward' ? 1 : -1);
-            abort_unless(isset($stages[$target]), 422, '只能逐步推进或退回；已成交由关联正式订单生效产生。');
-            $fileId = !empty($data['file_id']) ? (int) $data['file_id'] : null;
-            if ($fileId) abort_unless(CrmOpportunityFile::query()->available()->where('opportunity_id', $id)->whereKey($fileId)->exists(), 422, '关联文件不属于当前商机或已移除。');
-            $before = $this->snapshot($opportunity);
-            $opportunity->fill(array_intersect_key($data, array_flip(['expected_amount', 'expected_close_date'])));
-            $opportunity->stage = $stages[$target];
-            $opportunity->stage_entered_at = now();
-            $opportunity->version++;
-            $opportunity->save();
-            $this->log($opportunity, $data['direction'] === 'forward' ? 'stage_forward' : 'stage_backward', '阶段调整为'.self::STAGES[$opportunity->stage], $before, $this->snapshot($opportunity), $data['reason'], $actor, $fileId);
-            return $opportunity->fresh();
-        }, 3);
+        if (!isset($data['stage']) && !isset($data['nine_step_stage']) && isset($data['direction'])) {
+            $current = $this->visible($id, $actor);
+            $keys = array_keys(self::STAGES);
+            $index = array_search(CrmNineStepCatalog::normalizeStage('opportunity', $current->stage), $keys, true);
+            $next = ($index === false ? 0 : $index) + ($data['direction'] === 'forward' ? 1 : -1);
+            abort_unless(isset($keys[$next]), 422, '已到当前阶段范围边界。');
+            $data['stage'] = $keys[$next];
+        }
+        return app(CrmProgressApplicationService::class)->update('opportunity', $id, $data, $actor);
     }
 
     public function lose(int $id, array $data, object $actor): CrmOpportunity
@@ -318,6 +311,8 @@ final class CrmOpportunityApplicationService
         abort_if($opportunity->status === 'lost', 422, '已丢单商机不能形成成交。');
         if ($opportunity->status === 'won') return;
         $before = $this->snapshot($opportunity);
+        $opportunity->stage = 'step_8_closing';
+        $opportunity->win_probability = '100%｜已成交';
         $opportunity->status = 'won';
         $opportunity->won_at = $link->first_effective_at;
         $opportunity->version++;
@@ -400,6 +395,9 @@ final class CrmOpportunityApplicationService
             return $opportunity->only(['id', 'opportunity_no', 'owner_legacy_id', 'owner_name']) + ['abilities' => $abilities];
         }
         $row = $opportunity->attributesToArray();
+        if (!$row['latest_followup_summary']) $row['latest_followup_summary'] = $opportunity->latestFollowup?->content;
+        $row['latest_followup_content'] = $opportunity->latestFollowup?->content;
+        $row['latest_followup_at'] = $opportunity->latestFollowup?->contacted_at?->toDateTimeString() ?? $opportunity->last_contact_at?->toDateTimeString();
         unset($row['source_snapshot'], $row['request_key']);
         $customer = $opportunity->customer;
         $row['delegated'] = $this->delegated($opportunity, $actor);
@@ -414,7 +412,9 @@ final class CrmOpportunityApplicationService
             $row['contacts'] = $contacts->orderByDesc('is_default')->orderBy('id')->get(['id', 'contact_name', 'mobile', 'phone', 'email', 'wechat', 'position', 'status'])->toArray();
         }
         $row['source_lead'] = $opportunity->source_lead_id ? ['id' => $opportunity->source_lead_id, 'lead_no' => $opportunity->source_lead_no] : null;
-        $row['stage_label'] = self::STAGES[$opportunity->stage] ?? $opportunity->stage;
+        $row['stage'] = CrmNineStepCatalog::normalizeStage('opportunity', $opportunity->stage);
+        $row['stage_label'] = self::STAGES[$row['stage']] ?? $opportunity->stage;
+        $row['customer_pool'] = app(CrmCustomerPoolService::class)->normalize($opportunity->customer_pool);
         $row['status_label'] = self::STATUSES[$opportunity->status] ?? $opportunity->status;
         $row['department_name'] = $this->customers->departmentName($opportunity->department_legacy_id);
         $row['stage_age_days'] = $opportunity->stage_entered_at ? (int) $opportunity->stage_entered_at->diffInDays($opportunity->lost_at ?? $opportunity->won_at ?? now()) : 0;
@@ -426,7 +426,7 @@ final class CrmOpportunityApplicationService
             app(SalesOrderVisibilityService::class)->apply($orders, $actor, true);
             $row['orders_count'] = $orders->count();
         }
-        $row['abilities'] = $abilities;
+        $row['abilities'] = $abilities + ['progress' => $abilities['stage']];
         return $row;
     }
 

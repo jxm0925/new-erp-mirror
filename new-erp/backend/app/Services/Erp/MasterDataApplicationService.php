@@ -19,7 +19,10 @@ class MasterDataApplicationService
 
     public function create(string $entity, string $modelClass, array $data, ?int $operatorLegacyId): Model
     {
+        if ($entity === 'skus') return app(SkuAggregateApplicationService::class)->save(null, $data, $this->skuOperator($operatorLegacyId));
         return DB::transaction(function () use ($entity, $modelClass, $data, $operatorLegacyId) {
+            if ($entity === 'categories') $data = $this->productCategoryData($data);
+            if ($entity === 'products') $this->assertProductData($data);
             if ($entity === 'warehouses') {
                 $data = $this->warehouseScopeData($data);
                 $data = $this->warehouseManagerData($data);
@@ -75,7 +78,14 @@ class MasterDataApplicationService
 
     public function update(string $entity, Model $record, array $data, ?int $operatorLegacyId, ?string $managementContext = null): Model
     {
+        if ($record instanceof Sku) return app(SkuAggregateApplicationService::class)->save((int) $record->id, $data, $this->skuOperator($operatorLegacyId));
         return DB::transaction(function () use ($entity, $record, $data, $operatorLegacyId, $managementContext) {
+            if ($entity === 'categories') {
+                $all = $this->lockedProductCategories();
+                $record = $all->find($record->getKey());
+                abort_unless($record, 404);
+                $data = $this->productCategoryData($data, $record, $all);
+            }
             $oldItemScope = null;
             if ($record instanceof Item) {
                 $record = Item::whereKey($record->id)->lockForUpdate()->firstOrFail();
@@ -87,6 +97,7 @@ class MasterDataApplicationService
             // 编辑入口与停用入口保持同一父商品状态约束，不能用“保存草稿”绕过。
             if ($record instanceof Product) {
                 $record = $record->newQuery()->lockForUpdate()->findOrFail($record->getKey());
+                $this->assertProductData($data, $record);
                 $this->assertProductStatus($record, $data['status'] ?? $record->status);
             }
             $oldManager = null;
@@ -120,7 +131,6 @@ class MasterDataApplicationService
             if ($entity === 'items') $this->assertItemCategory($data['category_id'] ?? $record->category_id, true);
             if ($entity === 'items') $this->assertItemInventoryIdentityChangeAllowed($record, $data);
             if ($entity === 'items') $this->assertManufacturingStrategy($data, $record);
-            if ($entity === 'skus') $this->assertSkuSalesUnitChangeAllowed($record, $data['sales_unit_id'] ?? null);
             $categoryIds = $data['category_ids'] ?? null;
             unset($data['category_ids'], $data['reservation_token'], $data['creation_session_id']);
             $record->update($data);
@@ -271,11 +281,67 @@ class MasterDataApplicationService
     public function setStatus(Model $record, string $status): Model
     {
         return DB::transaction(function () use ($record, $status) {
-            $locked = $record->newQuery()->lockForUpdate()->findOrFail($record->getKey());
+            if ($record instanceof Sku) Product::whereKey($record->product_id)->lockForUpdate()->firstOrFail();
+            if ($record instanceof ItemCategory) {
+                $all = $this->lockedProductCategories();
+                $locked = $all->find($record->getKey());
+                abort_unless($locked, 404);
+                $this->productCategoryData(['status' => $status], $locked, $all);
+            } else {
+                $locked = $record->newQuery()->lockForUpdate()->findOrFail($record->getKey());
+            }
             if ($locked instanceof Product) $this->assertProductStatus($locked, $status);
+            if ($locked instanceof Sku && $status === 'enabled') app(SkuAggregateApplicationService::class)->assertPhysicalSkuCanBeEnabled($locked);
             $locked->update(['status' => $status]);
             return $locked->fresh();
         });
+    }
+
+    private function assertProductData(array $data, ?Product $product = null): void
+    {
+        abort_if(($data['product_type'] ?? $product?->product_type) === 'bundle' && $product?->product_type !== 'bundle',
+            422, '暂不支持新建套装商品。');
+        $categoryId = array_key_exists('category_id', $data) ? $data['category_id'] : $product?->category_id;
+        if ($categoryId) {
+            abort_unless(ItemCategory::whereKey($categoryId)->where('category_type', 'product')->lockForUpdate()->first(),
+                422, '商品只能选择商品分类。');
+        }
+    }
+
+    private function lockedProductCategories()
+    {
+        // Use the same ordered locks for moves and status changes to protect the whole hierarchy.
+        return ItemCategory::where('category_type', 'product')->orderBy('id')->lockForUpdate()->get();
+    }
+
+    private function productCategoryData(array $data, ?ItemCategory $category = null, $all = null): array
+    {
+        $all ??= $this->lockedProductCategories();
+        abort_if(isset($data['category_type']) && $data['category_type'] !== 'product', 422, '此入口只维护商品分类。');
+        $data['category_type'] = 'product';
+        $parentId = array_key_exists('parent_id', $data) ? $data['parent_id'] : $category?->parent_id;
+        $parents = $all->keyBy('id');
+        if ($parentId) {
+            abort_unless($parents->has($parentId), 422, '父级必须是有效的商品分类。');
+            abort_if($category && ((int) $parentId === (int) $category->id
+                || (new CategoryTreeEngine($all))->containsDescendant((int) $category->id, (int) $parentId)),
+                422, '父级不能选择当前分类或其下级。');
+        }
+        $status = $data['status'] ?? $category?->status ?? 'enabled';
+        if ($status === 'disabled') {
+            abort_if($category && $all->contains(fn ($row) => (int) $row->parent_id === (int) $category->id && $row->status === 'enabled'),
+                422, '当前分类下仍有启用的子分类，请先停用子分类。');
+        } else {
+            $visited = [];
+            while ($parentId) {
+                abort_if(isset($visited[$parentId]), 422, '上级分类存在循环，请先调整父子关系。');
+                $visited[$parentId] = true;
+                $parent = $parents->get($parentId);
+                abort_unless($parent && $parent->status === 'enabled', 422, '上级分类未启用，不能启用当前分类。');
+                $parentId = $parent->parent_id;
+            }
+        }
+        return $data;
     }
 
     private function assertProductStatus(Product $product, string $status): void
@@ -319,7 +385,10 @@ class MasterDataApplicationService
 
         DB::transaction(function () use ($entity, $record) {
             /** @var Model $locked */
-            $locked = $record->newQuery()->lockForUpdate()->findOrFail($record->getKey());
+            $query = $record->newQuery();
+            if ($entity === 'categories') $query->where('category_type', 'product');
+            if ($entity === 'item_categories') $query->where('category_type', 'item');
+            $locked = $query->lockForUpdate()->findOrFail($record->getKey());
             abort_if(($locked->status ?? null) === 'enabled', 422, '启用状态的数据不能删除，请先停用。');
 
             $references = match ($entity) {
@@ -353,7 +422,7 @@ class MasterDataApplicationService
                     ['erp_sales_order_lines', 'unit_id', '该单位已被销售订单引用'],
                     ['erp_sales_order_fulfillments', 'sales_unit_id', '该单位已被销售履约引用'],
                 ],
-                'categories' => [
+                'categories', 'item_categories' => [
                     ['erp_item_categories', 'parent_id', '该类目下仍有子类目'],
                     ['erp_items', 'category_id', '该类目已被物料引用'],
                     ['erp_products', 'category_id', '该类目已被商品引用'],
@@ -480,14 +549,10 @@ class MasterDataApplicationService
         }
     }
 
-    private function assertSkuSalesUnitChangeAllowed(Model $record, ?int $newUnitId): void
+    private function skuOperator(?int $operatorId): object
     {
-        if (!$newUnitId || (int) $record->sales_unit_id === (int) $newUnitId) return;
-        $used = DB::table('erp_sales_order_lines as line')
-            ->join('erp_sales_orders as orders', 'orders.id', '=', 'line.sales_order_id')
-            ->where('line.sku_id', $record->getKey())
-            ->whereNotIn('orders.order_status', ['draft', 'cancelled'])
-            ->exists();
-        abort_if($used, 422, '该 SKU 已存在已确认销售订单，销售单位不能直接修改。');
+        $operator = app(AuthContextService::class)->currentUser(request());
+        abort_unless($operator && (int) $operator->legacy_id === (int) $operatorId, 401, '未登录或登录已过期。');
+        return $operator;
     }
 }

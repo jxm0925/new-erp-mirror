@@ -316,15 +316,15 @@
 </template>
 <script>
 import cachedPageRoute from '@/utils/cachedPageRoute'
-import { getProductionRouting, createProductionRouting, updateProductionRouting, activateProductionRouting } from '../../../api/erp/production'
+import { safeUuid as uuid } from '@/utils/id'
+import { getProductionRouting, createProductionRouting, updateProductionRouting } from '../../../api/erp/production'
 import { getItemCategoryTree } from '../../../api/erp/master'
 import { reserveForCreatePage, clearCreatePageReservation } from '../../../utils/documentNumberReservation'
 import PurchaseItemPicker from '@/components/purchase/PurchaseItemPicker.vue'
 import ProductSkuPicker from '@/components/sales/ProductSkuPicker.vue'
 import ProductionProcessCatalogPanel from './ProductionProcessCatalogPanel.vue'
 import SystemRecordPicker from '@/components/system/SystemRecordPicker.vue'
-import { executeProductionDecision } from '../../../api/erp/production-decisions'
-const uuid = () => window.crypto && window.crypto.randomUUID ? window.crypto.randomUUID() : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g,c=>{const r=Math.random()*16|0;return (c==='x'?r:(r&3|8)).toString(16)})
+import { executeProductionDecision, pendingProductionDecision } from '../../../api/erp/production-decisions'
 const emptyPercent = value => value === '' || value === null || value === undefined
 const percentFromRate = value => emptyPercent(value) ? '' : String(Number((Number(value) * 100).toFixed(4)))
 const validPercent = value => emptyPercent(value) || (/^\d{1,3}(?:\.\d{1,4})?$/.test(String(value)) && Number(value) <= 100)
@@ -333,7 +333,7 @@ const asBoolean = value => value === true || value === 1 || value === '1'
 export default {
   mixins: [cachedPageRoute],
   name:'ProductionRoutingForm', components:{PurchaseItemPicker,ProductSkuPicker,ProductionProcessCatalogPanel,SystemRecordPicker},
-  data:()=>({loading:false,sessionId:'',reservationToken:'',reservation:null,savedId:null,operations:[],operationPickerOpen:false,operationPickerTarget:null,operationPickerValue:[],items:{},catalogs:{stages:{},'packaging-schemes':{}},expanded:[],pickerTarget:null,catalogTarget:null,pendingSave:null,pendingActivation:null,
+  data:()=>({loading:false,sessionId:'',reservationToken:'',reservation:null,savedId:null,operations:[],operationPickerOpen:false,operationPickerTarget:null,operationPickerValue:[],items:{},catalogs:{stages:{},'packaging-schemes':{}},expanded:[],pickerTarget:null,catalogTarget:null,
     materialKeywordByOp:{},materialTallByOp:{},
     outputModes:{flow_only:'直接交接',warehouse_optional:'可选入库',warehouse_required:'合格后入库'},
     supplyModes:{dedicated_delivery:'专单配送',workstation_stock:'工位库存',no_per_order_delivery:'无需逐单配送'},
@@ -353,7 +353,23 @@ export default {
     rememberCatalog({type,row}){if(row&&row.id&&this.catalogs[type])this.$set(this.catalogs[type],row.id,row)},
     catalogName(type,id){return (this.catalogs[type][id]||{}).name||(id?`档案 ${id}`:'')},
     openCatalog(type,row=null){if(this.viewOnly)return;this.catalogTarget=row?{type,row}:null;this.$refs.processCatalog.open(type,{mode:row?'select':'manage',selected:row?(this.catalogs[type][type==='stages'?row.production_stage_id:row.packaging_scheme_id]||null):null})},
-    selectCatalog({type,row}){this.rememberCatalog({type,row});if(!this.catalogTarget||this.catalogTarget.type!==type||!this.form.operations.includes(this.catalogTarget.row))return;this.$set(this.catalogTarget.row,type==='stages'?'production_stage_id':'packaging_scheme_id',row.id);this.catalogTarget=null},
+    selectCatalog({type,row}){
+      this.rememberCatalog({type,row})
+      if(!this.catalogTarget||this.catalogTarget.type!==type||!this.form.operations.includes(this.catalogTarget.row))return
+      const operation=this.catalogTarget.row
+      this.$set(operation,type==='stages'?'production_stage_id':'packaging_scheme_id',row.id)
+      if(type==='packaging-schemes'&&operation.execution_context==='shipment'&&operation.shipment_operation_type==='packing')this.applyStandardPackagingMaterials(operation,row)
+      this.catalogTarget=null
+    },
+    applyStandardPackagingMaterials(operation,scheme){
+      // 仅响应主动选方案；加载存量路线时保留当时保存的用料和人工数量。
+      ;(scheme.items||[]).forEach(line=>{
+        this.rememberItem(line.item)
+        const existing=operation.packaging_materials.find(material=>Number(material.component_item_id)===Number(line.item_id))
+        if(existing)this.$set(existing,'base_qty_per_output_unit',line.qty_per_unit)
+        else operation.packaging_materials.push({component_item_id:line.item_id,base_qty_per_output_unit:line.qty_per_unit})
+      })
+    },
     openOperationPicker(row){if(this.viewOnly||!this.form.operations.includes(row))return;this.operationPickerTarget=row;const current=this.operations.find(operation=>Number(operation.id)===Number(row.operation_id));this.operationPickerValue=current?[current]:[];this.operationPickerOpen=true},
     selectOperation(rows){const row=this.operationPickerTarget;if(this.viewOnly||!this.form.operations.includes(row)||rows.length!==1)return;const operation=rows[0];const index=this.operations.findIndex(current=>Number(current.id)===Number(operation.id));if(index<0)this.operations.push(operation);else this.$set(this.operations,index,operation);row.operation_id=operation.id},
     async reserve(){this.loading=true;try{this.reservation=await reserveForCreatePage('routing',this.pageRoute.path);this.sessionId=this.reservation.creation_session_id;this.form.routing_no=this.reservation.document_no;this.reservationToken=this.reservation.reservation_token;this.doAddOperation({silent:true})}catch(e){this.$message.error(e.userMessage||'编号生成失败')}finally{this.loading=false}},
@@ -585,7 +601,7 @@ export default {
         if(row.shipment_operation_type==='packing'&&!row.packaging_scheme_id){this.$message.warning(`第 ${opIndex} 道打包工序必须选择包装方案`);return false}
         if(row.shipment_operation_type!=='packing'&&(row.packaging_scheme_id||row.packaging_materials.length)){this.$message.warning(`第 ${opIndex} 道试水或装车工序不能配置包装方案或包装用料`);return false}
         if(row.material_supply_rules.length||this.incomingRules(row).length){this.$message.warning('发货作业不能使用生产 BOM 用料规则');return false}
-        if(row.packaging_materials.some(material=>!/^\d+(?:\.\d+)?$/.test(String(material.base_qty_per_output_unit))||Number(material.base_qty_per_output_unit)<=0||Number(material.base_qty_per_output_unit)>999999999)){this.$message.warning('请填写包装用料每件的基础单位数量，必须大于 0');return false}
+        if(row.packaging_materials.some(material=>!/^\d{1,10}(?:\.\d{1,8})?$/.test(String(material.base_qty_per_output_unit))||Number(material.base_qty_per_output_unit)<=0)){this.$message.warning('包装用料每件的基础单位数量必须大于 0，最多 10 位整数、8 位小数');return false}
       }else if(row.material_supply_rules.some(rule=>!validPercent(rule.percent)||emptyPercent(rule.percent)||Number(rule.percent)<=0||!this.form.operations.some(target=>target.key===rule.target_key&&target.execution_context==='production'))){this.$message.warning('生产用料须分配到生产工序，用量占比须大于 0 且不超过 100%');return false}
       return true
     },
@@ -601,7 +617,7 @@ export default {
           if(row.execution_context==='shipment'){
             operation.shipment_operation_type=row.shipment_operation_type
             operation.packaging_scheme_id=row.packaging_scheme_id
-            operation.packaging_materials=row.packaging_materials.map(material=>({component_item_id:material.component_item_id,base_qty_per_output_unit:Number(material.base_qty_per_output_unit)}))
+            operation.packaging_materials=row.packaging_materials.map(material=>({component_item_id:material.component_item_id,base_qty_per_output_unit:String(material.base_qty_per_output_unit)}))
           }else{
             operation.material_supply_rules=row.material_supply_rules.map(rule=>({component_item_id:rule.component_item_id,target_sequence:(this.form.operations.find(target=>target.key===rule.target_key)||{}).sequence,required_qty_ratio:Number(rule.percent)/100,
               supply_mode:rule.supply_mode,requires_delivery:rule.supply_mode==='dedicated_delivery',participates_in_kitting:rule.participates_in_kitting,allow_partial_delivery:rule.allow_partial_delivery,delivery_location_type:rule.delivery_location_type}))
@@ -611,31 +627,29 @@ export default {
     },
     async save(activate){
       if(this.loading||this.viewOnly)return
-      // 启用响应丢失时只重试原启用命令，不能先重复保存已启用的版本。
-      if(activate&&this.pendingActivation){this.loading=true;try{await this.finishActivation();await this.load()}catch(e){this.showSaveError(e)}finally{this.loading=false}return}
       if(!await this.$refs.form.validate().catch(()=>false))return
       if(!this.form.sku_id&&!this.form.applicable_items.length&&!(this.form.applicable_category_ids||[]).length)return this.$message.warning('请至少选择一个适用物料或适用类目')
       if(!this.form.operations.length)return this.$message.warning('请至少添加一道工序')
       if(!this.form.operations.every(this.validateOperation))return
-      const common=this.payload();const signature=JSON.stringify(common)
-      // 同一表单的网络重试复用命令号，避免已提交但丢失响应时重复生成路线。
-      if(!this.pendingSave||this.pendingSave.signature!==signature)this.pendingSave={signature,id:`routing-save-${uuid()}`}
+      const common={...this.payload(),activate_after_save:Boolean(activate)}
       this.loading=true
       try{
         const id=this.id
         const savePayload=id?{...common,expected_version:this.form.business_version}:{...common,creation_session_id:this.sessionId,reservation_token:this.reservationToken}
-        const r=await executeProductionDecision('routing_save_'+(id||this.sessionId),savePayload,payload=>id?updateProductionRouting(id,payload):createProductionRouting(payload))
-        if(!id)clearCreatePageReservation(this.reservation)
-        this.savedId=r.data.data.id;this.form.business_version=r.data.data.business_version;this.pendingSave=null
-        if(activate){
-          this.pendingActivation={client_command_id:`routing-activate-${uuid()}`,expected_version:this.form.business_version}
-          await this.finishActivation()
+        const decisionKey='routing_save_'+(id||this.sessionId)
+        const pending=pendingProductionDecision(decisionKey)
+        if(pending){
+          const previous={...pending};delete previous.client_command_id
+          if(JSON.stringify(previous)!==JSON.stringify(savePayload))return this.$message.warning('上次保存结果尚未确认，请先刷新核对路线状态；继续重试时须保持上次内容和操作一致。')
         }
-        this.$message.success(activate?'工艺路线已启用':'工艺路线草稿已保存');const path=`/production/routings/${this.id}${activate?'':'/edit'}`;if(this.pageRoute.path!==path)await this.$router.replace(path);await this.load()
+        const r=await executeProductionDecision(decisionKey,savePayload,payload=>id?updateProductionRouting(id,payload):createProductionRouting(payload))
+        if(!id)clearCreatePageReservation(this.reservation)
+        this.savedId=r.data.data.id;this.form.business_version=r.data.data.business_version;this.form.status=r.data.data.status
+        const active=this.form.status==='active'
+        this.$message.success(active?'工艺路线已启用':'工艺路线草稿已保存');const path=`/production/routings/${this.id}${active?'':'/edit'}`;if(this.pageRoute.path!==path)await this.$router.replace(path);await this.load()
       }catch(e){this.showSaveError(e)}finally{this.loading=false}
     },
-    async finishActivation(){const activated=await executeProductionDecision('routing_activate_'+this.id,this.pendingActivation,payload=>activateProductionRouting(this.id,payload));this.form.status=activated.data.data.status;this.pendingActivation=null},
-    showSaveError(e){if(e.response&&e.response.status>=400&&e.response.status<500)this.pendingActivation=null;this.$message.error(e.userMessage||e.response&&e.response.data&&e.response.data.message||'保存失败')}
+    showSaveError(e){this.$message.error(e.userMessage||e.response&&e.response.data&&e.response.data.message||'保存失败')}
   }
 }
 </script>

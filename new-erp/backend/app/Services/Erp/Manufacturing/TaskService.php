@@ -541,29 +541,6 @@ final class TaskService
         }
     }
 
-    /** 工序管理里设置“能做的人”；不设 = 有报工权限的人都能做。 */
-    public function saveWorkers(int $operationId, array $employeeIds, object $actor): array
-    {
-        return DB::transaction(function () use ($operationId, $employeeIds, $actor) {
-            \App\Models\Erp\ProductionOperation::query()->lockForUpdate()->findOrFail($operationId);
-            $ids = array_values(array_unique(array_filter(array_map('intval', $employeeIds))));
-            $users = $ids ? DB::table('erp_legacy_admin_users')->whereIn('legacy_id', $ids)->whereNull('deleted_at')
-                ->whereIn(DB::raw('LOWER(TRIM(status))'), ['normal', 'active'])->orderBy('legacy_id')->lockForUpdate()->get()->keyBy('legacy_id') : collect();
-            if ($users->count() !== count($ids)) $this->fail('user_invalid', '所选人员必须是未删除的在职账号，请刷新后重选。');
-            foreach ($users as $user) $this->assertExecutor($user);
-            // 已在“能做的人”里的保留；新加入的须是有效的生产工人档案。
-            $current = ProductionOperationWorker::query()->where('operation_id', $operationId)->pluck('employee_legacy_id')->map(fn ($v) => (int) $v)->all();
-            foreach ($users as $user) if (! in_array((int) $user->legacy_id, $current, true)) $this->assertWorkerStaff($user);
-            ProductionOperationWorker::query()->where('operation_id', $operationId)->whereNotIn('employee_legacy_id', $ids ?: [0])->delete();
-            foreach ($ids as $id) {
-                ProductionOperationWorker::query()->lockForUpdate()->updateOrCreate(['operation_id' => $operationId, 'employee_legacy_id' => $id],
-                    ['employee_name' => $this->userName($users[$id]), 'created_by_legacy_id' => $this->actorId($actor)]);
-            }
-            return ProductionOperationWorker::query()->where('operation_id', $operationId)->orderBy('id')->get()
-                ->map(fn ($w) => ['id' => (int) $w->employee_legacy_id, 'name' => $w->employee_name])->values()->all();
-        }, 5);
-    }
-
     public static function closeSession(MfgLaborSession $session, string $status, ?CarbonInterface $endedAt = null): void
     {
         $ended = $endedAt ?? now();

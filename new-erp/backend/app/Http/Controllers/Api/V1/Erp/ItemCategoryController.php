@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1\Erp;
 use App\Http\Controllers\Controller;
 use App\Models\Erp\ItemCategory;
 use App\Services\Erp\AuthContextService;
+use App\Services\Erp\CategoryTreeEngine;
 use App\Services\Erp\ItemCategoryApplicationService;
 use App\Services\Erp\ItemManagementScopeService;
 use Illuminate\Database\Eloquent\Builder;
@@ -18,6 +19,7 @@ class ItemCategoryController extends Controller
         $this->authorizePermission($request, 'item_category.view');
         $scope = app(ItemManagementScopeService::class)->requestScope($request);
         $all = $this->allCategories($scope);
+        $tree = new CategoryTreeEngine($all);
         $query = ItemCategory::query()->where('category_type', 'item');
         app(ItemManagementScopeService::class)->applyScope($query, $scope);
         if ($request->boolean('root_only')) $query->whereNull('parent_id');
@@ -31,7 +33,7 @@ class ItemCategoryController extends Controller
 
         $paginator = $query->orderBy('sort_order')->orderBy('id')
             ->paginate(min(100, max(5, $request->integer('per_page', 10))));
-        $paginator->getCollection()->transform(fn (ItemCategory $category) => $this->serialize($all->firstWhere('id', $category->id) ?? $category, $all));
+        $paginator->setCollection($paginator->getCollection()->map(fn (ItemCategory $category) => $tree->node((int) $category->id)));
 
         return response()->json($paginator);
     }
@@ -40,27 +42,17 @@ class ItemCategoryController extends Controller
     {
         $this->authorizePermission($request, 'item_category.view');
         $all = $this->allCategories(app(ItemManagementScopeService::class)->requestScope($request));
-        $nodes = $all->sortBy([['sort_order', 'asc'], ['id', 'asc']]);
-        $build = function (?int $parentId) use (&$build, $nodes, $all) {
-            return $nodes->filter(fn ($row) => (int) ($row->parent_id ?? 0) === (int) ($parentId ?? 0))
-                ->map(function (ItemCategory $category) use (&$build, $all) {
-                    $row = $this->serialize($category, $all);
-                    $row['children'] = $build((int) $category->id)->values()->all();
-                    return $row;
-                })->values();
-        };
-
-        return response()->json(['data' => $build(null)->values()]);
+        return response()->json(['data' => (new CategoryTreeEngine($all))->tree()]);
     }
 
     public function show(Request $request, int $id)
     {
         $this->authorizePermission($request, 'item_category.view');
         $all = $this->allCategories(app(ItemManagementScopeService::class)->requestScope($request));
-        $category = $all->firstWhere('id', $id);
+        $category = (new CategoryTreeEngine($all))->node($id);
         abort_unless($category, 404);
 
-        return response()->json(['data' => $this->serialize($category, $all)]);
+        return response()->json(['data' => $category]);
     }
 
     public function store(Request $request, ItemCategoryApplicationService $service)
@@ -142,49 +134,7 @@ class ItemCategoryController extends Controller
                 'items as direct_item_count' => fn ($query) => $query->whereColumn('erp_items.management_scope', 'erp_item_categories.management_scope'),
                 'supplierCapabilities as direct_supplier_count' => fn ($query) => $query->where('status', 'active'),
                 'children as direct_child_count' => fn ($query) => $query->where('category_type', 'item'),
-            ])->get();
-    }
-
-    private function serialize(ItemCategory $category, $all): array
-    {
-        $descendantIds = $this->descendantIds((int) $category->id, $all);
-        $subtreeItemCount = \App\Models\Erp\Item::where('management_scope', $category->managementScope())
-            ->whereIn('category_id', array_merge([(int) $category->id], $descendantIds))->count();
-
-        return array_merge($category->toArray(), [
-            'full_path' => $this->fullPath($category, $all),
-            'is_leaf' => (int) $category->direct_child_count === 0,
-            'selectable' => $category->status === 'enabled' && (int) $category->direct_child_count === 0,
-            'subtree_item_count' => $subtreeItemCount,
-        ]);
-    }
-
-    private function descendantIds(int $rootId, $all): array
-    {
-        $result = [];
-        $frontier = [$rootId];
-        while ($frontier) {
-            $children = $all->whereIn('parent_id', $frontier)->pluck('id')->map(fn ($id) => (int) $id)->all();
-            if (!$children) break;
-            $result = array_merge($result, $children);
-            $frontier = $children;
-        }
-        return array_values(array_unique($result));
-    }
-
-    private function fullPath(ItemCategory $category, $all): string
-    {
-        $names = [$category->category_name];
-        $parentId = $category->parent_id;
-        $guard = [];
-        while ($parentId && !in_array((int) $parentId, $guard, true)) {
-            $guard[] = (int) $parentId;
-            $parent = $all->firstWhere('id', (int) $parentId);
-            if (!$parent) break;
-            array_unshift($names, $parent->category_name);
-            $parentId = $parent->parent_id;
-        }
-        return implode(' / ', $names);
+            ])->orderBy('sort_order')->orderBy('id')->get();
     }
 
     private function authorizePermission(Request $request, string $permission): object

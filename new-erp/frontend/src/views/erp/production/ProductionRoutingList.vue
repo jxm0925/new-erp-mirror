@@ -106,6 +106,7 @@
               <el-button v-if="s.row.status==='active'&&!s.row.is_default&&$can('production.routing.default')" type="text" @click="setDefault(s.row)">设为默认</el-button>
               <el-button v-if="$can('production.routing.create')" type="text" @click="copyVersion(s.row)">复制新版本</el-button>
               <el-button v-if="s.row.status==='active'&&$can('production.routing.activate')" type="text" class="danger-action" @click="retire(s.row)">退役</el-button>
+              <el-button v-if="s.row.status==='draft'&&$can('production.routing.delete')" type="text" class="danger-action" @click="remove(s.row)">删除</el-button>
             </div>
           </template>
         </el-table-column>
@@ -121,7 +122,7 @@
 
 <script>
 import ProductionProcessCatalogPanel from './ProductionProcessCatalogPanel.vue'
-import { listProductionRoutings, activateProductionRouting, setDefaultProductionRouting, copyProductionRouting, retireProductionRouting } from '../../../api/erp/production'
+import { listProductionRoutings, activateProductionRouting, setDefaultProductionRouting, copyProductionRouting, retireProductionRouting, deleteProductionRouting } from '../../../api/erp/production'
 
 export default {
   name: 'ProductionRoutingList',
@@ -209,6 +210,17 @@ export default {
         this.load()
       } catch (e) {
         if (e !== 'cancel' && e !== 'close') this.$message.error(e.userMessage || '退役失败')
+      }
+    },
+    async remove(row) {
+      try {
+        await this.$confirm(`确认删除工艺路线“${row.routing_name}”的草稿？删除后无法恢复。`, '删除工艺路线', { type: 'warning', confirmButtonText: '删除' })
+        await deleteProductionRouting(row.id, { client_command_id: `routing-delete-${row.id}-${row.business_version}`, expected_version: row.business_version })
+        this.$message.success('工艺路线草稿已删除')
+        if (this.rows.length === 1 && this.page > 1) this.page--
+        await this.load()
+      } catch (error) {
+        if (error !== 'cancel' && error !== 'close') this.$message.error(error.userMessage || '删除失败')
       }
     }
   }

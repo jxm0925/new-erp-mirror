@@ -32,14 +32,26 @@ final class CrmDashboardQueryService
     public function metadata(object $actor, array $filters): array
     {
         $departmentIds = $this->scope->visibleDepartments($actor);
-        $departments = DB::table('erp_departments')->whereIn('legacy_id', $departmentIds)->orderBy('sort')->orderBy('legacy_id')
-            ->get(['legacy_id as id', 'parent_legacy_id as parent_id', 'name'])->all();
-        $lines = $this->memberships($actor, $this->withoutAttribution($filters), 'business_line');
+        $departments = DB::table('erp_departments')
+            ->whereIn('legacy_id', $departmentIds)
+            ->whereNull('deleted_at')
+            ->where('status', 'normal')
+            ->orderBy('sort')
+            ->orderBy('legacy_id')
+            ->get(['legacy_id as id', 'parent_legacy_id as parent_id', 'name'])
+            ->all();
+        $lineFilters = $this->withoutAttribution($filters);
+        unset($lineFilters['business_line']);
+        $lines = CrmBusinessLineOptions::forVisibleRecords(
+            customers: $this->scope->customers($actor, $lineFilters),
+            leads: $this->scope->leads($actor, $lineFilters),
+            opportunities: $this->scope->opportunities($actor, $lineFilters),
+        );
         $currencies = [];
         foreach ([$this->scope->orders($actor, []), $this->scope->opportunities($actor), $this->scope->leads($actor)] as $query) {
             if ($query) $currencies = array_merge($currencies, $query->distinct()->pluck('currency')->all());
         }
-        return ['departments' => $departments, 'business_lines' => $lines ? $lines->whereNotNull('dimension_value')->distinct()->orderBy('dimension_value')->pluck('dimension_value')->all() : [],
+        return ['departments' => $departments, 'business_lines' => $lines,
             'currencies' => array_values(array_unique($currencies)), 'dimensions' => collect(self::DIMENSIONS)->map(fn ($label, $value) => compact('value', 'label'))->values()->all(),
             'defaults' => ['date_from' => $filters['date_from'], 'date_to' => $filters['date_to'], 'per_page' => 10],
             'abilities' => $this->scope->abilities($actor), 'metadata' => $this->basis()];
@@ -313,6 +325,7 @@ final class CrmDashboardQueryService
         abort_unless(isset(self::DIMENSIONS[$dimension]), 422, '统计维度无效。');
         $customers = $this->scope->customers($actor, $filters);
         if (!$customers) return null;
+        if ($dimension === 'customer_pool') return $this->poolMemberships($actor, $filters, $customers);
         $field = self::CUSTOMER_FIELDS[$dimension] ?? null;
         $customerFields = ['id', 'owner_legacy_id'];
         if ($field) $customerFields[] = $field;
@@ -355,8 +368,34 @@ final class CrmDashboardQueryService
     private function dimensionOpportunities(object $actor, array $filters, string $dimension, mixed $value): ?Builder
     {
         $opportunities = $this->scope->opportunities($actor, $filters);
+        if ($dimension === 'customer_pool' && $opportunities) {
+            $pools = app(CrmCustomerPoolService::class);
+            $pool = 'COALESCE('.$pools->sqlName('erp_crm_opportunities.customer_pool').', (SELECT '.$pools->sqlName('l.customer_pool').' FROM erp_crm_leads l WHERE l.id = erp_crm_opportunities.source_lead_id))';
+            $opportunities->where('status', 'open');
+            return $value === null ? $opportunities->whereRaw("($pool) IS NULL") : $opportunities->whereRaw("($pool) = ?", [$value]);
+        }
         $members = $this->memberships($actor, $this->withoutAttribution($filters), $dimension);
         return $opportunities && $members ? $opportunities->where('status', 'open')->whereIn('customer_id', $this->matchValue($members, $value)->select('customer_id')) : null;
+    }
+
+    private function poolMemberships(object $actor, array $filters, Builder $customers): QueryBuilder
+    {
+        $parts = [(clone $customers)->whereNotNull('customer_pool')->where('customer_pool', '!=', '')->selectRaw('id as customer_id, customer_pool as raw_pool')->toBase()];
+        $sources = $this->withoutAttribution($filters);
+        $leads = $this->scope->leads($actor, $sources);
+        if ($leads) $parts[] = $leads->where('status', '!=', 'converted')->whereNotNull('customer_pool')->where('customer_pool', '!=', '')->selectRaw('customer_id, customer_pool as raw_pool')->toBase();
+        $opps = $this->scope->opportunities($actor, $sources);
+        if ($opps) {
+            $rawPool = "COALESCE(NULLIF(customer_pool, ''), (SELECT l.customer_pool FROM erp_crm_leads l WHERE l.id = erp_crm_opportunities.source_lead_id))";
+            $parts[] = $opps->where('status', 'open')->whereRaw("NULLIF(($rawPool), '') IS NOT NULL")->selectRaw("customer_id, $rawPool as raw_pool")->toBase();
+        }
+        $union = array_shift($parts);
+        foreach ($parts as $part) $union->unionAll($part);
+        $pool = app(CrmCustomerPoolService::class)->sqlName('p.raw_pool');
+        $rows = DB::query()->fromSub($customers->select(['id', 'owner_legacy_id'])->toBase(), 'c')
+            ->leftJoinSub($union, 'p', 'p.customer_id', '=', 'c.id')
+            ->selectRaw("c.id as customer_id, c.owner_legacy_id as sales_id, $pool as dimension_value")->distinct();
+        return DB::query()->fromSub($rows, 'dimension_members');
     }
 
     private function dimensionSummary(object $actor, array $filters, string $dimension, QueryBuilder $members): array

@@ -25,4 +25,10 @@ class Bom extends MasterModel
     public function logs() { return $this->hasMany(BomLog::class, 'bom_id')->latest(); }
     public function routing() { return $this->belongsTo(ProductionRouting::class, 'routing_id'); }
     public function operationStandards() { return $this->hasMany(BomOperationStandard::class, 'bom_id'); }
+    public function approvalTask()
+    {
+        return $this->hasOne(ApprovalTask::class, 'business_id')
+            ->ofMany(['id' => 'max'], fn ($query) => $query->where('business_object_code', 'BOM'))
+            ->select(['erp_approval_tasks.id', 'erp_approval_tasks.business_id', 'erp_approval_tasks.business_object_code', 'erp_approval_tasks.task_status', 'erp_approval_tasks.action_status']);
+    }
 }

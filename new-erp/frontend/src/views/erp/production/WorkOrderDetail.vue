@@ -1431,9 +1431,9 @@ export default {
       }
       if (value > 0) {
         const operation = (this.wo.kitting || []).find(k => k.operation_key === m.operation_key)
-        const material = operation && operation.materials.find(row => row.component_item_id === m.component_item_id)
+        const material = operation && operation.materials.find(row => row.id === m.id)
         if (!material || !material.can_order) return this.$message.warning('请先接下使用该半成品的工序，再开半成品工单。')
-        await this.run(() => createSemiWorkOrder(this.wo.id, { component_item_id: m.component_item_id, operation_id: Number(String(m.operation_key).replace(/^o/, '')), qty: value }), '半成品工单已开')
+        await this.run(() => createSemiWorkOrder(this.wo.id, { component_item_id: m.component_item_id, material_id: m.id, operation_id: Number(String(m.operation_key).replace(/^o/, '')), qty: value }), '半成品工单已开')
       }
     },
     receiveMaterials(k) { this.openSerialReceive(k, false) },

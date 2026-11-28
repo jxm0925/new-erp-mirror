@@ -345,6 +345,7 @@
             <paged-record-select
               v-model="configTargetItemId"
               entity="items"
+              category-type="item"
               :selected-rows="configItem.id ? [configItem] : []"
               title="选择库存物料"
               placeholder="请选择要配置预警规则的物料"

@@ -77,7 +77,8 @@ final class CrmCustomerLifecycleQueryService
             $this->leads->applyVisible($query, $actor);
             // 标签按可见线索汇总，分批读取而不把客户的历史线索全部载入详情。
             foreach ($query->select(['id', 'created_by_legacy_id', 'customer_pool', 'customer_tags', 'custom_tags'])->lazyById(200) as $lead) {
-                if (in_array($lead->customer_pool, CrmLeadApplicationService::POOLS, true)) $pools[$lead->customer_pool] = true;
+                $pool = app(CrmCustomerPoolService::class)->normalize($lead->customer_pool);
+                if ($pool) $pools[$pool] = true;
                 foreach ($lead->customer_tags ?? [] as $tag) $customerTags[$tag] = $tag;
                 // 个人标签只供原录入人汇总，客户/线索可见不等于共享个人标签。
                 if ((int) $lead->created_by_legacy_id === (int) $actor->legacy_id) {
@@ -88,7 +89,8 @@ final class CrmCustomerLifecycleQueryService
         return [
             'opportunity_summary' => $opportunitySummary,
             'latest_followups' => $this->followups->latestForCustomer((int) $customer->id, $actor),
-            'customer_pools' => array_values(array_filter(CrmLeadApplicationService::POOLS, fn ($pool) => isset($pools[$pool]))),
+            'customer_pool' => app(CrmCustomerPoolService::class)->normalize($customer->customer_pool),
+            'customer_pools' => array_keys($pools),
             'customer_tags' => array_values($customerTags), 'custom_tags' => array_values($customTags), 'abilities' => $abilities,
         ];
     }

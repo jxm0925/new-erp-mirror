@@ -1,5 +1,5 @@
 <template>
-  <el-dialog class="crm-dialog" :title="title" :visible.sync="visible" :width="['assign', 'transfer'].includes(action) ? '940px' : '700px'" append-to-body :close-on-click-modal="false" :before-close="close">
+  <el-dialog class="crm-dialog" :title="title" :visible.sync="visible" :width="['assign', 'transfer'].includes(action) ? '940px' : '480px'" append-to-body :close-on-click-modal="false" :before-close="close">
     <div v-loading="loading">
       <el-alert v-if="error" :title="error" type="error" :closable="false" show-icon />
       <div class="action-summary-card">
@@ -86,8 +86,8 @@
         <el-form-item v-if="['assign','transfer'].includes(action)" label="分配附件">
           <crm-attachments ref="attachments" v-model="attachments" @busy="uploading = $event" />
         </el-form-item>
-        <el-form-item v-if="['return','recycle','invalidate'].includes(action)" label="详细说明" required>
-          <el-input v-model.trim="form.note" type="textarea" :rows="2" maxlength="500" placeholder="请补充具体情况说明，将记录在操作日志中" />
+        <el-form-item v-if="['return','recycle','invalidate'].includes(action)" label="补充说明" :required="form.reason === '其他'">
+          <el-input v-model.trim="form.note" type="textarea" :rows="2" maxlength="500" placeholder="选填；原因选其他时请补充说明" />
         </el-form-item>
         <el-form-item v-if="action === 'transfer' && lead.customer" label="客户负责人">
           <el-checkbox v-model="form.transfer_customer" :disabled="!allowed.transfer_customer">
@@ -100,7 +100,7 @@
             <el-option v-for="item in pools" :key="item" :value="item" :label="item" />
           </el-select>
         </el-form-item>
-        <el-form-item v-if="action === 'pool'" label="调整原因" required>
+        <el-form-item v-if="action === 'pool'" label="调整原因">
           <el-input v-model.trim="form.reason" type="textarea" :rows="2" maxlength="500" placeholder="请说明调整客户池的原因" />
         </el-form-item>
       </el-form>
@@ -130,6 +130,7 @@
 
 <script>
 import { getCrmLead, getCrmLeadMetadata, listCrmLeadAssignees, actCrmLead, crmDate, crmError } from '@/api/erp/crm'
+import { poolNames } from '@/utils/crmProgress'
 import { crmDepartmentTree } from '@/utils/crmDepartmentTree'
 import CrmAttachments from './CrmAttachments.vue'
 import '@/styles/crm.css'
@@ -142,7 +143,6 @@ const labels = {
   recycle: '回收',
   claim: '领取',
   pool: '调整客户池',
-  confirm: '有效线索',
   invalidate: '标记无效'
 }
 
@@ -172,7 +172,7 @@ export default {
   }),
   computed: {
     title() {
-      return this.action === 'recycle' ? (this.selfRelease ? '释放到公海' : '回收到公海') : (labels[this.action] || '') + (['pool', 'confirm', 'invalidate'].includes(this.action) ? '' : '线索')
+      return this.action === 'recycle' ? (this.selfRelease ? '释放到公海' : '回收到公海') : (labels[this.action] || '') + (['pool', 'invalidate'].includes(this.action) ? '' : '线索')
     },
     allowed() { return this.lead.abilities || {} },
     selfRelease() { return this.action === 'recycle' && !!this.allowed.self_release },
@@ -192,7 +192,6 @@ export default {
         claim: '多人同时领取时，只有先提交的一方成功。',
         accept: this.lead.delegated ? `你代为接收后，线索由${this.lead.pending_user_name || '原销售'}负责。` : '接收后由你负责该线索的日常跟进。',
         pool: '客户池只调整本条线索的经营分组。',
-        confirm: '确认客户和基本咨询有效，保留确认时间和确认人。',
         invalidate: '标记无效后保留线索和操作记录。'
       })[this.action] || ''
     }
@@ -216,7 +215,23 @@ export default {
     selectPerson(row) {
       if (this.selectable(row)) this.form.to_user_legacy_id = row.id
     },
+    async quickAction(action, lead) {
+      if (this.saving || this.loading) return
+      this.saving = true
+      const id = typeof lead === 'object' ? lead.id : lead
+      this.$emit('busy', id)
+      try {
+        const response = await getCrmLead(id)
+        const current = response.data.data || response.data
+        if (!(current.abilities || {})[action]) throw new Error('该线索状态或权限已变化，请刷新后重新选择')
+        await actCrmLead(id, action, { version: current.version, business_version: current.business_version || current.version })
+        this.$message.success(action === 'claim' ? '已领取线索，进入第1步｜营销自己' : '已接收线索，进入第1步｜营销自己')
+        this.$emit('changed')
+      } catch (error) { this.$message.error(crmError(error, error.message || '操作未成功')); this.$emit('changed') }
+      finally { this.saving = false; this.$emit('busy', null) }
+    },
     async open(action, lead) {
+      if (['accept', 'claim'].includes(action)) return this.quickAction(action, lead)
       const session = ++this.session
       this.action = action
       this.lead = {}
@@ -238,7 +253,7 @@ export default {
         this.lead = response.data.data || response.data
         this.attachments = [...(this.lead.assignment_attachments || [])]
         this.currentUser = (meta.data.data || meta.data).current_user || {}
-        this.pools = (meta.data.data || meta.data).customer_pools || []
+        this.pools = poolNames(meta.data.data || meta.data, 'lead', this.lead.customer_pool)
         this.form.customer_pool = this.lead.customer_pool || ''
         this.form.target_department_legacy_id = Number(this.lead.default_recycle_department_id || this.lead.department_legacy_id) || null
         if (!this.allowed[action]) this.error = '该线索状态或权限已变化，请刷新后重新选择。'
@@ -285,8 +300,8 @@ export default {
       if (this.saving || this.loading || this.uploading || this.error || !this.allowed[this.action]) return
       if (this.action === 'recycle' && !this.recycleDepartment) return this.$message.warning('请选择有效的目标公海')
       if (['assign', 'transfer'].includes(this.action) && !this.form.to_user_legacy_id) return this.$message.warning('请选择接收销售')
-      if (['assign', 'transfer', 'return', 'recycle', 'invalidate', 'pool'].includes(this.action) && !this.form.reason) return this.$message.warning('请填写原因或说明')
-      if (['return', 'recycle', 'invalidate'].includes(this.action) && !this.form.note) return this.$message.warning('请填写说明')
+      if (['assign', 'transfer', 'return', 'recycle', 'invalidate'].includes(this.action) && !this.form.reason) return this.$message.warning('请填写原因或说明')
+      if (['return', 'recycle', 'invalidate'].includes(this.action) && this.form.reason === '其他' && !this.form.note) return this.$message.warning('请填写说明')
       if (this.action === 'pool' && !this.form.customer_pool) return this.$message.warning('请选择客户池')
       const session = this.session
       this.saving = true

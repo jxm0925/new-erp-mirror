@@ -14,7 +14,7 @@
       <div class="head-actions">
         <el-button size="small" icon="el-icon-refresh" class="btn-refresh" @click="load">刷新</el-button>
         <el-button
-          v-if="$can('sku_item_relation.audit')"
+          v-if="canAudit"
           size="small"
           icon="el-icon-circle-check"
           class="btn-integrity"
@@ -238,7 +238,7 @@
                 >
                   {{ row.default_item ? '更换默认物料' : '设置默认物料' }}
                 </el-button>
-                <el-button type="text" size="small" class="btn-action-view" @click.stop="openHistoryModal(row)">
+                <el-button v-if="canViewHistory" type="text" size="small" class="btn-action-view" @click.stop="openHistoryModal(row)">
                   查看历史
                 </el-button>
               </div>
@@ -320,26 +320,21 @@
             </span>
             <span class="search-tip">支持按物料编码、名称、规格型号检索（仅限启用状态的物料）</span>
           </div>
-          <el-select
+          <paged-record-select
             v-model="setModal.form.item_id"
-            v-paged-scroll="loadMoreModalItems"
-            filterable
-            remote
+            entity="items"
+            category-type="item"
+            management-scope="factory"
+            :params="{ management_scope: 'factory', status: 'enabled' }"
+            :selected-rows="setModal.chosen ? [setModal.chosen] : []"
+            :label="item => [item.item_code, item.item_name, item.spec].filter(Boolean).join('｜')"
             clearable
-            :remote-method="searchModalItems"
-            :loading="setModal.itemPage.loading"
-            placeholder="输入 物料编码 / 名称 / 规格型号快速搜索并选定"
+            title="选择默认履约物料"
+            placeholder="点击打开弹窗搜索并选择启用的工厂物料"
             class="full-width-select"
             size="small"
             @change="onSelectModalItem"
-          >
-            <el-option
-              v-for="item in setModal.items"
-              :key="item.id"
-              :value="item.id"
-              :label="`${item.item_code} ｜ ${item.item_name} ${item.spec ? '（' + (item.spec) + '）' : ''}`"
-            />
-          </el-select>
+          />
         </section>
 
         <!-- 默认物料左右对称对比配置网格 -->
@@ -356,7 +351,7 @@
               <div class="item-row"><span class="lbl">物料名称</span><span class="val">{{ setModal.current.item_name }}</span></div>
               <div class="item-row"><span class="lbl">规格型号</span><span class="val">{{ setModal.current.spec || '—' }}</span></div>
               <div class="item-row"><span class="lbl">Item类型</span><span class="val">{{ itemType(setModal.current.item_type) }}</span></div>
-              <div class="item-row"><span class="lbl">库存单位</span><span class="val">{{ setModal.current.unit && setModal.current.unit.unit_name || '—' }}</span></div>
+              <div class="item-row"><span class="lbl">库存单位</span><span class="val">{{ itemUnitText(setModal.current) }}</span></div>
               <div class="item-row"><span class="lbl">换算因子</span><span class="val code-mono">{{ formatNumber(setModal.currentRelation && setModal.currentRelation.qty || 1) }}</span></div>
               <div class="item-row"><span class="lbl">启用状态</span><span class="val badge-active">启用</span></div>
             </div>
@@ -382,7 +377,7 @@
               <div class="item-row"><span class="lbl">物料名称</span><span class="val">{{ setModal.chosen.item_name }}</span></div>
               <div class="item-row"><span class="lbl">规格型号</span><span class="val">{{ setModal.chosen.spec || '—' }}</span></div>
               <div class="item-row"><span class="lbl">Item类型</span><span class="val">{{ itemType(setModal.chosen.item_type) }}</span></div>
-              <div class="item-row"><span class="lbl">库存单位</span><span class="val">{{ setModal.chosen.unit && setModal.chosen.unit.unit_name || '—' }}</span></div>
+              <div class="item-row"><span class="lbl">库存单位</span><span class="val">{{ setModalItemUnitText }}</span></div>
               <div class="item-row"><span class="lbl">换算因子</span><span class="val code-mono text-success">{{ formatNumber(setModal.form.factor) }}</span></div>
               <div class="item-row"><span class="lbl">启用状态</span><span class="val badge-active">启用</span></div>
             </div>
@@ -534,7 +529,7 @@
         </div>
 
         <!-- 重复关系待修复提示条与快速处理 -->
-        <div v-if="historyModal.audit && historyModal.audit.check_status === 'duplicate'" class="duplicate-repair-alert">
+        <div v-if="canRepair && historyModal.audit && historyModal.audit.check_status === 'duplicate'" class="duplicate-repair-alert">
           <div class="repair-alert-title">
             <i class="el-icon-warning" />
             <span>检测到重复默认物料异常：该 SKU 存在多个启用的默认关系，请选择保留项</span>
@@ -737,22 +732,22 @@
           </el-table-column>
           <el-table-column label="修复操作" width="130" align="center" fixed="right">
             <template slot-scope="{ row }">
-              <template v-if="row.audit && row.audit.check_status === 'missing'">
+              <template v-if="row.audit && row.audit.check_status === 'missing' && canSet(row)">
                 <el-button type="text" size="small" class="btn-action-primary" @click="handleIntegrityFix(row)">
                   设置默认物料
                 </el-button>
               </template>
-              <template v-else-if="row.audit && row.audit.check_status === 'item_disabled'">
+              <template v-else-if="row.audit && row.audit.check_status === 'item_disabled' && canSet(row)">
                 <el-button type="text" size="small" class="btn-action-primary" @click="handleIntegrityFix(row)">
                   更换默认物料
                 </el-button>
               </template>
-              <template v-else-if="row.audit && row.audit.check_status === 'duplicate'">
+              <template v-else-if="row.audit && row.audit.check_status === 'duplicate' && canRepair">
                 <el-button type="text" size="small" class="text-danger" @click="openHistoryModal(row)">
                   处理重复关系
                 </el-button>
               </template>
-              <template v-else-if="row.audit && row.audit.check_status === 'wrong_binding'">
+              <template v-else-if="row.audit && row.audit.check_status === 'wrong_binding' && canRepair">
                 <el-button type="text" size="small" class="text-danger" @click="repairWrongBinding(row)">
                   解除错误绑定
                 </el-button>
@@ -786,9 +781,7 @@
 <script>
 import PagedRecordSelect from '@/components/common/PagedRecordSelect.vue'
 import { erpDateTime } from '../../../utils/dateTime'
-import pagedScroll from '../../../directives/pagedScroll'
 import { materialListPath } from '../../../utils/materialManagementScope.mjs'
-import { createPageState, queryPage, includeSelected } from '../../../utils/pagedQuery'
 import {
   listDefaultSkuItemRelations,
   getDefaultSkuItemRelation,
@@ -796,14 +789,12 @@ import {
   setDefaultSkuItem,
   auditDefaultSkuItemRelations,
   resolveDuplicateSkuItemRelation,
-  removeWrongSkuItemBinding,
-  listEntity
+  removeWrongSkuItemBinding
 } from '../../../api/erp/master'
 
 export default {
   components: { PagedRecordSelect },
   name: 'SkuItemRelationList',
-  directives: { pagedScroll },
   data () {
     return {
       loading: false,
@@ -828,15 +819,12 @@ export default {
         visible: false,
         loading: false,
         saving: false,
-        itemPage: createPageState(10),
         isChange: false,
         sku: null,
         current: null,
         currentRelation: null,
         activeRelationCount: 0,
-        items: [],
         chosen: null,
-        itemKeyword: '',
         form: {
           item_id: null,
           factor: 1,
@@ -893,8 +881,7 @@ export default {
       return u ? (u.unit_name || u.symbol) : '件'
     },
     setModalItemUnitText () {
-      const u = this.setModal.chosen && this.setModal.chosen.unit
-      return u ? (u.unit_name || u.symbol) : '个'
+      return this.itemUnitText(this.setModal.chosen)
     },
     historyModalSkuProduct () {
       if (!this.historyModal.sku || !this.historyModal.sku.product) return '—'
@@ -908,13 +895,28 @@ export default {
     historyModalCurrent () {
       return this.historyModalCurrentRelation && this.historyModalCurrentRelation.item
     },
+    canAudit () {
+      return this.$can('master.sku_item_relation') || this.$can('master.sku_item_relation.view') || this.$can('sku_item_relation.repair') || this.$can('sku_item_relation.audit')
+    },
+    canViewHistory () {
+      return this.$can('master.sku_item_relation') || this.$can('master.sku_item_relation.view') || this.$can('sku_item_relation.history')
+    },
+    canRepair () {
+      return this.$can('sku_item_relation.repair')
+    },
     historyDuplicateRelations () {
       const list = (this.historyModal.audit && this.historyModal.audit.relations) || []
       return list.filter(x => x.status === 'active' && x.is_primary)
     }
   },
-  created () {
-    this.load()
+  async created () {
+    await this.load()
+    this.consumeRouteModalIntent()
+  },
+  watch: {
+    '$route.query' () {
+      this.consumeRouteModalIntent()
+    }
   },
   methods: {
     defaultItemPath(item) {
@@ -986,8 +988,27 @@ export default {
     formatNumber (val) {
       return Number(val || 0).toFixed(8).replace(/0+$/, '').replace(/\.$/, '')
     },
+    consumeRouteModalIntent () {
+      const q = this.$route.query || {}
+      if (q.integrity === '1' && this.canAudit && !this.integrityModal.visible) {
+        this.openIntegrityModal()
+      } else if (Number(q.set_sku_id) > 0 && !this.setModal.visible) {
+        this.openSetItemModal({ id: Number(q.set_sku_id) })
+      } else if (Number(q.history_sku_id) > 0 && this.canViewHistory && !this.historyModal.visible) {
+        this.openHistoryModal({ id: Number(q.history_sku_id) })
+      }
+      if (q.integrity || q.set_sku_id || q.history_sku_id) {
+        this.$router.replace({ path: '/master/sku-item-relations' }).catch(() => {})
+      }
+    },
     canSet (r) {
-      return r.line_type === 'physical' && this.$can(r.default_item ? 'sku_item_relation.change' : 'sku_item_relation.set')
+      const lineType = r.line_type || (r.sku && (r.sku.line_type || r.sku.order_line_type))
+      const hasDefault = !!(r.default_item || (r.audit && r.audit.check_status === 'item_disabled'))
+      if (lineType !== 'physical') return false
+      if (hasDefault) {
+        return this.$can('master.sku_item_relation.set_primary') || this.$can('master.sku_item_relation.create') || this.$can('sku_item_relation.change')
+      }
+      return this.$can('master.sku_item_relation.create') || this.$can('master.sku_item_relation.set_primary') || this.$can('sku_item_relation.set')
     },
     itemType (value) {
       return ({
@@ -997,6 +1018,9 @@ export default {
         packaging: '包装物',
         service: '服务'
       })[value] || '—'
+    },
+    itemUnitText (item) {
+      return item?.unit?.unit_name || item?.unit?.symbol || item?.unit_name || '—'
     },
 
     // ==========================================
@@ -1010,9 +1034,6 @@ export default {
       this.setModal.current = null
       this.setModal.currentRelation = null
       this.setModal.chosen = null
-      this.setModal.items = []
-      this.setModal.itemKeyword = ''
-      this.setModal.itemPage = createPageState(10)
       this.setModal.form = {
         item_id: null,
         factor: 1,
@@ -1036,9 +1057,6 @@ export default {
         this.setModal.isChange = !!this.setModal.current
         this.setModal.form.factor = Number(this.setModal.currentRelation?.qty || 1)
         this.setModal.form.change_reason = this.setModal.current ? '' : '首次设置'
-
-        // 默认预加载启用的物料 列表
-        await this.fetchModalItems('')
       } catch (e) {
         this.$message.error(e.userMessage || '加载 SKU 关系详情失败')
         this.setModal.visible = false
@@ -1046,24 +1064,8 @@ export default {
         this.setModal.loading = false
       }
     },
-    async searchModalItems (keyword) {
-      this.setModal.itemKeyword = keyword || ''
-      await this.fetchModalItems(this.setModal.itemKeyword)
-    },
-    async fetchModalItems (keyword, append = false) {
-      const state = this.setModal.itemPage
-      if (!append) this.setModal.items = includeSelected([], this.setModal.chosen)
-      try {
-        const data = await queryPage(state, params => listEntity('items', params), { management_scope: 'factory', status: 'enabled', keyword: keyword || '' }, append)
-        if (data && state === this.setModal.itemPage) this.setModal.items = includeSelected(state.rows, this.setModal.chosen)
-      } catch (e) { this.$message.error(e.userMessage || '物料候选加载失败') }
-    },
-    loadMoreModalItems () {
-      if (!this.setModal.visible) return
-      return this.fetchModalItems(this.setModal.itemKeyword, true)
-    },
-    onSelectModalItem (itemId) {
-      this.setModal.chosen = this.setModal.items.find(x => Number(x.id) === Number(itemId)) || null
+    onSelectModalItem (itemId, rows = []) {
+      this.setModal.chosen = itemId ? rows[0] || null : null
     },
     async saveSetItem () {
       const { form, current, currentRelation, activeRelationCount, sku } = this.setModal

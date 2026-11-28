@@ -29,7 +29,7 @@ final class CrmTeamApplicationService
         $super = $this->auth->isSuperAdmin($actor);
         $grant = $this->access->activeGrant($actor);
         $managed = $this->access->managedDepartments($actor);
-        $departments = DB::table('erp_departments')->whereIn('legacy_id', $managed)
+        $departments = DB::table('erp_departments')->whereNull('deleted_at')->where('status', 'normal')->whereIn('legacy_id', $managed)
             ->orderBy('sort')->orderBy('legacy_id')->get(['legacy_id as id', 'parent_legacy_id as parent_id', 'name']);
         $actions = $super ? CrmAssignmentAccessService::ACTIONS : array_filter(CrmAssignmentAccessService::ACTIONS,
             fn ($label, $key) => $grant && in_array($key, $grant->actions, true) && $this->access->hasPermission($actor, CrmAssignmentAccessService::PERMISSIONS[$key]), ARRAY_FILTER_USE_BOTH);

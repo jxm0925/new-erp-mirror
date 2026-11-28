@@ -5,12 +5,14 @@ namespace App\Http\Controllers\Api\V1\Erp;
 use App\Http\Controllers\Controller;
 use App\Models\Erp\{Item, ItemCategory, Location, Product, Sku, Supplier, Unit, Warehouse};
 use App\Services\Erp\AuthContextService;
+use App\Services\Erp\CategoryTreeEngine;
 use App\Services\Erp\MasterDataApplicationService;
 use App\Services\Erp\MasterDataAccessService;
 use App\Services\Erp\MasterDataSummaryService;
 use App\Services\Erp\ItemManagementScopeService;
 use App\Services\Erp\ItemCategoryApplicationService;
 use App\Services\Erp\ProductMatrixApplicationService;
+use App\Services\Erp\SkuAggregateApplicationService;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -34,6 +36,7 @@ class MasterDataController extends Controller
     public function index(Request $request)
     {
         [$model, $code, $name, $relations] = $this->config($request);
+        app(MasterDataAccessService::class)->authorizeRead($request, (string) $request->route('entity'));
         // Product/SKU selectors only need Product master fields. Loading every SKU
         // and Item relation makes a selector wait on the entire master catalogue.
         if ($request->route('entity') === 'products' && !$request->boolean('include_skus')) {
@@ -46,11 +49,12 @@ class MasterDataController extends Controller
             $relations = ['managerUser'];
         }
         $query = $model::query()->with($relations);
+        if ($request->route('entity') === 'categories') $query->where('category_type', 'product');
         if ($request->has('ids')) {
             $selected = $request->validate(['ids' => 'required|array|min:1|max:1000', 'ids.*' => 'required|integer|min:1|distinct']);
             $query->whereIn('id', $selected['ids']);
         }
-        if (in_array($request->route('entity'), ['items', 'categories'], true)) {
+        if ($request->route('entity') === 'items') {
             $scopes = app(ItemManagementScopeService::class);
             $scopes->applyScope($query, $scopes->requestScope($request));
         }
@@ -202,15 +206,10 @@ class MasterDataController extends Controller
             });
         }
         if ($request->route('entity') === 'categories' && $request->boolean('tree')) {
-            $nodes = $query->orderBy('sort_order')->orderBy('id')->get();
-            $nodeIds = $nodes->pluck('id')->map(fn ($id) => (int) $id)->all();
-            $build = function ($parentId = null) use (&$build, $nodes, $nodeIds) {
-                return $nodes->filter(fn ($row) => $parentId === null
-                    ? !$row->parent_id || !in_array((int) $row->parent_id, $nodeIds, true)
-                    : (int) $row->parent_id === (int) $parentId)
-                    ->map(fn ($row) => [...$row->toArray(), 'children' => $build($row->id)->values()->all()])->values();
-            };
-            return response()->json(['data' => $build()]);
+            // Build paths from the complete domain even when search/status filters hide ancestors.
+            $visibleIds = count($query->getQuery()->wheres) > 1 ? $query->pluck('id')->all() : null;
+            $all = ItemCategory::where('category_type', 'product')->with($relations)->orderBy('sort_order')->orderBy('id')->get();
+            return response()->json(['data' => (new CategoryTreeEngine($all))->tree($visibleIds)]);
         }
         $stats = $request->boolean('include_stats')
             ? app(MasterDataSummaryService::class)->summarize((string) $request->route('entity'), $query) : null;
@@ -255,9 +254,11 @@ class MasterDataController extends Controller
     public function show(Request $request, int $id)
     {
         [$model, , , $relations] = $this->config($request);
+        app(MasterDataAccessService::class)->authorizeRead($request, (string) $request->route('entity'));
         $warehouseSummary = $request->route('entity') === 'warehouses' && $request->boolean('include_location_summary');
         if ($warehouseSummary) $relations = ['managerUser'];
         $query = $model::with($relations);
+        if ($request->route('entity') === 'categories') $query->where('category_type', 'product');
         if ($warehouseSummary) $query->withCount('locations')->addSelect(['area_count' => Location::query()
             ->selectRaw("COUNT(DISTINCT NULLIF(TRIM(area), ''))")->whereColumn('warehouse_id', 'erp_warehouses.id')]);
         $record = $query->findOrFail($id);
@@ -275,17 +276,14 @@ class MasterDataController extends Controller
 
     public function store(Request $request, MasterDataApplicationService $service)
     {
+        if ($request->route('entity') === 'skus') return $this->storeIntegratedSku($request);
         app(MasterDataAccessService::class)->authorize($request, (string) $request->route('entity'), 'create');
         [$model] = $this->config($request);
-        $this->prepareSkuCanonicalInput($request);
-        $this->prepareSkuOrderLineType($request);
         $data = $request->validate($this->rules($request));
         $this->protectHiddenCosts($request, $data);
         if ($request->route('entity') === 'units' && empty($data['allow_decimal'])) $data['decimal_places'] = 0;
         if ($request->route('entity') === 'units') $data += ['is_legacy' => false, 'standard_unit_id' => null];
-        if ($request->route('entity') === 'categories' && ($data['category_type'] ?? null) === 'item') {
-            abort(422, 'Item 类目请使用专用 Item 类目接口维护。');
-        }
+        if ($request->route('entity') === 'categories') $data['category_type'] = 'product';
         if ($request->route('entity') === 'items') {
             $this->assertValidItemCategory($data['category_id'] ?? null, false);
             $this->assertStandardBusinessUnit((int) $data['unit_id']);
@@ -300,8 +298,6 @@ class MasterDataController extends Controller
                 'creation_session_id' => 'nullable|uuid',
             ]));
         }
-        $this->normalizeSkuOrderAttributeCapabilities($request, $data);
-        if ($request->route('entity') === 'skus') $this->assertPhysicalSkuCanBeEnabled($data);
         $this->enforceUnitBaseRule($request, $data);
         if ($request->route('entity') === 'products' && $request->has('sku_matrix')) {
             app(MasterDataAccessService::class)->authorize($request, 'skus', 'create');
@@ -320,18 +316,15 @@ class MasterDataController extends Controller
 
     public function update(Request $request, int $id, MasterDataApplicationService $service)
     {
+        if ($request->route('entity') === 'skus') return $this->updateIntegratedSku($request, $id);
         app(MasterDataAccessService::class)->authorize($request, (string) $request->route('entity'), 'edit');
         [$model, $code] = $this->config($request);
         $record = $model::findOrFail($id);
         $this->assertManagementContext($request, $record);
-        $this->prepareSkuCanonicalInput($request);
-        $this->prepareSkuOrderLineType($request);
         $data = $request->validate($this->rules($request, $id));
         $this->protectHiddenCosts($request, $data);
         if ($request->route('entity') === 'units' && empty($data['allow_decimal'])) $data['decimal_places'] = 0;
-        if ($request->route('entity') === 'categories' && ($data['category_type'] ?? null) === 'item') {
-            abort(422, 'Item 类目请使用专用 Item 类目接口维护。');
-        }
+        if ($request->route('entity') === 'categories') $data['category_type'] = 'product';
         if ($request->route('entity') === 'items' && !empty($data['category_id'])) $this->assertValidItemCategory($data['category_id'], true);
         if ($record instanceof Item) {
             $this->normalizeItemSerialTracking($data, $record);
@@ -343,13 +336,6 @@ class MasterDataController extends Controller
             $this->assertStandardBusinessUnit((int) $data['unit_id']);
         }
         if ($request->route('entity') === 'units') unset($data[$code]);
-        if ($record instanceof Sku && array_key_exists('sales_unit_id', $data)
-            && (int) $data['sales_unit_id'] !== (int) $record->sales_unit_id
-            && $this->skuSalesUnitLocked((int) $record->id)) {
-            abort(422, '该 SKU 已存在确认销售订单，销售单位不能直接修改。');
-        }
-        $this->normalizeSkuOrderAttributeCapabilities($request, $data);
-        if ($record instanceof Sku) $this->assertPhysicalSkuCanBeEnabled($data, $record->id);
         $this->enforceUnitBaseRule($request, $data, $id);
         if ($request->route('entity') === 'products' && $request->has('sku_matrix')) {
             app(MasterDataAccessService::class)->authorize($request, 'skus', 'create');
@@ -382,6 +368,37 @@ class MasterDataController extends Controller
         return response()->json(['message' => '规格批次已保存', 'data' => $product], 201);
     }
 
+    public function storeIntegratedSku(Request $request)
+    {
+        $operator = app(MasterDataAccessService::class)->authorize($request, 'skus', 'create');
+        $record = app(SkuAggregateApplicationService::class)->save(null, $request->all(), $operator);
+        return response()->json(['message' => '保存成功', 'data' => $record], 201);
+    }
+
+    public function updateIntegratedSku(Request $request, int $id)
+    {
+        $operator = app(MasterDataAccessService::class)->authorize($request, 'skus', 'edit');
+        $record = app(SkuAggregateApplicationService::class)->save($id, $request->all(), $operator);
+        return response()->json(['message' => '保存成功', 'data' => $record]);
+    }
+
+    public function productSkuSpecs(Request $request, int $id)
+    {
+        $auth = app(AuthContextService::class);
+        $operator = $auth->currentUser($request);
+        abort_unless($operator, 401, '未登录或登录已过期。');
+        abort_unless($auth->isSuperAdmin($operator) || array_intersect([
+            'master.product', 'master.product.view', 'master.product.create',
+            'master.sku', 'master.sku.view', 'master.sku.create',
+        ], $auth->permissionCodes($operator)), 403, '没有商品或 SKU 查看、新建权限。');
+        Product::findOrFail($id);
+        $specs = Sku::where('product_id', $id)->orderBy('id')->get(['id', 'sku_code', 'sku_name', 'spec_text', 'status'])
+            ->map(fn (Sku $sku) => ['id' => $sku->id, 'sku_code' => $sku->sku_code, 'sku_name' => $sku->sku_name,
+                'spec_text' => $sku->spec_text, 'normalized_spec' => SkuAggregateApplicationService::normalizeSpec($sku->spec_text),
+                'status' => $sku->status]);
+        return response()->json(['data' => $specs]);
+    }
+
     public function disable(Request $request, int $id, MasterDataApplicationService $service)
     {
         app(MasterDataAccessService::class)->authorize($request, (string) $request->route('entity'), 'edit');
@@ -399,11 +416,6 @@ class MasterDataController extends Controller
         [$model] = $this->config($request);
         $record = $model::findOrFail($id);
         $this->assertManagementContext($request, $record);
-        if ($record instanceof Sku) {
-            $data = $record->getAttributes();
-            $data['status'] = 'enabled';
-            $this->assertPhysicalSkuCanBeEnabled($data, $record->id);
-        }
         if ($record instanceof Product) $this->assertProductCanBeEnabled($record);
         if ($record instanceof Item) $this->assertItemCanBeEnabled($record);
         $record = $service->setStatus($record, 'enabled');
@@ -434,7 +446,10 @@ class MasterDataController extends Controller
 
     private function assertManagementContext(Request $request, $record): void
     {
-        if ($record instanceof Item || $record instanceof ItemCategory) {
+        if ($record instanceof ItemCategory && $request->route('entity') === 'categories') {
+            abort_unless($record->category_type === 'product', 404);
+        }
+        if ($record instanceof Item) {
             $scopes = app(ItemManagementScopeService::class);
             $scopes->assertContext($record, $scopes->requestScope($request));
         }
@@ -607,136 +622,28 @@ class MasterDataController extends Controller
     private function config(Request $request): array
     {
         abort_unless(isset(self::CONFIG[$request->route('entity')]), 404);
-        return self::CONFIG[$request->route('entity')];
-    }
-
-    /**
-     * SKU 仅维护“订单行是否支持/是否必填/允许值”的能力边界。
-     * 未支持的能力不能残留必填或选项，避免前端与确认校验出现矛盾状态。
-     */
-    private function normalizeSkuOrderAttributeCapabilities(Request $request, array &$data): void
-    {
-        if ($request->route('entity') !== 'skus') return;
-
-        $electricMode = $data['electric_mode'] ?? 'hidden';
-        $pumpMode = $data['need_pump_mode'] ?? 'hidden';
-        $data['electric_mode'] = $electricMode;
-        $data['need_pump_mode'] = $pumpMode;
-        unset($data['supports_electric'], $data['electric_required'], $data['electric_options'], $data['supports_need_pump'], $data['need_pump_required']);
-        $data['allow_customized'] = (bool) ($data['allow_customized'] ?? false);
-        $data['allow_special_customized'] = (bool) ($data['allow_special_customized'] ?? false);
-        if (!$data['allow_special_customized']) {
-            $data['special_custom_drawing_required'] = false;
-            $data['special_custom_agreement_required'] = false;
-            $data['special_custom_description_required'] = false;
+        $config = self::CONFIG[$request->route('entity')];
+        if ($request->route('entity') === 'categories') {
+            $config[3] = ['parent' => fn ($query) => $query->where('category_type', 'product')];
         }
-        // 电压选项属于订单行的统一选项，不在 SKU 层保存重复规则。
-    }
-
-    /** Maps legacy storage names to the formal SKU API fields. */
-    private function prepareSkuCanonicalInput(Request $request): void
-    {
-        if ($request->route('entity') !== 'skus') return;
-
-        $request->merge([
-            'spec_text' => $request->input('spec_model', $request->input('spec_text')),
-            'order_line_type' => $request->input('line_type', $request->input('order_line_type')),
-            'is_sale_item' => $request->input('is_sellable', $request->input('is_sale_item')),
-            'is_customizable' => $request->boolean('allow_customized') || $request->boolean('allow_special_customized'),
-        ]);
-    }
-
-    private function prepareSkuOrderLineType(Request $request): void
-    {
-        if ($request->route('entity') !== 'skus') return;
-
-        $type = $request->input('order_line_type');
-        if (!$type) {
-            $legacy = $request->input('fulfillment_type', 'physical');
-            $type = $legacy === 'virtual' ? 'no_delivery' : $legacy;
-        }
-        // fulfillment_type 仅是旧接口兼容字段，页面与业务判断只使用 order_line_type。
-        $request->merge([
-            'order_line_type' => $type,
-            'fulfillment_type' => $type === 'no_delivery' ? 'virtual' : $type,
-        ]);
-    }
-
-    private function assertPhysicalSkuCanBeEnabled(array $data, ?int $skuId = null): void
-    {
-        if (($data['status'] ?? 'draft') !== 'enabled') return;
-
-        abort_unless(!empty($data['sku_code']) && !empty($data['sku_name']) && !empty($data['product_id']) && !blank($data['spec_text'] ?? null), 422, 'SKU 编码、名称、所属 Product 与规格型号必须完整后才能启用。');
-        abort_unless(!empty($data['sales_unit_id']), 422, '请先维护销售单位后再启用 SKU。');
-        abort_unless(in_array($data['order_line_type'] ?? '', ['physical', 'service', 'no_delivery', 'deduction'], true), 422, '订单行类型无效，不能启用 SKU。');
-        abort_unless(in_array($data['electric_mode'] ?? 'hidden', ['hidden', 'optional', 'required'], true), 422, '电压属性模式无效。');
-        abort_unless(in_array($data['need_pump_mode'] ?? 'hidden', ['hidden', 'optional', 'required'], true), 422, '原水泵控制属性模式无效。');
-        abort_unless(DB::table('erp_products')->where('id', $data['product_id'])->where('status', 'enabled')->exists(), 422, '所属 Product 必须处于启用状态。');
-        abort_unless(DB::table('erp_units')->where('id', $data['sales_unit_id'])->where('status', 'enabled')->exists(), 422, '销售单位必须处于启用状态。');
-
-        if (($data['order_line_type'] ?? 'physical') !== 'physical') return;
-
-        $hasDefaultItem = $skuId && DB::table('erp_sku_item_relations as relation')
-            ->join('erp_items as item', 'item.id', '=', 'relation.item_id')
-            ->where('relation.sku_id', $skuId)
-            ->where('relation.status', 'active')
-            ->where('relation.is_primary', true)
-            ->where('item.status', 'enabled')
-            ->exists();
-        abort_unless($hasDefaultItem, 422, '实物 SKU 保存并启用前必须绑定一个有效默认物料；可先保存草稿。');
+        return $config;
     }
 
     private function rules(Request $request, ?int $id = null): array
     {
         $entity = $request->route('entity');
         $unique = fn (string $table, string $column) => ['required', 'string', 'max:120', Rule::unique($table, $column)->ignore($id)];
-        $currentSalesUnitId = $entity === 'skus' && $id ? Sku::whereKey($id)->value('sales_unit_id') : null;
-        $salesUnitExists = Rule::exists('erp_units', 'id')->where(function ($query) use ($currentSalesUnitId) {
-            $query->where('status', 'enabled')->where(function ($unit) use ($currentSalesUnitId) {
-                $unit->where('is_legacy', false);
-                if ($currentSalesUnitId) $unit->orWhere('id', $currentSalesUnitId);
-            });
-        });
+        $historicalBundle = $entity === 'products' && $id && Product::whereKey($id)->where('product_type', 'bundle')->exists();
         return match ($entity) {
             'products' => [
                 'product_code' => $unique('erp_products', 'product_code'), 'product_name' => 'required|string|max:160',
-                'product_type' => 'required|string|max:40', 'category_id' => 'nullable|exists:erp_item_categories,id',
+                'product_type' => ['required', 'string', 'max:40', ...($historicalBundle ? [] : [Rule::notIn(['bundle'])])],
+                'category_id' => ['nullable', Rule::exists('erp_item_categories', 'id')->where('category_type', 'product')],
                 'model' => 'nullable|string|max:100', 'unit_id' => 'nullable|exists:erp_units,id',
                 'search_aliases' => 'nullable|string|max:500', 'search_keywords' => 'nullable|string',
                 'brand' => 'nullable|string|max:100', 'origin' => 'nullable|string|max:120',
                 'image' => 'nullable|string|max:255', 'description' => 'nullable|string', 'status' => 'required|in:draft,enabled,disabled',
                 'remark' => 'nullable|string',
-            ],
-            'skus' => [
-                'product_id' => 'required|exists:erp_products,id', 'sku_code' => $unique('erp_skus', 'sku_code'),
-                'sku_name' => 'required|string|max:160', 'spec_text' => 'nullable|string|max:255', 'image' => 'nullable|string|max:255',
-                'search_aliases' => 'nullable|string|max:500', 'search_keywords' => 'nullable|string',
-                'sale_price' => 'nullable|numeric|min:0', 'reference_cost' => 'nullable|numeric|min:0',
-                'default_tax_rate' => 'nullable|numeric|min:0|max:1',
-                'default_price_tax_mode' => 'nullable|in:tax_inclusive,tax_exclusive',
-                'product_structure_type' => 'nullable|string|max:40', 'production_policy' => 'nullable|string|max:40',
-                'order_line_type' => 'required|in:physical,service,no_delivery,deduction',
-                'fulfillment_type' => 'nullable|in:physical,service,virtual,deduction',
-                'sales_unit_id' => ['nullable', $salesUnitExists], 'sales_unit_snapshot' => 'nullable|string|max:80',
-                'is_customizable' => 'boolean', 'is_need_production' => 'boolean', 'is_need_bom' => 'boolean',
-                'is_sale_item' => 'boolean', 'is_custom_sku' => 'boolean',
-                'supports_electric' => 'boolean', 'electric_required' => 'boolean',
-                'electric_options' => 'nullable|array', 'electric_options.*' => 'string|max:40',
-                'supports_need_pump' => 'boolean', 'need_pump_required' => 'boolean',
-                'electric_mode' => 'nullable|in:hidden,optional,required', 'need_pump_mode' => 'nullable|in:hidden,optional,required',
-                'allow_customized' => 'boolean', 'allow_special_customized' => 'boolean',
-                'special_custom_drawing_required' => 'boolean', 'special_custom_agreement_required' => 'boolean',
-                'special_custom_description_required' => 'boolean', 'delivery_inspection_required' => 'boolean',
-                'base_sku_id' => 'nullable|exists:erp_skus,id',
-                'custom_scope' => 'nullable|in:none,order,customer,reusable',
-                'custom_source_type' => 'nullable|in:sales_order,manual,import',
-                'custom_source_id' => 'nullable|integer|min:0',
-                'customer_id' => 'nullable|integer|min:0',
-                'sales_order_id' => 'nullable|integer|min:0',
-                'sales_order_line_id' => 'nullable|integer|min:0',
-                'custom_status' => 'nullable|in:draft,active,disabled,archived',
-                'custom_description' => 'nullable|string',
-                'status' => 'required|in:draft,enabled,disabled', 'remark' => 'nullable|string',
             ],
             'items' => [
                 'item_code' => $unique('erp_items', 'item_code'), 'item_name' => 'required|string|max:160',
@@ -781,7 +688,8 @@ class MasterDataController extends Controller
             ],
             'categories' => [
                 'category_code' => $unique('erp_item_categories', 'category_code'), 'category_name' => 'required|string|max:120',
-                'parent_id' => 'nullable|exists:erp_item_categories,id', 'category_type' => 'required|in:product,item,supplier',
+                'parent_id' => ['nullable', 'integer', Rule::exists('erp_item_categories', 'id')->where('category_type', 'product')],
+                'category_type' => 'sometimes|in:product',
                 'sort_order' => 'nullable|integer|min:0', 'status' => 'required|in:enabled,disabled', 'remark' => 'nullable|string',
             ],
             'suppliers' => [

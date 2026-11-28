@@ -8,6 +8,7 @@ export const readDaily = (path, paramsOrDate) => {
   const params = typeof paramsOrDate === 'string' ? { date: paramsOrDate } : { ...(paramsOrDate || {}) }
   return api.get(root + '/' + path, { params })
 }
+export const syncDailyFollowups = payload => api.post(root + '/sales/sync-followups', payload)
 export const saveDaily = (path, form) => api.put(root + '/' + path, form)
 export const saveSupervisorNote = payload => api.put(root + '/sales/supervisor-note', payload)
 export const analyzeDaily = (path, date, version, extra = {}) =>

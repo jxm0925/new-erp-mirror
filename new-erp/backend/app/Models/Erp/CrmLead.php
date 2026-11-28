@@ -14,6 +14,8 @@ class CrmLead extends MasterModel
         'first_contact_at' => 'datetime', 'last_contact_at' => 'datetime', 'next_contact_at' => 'datetime',
     ];
 
+    public function latestFollowup() { return $this->hasOne(CrmFollowup::class, 'subject_id')->ofMany(['contacted_at' => 'max', 'id' => 'max'], fn ($q) => $q->where('subject_type', 'lead')); }
+
     public function customer() { return $this->belongsTo(SalesCustomer::class, 'customer_id'); }
     public function attachments() { return $this->hasMany(CrmAttachment::class, 'subject_id')->where('subject_type', 'lead')->where('is_active', true); }
 }

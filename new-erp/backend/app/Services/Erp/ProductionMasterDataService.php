@@ -5,6 +5,7 @@ namespace App\Services\Erp;
 use App\Models\Erp\Item;
 use App\Models\Erp\Product;
 use App\Models\Erp\ProductionOperation;
+use App\Models\Erp\ProductionOperationWorker;
 use App\Models\Erp\ProductionStage;
 use App\Models\Erp\ProductionPackagingScheme;
 use App\Models\Erp\ProductionRouting;
@@ -31,7 +32,7 @@ class ProductionMasterDataService
             ->where('active_route.status', 'active')
             ->selectRaw('COUNT(DISTINCT operation_route.routing_id)');
 
-        return ProductionOperation::query()
+        $query = ProductionOperation::query()
             ->addSelect(['active_routing_count' => $activeRoutingCount])
             ->when($filters['keyword'] ?? null, fn ($q, $v) => $q->where(fn ($x) => $x->where('operation_no', 'like', "%{$v}%")->orWhere('operation_name', 'like', "%{$v}%")))
             ->when($filters['status'] ?? null, fn ($q, $v) => $q->where('status', $v))
@@ -50,7 +51,12 @@ class ProductionMasterDataService
                     ->where('reference_route.status', 'active')
                     ->selectRaw('1')
             ))
-            ->orderBy('sort')->orderBy('id')->paginate(min(20, max(1, (int) ($filters['per_page'] ?? 10))));
+            ->orderBy('sort')->orderBy('id');
+        foreach ($this->operationDeletionReferences() as $key => $reference) {
+            $query->addSelect(['delete_reference_'.$key => $reference->selectRaw('1')->limit(1)]);
+        }
+        return $query->paginate(min(20, max(1, (int) ($filters['per_page'] ?? 10))))
+            ->through(fn ($operation) => $this->presentOperationDeletion($operation));
     }
 
     public function operation(int $id, array $permissions, bool $superAdmin): ProductionOperation
@@ -71,7 +77,55 @@ class ProductionMasterDataService
         $operation->setAttribute('status_lock_reason', ! $activeRoutings->isEmpty()
             ? "已被 {$activeRoutings->count()} 条生效路线引用，状态不可修改"
             : ($canToggle ? null : '无工序启停权限，状态不可修改'));
-        return $operation;
+        foreach ($this->operationDeletionReferences($id) as $key => $reference) {
+            $operation->setAttribute('delete_reference_'.$key, $reference->exists());
+        }
+        return $this->presentOperationDeletion($operation);
+    }
+
+    public function operationWorkers(int $id, array $permissions, bool $superAdmin): array
+    {
+        $this->authorize($permissions, $superAdmin, 'production.operation.view');
+        return $this->workersForOperation($id);
+    }
+
+    public function updateOperationWorkers(int $id, array $employeeIds, object $actor, array $permissions, bool $superAdmin): array
+    {
+        $this->authorize($permissions, $superAdmin, 'production.operation.edit');
+        return DB::transaction(function () use ($id, $employeeIds, $actor): array {
+            ProductionOperation::query()->lockForUpdate()->findOrFail($id);
+            $ids = array_values(array_unique(array_filter(array_map('intval', $employeeIds))));
+            $users = $ids ? DB::table('erp_legacy_admin_users')->whereIn('legacy_id', $ids)->whereNull('deleted_at')
+                ->whereIn(DB::raw('LOWER(TRIM(status))'), ['normal', 'active'])->orderBy('legacy_id')->lockForUpdate()->get()->keyBy('legacy_id') : collect();
+            if ($users->count() !== count($ids)) throw new \App\Exceptions\Erp\WorkOrderDomainException('user_invalid', '所选人员必须是未删除的在职账号，请刷新后重选。');
+            $auth = app(AuthContextService::class);
+            $current = ProductionOperationWorker::query()->where('operation_id', $id)->pluck('employee_legacy_id')->map(fn ($value) => (int) $value)->all();
+            foreach ($users as $user) {
+                $name = (string) (($user->nickname ?? null) ?: ($user->username ?? null) ?: ('#'.$user->legacy_id));
+                if (! $auth->isSuperAdmin($user) && ! in_array('production.task.execute', $auth->permissionCodes($user), true)) {
+                    throw new \App\Exceptions\Erp\WorkOrderDomainException('user_invalid', $name.' 没有生产报工权限，不能参与这道工序。');
+                }
+                // 已配置人员继续兼容；新增人员仍须具备启用的生产工人档案。
+                if (! in_array((int) $user->legacy_id, $current, true) && ! app(BusinessStaffService::class)->isActive((int) $user->legacy_id, 'production_worker')) {
+                    throw new \App\Exceptions\Erp\WorkOrderDomainException('user_invalid', $name.' 不是有效的生产工人，请先在“系统管理 / 业务员档案”登记并启用。');
+                }
+            }
+            ProductionOperationWorker::query()->where('operation_id', $id)->whereNotIn('employee_legacy_id', $ids ?: [0])->delete();
+            foreach ($ids as $employeeId) {
+                $user = $users[$employeeId];
+                ProductionOperationWorker::query()->lockForUpdate()->updateOrCreate(['operation_id' => $id, 'employee_legacy_id' => $employeeId], [
+                    'employee_name' => (string) (($user->nickname ?? null) ?: ($user->username ?? null) ?: ('#'.$user->legacy_id)),
+                    'created_by_legacy_id' => (int) ($actor->legacy_id ?? $actor->id ?? 0) ?: null,
+                ]);
+            }
+            return $this->workersForOperation($id);
+        }, 5);
+    }
+
+    private function workersForOperation(int $id): array
+    {
+        return ProductionOperationWorker::query()->where('operation_id', $id)->orderBy('id')->get()
+            ->map(fn ($worker) => ['id' => (int) $worker->employee_legacy_id, 'name' => $worker->employee_name])->values()->all();
     }
 
     public function createOperation(array $data, object $user, array $permissions, bool $superAdmin): ProductionOperation
@@ -154,15 +208,11 @@ class ProductionMasterDataService
                 throw ValidationException::withMessages(['status' => '工序必须先停用，且确认无业务引用后才能删除。']);
             }
             try {
-                if (DB::table('erp_production_routing_operations')->where('operation_id', $operation->id)
-                    ->lock('FOR UPDATE NOWAIT')->first(['id'])) {
-                    throw ValidationException::withMessages(['operation' => '该工序已被工艺路线引用；即使路线已退役也必须保留历史，不能删除。']);
-                }
-                // 当前读保留回收站 BOM 的引用；编辑时软删的旧明细不算引用，反向取锁不得等待。
-                if (DB::table('erp_bom_item_operations as bo')->join('erp_bom_items as bi', 'bi.id', '=', 'bo.bom_item_id')
-                    ->where('bo.operation_id', $operation->id)->whereNull('bi.deleted_at')
-                    ->lock('FOR UPDATE NOWAIT')->first(['bo.id'])) {
-                    throw ValidationException::withMessages(['operation' => '该工序已被 BOM 用料行绑定；请先在 BOM 中解除绑定，不能删除。']);
+                // 与列表可删标记共用同一引用口径，包含历史路线、BOM、模板及实际作业，避免触发外键错误或丢失追溯。
+                foreach ($this->operationDeletionReferences($id) as $reference) {
+                    if ($reference->lock('FOR UPDATE NOWAIT')->first(['reference.id'])) {
+                        throw ValidationException::withMessages(['operation' => '该工序仍被路线、BOM、绩效模板或生产发货作业引用，不能删除。']);
+                    }
                 }
             } catch (QueryException $exception) {
                 if ((int) ($exception->errorInfo[1] ?? 0) !== 3572) throw $exception;
@@ -196,6 +246,7 @@ class ProductionMasterDataService
     public function createRouting(array $data, object $user, array $permissions, bool $superAdmin): ProductionRouting
     {
         $this->authorize($permissions, $superAdmin, 'production.routing.create');
+        if (! empty($data['activate_after_save'])) $this->authorize($permissions, $superAdmin, 'production.routing.activate');
         return $this->command('create_routing', 'routing', $data, $user, function () use ($data, $user): ProductionRouting {
             $this->assertObjectRelation($data['product_id'] ?? null, $data['sku_id'] ?? null);
             $number = $this->numbers->reservedNumber($data['reservation_token'], 'routing', $this->userId($user), $data['creation_session_id']);
@@ -215,6 +266,7 @@ class ProductionMasterDataService
             $this->syncApplicabilities($routing, $data, true);
             $this->syncOperations($routing, $data['operations'], $user);
             $this->assertRoutingManagementScope($routing);
+            if (! empty($data['activate_after_save'])) $this->activateSavedRouting($routing, $user);
             $this->numbers->consume($data['reservation_token'], 'routing', $number, $this->userId($user), 'production_routing', $routing->id);
             return $this->withoutStandards($routing->load(['product', 'sku', 'applicabilities.item:id,item_code,item_name,spec,item_type,management_scope', 'applicabilities.category:id,category_code,category_name', 'operations.operation']));
         });
@@ -223,6 +275,7 @@ class ProductionMasterDataService
     public function updateRouting(int $id, array $data, object $user, array $permissions, bool $superAdmin): ProductionRouting
     {
         $this->authorize($permissions, $superAdmin, 'production.routing.edit');
+        if (! empty($data['activate_after_save'])) $this->authorize($permissions, $superAdmin, 'production.routing.activate');
         return $this->command('update_routing', 'routing', $data + ['id' => $id], $user, function () use ($id, $data, $user): ProductionRouting {
             $routing = ProductionRouting::lockForUpdate()->findOrFail($id);
             $this->version($routing, $data);
@@ -238,6 +291,7 @@ class ProductionMasterDataService
             $this->syncApplicabilities($routing, $data);
             if (isset($data['operations'])) $this->syncOperations($routing, $data['operations'], $user);
             $this->assertRoutingManagementScope($routing);
+            if (! empty($data['activate_after_save'])) $this->activateSavedRouting($routing, $user);
             return $this->withoutStandards($routing->load(['product', 'sku', 'applicabilities.item:id,item_code,item_name,spec,item_type,management_scope', 'applicabilities.category:id,category_code,category_name', 'operations.operation']));
         });
     }
@@ -248,16 +302,25 @@ class ProductionMasterDataService
         return $this->command('activate_routing', 'routing', $data + ['id' => $id], $user, function () use ($id, $data, $user): ProductionRouting {
             $routing = ProductionRouting::with('operations.operation')->lockForUpdate()->findOrFail($id);
             $this->version($routing, $data);
-            if ($routing->status !== 'draft') throw ValidationException::withMessages(['status' => '只有草稿工艺路线可以生效。']);
-            if ($routing->operations->isEmpty()) throw ValidationException::withMessages(['operations' => '工艺路线至少需要一道工序。']);
-            if ($routing->operations->contains(fn ($row) => $row->operation?->status !== 'enabled')) throw ValidationException::withMessages(['operations' => '工艺路线包含已停用工序，不能生效。']);
-            $this->validateRoutingExecution($routing);
-            $routing->status = 'active';
-            $routing->business_version++;
-            $routing->updated_by_legacy_id = $this->userId($user);
-            $routing->save();
+            $this->activateSavedRouting($routing, $user);
             return $routing->fresh(['product', 'sku', 'applicabilities.item:id,item_code,item_name,spec,item_type,management_scope', 'applicabilities.category:id,category_code,category_name', 'operations.operation']);
         });
+    }
+
+    private function activateSavedRouting(ProductionRouting $routing, object $user): void
+    {
+        if ($routing->status !== 'draft') throw ValidationException::withMessages(['status' => '只有草稿工艺路线可以生效。']);
+        // 保存时可能重建工序节点，必须清除旧关系并按与独立启用相同的完整规则重新检查。
+        $routing->unsetRelation('operations')->load('operations.operation');
+        if ($routing->operations->isEmpty()) throw ValidationException::withMessages(['operations' => '工艺路线至少需要一道工序。']);
+        $operationIds = $routing->operations->pluck('operation_id')->unique();
+        $operations = ProductionOperation::query()->whereIn('id', $operationIds)->orderBy('id')->lockForUpdate()->get();
+        if ($operations->count() !== $operationIds->count() || $operations->contains(fn ($operation) => $operation->status !== 'enabled')) throw ValidationException::withMessages(['operations' => '工艺路线包含已停用工序，不能生效。']);
+        $this->validateRoutingExecution($routing);
+        $routing->status = 'active';
+        $routing->business_version++;
+        $routing->updated_by_legacy_id = $this->userId($user);
+        $routing->save();
     }
 
     public function setDefaultRouting(int $id, array $data, object $user, array $permissions, bool $superAdmin): ProductionRouting
@@ -400,6 +463,18 @@ class ProductionMasterDataService
                         ->whereNotIn('routing_operation_id', $routingOperationIds)
                         ->whereIn('target_routing_operation_id', $routingOperationIds)->exists()
                 );
+            // 草稿也可能已在 BOM 配置或历史作业中留有真实关联，不能依靠无外键列或 SET NULL 删除来丢失追溯。
+            foreach (['erp_boms', 'erp_mfg_work_orders', 'erp_shipment_packing_operations'] as $table) {
+                $referenced = $referenced || DB::table($table)->where('routing_id', $id)->exists();
+            }
+            if ($routingOperationIds->isNotEmpty()) {
+                foreach (['erp_bom_operation_standards', 'erp_mfg_work_order_operations', 'erp_shipment_packing_operations'] as $table) {
+                    $referenced = $referenced || DB::table($table)->whereIn('routing_operation_id', $routingOperationIds)->exists();
+                }
+                foreach (['erp_items', 'erp_item_material_policies'] as $table) {
+                    $referenced = $referenced || DB::table($table)->whereIn('serial_generation_routing_operation_id', $routingOperationIds)->exists();
+                }
+            }
             if ($referenced) {
                 throw ValidationException::withMessages(['routing' => '该工艺路线或其节点已被生产配置、需求、工单或库存归属引用，不能删除。']);
             }
@@ -418,9 +493,10 @@ class ProductionMasterDataService
     {
         $this->authorize($permissions, $superAdmin, ['production.operation.view', 'production.routing.view', 'production.work_order.create', 'production.tech.manage']);
         $keyword = trim((string) ($filters['keyword'] ?? ''));
-        $perPage = min(50, max(1, (int) ($filters['per_page'] ?? 10)));
+        $ids = $type === 'items' ? ($filters['ids'] ?? null) : null;
+        $perPage = $ids !== null ? max(1, count($ids)) : min(50, max(1, (int) ($filters['per_page'] ?? 10)));
         $query = match ($type) {
-            'items' => app(ItemManagementScopeService::class)->applyScope(Item::query()->with(['unit:id,unit_name', 'category:id,category_name']), 'factory')->where('status', 'enabled')
+            'items' => app(ItemManagementScopeService::class)->applyScope(Item::query()->with(['unit:id,unit_name,symbol', 'category:id,category_name']), 'factory')->where('status', 'enabled')
                 ->where(function ($items) use ($filters): void {
                     $items->where('is_production_item', true);
                     if (($filters['purpose'] ?? null) === 'routing') {
@@ -432,7 +508,7 @@ class ProductionMasterDataService
                 })
                 ->when($filters['category_id'] ?? null, fn ($q, $categoryId) => $q->whereIn('category_id', [$categoryId, ...app(ItemCategoryApplicationService::class)->descendantIds((int) $categoryId)]))
                 ->when($filters['item_type'] ?? null, fn ($q, $itemType) => $q->where('item_type', $itemType))
-                ->when($keyword, fn ($q) => $q->where(fn ($x) => $x->where('item_code', 'like', "%{$keyword}%")->orWhere('item_name', 'like', "%{$keyword}%")->orWhere('spec', 'like', "%{$keyword}%")->orWhere('model', 'like', "%{$keyword}%")))->orderBy('item_name'),
+                ->when($keyword, fn ($q) => $q->where(fn ($x) => $x->where('item_code', 'like', "%{$keyword}%")->orWhere('item_name', 'like', "%{$keyword}%")->orWhere('spec', 'like', "%{$keyword}%")->orWhere('model', 'like', "%{$keyword}%")))->orderBy('item_name')->orderBy('id'),
             'operations' => ProductionOperation::query()->where('status', 'enabled')
                 ->when(isset($filters['is_public']) && $filters['is_public'] !== '', fn ($q) => $q->where('is_public', (bool) $filters['is_public']))
                 ->when($keyword, fn ($q) => $q->where(fn ($x) => $x->where('operation_no', 'like', "%{$keyword}%")->orWhere('operation_name', 'like', "%{$keyword}%")))->orderBy('sort')->orderBy('id'),
@@ -445,6 +521,7 @@ class ProductionMasterDataService
                 ->when($keyword, fn ($q) => $q->where(fn ($x) => $x->where('routing_no', 'like', "%{$keyword}%")->orWhere('routing_name', 'like', "%{$keyword}%")))->orderByDesc('is_default')->orderByDesc('version'),
             default => throw ValidationException::withMessages(['type' => '不支持的生产主数据选择器类型。']),
         };
+        if ($ids !== null) $query->whereIn('id', $ids);
         return $query->paginate($perPage);
     }
 
@@ -575,6 +652,14 @@ class ProductionMasterDataService
             if ($row['execution_context'] === 'shipment' && ! in_array($row['shipment_operation_type'], ['water_test', 'packing', 'loading'], true)) throw ValidationException::withMessages(['operations' => '请选择试水、打包或装车作业类型。']);
             unset($row['output_item_id']);
             $row['packaging_materials'] = $row['packaging_materials'] ?? [];
+            \Illuminate\Support\Facades\Validator::make(['materials' => $row['packaging_materials']], [
+                'materials' => 'array', 'materials.*.component_item_id' => 'required|integer|min:1|distinct',
+                'materials.*.base_qty_per_output_unit' => ProductionProcessCatalogService::PACKAGING_QUANTITY_RULES,
+            ])->validate();
+            $row['packaging_materials'] = array_map(fn ($material) => [
+                'component_item_id' => (int) $material['component_item_id'],
+                'base_qty_per_output_unit' => (string) $material['base_qty_per_output_unit'],
+            ], array_values($row['packaging_materials']));
             if ($row['shipment_operation_type'] === 'packing' && empty($row['packaging_scheme_id'])) throw ValidationException::withMessages(['operations' => '打包工序必须选择包装方案。']);
             if ($row['execution_context'] === 'shipment' && $row['shipment_operation_type'] !== 'packing'
                 && (! empty($row['packaging_scheme_id']) || $row['packaging_materials'] !== [])) throw ValidationException::withMessages(['operations' => '只有打包工序可以配置包装方案和包装用料。']);
@@ -773,8 +858,9 @@ class ProductionMasterDataService
             $entity = $action();
             // 仅资料变为可用后重试；适用范围编辑仍遵守草稿限制，不提前下达工单。
             if ($entityType === 'routing' && $entity->status === 'active'
-                && in_array($type, ['activate_routing', 'default_routing', 'update_routing'], true)) {
-                app(WorkOrderService::class)->retryBlockedForMasterDataAfterCommit(null, (int) $entity->id, $user);
+                && in_array($type, ['create_routing', 'activate_routing', 'default_routing', 'update_routing'], true)) {
+                if (! empty($data['activate_after_save'])) app(WorkOrderService::class)->retryBlockedForMasterData(null, (int) $entity->id, $user, true);
+                else app(WorkOrderService::class)->retryBlockedForMasterDataAfterCommit(null, (int) $entity->id, $user);
             }
             $responseSnapshot = ['id' => $entity->id];
             DB::table('erp_production_master_commands')->where('client_command_id', $id)->update([
@@ -825,6 +911,35 @@ class ProductionMasterDataService
     private function version($model, array $data): void
     {
         if ((int) ($data['expected_version'] ?? 0) !== (int) $model->business_version) throw ValidationException::withMessages(['expected_version' => '数据版本已变化，请刷新后重试。']);
+    }
+
+    private function operationDeletionReferences(?int $id = null): array
+    {
+        $queries = [
+            'routing' => DB::table('erp_production_routing_operations as reference'),
+            // 回收站 BOM 的正式引用仍需保留；已软删的旧用料明细不阻止删除。
+            'bom' => DB::table('erp_bom_item_operations as reference')->join('erp_bom_items as bi', 'bi.id', '=', 'reference.bom_item_id')->whereNull('bi.deleted_at'),
+            'position' => DB::table('erp_bom_position_performance as reference'),
+            'template' => DB::table('erp_production_performance_template_lines as reference'),
+            'production' => DB::table('erp_mfg_work_order_operations as reference'),
+            'shipment' => DB::table('erp_shipment_packing_operations as reference'),
+        ];
+        foreach ($queries as $query) {
+            $id === null ? $query->whereColumn('reference.operation_id', 'erp_production_operations.id') : $query->where('reference.operation_id', $id);
+        }
+        return $queries;
+    }
+
+    private function presentOperationDeletion(ProductionOperation $operation): ProductionOperation
+    {
+        $referenced = false;
+        foreach (array_keys($this->operationDeletionReferences()) as $key) {
+            $attribute = 'delete_reference_'.$key;
+            $referenced = $referenced || (bool) $operation->getAttribute($attribute);
+            $operation->offsetUnset($attribute);
+        }
+        $operation->setAttribute('deletable', $operation->status === 'disabled' && ! $referenced);
+        return $operation;
     }
 
     /** 工序被哪些路线和 BOM 引用，供停用前提醒。 */

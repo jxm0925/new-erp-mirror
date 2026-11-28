@@ -98,7 +98,7 @@
                 <span class="date-text">{{ time(s.row.updated_at) }}</span>
               </template>
             </el-table-column>
-            <el-table-column label="操作" width="140" align="center" fixed="right">
+            <el-table-column label="操作" width="180" align="center" fixed="right">
               <template slot-scope="s">
                 <span class="row-actions" @click.stop>
                   <el-button type="text" @click="selectRow(s.row)">查看</el-button>
@@ -106,6 +106,7 @@
                   <el-button v-if="$can('production.operation.toggle')" type="text" :class="s.row.status==='enabled'?'danger-link':'success-link'" @click="toggle(s.row)">
                     {{ s.row.status==='enabled'?'停用':'启用' }}
                   </el-button>
+                  <el-button v-if="canDelete(s.row)" type="text" class="danger-link" @click="remove(s.row)">删除</el-button>
                 </span>
               </template>
             </el-table-column>
@@ -122,7 +123,7 @@
         <template v-if="selected">
           <header class="inspector-header">
             <div class="card-title">工序详情</div>
-            <el-button type="text" icon="el-icon-close" class="close-btn" aria-label="关闭工序详情" @click="selected=null" />
+            <el-button type="text" icon="el-icon-close" class="close-btn" aria-label="关闭工序详情" @click="closeInspector" />
           </header>
           <dl class="operation-facts">
             <div><dt>工序编码</dt><dd class="mono-code">{{ selected.operation_no }}</dd></div>
@@ -161,10 +162,10 @@
           <el-alert v-if="Number(selected.active_routing_count)>0 && selected.status==='enabled'" title="该工序正被已生效路线引用，暂不可停用" type="warning" :closable="false" show-icon />
 
           <div class="inspector-actions">
-            <el-button size="small" @click="$router.push(`/production/operations/${selected.id}`)">查看详情</el-button>
             <el-button v-if="$can('production.operation.edit')" size="small" type="success" plain @click="openEdit(selected)">编辑</el-button>
             <el-button v-if="$can('production.operation.toggle')" size="small" type="danger" plain :disabled="selected.status!=='enabled' || Number(selected.active_routing_count)>0" @click="toggle(selected)">停用</el-button>
             <el-button v-if="$can('production.operation.toggle')" size="small" type="success" plain :disabled="selected.status==='enabled'" @click="toggle(selected)">启用</el-button>
+            <el-button v-if="canDelete(selected)" size="small" type="danger" plain @click="remove(selected)">删除</el-button>
           </div>
         </template>
         <el-empty v-else description="选择左侧工序查看详情" :image-size="72" />
@@ -208,7 +209,7 @@
 
 <script>
 import { erpDateTime } from '../../../utils/dateTime'
-import { listProductionOperations, getProductionOperation, createProductionOperation, updateProductionOperation, enableProductionOperation, disableProductionOperation, getOperationReferences, getOperationWorkers, saveOperationWorkers } from '../../../api/erp/production'
+import { listProductionOperations, getProductionOperation, createProductionOperation, updateProductionOperation, enableProductionOperation, disableProductionOperation, deleteProductionOperation, getOperationReferences, getOperationWorkers, saveOperationWorkers } from '../../../api/erp/production'
 import { listUsers } from '../../../api/erp/rbac'
 import { reserveForCreatePage, clearCreatePageReservation } from '../../../utils/documentNumberReservation'
 
@@ -224,7 +225,8 @@ export default {
   },
   watch: {
     '$route.query.create'(value) { if (value === '1' && this.$can('production.operation.create')) this.openCreate() },
-    '$route.query.edit'(value) { if (value && this.$can('production.operation.edit')) this.openEdit({ id: value }) }
+    '$route.query.edit'(value) { if (value && this.$can('production.operation.edit')) this.openEdit({ id: value }) },
+    '$route.query.view'(value) { if (value && Number(this.selected && this.selected.id) !== Number(value)) this.selectRow({ id: Number(value) }); else if (!value) this.selected = null }
   },
   created() { this.load(); if (this.$route.query.create === '1' && this.$can('production.operation.create')) this.$nextTick(this.openCreate); else if (this.$route.query.edit && this.$can('production.operation.edit')) this.$nextTick(() => this.openEdit({ id: this.$route.query.edit })) },
   methods: {
@@ -234,22 +236,48 @@ export default {
         const response = await listProductionOperations({ ...this.filters, page: this.page, per_page: this.perPage })
         this.rows = response.data.data || []
         this.total = response.data.total || 0
-        if (this.selected) {
-          const current = this.rows.find(row => row.id === this.selected.id)
-          if (current) await this.selectRow(current)
-          else this.selected = null
-        }
+        const selectedId = this.$route.query.view || (this.selected && this.selected.id)
+        if (selectedId) await this.selectRow(this.rows.find(row => Number(row.id) === Number(selectedId)) || { id: Number(selectedId) })
       } catch (error) { this.$message.error(error.userMessage || '工序加载失败') } finally { this.loading = false }
     },
     async selectRow(row) {
-      const requestedId = row.id
-      this.selected = { ...row, active_routings: [] }
+      const requestedId = Number(row.id)
+      if (!Number.isInteger(requestedId) || requestedId < 1) return
+      this.selected = { ...row, id: requestedId, active_routings: [] }
       this.detailLoading = true
       this.loadWorkers(requestedId)
       try {
         const response = await getProductionOperation(requestedId)
-        if (this.selected && this.selected.id === requestedId) this.selected = response.data.data
-      } catch (error) { this.$message.error(error.userMessage || '工序详情加载失败') } finally { if (this.selected && this.selected.id === requestedId) this.detailLoading = false }
+        if (this.selected && this.selected.id === requestedId) {
+          this.selected = response.data.data
+          if (Number(this.$route.query.view) !== requestedId) this.$router.replace({ path: '/production/operations', query: { ...this.$route.query, view: String(requestedId) } }).catch(() => {})
+        }
+      } catch (error) {
+        if (this.selected && this.selected.id === requestedId) this.selected = null
+        this.$message.error(error.userMessage || '工序详情加载失败')
+      } finally { if (!this.selected || this.selected.id === requestedId) this.detailLoading = false }
+    },
+    closeInspector() {
+      this.selected = null
+      this.workers = []
+      if (this.$route.query.view) {
+        const query = { ...this.$route.query }
+        delete query.view
+        this.$router.replace({ path: '/production/operations', query }).catch(() => {})
+      }
+    },
+    canDelete(row) { return this.$can('production.operation.delete') && row.status === 'disabled' && asBoolean(row.deletable) },
+    async remove(row) {
+      try {
+        await this.$confirm(`确认删除停用工序“${row.operation_name}”？删除后无法恢复。`, '删除工序', { type: 'warning', confirmButtonText: '删除' })
+        await deleteProductionOperation(row.id, { client_command_id: `operation-delete-${row.id}-${row.business_version}`, expected_version: row.business_version })
+        if (this.selected && Number(this.selected.id) === Number(row.id)) this.closeInspector()
+        this.$message.success('工序已删除')
+        if (this.rows.some(current => Number(current.id) === Number(row.id)) && this.rows.length === 1 && this.page > 1) this.page--
+        await this.load()
+      } catch (error) {
+        if (error !== 'cancel' && error !== 'close') this.$message.error(error.userMessage || '删除失败')
+      }
     },
     async loadWorkers(id) {
       this.workers = []
@@ -287,7 +315,7 @@ export default {
     reset() { this.filters = { keyword: '', status: '', reference_status: '', is_public: '' }; this.search() },
     changePage(value) { this.page = value; this.load() },
     changePageSize(value) { this.perPage = value; this.page = 1; this.load() },
-    rowClass({ row }) { return this.selected && this.selected.id === row.id ? 'selected-operation-row' : '' },
+    rowClass({ row }) { return this.selected && Number(this.selected.id) === Number(row.id) ? 'selected-operation-row' : '' },
     async openCreate() {
       if (this.createDialog) return
       this.dialogMode = 'create'
@@ -325,7 +353,12 @@ export default {
     closeCreate() {
       if (this.createSaving) return
       this.createDialog = false
-      if (this.$route.query.create === '1' || this.$route.query.edit) this.$router.replace('/production/operations').catch(() => {})
+      if (this.$route.query.create === '1' || this.$route.query.edit) {
+        const query = { ...this.$route.query }
+        delete query.create
+        delete query.edit
+        this.$router.replace({ path: '/production/operations', query }).catch(() => {})
+      }
     },
     saveCreate() {
       this.$refs.createForm.validate(async valid => {

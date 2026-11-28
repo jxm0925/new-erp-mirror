@@ -13,7 +13,10 @@
       </div>
       <div class="head-actions">
         <el-button size="small" icon="el-icon-refresh" class="btn-refresh" @click="fetch">刷新</el-button>
-        <el-button size="small" type="success" icon="el-icon-plus" class="btn-theme-create" @click="$router.push('/master/skus/new')">
+        <el-button v-if="$can('master.import') || $can('master.import.upload')" size="small" icon="el-icon-upload2" class="btn-refresh" @click="$router.push({ path: '/master/imports', query: { type: 'SKU' } })">
+          导入 SKU
+        </el-button>
+        <el-button v-if="$can('master.sku.create')" size="small" type="success" icon="el-icon-plus" class="btn-theme-create" @click="$router.push('/master/skus/new')">
           新增 SKU
         </el-button>
       </div>
@@ -224,10 +227,11 @@
                 <el-button type="text" size="small" icon="el-icon-view" class="action-link-theme" @click.stop="$router.push('/master/skus/' + row.id)">
                   详情
                 </el-button>
-                <el-button type="text" size="small" icon="el-icon-edit" class="action-link-theme" @click.stop="$router.push('/master/skus/' + row.id + '/edit')">
-                  编辑
+                <el-button v-if="$can('master.sku.edit')" type="text" size="small" icon="el-icon-edit" class="action-link-theme" @click.stop="$router.push('/master/skus/' + row.id + (row.status === 'draft' ? '/complete' : '/edit'))">
+                  {{ row.status === 'draft' ? '去补全' : '编辑' }}
                 </el-button>
                 <el-button
+                  v-if="row.status !== 'draft' && $can('master.sku.edit')"
                   type="text"
                   size="small"
                   :class="row.status === 'enabled' ? 'danger-link' : 'success-link'"
@@ -236,7 +240,7 @@
                   {{ row.status === 'enabled' ? '停用' : '启用' }}
                 </el-button>
                 <el-button
-                  v-if="row.status !== 'enabled'"
+                  v-if="row.status !== 'enabled' && $can('master.sku.delete')"
                   type="text"
                   size="small"
                   class="danger-link"

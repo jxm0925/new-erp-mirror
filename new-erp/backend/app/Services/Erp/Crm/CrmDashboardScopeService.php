@@ -2,6 +2,7 @@
 
 namespace App\Services\Erp\Crm;
 
+use App\Models\Erp\BusinessLine;
 use App\Models\Erp\CrmFollowup;
 use App\Models\Erp\CrmLead;
 use App\Models\Erp\CrmOpportunity;
@@ -44,7 +45,7 @@ final class CrmDashboardScopeService
         $query = SalesCustomer::query();
         $this->access->applyVisible($query, $actor);
         $this->attribution($query, $filters, 'owner_legacy_id', 'owner_department_legacy_id');
-        if (!empty($filters['business_line'])) $query->whereJsonContains('business_lines', $filters['business_line']);
+        if (filled($filters['business_line'] ?? null)) $query->whereJsonContains('business_lines', $filters['business_line']);
         return $query;
     }
 
@@ -54,7 +55,7 @@ final class CrmDashboardScopeService
         $query = CrmLead::query();
         $this->leadAccess->applyVisible($query, $actor);
         $this->attribution($query, $filters, 'owner_legacy_id', 'department_legacy_id');
-        if (!empty($filters['business_line'])) $query->whereJsonContains('customer_business_lines', $filters['business_line']);
+        if (filled($filters['business_line'] ?? null)) $query->whereJsonContains('customer_business_lines', $filters['business_line']);
         if (!empty($filters['currency'])) $query->where('currency', $filters['currency']);
         return $query;
     }
@@ -65,7 +66,7 @@ final class CrmDashboardScopeService
         $query = CrmOpportunity::query();
         $this->opportunityAccess->applyVisible($query, $actor);
         $this->attribution($query, $filters, 'owner_legacy_id', 'department_legacy_id');
-        if (!empty($filters['business_line'])) $query->where('business_line', $filters['business_line']);
+        if (filled($filters['business_line'] ?? null)) $query->where('business_line', $filters['business_line']);
         if (!empty($filters['currency'])) $query->where('currency', $filters['currency']);
         return $query;
     }
@@ -78,7 +79,7 @@ final class CrmDashboardScopeService
         $this->amounts->applyEffective($query);
         $this->attribution($query, $filters, 'sales_user_legacy_id', 'sales_department_id');
         if (!empty($filters['currency'])) $query->where('currency', $filters['currency']);
-        if (!empty($filters['business_line'])) {
+        if (filled($filters['business_line'] ?? null)) {
             // 订单没有业务线快照，只取原权限下可见的关联商机，不猜客户当前业务线。
             $opportunities = $this->opportunities($actor, ['business_line' => $filters['business_line']]);
             $opportunities ? $query->whereIn('id', DB::table('erp_crm_opportunity_orders')->select('order_id')
@@ -130,13 +131,15 @@ final class CrmDashboardScopeService
         return $this->departmentCache[$id] = $ids;
     }
 
-    /** 筛选项只来自原可见对象及原组织范围，未知或越权值不能退回全范围。 */
+    /** 接受启用的公共业务线；历史筛选值和组织范围仍按原可见权限校验。 */
     public function assertFilters(object $actor, array $filters): void
     {
         foreach (['department_legacy_id', 'group_legacy_id'] as $field) {
             if (empty($filters[$field])) continue;
             $id = (int) $filters[$field];
-            if (!DB::table('erp_departments')->where('legacy_id', $id)->exists()) throw ValidationException::withMessages([$field => '部门或小组不存在。']);
+            if (!DB::table('erp_departments')->where('legacy_id', $id)->whereNull('deleted_at')->where('status', 'normal')->exists()) {
+                throw ValidationException::withMessages([$field => '部门或小组不存在。']);
+            }
             if ($field === 'group_legacy_id' && !empty($filters['department_legacy_id'])
                 && !in_array($id, $this->departmentIds((int) $filters['department_legacy_id']), true)) {
                 throw ValidationException::withMessages([$field => '所选小组不属于该部门。']);
@@ -152,7 +155,7 @@ final class CrmDashboardScopeService
             if (!DB::table('erp_legacy_admin_users')->where('legacy_id', $id)->exists()) throw ValidationException::withMessages(['sales_user_legacy_id' => '销售人员不存在。']);
             abort_unless($this->salesIds($actor)->where('sales_id', $id)->exists(), 403, '所选销售人员不在可见范围内。');
         }
-        if (!empty($filters['business_line'])) {
+        if (filled($filters['business_line'] ?? null) && !BusinessLine::query()->enabled()->where('name', $filters['business_line'])->exists()) {
             $line = $filters['business_line'];
             $customers = $this->customers($actor);
             $leads = $this->leads($actor);
@@ -201,19 +204,36 @@ final class CrmDashboardScopeService
 
     public function visibleDepartments(object $actor): array
     {
-        if ($this->auth->dataScope($actor) === 'all') return DB::table('erp_departments')->orderBy('legacy_id')->pluck('legacy_id')->map(fn ($id) => (int) $id)->all();
+        if ($this->auth->dataScope($actor) === 'all') {
+            return DB::table('erp_departments')
+                ->whereNull('deleted_at')
+                ->where('status', 'normal')
+                ->orderBy('legacy_id')
+                ->pluck('legacy_id')
+                ->map(fn ($id) => (int) $id)
+                ->all();
+        }
+        $rows = DB::table('erp_departments')
+            ->whereNull('deleted_at')
+            ->where('status', 'normal')
+            ->get(['legacy_id', 'parent_legacy_id']);
+        $activeIds = $rows->pluck('legacy_id')->map(fn ($id) => (int) $id)->all();
         $ids = [];
         foreach ([[$this->customers($actor), 'owner_department_legacy_id'], [$this->leads($actor), 'department_legacy_id'],
             [$this->opportunities($actor), 'department_legacy_id'], [$this->orders($actor), 'sales_department_id']] as [$query, $field]) {
             if ($query) $ids = array_merge($ids, $query->distinct()->pluck($field)->all());
         }
         $ids = array_merge($ids, DB::table('erp_department_users')->where('user_legacy_id', $actor->legacy_id)->pluck('department_legacy_id')->all());
-        // 祖先只作为层级筛选入口，结果仍与每种对象的原权限相交。
-        $rows = DB::table('erp_departments')->get(['legacy_id', 'parent_legacy_id']);
+        $ids = array_values(array_unique(array_intersect(array_map('intval', array_filter($ids)), $activeIds)));
+        // 祖先只作为层级筛选入口，结果仍与每种对象的原权限相交；已停用或软删除部门不再暴露到筛选项。
         do {
             $before = count($ids);
-            foreach ($rows as $row) if (in_array((int) $row->legacy_id, array_map('intval', $ids), true) && $row->parent_legacy_id) $ids[] = (int) $row->parent_legacy_id;
-            $ids = array_values(array_unique(array_map('intval', array_filter($ids))));
+            foreach ($rows as $row) {
+                if (in_array((int) $row->legacy_id, $ids, true) && $row->parent_legacy_id && in_array((int) $row->parent_legacy_id, $activeIds, true)) {
+                    $ids[] = (int) $row->parent_legacy_id;
+                }
+            }
+            $ids = array_values(array_unique($ids));
         } while (count($ids) !== $before);
         return $ids;
     }

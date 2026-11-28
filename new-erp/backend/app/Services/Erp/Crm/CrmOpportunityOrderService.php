@@ -29,7 +29,7 @@ final class CrmOpportunityOrderService
         $contact = $contextOnly && !$opportunity->contact_id ? null : $customer->contacts()->where('status', 'enabled')
             ->when($opportunity->contact_id, fn ($q) => $q->whereKey($opportunity->contact_id))
             ->orderByDesc('is_default')->orderBy('id')->first();
-        $tradeType = data_get($opportunity->source_snapshot, 'trade_type');
+        $tradeType = $opportunity->trade_type ?: data_get($opportunity->source_snapshot, 'trade_type') ?: CrmNineStepCatalog::tradeType($opportunity->department_legacy_id);
         return [
             'opportunity_id' => $opportunity->id,
             'opportunity' => $opportunity->only(['id', 'opportunity_no', 'name']),
@@ -172,6 +172,7 @@ final class CrmOpportunityOrderService
                 ['order_id' => $order->id, 'order_no' => $order->sales_order_no, 'first_effective_at' => $link->first_effective_at->toDateTimeString()], null, $actor);
         }
         $this->opportunities->markWon($opportunity, $actor, $order->id);
+        app(CrmProgressApplicationService::class)->customerWon((int) $order->customer_id, $actor);
     }
 
     public function deleteDraftLink(SalesOrder $order, ?object $actor): void

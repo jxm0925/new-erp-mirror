@@ -32,6 +32,115 @@ final class CrmDailyReportService
         return CrmDailyReport::where(['kind' => $kind, 'scope_id' => $id, 'report_date' => $date]);
     }
 
+    public function syncFollowups(object $actor, string $date, int $version): array
+    {
+        $this->assertSalesWriter($actor);
+        $id = (int) $actor->legacy_id;
+        $name = $this->staff->name($id) ?: ($actor->nickname ?: $actor->username ?: '销售');
+        DB::transaction(function () use ($actor, $date, $version, $id, $name) {
+            $report = $this->locked('sales', $id, $date, $actor, $name);
+            abort_if($report->confirmed_at, 409, '这份作战表已确认。');
+            $this->checkVersion($report, ['version' => $version]);
+            $body = $this->identifyPoolRows($report->body ?? []);
+            $fresh = $this->facts->poolOthers($actor, $date, $id, $name);
+            $byKey = collect($fresh)->keyBy('key');
+            $rows = [];
+            foreach ($body['pool_others'] ?? [] as $row) {
+                if (!empty($row['key']) && $byKey->has($row['key'])) {
+                    // 事实重取，主攻、求助和复盘等人工决策仍保留。
+                    $freshRow = $byKey->pull($row['key']);
+                    $merged = array_replace($row, $freshRow);
+                    foreach (['pool', 'nine_step', 'stage', 'stage_label', 'probability', 'max_blocker', 'promise'] as $field) {
+                        if (!empty($row['followup_fingerprint']) && $row['followup_fingerprint'] === $freshRow['followup_fingerprint']
+                            && array_key_exists($field, $row) && $row[$field] !== ($row['auto_snapshot'][$field] ?? null)) $merged[$field] = $row[$field];
+                    }
+                    $row = $merged;
+                }
+                $rows[] = $row;
+            }
+            $body['pool_others'] = array_merge($rows, $byKey->values()->all());
+            $manualPlans = array_values(array_filter($body['plan'] ?? [], fn ($p) => ($p['source'] ?? '') !== 'followup'));
+            $oldPlans = collect($body['plan'] ?? [])->where('source', 'followup')->keyBy('row_ref');
+            $plans = $this->followupPlans($fresh, $date);
+            foreach ($plans as &$plan) {
+                $old = $oldPlans->get($plan['row_ref']);
+                if (!$old) continue;
+                foreach (['task', 'action', 'time', 'result', 'blocker', 'reason', 'remark'] as $field) {
+                    if (array_key_exists($field, $old) && $old[$field] !== ($old['auto_snapshot'][$field] ?? null)) $plan[$field] = $old[$field];
+                }
+            }
+            unset($plan);
+            $body['plan'] = array_merge($manualPlans, $plans);
+            $report->body = $body;
+            if ($report->analysis) $report->analysis = array_replace($report->analysis, ['review_changed' => true]);
+            $report->version++;
+            $report->save();
+        }, 3);
+        return $this->sales($actor, $date);
+    }
+
+    private function assertSalesWriter(object $actor): void
+    {
+        $access = app(CrmCustomerAccessService::class);
+        abort_unless($access->can($actor, 'crm.lead.view') && (app(\App\Services\Erp\AuthContextService::class)->isSuperAdmin($actor)
+            || ($this->staff->isActiveSales((int) $actor->legacy_id) && $access->can($actor, 'crm.lead.follow'))), 403, '需要有效销售身份和跟进权限。');
+    }
+
+    private function followupPlans(array $rows, string $date): array
+    {
+        $plans = [];
+        foreach ($rows as $row) {
+            if (($row['followup_schedule_mode'] ?? '') !== 'scheduled' || blank($row['contact_time'] ?? null) || blank($row['tmr_must_action'] ?? null)) continue;
+            if (Carbon::parse($row['contact_time'])->toDateString() !== Carbon::parse($date)->addDay()->toDateString()) continue;
+            $plans[] = ['source' => 'followup', 'subject_key' => $row['key'], 'row_ref' => 'followup-plan:'.$row['key'],
+                'seq' => count($plans) + 1, 'customer_name' => $row['customer_name'], 'task' => $row['tmr_must_action'],
+                'action' => $row['tmr_must_action'], 'time' => $row['contact_time'], 'blocker' => $row['max_blocker'] ?? '',
+                'result' => '', 'reason' => '', 'remark' => ''];
+            $last = count($plans) - 1;
+            $plans[$last]['auto_snapshot'] = array_intersect_key($plans[$last], array_flip(['task', 'action', 'time', 'result', 'blocker', 'reason', 'remark']));
+        }
+        return $plans;
+    }
+
+    /** 只有人工改变的推进字段反向落主表；历史只读事实不能借日报越权重写对象。 */
+    private function syncProgress(object $actor, string $date, array $body, array $stored, string $name): array
+    {
+        $baseline = collect($this->facts->poolOthers($actor, $date, (int) $actor->legacy_id, $name))->keyBy('key')->all();
+        foreach ($stored['pool_others'] ?? [] as $row) if (!empty($row['key'])) $baseline[$row['key']] = $row;
+        $indices = array_keys($body['pool_others']);
+        usort($indices, fn ($a, $b) => strcmp($body['pool_others'][$a]['key'], $body['pool_others'][$b]['key']));
+        foreach ($indices as $index) {
+            $row = $body['pool_others'][$index];
+            $key = $row['key'];
+            if ($key === '' || str_starts_with($key, 'customer:')) continue;
+            $previous = $baseline[$key] ?? [];
+            $payload = $this->rowProgress($row);
+            $oldPayload = $this->rowProgress($previous);
+            $changes = array_filter($payload, fn ($value, $field) => (string) $value !== (string) ($oldPayload[$field] ?? ''), ARRAY_FILTER_USE_BOTH);
+            if (!$changes) continue;
+            [$kind, $targetId] = explode(':', $key);
+            $target = ($kind === 'lead' ? CrmLead::query() : CrmOpportunity::query())->lockForUpdate()->find((int) $targetId);
+            abort_unless($target && (int) $target->owner_legacy_id === (int) $actor->legacy_id
+                && $target->status === ($kind === 'lead' ? 'active' : 'open'), 409, '日报关联对象已转交或结束，不能反向修改推进进度。');
+            abort_unless(isset($row['subject_version']), 409, '请刷新日报后再调整关联对象进度。');
+            $updated = app(CrmProgressApplicationService::class)->update($kind, (int) $targetId,
+                $changes + ['version' => (int) $row['subject_version']], $actor);
+            $body['pool_others'][$index]['subject_version'] = (int) $updated->version;
+        }
+        return $body;
+    }
+
+    private function rowProgress(array $row): array
+    {
+        $kind = explode(':', (string) ($row['key'] ?? 'lead:'))[0];
+        $stage = trim((string) (($row['nine_step'] ?? '') ?: ($row['stage'] ?? '')));
+        $result = ['customer_pool' => app(CrmCustomerPoolService::class)->normalize($row['pool'] ?? null),
+            'current_blocker' => $row['max_blocker'] ?? '', 'customer_promise' => $row['promise'] ?? ''];
+        if ($stage !== '') $result['nine_step_stage'] = CrmNineStepCatalog::normalizeStage($kind, $stage);
+        if (filled($row['probability'] ?? null)) $result['win_probability'] = (string) $row['probability'];
+        return $result;
+    }
+
     public function sales(object $actor, string $date, ?int $salesId = null, array $projectKeys = []): array
     {
         $id = $salesId && $salesId > 0 ? $salesId : (int) $actor->legacy_id;
@@ -50,6 +159,7 @@ final class CrmDailyReportService
         $rawBody = $this->identifyPoolRows($rawBody);
         if (!$amountsAllowed) $rawBody = $this->protectSalesAmounts($rawBody);
         $poolOthers = $rawBody['pool_others'] ?? ($confirmed ? [] : $this->facts->poolOthers($actor, $date, $id, $salesName));
+        if (!$report) $rawBody['plan'] = $this->followupPlans($poolOthers, $date);
         $storedAnalysis = ($report?->analysis['template_version'] ?? null) === 2 ? $report->analysis : null;
 
         // 收集所有涉及的项目 key
@@ -92,6 +202,7 @@ final class CrmDailyReportService
         $normalizedBody = $this->normalizeSalesBodyForRead($rawBody, $salesName, $poolOthers, $items);
 
         return [
+            'dictionaries' => CrmNineStepCatalog::metadata('all'),
             'version' => $report?->version ?? 0,
             'confirmed' => $confirmed,
             'is_self' => $isSelf,
@@ -109,6 +220,7 @@ final class CrmDailyReportService
 
     public function saveSales(object $actor, string $date, array $input): array
     {
+        $this->assertSalesWriter($actor);
         if (isset($input['sales_id']) && (int) $input['sales_id'] !== (int) $actor->legacy_id) {
             abort(403, '只能保存本人作战表，主管请使用批注功能。');
         }
@@ -139,15 +251,15 @@ final class CrmDailyReportService
             'base.today_ship_target' => 'nullable|numeric|min:0|max:999999999999',
             'base.month_close_target' => 'nullable|numeric|min:0|max:999999999999',
             'base.month_ship_target' => 'nullable|numeric|min:0|max:999999999999',
-            'pool_others' => 'present|array|max:100',
+            'pool_others' => 'present|array',
             'pool_others.*' => 'array',
             'department_help' => 'sometimes|array|max:30',
             'department_help.*' => 'required|string|distinct|max:500',
             'review_detail' => 'sometimes|array',
-            'plan' => 'sometimes|array|max:60',
+            'plan' => 'sometimes|array',
             'plan.*' => 'array',
             'items' => 'sometimes|array|max:40',
-            'items.*.key' => ['required', 'distinct', 'regex:/^(lead|opportunity):[1-9][0-9]*$/'],
+            'items.*.key' => ['required', 'distinct', 'regex:/^(lead|opportunity|customer):[1-9][0-9]*$/'],
             'items.*.priority' => 'required|in:primary,backup,review',
             'items.*.blocker' => 'nullable|string|max:500',
             'items.*.action' => 'nullable|string|max:500',
@@ -157,7 +269,7 @@ final class CrmDailyReportService
         ])->validate();
 
         Validator::make($data, [
-            'pool_others.*.key' => ['nullable', 'distinct', 'regex:/^(lead|opportunity):[1-9][0-9]*$/'],
+            'pool_others.*.key' => ['nullable', 'distinct', 'regex:/^(lead|opportunity|customer):[1-9][0-9]*$/'],
         ])->validate();
 
         $id = (int) $actor->legacy_id;
@@ -184,8 +296,11 @@ final class CrmDailyReportService
             $this->checkVersion($report, $data);
 
             $keys = array_column($body['items'], 'key');
+            $boundKeys = array_values(array_filter(array_column($body['pool_others'], 'key')));
+            abort_unless(count($this->facts->byKeys($actor, $id, $boundKeys, false)) === count($boundKeys), 403, '日报包含无权读取的关联对象，请移除后重试。');
             $subjects = $this->facts->byKeys($actor, $id, $keys);
             abort_unless(count($keys) === count($subjects), 409, '部分客户已转交或结束跟进，请刷新后移除。');
+            $body = $this->syncProgress($actor, $date, $body, $report->body ?? [], $salesName);
 
             if ($confirm) {
                 $hasReviewDetail = collect($body['review_detail'])->filter(fn ($v) => filled($v))->isNotEmpty();
@@ -201,12 +316,13 @@ final class CrmDailyReportService
                 foreach ($body['items'] as $item) {
                     $s = $subjects[$item['key']];
                     // 确认与移交/结束跟进互斥，重复提交由日报锁保护。
-                    $model = $s['kind'] === 'lead' ? CrmLead::class : CrmOpportunity::class;
+                    $model = match ($s['kind']) { 'lead' => CrmLead::class, 'opportunity' => CrmOpportunity::class, default => \App\Models\Erp\SalesCustomer::class };
                     $subject = $model::whereKey($s['id'])->lockForUpdate()->first();
-                    abort_unless($subject && (int) $subject->owner_legacy_id === $id && $subject->status === ($s['kind'] === 'lead' ? 'active' : 'open'), 409, '跟进对象已变更。');
+                    $active = $subject && match ($s['kind']) { 'lead' => $subject->status === 'active', 'opportunity' => $subject->status === 'open', default => !in_array($subject->status, ['disabled', 'blacklisted'], true) };
+                    abort_unless($active && (int) $subject->owner_legacy_id === $id, 409, '跟进对象已变更。');
                     if ($item['priority'] === 'review' && blank($item['help_request'])) continue;
                     if ($item['priority'] !== 'review') {
-                        $service = $s['kind'] === 'lead' ? CrmLeadApplicationService::class : CrmOpportunityApplicationService::class;
+                        $service = match ($s['kind']) { 'lead' => CrmLeadApplicationService::class, 'opportunity' => CrmOpportunityApplicationService::class, default => CrmCustomerAccessService::class };
                         abort_unless(app($service)->abilities($subject, $actor)['follow'], 403, '缺少此项目的跟进权限。');
                         abort_if(blank($item['action']), 422, '请填写重点客户的明日动作。');
                     }
@@ -866,7 +982,7 @@ final class CrmDailyReportService
         }
 
         $poolOthers = [];
-        foreach (array_slice($data['pool_others'] ?? [], 0, 100) as $row) {
+        foreach ($data['pool_others'] ?? [] as $row) {
             if (!is_array($row)) continue;
             $process = [];
             foreach (['nine_step', 'today_action', 'today_result', 'promise', 'reason', 'next_step', 'deadline',
@@ -874,6 +990,14 @@ final class CrmDailyReportService
                 $process[$field] = mb_substr(trim((string) ($row[$field] ?? '')), 0, 500);
             }
             $poolOthers[] = $process + [
+                'source' => ($row['source'] ?? '') === 'followup' ? 'followup' : '',
+                'auto_snapshot' => array_intersect_key(is_array($row['auto_snapshot'] ?? null) ? $row['auto_snapshot'] : [], array_flip(['pool', 'nine_step', 'stage', 'stage_label', 'probability', 'max_blocker', 'promise'])),
+                'subject_version' => isset($row['subject_version']) ? (int) $row['subject_version'] : null,
+                'followup_ids' => array_values(array_unique(array_map('intval', is_array($row['followup_ids'] ?? null) ? $row['followup_ids'] : []))),
+                'followup_fingerprint' => mb_substr(trim((string) ($row['followup_fingerprint'] ?? '')), 0, 64),
+                'followup_schedule_mode' => in_array($row['followup_schedule_mode'] ?? '', ['scheduled', 'nurture', 'completed'], true) ? $row['followup_schedule_mode'] : '',
+                'priority' => in_array($row['priority'] ?? '', ['primary', 'backup', 'review'], true) ? $row['priority'] : '',
+                'help_request' => mb_substr(trim((string) ($row['help_request'] ?? '')), 0, 500),
                 'key' => mb_substr(trim((string) ($row['key'] ?? '')), 0, 60),
                 'row_ref' => mb_substr((string) ($row['row_ref'] ?? ''), 0, 100),
                 'kind' => mb_substr(trim((string) ($row['kind'] ?? '')), 0, 20),
@@ -907,9 +1031,12 @@ final class CrmDailyReportService
         $reviewDetail['final'] = $existingSupervisorFinal;
 
         $plan = [];
-        foreach (array_values(array_slice($data['plan'] ?? [], 0, 60)) as $idx => $row) {
+        foreach (array_values($data['plan'] ?? []) as $idx => $row) {
             if (!is_array($row)) continue;
             $plan[] = [
+                'source' => ($row['source'] ?? '') === 'followup' ? 'followup' : '',
+                'row_ref' => mb_substr(trim((string) ($row['row_ref'] ?? '')), 0, 100),
+                'auto_snapshot' => array_intersect_key(is_array($row['auto_snapshot'] ?? null) ? $row['auto_snapshot'] : [], array_flip(['task', 'action', 'time', 'result', 'blocker', 'reason', 'remark'])),
                 'ai_ref' => mb_substr(trim((string) ($row['ai_ref'] ?? '')), 0, 80),
                 'seq' => $idx + 1,
                 'task' => mb_substr(trim((string) ($row['task'] ?? '')), 0, 200),

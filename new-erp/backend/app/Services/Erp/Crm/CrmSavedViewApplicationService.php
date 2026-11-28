@@ -18,17 +18,17 @@ final class CrmSavedViewApplicationService
         'customers' => ['customer_name' => '客户名称', 'customer_code' => '客户编码', 'company_background' => '公司背景',
             'customer_kind' => '客户类型', 'customer_grade' => '客户等级', 'industry' => '行业', 'purchasing_power' => '年采购力',
             'business_lines' => '业务线', 'default_contact' => '联系人', 'owner_name' => '负责销售', 'deal_amount' => '成交金额',
-            'customer_pools' => '客户池', 'last_contact_at' => '最近跟进', 'next_contact_at' => '下次跟进', 'status' => '状态',
+            'customer_pool' => '维系池', 'lifecycle_stage' => '九步阶段', 'customer_pools' => '线索客户池', 'last_contact_at' => '最近跟进', 'next_contact_at' => '下次跟进', 'status' => '状态',
             'region' => '地区', 'credit_code' => '统一信用代码', 'first_source' => '首次来源', 'customer_tags' => '客户标签', 'remark' => '备注',
             'open_opportunity_count' => '进行中商机', 'expected_amounts' => '待成交金额'],
         'leads' => ['customer_name' => '客户名称', 'lead_no' => '线索编号', 'customer_kind' => '客户类型', 'contact_name' => '联系人',
             'mobile' => '联系电话', 'region' => '地区', 'demand_summary' => '需求摘要', 'expected_amount' => '预计成交额',
             'trade_type' => '贸易类型', 'source_channel' => '本次咨询来源', 'entry_method' => '录入方式',
             'platform_name' => '平台与店铺', 'owner_name' => '负责销售', 'department_name' => '所属部门', 'status' => '状态',
-            'customer_pool' => '客户池', 'last_contact_at' => '最近跟进', 'next_contact_at' => '下次跟进', 'next_plan' => '跟进计划',
+            'customer_pool' => '客户池', 'nine_step_stage' => '九步阶段', 'latest_followup_summary' => '跟进摘要', 'last_contact_at' => '最近跟进', 'next_contact_at' => '下次跟进', 'next_plan' => '跟进计划',
             'recycle_reason' => '回收原因', 'recycled_at' => '回收时间', 'previous_owner_name' => '原负责人', 'recycled_by_name' => '回收人'],
         'opportunities' => ['customer_name' => '客户名称', 'name' => '商机名称', 'business_line' => '业务线', 'owner_name' => '负责销售',
-            'stage' => '阶段', 'expected_amount' => '预计金额', 'expected_close_date' => '预计成交日期',
+            'stage' => '阶段', 'customer_pool' => '客户池', 'latest_followup_summary' => '跟进摘要', 'expected_amount' => '预计金额', 'expected_close_date' => '预计成交日期',
             'last_contact_at' => '最近跟进', 'next_contact_at' => '下次跟进'],
     ];
     public const SORT_FIELDS = [
@@ -44,11 +44,11 @@ final class CrmSavedViewApplicationService
     public const DASHBOARD_PAGES = ['overview', 'sales', 'dimensions', 'pipeline', 'sources', 'income'];
     public const DEFAULT_COLUMNS = [
         'customers' => ['customer_name', 'customer_code', 'company_background', 'customer_kind', 'customer_grade', 'industry', 'purchasing_power',
-            'business_lines', 'default_contact', 'owner_name', 'deal_amount', 'customer_pools', 'last_contact_at', 'next_contact_at', 'status'],
+            'business_lines', 'default_contact', 'owner_name', 'deal_amount', 'customer_pool', 'lifecycle_stage', 'customer_pools', 'last_contact_at', 'next_contact_at', 'status'],
         'leads' => ['customer_name', 'lead_no', 'customer_kind', 'contact_name', 'mobile', 'region', 'demand_summary', 'expected_amount', 'trade_type',
-            'source_channel', 'entry_method', 'platform_name', 'owner_name', 'department_name', 'status', 'customer_pool',
+            'source_channel', 'entry_method', 'platform_name', 'owner_name', 'department_name', 'status', 'customer_pool', 'nine_step_stage', 'latest_followup_summary',
             'last_contact_at', 'next_contact_at', 'next_plan', 'recycle_reason', 'recycled_at', 'previous_owner_name', 'recycled_by_name'],
-        'opportunities' => ['customer_name', 'name', 'business_line', 'owner_name', 'stage', 'expected_amount', 'expected_close_date', 'last_contact_at', 'next_contact_at'],
+        'opportunities' => ['customer_name', 'name', 'business_line', 'owner_name', 'stage', 'customer_pool', 'latest_followup_summary', 'expected_amount', 'expected_close_date', 'last_contact_at', 'next_contact_at'],
     ];
     private const REQUIRED_FIELDS = ['customers' => ['customer_name'], 'leads' => ['customer_name'], 'opportunities' => ['customer_name', 'name']];
     private const PRIVATE_FILTERS = ['keyword', 'customer_id', 'custom_tag', 'recycle_reason'];
@@ -239,16 +239,17 @@ final class CrmSavedViewApplicationService
     {
         return match ($resource) {
             'customers' => ['tab' => 'nullable|in:mine,collab,all', 'keyword' => 'nullable|string|max:160',
+                'customer_pool' => 'nullable|string|max:80',
                 'industry' => 'nullable|string|max:80', 'customer_grade' => 'nullable|string|max:40',
                 'owner_name' => 'nullable|string|max:80', 'status' => 'nullable|in:enabled,potential,disabled,blacklisted'],
             'leads' => ['tab' => 'nullable|in:all,mine,collaborating,delegated,pending_assignment,pending_acceptance,pending_review,public_pool,draft',
                 'keyword' => 'nullable|string|max:160', 'department_legacy_id' => 'nullable|integer|min:1',
                 'source_channel' => 'nullable|string|max:120', 'entry_method' => 'nullable|in:self,operations',
                 'recycle_reason' => 'nullable|string|max:500', 'status' => ['nullable', Rule::in(array_keys(CrmLeadApplicationService::STATUSES))],
-                'customer_pool' => ['nullable', Rule::in(CrmLeadApplicationService::POOLS)], 'customer_id' => 'nullable|integer|min:1',
+                'customer_pool' => 'nullable|string|max:80', 'customer_id' => 'nullable|integer|min:1',
                 'customer_tag' => 'nullable|string|max:80', 'custom_tag' => 'nullable|string|max:80', 'due' => 'nullable|in:today,overdue,pending'],
             'opportunities' => ['tab' => 'nullable|in:all,mine,delegated,collaborating,won,lost', 'keyword' => 'nullable|string|max:160',
-                'business_line' => 'nullable|string|max:120', 'stage' => ['nullable', Rule::in(array_keys(CrmOpportunityApplicationService::STAGES))],
+                'customer_pool' => 'nullable|string|max:80', 'business_line' => 'nullable|string|max:120', 'stage' => ['nullable', Rule::in(array_merge(array_keys(CrmOpportunityApplicationService::STAGES),array_keys(CrmNineStepCatalog::LEGACY)))],
                 'expected_close_from' => 'nullable|date_format:Y-m-d', 'expected_close_to' => 'nullable|date_format:Y-m-d'],
             'dashboard' => ['date_from' => 'nullable|date_format:Y-m-d', 'date_to' => 'nullable|date_format:Y-m-d',
                 'department_legacy_id' => 'nullable|integer|min:1', 'group_legacy_id' => 'nullable|integer|min:1',
@@ -342,8 +343,14 @@ final class CrmSavedViewApplicationService
     private function readableConfiguration(object $actor, CrmSavedView $view): array
     {
         $original = $view->configuration ?? [];
-        $configuration = is_array($original) ? $original : [];
         $resource = $view->resource;
+        if ($resource === 'dashboard' && is_array($original['filters'] ?? null)) {
+            // 在读取副本上统一旧小组字段，等价转换不触发配置失效提示。
+            $groupId = $original['filters']['group_legacy_id'] ?? null;
+            if ($groupId !== null && $groupId !== '') $original['filters']['department_legacy_id'] = $groupId;
+            unset($original['filters']['group_legacy_id']);
+        }
+        $configuration = is_array($original) ? $original : [];
         $configuration = array_intersect_key($configuration, array_flip($resource === 'dashboard' ? ['page', 'filters', 'settings', 'components'] : ['columns', 'filters', 'sort', 'group_by']));
         $configuration['filters'] = $this->readableValues($configuration['filters'] ?? [], $this->filterRules($resource));
         if ($view->scope !== 'personal') $configuration['filters'] = array_diff_key($configuration['filters'], array_flip(self::PRIVATE_FILTERS));
@@ -351,6 +358,15 @@ final class CrmSavedViewApplicationService
         $to = $resource === 'opportunities' ? 'expected_close_to' : 'date_to';
         if (!empty($configuration['filters'][$from]) && !empty($configuration['filters'][$to]) && $configuration['filters'][$from] > $configuration['filters'][$to]) unset($configuration['filters'][$from], $configuration['filters'][$to]);
         if ($resource === 'dashboard') {
+            $departmentId = $configuration['filters']['department_legacy_id'] ?? null;
+            if ($departmentId !== null && $departmentId !== '') {
+                $visibleDepartments = once(fn () => app(CrmDashboardScopeService::class)->visibleDepartments($actor));
+                if (in_array((int) $departmentId, $visibleDepartments, true)) {
+                    $configuration['filters']['department_legacy_id'] = (int) $departmentId;
+                } else {
+                    unset($configuration['filters']['department_legacy_id']);
+                }
+            }
             $configuration['page'] = in_array($configuration['page'] ?? '', self::DASHBOARD_PAGES, true) ? $configuration['page'] : 'overview';
             $configuration['settings'] = $this->readableValues($configuration['settings'] ?? [], $this->settingRules($actor));
             if (!empty($configuration['settings']['cohort_from']) && !empty($configuration['settings']['cohort_to'])

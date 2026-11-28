@@ -24,70 +24,38 @@
             </el-form-item>
             <el-form-item :label="form.customer_kind === 'enterprise' ? '企业名称' : '客户姓名'" required>
               <div class="crm-inline name-field">
-                <el-input v-model.trim="form.customer_name" :disabled="identityLocked" maxlength="160" placeholder="请输入客户名称" />
+                <el-input v-model.trim="form.customer_name" :disabled="identityLocked" maxlength="160" placeholder="请输入客户名称" @blur="checkDuplicate" />
                 <el-button v-if="!isFormal && (!$can || $can('sales.customer'))" type="text" icon="el-icon-search" @click="$refs.picker.open()">选择已有客户</el-button>
               </div>
+              <small v-if="duplicateChecking" class="crm-sub">正在核对已有客户…</small><small v-else-if="duplicateHint" class="crm-sub">{{ duplicateHint }}</small>
               <div v-if="form.customer_id" class="linked-cust-bar">
                 <span><i class="el-icon-circle-check" /> 已关联已有客户</span>
                 <el-button v-if="!isFormal" type="text" size="mini" class="crm-danger-link" @click="unlinkCustomer">取消关联</el-button>
               </div>
             </el-form-item>
-            <el-form-item v-if="form.customer_kind === 'enterprise'" label="信用代码">
-              <el-input v-model.trim="form.credit_code" :disabled="identityLocked" maxlength="32" placeholder="统一社会信用代码（选填）" />
-            </el-form-item>
+
             <el-form-item label="对接人">
               <el-input v-model.trim="form.contact_name" maxlength="80" placeholder="默认同客户姓名" />
             </el-form-item>
-            <el-form-item label="对接人身份">
-              <el-input v-model.trim="form.contact_role" maxlength="80" placeholder="如：老板 / 采购 / 项目经理" />
-            </el-form-item>
+
             <el-form-item label="手机">
-              <el-input v-model.trim="form.mobile" maxlength="80" placeholder="真实手机号码，录入不打码" />
+              <el-input v-model.trim="form.mobile" maxlength="80" placeholder="真实手机号码，录入不打码" @blur="checkDuplicate" />
             </el-form-item>
-            <el-form-item label="联系方式2">
-              <el-input v-model.trim="form.contact_value2" placeholder="备用电话 / 座机 / 其他" maxlength="80" />
-            </el-form-item>
+
             <el-form-item label="微信号">
-              <el-input v-model.trim="form.wechat" maxlength="80" placeholder="客户微信号（选填）" />
+              <el-input v-model.trim="form.wechat" maxlength="80" placeholder="客户微信号（选填）" @blur="checkDuplicate" />
             </el-form-item>
-            <el-form-item label="邮箱">
-              <el-input v-model.trim="form.email" maxlength="160" placeholder="客户邮箱（选填）" />
-            </el-form-item>
-            <el-form-item label="地区">
-              <customer-region-select v-model="form.region_id" :columns="2" :legacy-label="[form.province, form.city, form.district].filter(Boolean).join(' / ')" />
-            </el-form-item>
-            <el-form-item label="详细地址">
-              <el-input v-model.trim="form.detail_address" maxlength="500" placeholder="街道、门牌或项目现场地址（选填）" />
-            </el-form-item>
-            <el-form-item label="客户等级">
-              <el-select popper-class="crm-select-popper" v-model="form.customer_grade" filterable allow-create clearable placeholder="未填写" @change="$set(profileEdited, 'customer_grade', true)">
-                <el-option v-for="item in profileOptions.customer_grade" :key="item" :label="item" :value="item" />
-              </el-select>
-            </el-form-item>
-            <el-form-item label="行业">
-              <el-select popper-class="crm-select-popper" v-model="form.industry" filterable allow-create clearable placeholder="未填写" @change="$set(profileEdited, 'industry', true)">
-                <el-option v-for="item in profileOptions.industry" :key="item" :label="item" :value="item" />
-              </el-select>
-            </el-form-item>
-            <el-form-item label="年采购力">
-              <el-select popper-class="crm-select-popper" v-model="form.purchasing_power" clearable placeholder="未填写" @change="$set(profileEdited, 'purchasing_power', true)">
-                <el-option v-for="item in profileOptions.purchasing_power" :key="item" :label="item" :value="item" />
-              </el-select>
-            </el-form-item>
+
             <el-form-item label="业务线">
-              <el-select popper-class="crm-select-popper" v-model="form.customer_business_lines" multiple filterable allow-create default-first-option placeholder="未填写，可多选" @change="$set(profileEdited, 'customer_business_lines', true)">
-                <el-option v-for="item in profileOptions.business_lines" :key="item" :label="item" :value="item" />
+              <el-select popper-class="crm-select-popper" v-model="form.customer_business_lines" multiple filterable placeholder="未填写，可多选" @change="$set(profileEdited, 'customer_business_lines', true)">
+                <el-option v-for="item in businessLineOptions" :key="item" :label="item" :value="item" />
               </el-select>
             </el-form-item>
           </section>
 
           <section class="crm-box form-col-box">
             <h3 class="crm-section-title">线索业务</h3>
-            <el-form-item label="贸易类型">
-              <el-select popper-class="crm-select-popper" v-model="form.trade_type" clearable filterable allow-create default-first-option>
-                <el-option v-for="item in metadata.trade_types || []" :key="item" :value="item" :label="item" />
-              </el-select>
-            </el-form-item>
+
             <el-form-item label="所属部门" required>
               <el-input v-if="departmentLocked" :value="departmentName" disabled />
               <el-select popper-class="crm-select-popper" v-else v-model="form.department_legacy_id" filterable placeholder="选择线索归属部门">
@@ -110,43 +78,24 @@
                 <el-option v-for="item in metadata.source_channels || []" :key="item" :value="item" :label="item" />
               </el-select>
             </el-form-item>
-            <el-form-item label="录入方式">
-              <el-input :value="selfEntry ? '销售自录' : '运营代录'" disabled />
-            </el-form-item>
-            <el-form-item label="线索类型">
-              <el-select popper-class="crm-select-popper" v-model="form.lead_type" filterable allow-create default-first-option clearable placeholder="如：普通咨询">
-                <el-option v-for="item in metadata.lead_types || []" :key="item" :value="item" :label="item" />
-              </el-select>
-            </el-form-item>
+
             <el-form-item label="客户标签">
               <el-select popper-class="crm-select-popper" v-model="form.customer_tags" multiple filterable allow-create default-first-option placeholder="可多选或输入新标签">
                 <el-option v-for="item in metadata.customer_tags || []" :key="item" :value="item" :label="item" />
               </el-select>
             </el-form-item>
-            <el-form-item v-if="canEditPersonalTags" label="个人标签">
-              <el-select popper-class="crm-select-popper" v-model="form.custom_tags" multiple filterable allow-create default-first-option placeholder="个人跟进标记，可输入回车创建">
+            <el-form-item v-if="canEditPersonalTags" label="我的标签">
+              <el-select popper-class="crm-select-popper" v-model="form.custom_tags" multiple filterable allow-create default-first-option placeholder="我的跟进标记，可输入回车创建">
                 <el-option v-for="item in metadata.custom_tags || []" :key="item" :value="item" :label="item" />
               </el-select>
             </el-form-item>
-            <el-form-item label="是否新咨询">
-              <el-radio-group v-model="form.is_new_inquiry">
-                <el-radio :label="true">是</el-radio>
-                <el-radio :label="false">否</el-radio>
-              </el-radio-group>
-            </el-form-item>
+
             <el-form-item label="客户池">
               <el-select popper-class="crm-select-popper" v-model="form.customer_pool" clearable placeholder="选择线索所在客户池">
-                <el-option v-for="item in metadata.customer_pools || []" :key="item" :value="item" :label="item" />
+                <el-option v-for="item in pools" :key="item" :value="item" :label="item" />
               </el-select>
             </el-form-item>
-            <el-form-item label="预计成交额">
-              <div class="lead-money">
-                <el-select popper-class="crm-select-popper" v-model="form.currency">
-                  <el-option v-for="item in ['CNY','USD','EUR','HKD']" :key="item" :value="item" :label="item" />
-                </el-select>
-                <el-input-number v-model="form.expected_amount" :min="0" :precision="2" :controls="false" placeholder="预估金额" />
-              </div>
-            </el-form-item>
+
           </section>
 
           <section class="crm-box form-col-box">
@@ -199,6 +148,74 @@
             </div>
           </section>
         </div>
+
+        <el-collapse v-model="profileExpanded" class="lead-profile-collapse">
+          <el-collapse-item name="profile">
+            <template slot="title">更多客户画像与归档属性 <el-tag v-if="profileFilledCount" type="success" size="mini">已填 {{ profileFilledCount }} 项</el-tag></template>
+            <div class="crm-form-grid">
+              <el-form-item v-if="form.customer_kind === 'enterprise'" label="信用代码">
+              <el-input v-model.trim="form.credit_code" :disabled="identityLocked" maxlength="32" placeholder="统一社会信用代码（选填）" />
+            </el-form-item>
+              <el-form-item label="对接人身份">
+              <el-input v-model.trim="form.contact_role" maxlength="80" placeholder="如：老板 / 采购 / 项目经理" />
+            </el-form-item>
+              <el-form-item label="联系方式2">
+              <el-input v-model.trim="form.contact_value2" placeholder="备用电话 / 座机 / 其他" maxlength="80" />
+            </el-form-item>
+              <el-form-item label="邮箱">
+              <el-input v-model.trim="form.email" maxlength="160" placeholder="客户邮箱（选填）" />
+            </el-form-item>
+              <el-form-item label="地区">
+              <customer-region-select v-model="form.region_id" :columns="2" :legacy-label="[form.province, form.city, form.district].filter(Boolean).join(' / ')" />
+            </el-form-item>
+              <el-form-item label="详细地址">
+              <el-input v-model.trim="form.detail_address" maxlength="500" placeholder="街道、门牌或项目现场地址（选填）" />
+            </el-form-item>
+              <el-form-item label="客户等级">
+              <el-select popper-class="crm-select-popper" v-model="form.customer_grade" filterable allow-create clearable placeholder="未填写" @change="$set(profileEdited, 'customer_grade', true)">
+                <el-option v-for="item in profileOptions.customer_grade" :key="item" :label="item" :value="item" />
+              </el-select>
+            </el-form-item>
+              <el-form-item label="行业">
+              <el-select popper-class="crm-select-popper" v-model="form.industry" filterable allow-create clearable placeholder="未填写" @change="$set(profileEdited, 'industry', true)">
+                <el-option v-for="item in profileOptions.industry" :key="item" :label="item" :value="item" />
+              </el-select>
+            </el-form-item>
+              <el-form-item label="年采购力">
+              <el-select popper-class="crm-select-popper" v-model="form.purchasing_power" clearable placeholder="未填写" @change="$set(profileEdited, 'purchasing_power', true)">
+                <el-option v-for="item in profileOptions.purchasing_power" :key="item" :label="item" :value="item" />
+              </el-select>
+            </el-form-item>
+              <el-form-item label="贸易类型">
+              <el-select popper-class="crm-select-popper" v-model="form.trade_type" clearable filterable allow-create default-first-option>
+                <el-option v-for="item in metadata.trade_types || []" :key="item" :value="item" :label="item" />
+              </el-select>
+            </el-form-item>
+              <el-form-item label="录入方式">
+              <el-input :value="selfEntry ? '销售自录' : '运营代录'" disabled />
+            </el-form-item>
+              <el-form-item label="线索类型">
+              <el-select popper-class="crm-select-popper" v-model="form.lead_type" filterable allow-create default-first-option clearable placeholder="如：普通咨询">
+                <el-option v-for="item in metadata.lead_types || []" :key="item" :value="item" :label="item" />
+              </el-select>
+            </el-form-item>
+              <el-form-item label="是否新咨询">
+              <el-radio-group v-model="form.is_new_inquiry" disabled>
+                <el-radio :label="true">是</el-radio>
+                <el-radio :label="false">否</el-radio>
+              </el-radio-group>
+            </el-form-item>
+              <el-form-item label="预计成交额">
+              <div class="lead-money">
+                <el-select popper-class="crm-select-popper" v-model="form.currency">
+                  <el-option v-for="item in ['CNY','USD','EUR','HKD']" :key="item" :value="item" :label="item" />
+                </el-select>
+                <el-input-number v-model="form.expected_amount" :min="0" :precision="2" :controls="false" placeholder="预估金额" />
+              </div>
+            </el-form-item>
+            </div>
+          </el-collapse-item>
+        </el-collapse>
       </el-form>
     </div>
 
@@ -296,6 +313,8 @@
 
 <script>
 import { getCrmLeadMetadata, getCrmLead, listCrmLeads, saveCrmLead, crmDate, crmError } from '@/api/erp/crm'
+import { checkCustomerDuplicates } from '@/api/erp/sales'
+import { poolNames, inferTradeType } from '@/utils/crmProgress'
 import { erpDateTime } from '@/utils/dateTime'
 import { customerProfileOptions } from '@/utils/customerProfileOptions'
 import { crmDepartmentTree } from '@/utils/crmDepartmentTree'
@@ -365,9 +384,10 @@ export default {
     loading: false,
     saving: false,
     uploading: false,
-    session: 0,
+    session: 0, profileExpanded: [], duplicateTimer: null, duplicateSequence: 0, duplicateChecking: false, duplicateHint: '', liveDuplicates: [], initialInquiryIdentity: '',
     form: blank(),
     metadata: {},
+    metadataLoaded: false,
     initialDepartmentId: null,
     profileOptions: customerProfileOptions,
     profileEdited: {},
@@ -382,6 +402,12 @@ export default {
     duplicates: { visible: false, rows: [], message: '', reviewRequired: false, requiresConfirmation: false, reviewMode: false, reason: '', note: '' }
   }),
   computed: {
+    pools() { return poolNames(this.metadata, 'lead', this.form.customer_pool) },
+    profileFilledCount() { return ['credit_code','contact_role','contact_value2','email','region_id','detail_address','customer_grade','industry','purchasing_power','trade_type','lead_type','expected_amount'].filter(key => this.form[key] !== null && this.form[key] !== '' && this.form[key] !== undefined).length },
+    businessLineOptions() {
+      const dictionary = this.metadataLoaded ? ((this.metadata.dictionaries || {}).business_lines || []) : this.profileOptions.business_lines
+      return [...new Set([...dictionary, ...(this.form.customer_business_lines || [])].filter(Boolean))]
+    },
     currentUser() { return this.metadata.current_user || {} },
     isSales() { return !!this.currentUser.is_sales && (!this.isFormal || !JSON.parse(localStorage.getItem('erp_me') || '{}').is_super_admin) },
     selfEntry() { return this.form.entry_method ? this.form.entry_method === 'self' : this.isSales },
@@ -408,11 +434,56 @@ export default {
     },
     canEditPersonalTags() { return !this.form.id || !!(this.form.abilities && this.form.abilities.edit_custom_tags) }
   },
-  beforeDestroy() { this.session += 1 },
+  watch: {
+    'form.customer_name'() { this.scheduleDuplicate() },
+    'form.mobile'() { this.scheduleDuplicate() },
+    'form.wechat'() { this.scheduleDuplicate() },
+    'form.department_legacy_id'() { if (!this.loading) this.inferTrade() }
+  },
+  beforeDestroy() { this.session += 1; this.duplicateSequence += 1; clearTimeout(this.duplicateTimer) },
   methods: {
+    inferTrade() {
+      const department = this.departmentOptions.find(item => item.id === Number(this.form.department_legacy_id)) || {}
+      const value = inferTradeType(department, this.metadata.trade_types || [])
+      if (value) this.form.trade_type = value
+    },
+    scheduleDuplicate() {
+      clearTimeout(this.duplicateTimer)
+      this.duplicateSequence += 1
+      this.duplicateChecking = false
+      if (!this.visible || this.loading ) return
+      this.duplicateTimer = setTimeout(() => this.checkDuplicate(), 350)
+    },
+    async checkDuplicate() {
+      clearTimeout(this.duplicateTimer)
+      if (!this.visible || this.loading ) return
+      const session = this.session
+      const sequence = ++this.duplicateSequence
+      const identity = JSON.stringify([this.form.customer_name, this.form.mobile, this.form.wechat, this.form.customer_id])
+      if (!this.form.customer_name && !this.form.mobile && !this.form.wechat) { this.duplicateHint = ''; this.liveDuplicates = []; this.form.is_new_inquiry = !this.form.customer_id; return }
+      this.duplicateChecking = true
+      try {
+        const { data } = await checkCustomerDuplicates({ customer_kind: this.form.customer_kind, customer_name: this.form.customer_name, phones: [this.form.mobile].filter(Boolean), wechat: this.form.wechat, customer_id: this.form.customer_id || undefined, exclude_lead_id: this.form.id || undefined, exclude_id: this.isFormal ? this.form.customer_id : undefined })
+        // 异步查重只回填本次身份和本次弹窗，避免切客户或重开后迟到响应串值。
+        if (session !== this.session || sequence !== this.duplicateSequence || identity !== JSON.stringify([this.form.customer_name, this.form.mobile, this.form.wechat, this.form.customer_id])) return
+        this.liveDuplicates = Array.isArray(data.data) ? data.data : (data.matches || data.duplicates || [])
+        if (!this.isFormal || identity !== this.initialInquiryIdentity) this.form.is_new_inquiry = data.is_new_inquiry ?? !this.liveDuplicates.length
+        this.duplicateHint = this.liveDuplicates.length ? `发现 ${this.liveDuplicates.length} 个疑似已有客户，请核对客户与联系方式` : ''
+      } catch (error) {
+        if (session === this.session && sequence === this.duplicateSequence) this.duplicateHint = crmError(error, '暂未完成查重，保存时将再次核对')
+      } finally { if (session === this.session && sequence === this.duplicateSequence) this.duplicateChecking = false }
+    },
     async open(id) {
       const session = ++this.session
+      clearTimeout(this.duplicateTimer)
+      this.duplicateSequence += 1
+      this.duplicateChecking = false
+      this.duplicateHint = ''
+      this.liveDuplicates = []
+      this.initialInquiryIdentity = ''
+      this.profileExpanded = []
       this.form = blank()
+      this.metadataLoaded = false
       this.initialDepartmentId = null
       this.profileEdited = {}
       this.attachments = []
@@ -428,6 +499,7 @@ export default {
         const [meta, lead] = await Promise.all([getCrmLeadMetadata(), id ? getCrmLead(id) : Promise.resolve(null)])
         if (session !== this.session) return
         this.metadata = meta.data.data || meta.data
+        this.metadataLoaded = true
         this.metadata.departments = (this.metadata.departments || []).map(item => ({ ...item, id: Number(item.id) }))
         this.platforms = this.metadata.platforms || []
         if (lead) {
@@ -441,11 +513,12 @@ export default {
           this.attachments = [...(this.form.attachments || [])]
         } else {
           this.form.department_legacy_id = this.currentUser.department_legacy_id
-          this.form.customer_pool = (this.metadata.customer_pools || []).find(item => item === '新线索快转池') || ''
-          this.form.trade_type = (this.metadata.trade_types || [])[0] || ''
+          this.form.customer_pool = this.pools.find(item => item === '新线索4小时快转池') || ''
+          this.inferTrade()
         }
         this.form.department_legacy_id = this.form.department_legacy_id ? Number(this.form.department_legacy_id) : null
         this.initialDepartmentId = this.form.department_legacy_id
+        this.initialInquiryIdentity = JSON.stringify([this.form.customer_name, this.form.mobile, this.form.wechat, this.form.customer_id])
       } catch (error) {
         if (session === this.session) this.loadError = crmError(error, '线索资料加载失败')
       } finally {
@@ -461,6 +534,8 @@ export default {
     close() {
       if (this.saving) return
       this.session += 1
+      this.duplicateSequence += 1
+      clearTimeout(this.duplicateTimer)
       this.visible = false
       this.duplicates.visible = false
       this.resetLeadChoice()
@@ -484,6 +559,8 @@ export default {
         if (!this.profileEdited[field]) this.form[field] = field === 'customer_business_lines' ? [] : ''
       })
       this.form.customer_id = null
+      this.form.is_new_inquiry = true
+      this.scheduleDuplicate()
       this.resetLeadChoice()
     },
     applyCustomerProfile(row) {
@@ -507,6 +584,7 @@ export default {
       this.form.contact_name = row.contact_name || ''
       this.form.mobile = row.contact_phone || ''
       this.form.contact_id = null
+      this.$nextTick(() => this.checkDuplicate())
       this.loadExistingLeads(1)
     },
     async loadExistingLeads(page = 1) {
@@ -586,6 +664,8 @@ export default {
       this.applyCustomerProfile(row)
       this.form.customer_id = row.id
       this.duplicates.visible = false
+      await this.$nextTick()
+      await this.checkDuplicate()
       return this.save('submit', confirmation)
     },
     createDespiteDuplicates() {
@@ -667,6 +747,8 @@ export default {
 </script>
 
 <style scoped>
+.lead-profile-collapse { margin-top: 14px; }
+.lead-profile-collapse ::v-deep .el-collapse-item__header { gap: 8px; color: #475569; }
 .form-dlg-head {
   display: flex;
   align-items: center;

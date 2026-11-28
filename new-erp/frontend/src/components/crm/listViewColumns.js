@@ -7,7 +7,7 @@ export const customerColumnGroups = [
   { key: 'open_opportunity_count', label: '进行中商机', fields: ['open_opportunity_count'] },
   { key: 'expected_amounts', label: '待成交金额', fields: ['expected_amounts'] },
   { key: 'deal', label: '成交金额', fields: ['deal_amount'] },
-  { key: 'pools', label: '线索所在客户池', fields: ['customer_pools'] },
+  { key: 'pools', label: '维系客户池 / 生命周期', fields: ['customer_pool', 'lifecycle_stage', 'customer_pools'] },
   { key: 'schedule', label: '最近联系 · 下次计划', fields: ['last_contact_at', 'next_contact_at'] },
   { key: 'status', label: '状态', fields: ['status'] },
   { key: 'region', label: '地区', fields: ['region'] },
@@ -23,8 +23,9 @@ export const leadColumnGroups = [
   { key: 'demand', label: '需求摘要 / 业务', fields: ['demand_summary', 'expected_amount', 'trade_type'] },
   { key: 'source', label: '来源渠道 / 录入', fields: ['source_channel', 'entry_method', 'platform_name'] },
   { key: 'owner', label: '负责人 / 部门', fields: ['owner_name', 'department_name'] },
-  { key: 'state', label: '状态 / 客户池', fields: ['status', 'customer_pool'] },
-  { key: 'schedule', label: '最近联系 / 下次计划', fields: ['last_contact_at', 'next_contact_at', 'next_plan'] },
+  { key: 'state', label: '状态 / 客户池', fields: ['status', 'customer_pool', 'nine_step_stage'] },
+  { key: 'latest_followup', label: '最近跟进', fields: ['last_contact_at', 'latest_followup_summary'] },
+  { key: 'schedule', label: '下次联系 / 计划', fields: ['next_contact_at', 'next_plan'] },
   { key: 'recycle', label: '回收时间 / 原因', fields: ['recycle_reason', 'recycled_at'] },
   { key: 'recycle_owner', label: '原负责人 / 回收人', fields: ['previous_owner_name', 'recycled_by_name'] }
 ]
@@ -34,10 +35,11 @@ export const opportunityColumnGroups = [
   { key: 'name', label: '商机名称', fields: ['name'] },
   { key: 'business_line', label: '业务线', fields: ['business_line'] },
   { key: 'owner_name', label: '负责人', fields: ['owner_name'] },
-  { key: 'stage', label: '阶段', fields: ['stage'] },
+  { key: 'customer_pool', label: '客户池', fields: ['customer_pool'] },
+  { key: 'stage', label: '九步阶段', fields: ['stage'] },
   { key: 'expected_amount', label: '预计金额', fields: ['expected_amount'] },
   { key: 'expected_close_date', label: '预计成交日期', fields: ['expected_close_date'] },
-  { key: 'last_contact_at', label: '最近跟进', fields: ['last_contact_at'] },
+  { key: 'last_contact_at', label: '最近跟进', fields: ['last_contact_at', 'latest_followup_summary'] },
   { key: 'next_contact_at', label: '下次跟进', fields: ['next_contact_at'] }
 ]
 

@@ -1,9 +1,9 @@
 <template>
   <div class="crm-page">
     <header class="crm-head"><span class="crm-head-icon"><i class="el-icon-aim" /></span><h1>商机中心</h1><div class="crm-actions"><span class="crm-muted">{{ (metadata.current_user || {}).name }} / {{ (metadata.current_user || {}).department_name }}</span><crm-list-view-controls ref="views" resource="opportunities" title="商机" :configuration="viewConfiguration" :filters="viewFilters" :column-groups="columnGroups" :filter-options="viewFilterOptions" @apply="applyView" /><el-button v-if="abilities.create" type="success" size="small" icon="el-icon-plus" @click="$refs.form.open()">新建商机</el-button></div></header>
-    <el-tabs v-model="query.tab" @tab-click="search"><el-tab-pane v-for="item in tabs" :key="item.value" :name="item.value" :label="item.label + ' ' + (counts[item.value] || 0)" /></el-tabs>
+    <el-tabs v-model="query.tab" @tab-click="changeTab"><el-tab-pane v-for="item in tabs" :key="item.value" :name="item.value" :label="item.label + ' ' + (counts[item.value] || 0)" /></el-tabs>
     <el-alert v-if="error" :title="error" type="error" :closable="false" show-icon />
-    <div class="crm-filters"><el-input v-model.trim="query.keyword" size="small" clearable placeholder="客户 / 商机名称" @keyup.enter.native="search" /><label>业务线<el-select v-model="query.business_line" clearable size="small" placeholder="全部" popper-class="crm-select-popper"><el-option v-for="item in metadata.business_lines || []" :key="item" :label="item" :value="item" /></el-select></label><label>预计成交日期<el-date-picker v-model="dateRange" type="daterange" value-format="yyyy-MM-dd" size="small" start-placeholder="开始日期" end-placeholder="结束日期" popper-class="crm-date-popper" /></label><el-button size="small" type="success" @click="search">查询</el-button><el-button size="small" @click="reset">重置</el-button></div>
+    <div class="crm-filters"><el-input v-model.trim="query.keyword" size="small" clearable placeholder="客户 / 商机名称" @keyup.enter.native="search" /><label>业务线<el-select v-model="query.business_line" clearable size="small" placeholder="全部" popper-class="crm-select-popper"><el-option v-for="item in metadata.business_lines || []" :key="item" :label="item" :value="item" /></el-select></label><label>客户池<el-select v-model="query.customer_pool" size="small" clearable popper-class="crm-select-popper" @change="search"><el-option v-for="item in pools" :key="item" :value="item" :label="item" /></el-select></label><label>商机状态<el-select v-model="query.status" size="small" clearable popper-class="crm-select-popper" @change="search"><el-option v-for="(label,key) in metadata.statuses || {}" :key="key" :value="key" :label="label" /></el-select></label><label>预计成交日期<el-date-picker v-model="dateRange" type="daterange" value-format="yyyy-MM-dd" size="small" start-placeholder="开始日期" end-placeholder="结束日期" popper-class="crm-date-popper" /></label><el-button size="small" type="success" @click="search">查询</el-button><el-button size="small" @click="reset">重置</el-button></div>
     <section class="crm-box"><div class="crm-inline"><b>{{ currentTabLabel }} · 阶段筛选</b><span class="crm-muted">进行中 {{ openCount }} 项<span v-for="item in expectedAmounts" :key="item.currency"> · 预计金额 {{ money(item.amount,item.currency) }}</span></span></div><div class="crm-opportunity-stages"><button v-for="(label,key) in metadata.stages || {}" :key="key" type="button" class="crm-opportunity-stage" :class="{current:query.stage === key}" @click="selectStage(key)">{{ label }} <b>{{ stageCounts[key] || 0 }}</b></button></div></section>
     <section class="crm-card">
       <el-table :key="viewTableKey" v-loading="loading" :span-method="viewGroupSpan" :data="rows" size="small">
@@ -11,10 +11,10 @@
         <el-table-column v-for="column in viewColumns" :key="column.key" :label="column.label" :min-width="column.key === 'name' || column.key === 'expected_amount' ? 155 : 125" :align="column.key === 'expected_amount' ? 'right' : 'left'">
           <template slot-scope="{row}">
             <template v-if="column.key === 'customer_name'"><el-button v-if="!$can || $can('sales.customer')" type="text" size="mini" @click="$refs.customer.open(row.customer_id)">{{ row.customer_name }}</el-button><span v-else>{{ row.customer_name }}</span></template>
-            <el-tag v-else-if="column.key === 'stage'" :type="row.status === 'lost' ? 'danger' : row.status === 'won' ? 'success' : 'info'" size="mini">{{ row.status === 'open' ? row.stage_label : row.status_label }}</el-tag>
+            <crm-progress-controls v-else-if="column.key === 'stage' || column.key === 'customer_pool'" scope="opportunity" :subject="row" :metadata="metadata" :show-stage="column.key === 'stage'" :show-pool="column.key === 'customer_pool'" @changed="load" @refresh="load" />
             <template v-else-if="column.key === 'expected_amount'">{{ money(row.expected_amount,row.currency) }}</template>
             <template v-else-if="column.key === 'expected_close_date'">{{ shortDate(row.expected_close_date) }}</template>
-            <template v-else-if="column.key === 'last_contact_at' || column.key === 'next_contact_at'">{{ date(row[column.key]) }}</template>
+            <template v-else-if="column.key === 'last_contact_at' || column.key === 'next_contact_at'">{{ date(column.key === 'last_contact_at' ? (row.latest_followup_at || row.last_contact_at) : row[column.key]) }}<el-tooltip v-if="column.key === 'last_contact_at' && row.latest_followup_summary" :content="row.latest_followup_content || row.latest_followup_summary" placement="top"><div class="crm-followup-summary">{{ row.latest_followup_summary }}</div></el-tooltip></template>
             <template v-else>{{ row[column.key] || '—' }}</template>
           </template>
         </el-table-column>
@@ -26,6 +26,8 @@
   </div>
 </template>
 <script>
+import { poolNames } from '@/utils/crmProgress'
+import CrmProgressControls from '@/components/crm/CrmProgressControls.vue'
 import { formatMoney as displayMoney } from '../../../utils/money.js'
 import { getCrmOpportunityMetadata, listCrmOpportunities, crmDate, crmError } from '@/api/erp/crm'
 import { erpDateTime } from '@/utils/dateTime'
@@ -35,12 +37,13 @@ import CrmFollowupDialog from '@/components/crm/CrmFollowupDialog.vue'
 import CrmListViewControls from '@/components/crm/CrmListViewControls.vue'
 import { opportunityColumnGroups, orderedColumnGroups, listViewQuery, listViewGroupSpan } from '@/components/crm/listViewColumns'
 import '@/styles/crm.css'
-const blank = (perPage = 10, tab = 'all') => ({tab,keyword:'',business_line:'',stage:'',page:1,per_page:perPage})
+const blank = (perPage = 10, tab = 'all') => ({tab,keyword:'',business_line:'',customer_pool:'',status:'',stage:'',page:1,per_page:perPage})
 export default {
   name:'CrmOpportunityList',
-  components:{CrmListViewControls,CrmOpportunityFormDialog,CrmOpportunityDetailDialog,CrmFollowupDialog,CustomerDetailDialog:() => import('@/components/sales/CustomerDetailDialog.vue')},
+  components:{CrmProgressControls,CrmListViewControls,CrmOpportunityFormDialog,CrmOpportunityDetailDialog,CrmFollowupDialog,CustomerDetailDialog:() => import('@/components/sales/CustomerDetailDialog.vue')},
   data:() => ({columnGroups:opportunityColumnGroups,viewConfiguration:{columns:opportunityColumnGroups.flatMap(group => group.fields),filters:{},sort:{field:'',direction:'desc'},group_by:''},metadata:{},query:blank(),dateRange:[],rows:[],total:0,counts:{},stageCounts:{},expectedAmounts:[],loading:false,error:'',sequence:0}),
   computed:{
+    pools() { return poolNames(this.metadata, 'opportunity', this.query.customer_pool) },
     viewColumns() { return orderedColumnGroups(this.viewConfiguration.columns,this.columnGroups) },
     viewTableKey() { return this.viewConfiguration.columns.join(',') + ':' + this.viewConfiguration.group_by },
     viewFilters() { return { ...this.query, expected_close_from:(this.dateRange || [])[0] || '', expected_close_to:(this.dateRange || [])[1] || '' } },
@@ -58,11 +61,30 @@ export default {
       await this.$nextTick()
       const configuration = await this.$refs.views.initialize()
       if (configuration) this.applyView(configuration, false)
+      this.readRouteQuery()
       await this.load()
     } catch(error) { this.error = crmError(error,'商机中心加载失败') }
   },
   beforeDestroy() { this.sequence += 1 },
+  watch: {
+    '$route.query'() {
+      if (this.$route.path !== '/sales/opportunities') return
+      this.readRouteQuery(true)
+      this.load()
+    }
+  },
   methods:{
+    readRouteQuery(reset = false) {
+      const route = this.$route.query
+      if (!reset && !Object.keys(route).length) return
+      const query = blank(10)
+      Object.keys(query).forEach(key => { if (typeof route[key] === 'string') query[key] = route[key] })
+      query.page = Math.max(1, Number.parseInt(query.page, 10) || 1)
+      query.per_page = [10,20,50].includes(Number(query.per_page)) ? Number(query.per_page) : 10
+      if (!this.tabs.some(tab => tab.value === query.tab)) query.tab = 'all'
+      this.query = query
+      this.dateRange = route.expected_close_from || route.expected_close_to ? [route.expected_close_from || '', route.expected_close_to || ''] : []
+    },
     viewGroupSpan: listViewGroupSpan,
     applyView(configuration, reload = true) {
       this.viewConfiguration = configuration
@@ -103,6 +125,7 @@ export default {
         if (sequence === this.sequence) this.loading = false
       }
     },
+    changeTab() { if (['won', 'lost'].includes(this.query.tab)) this.query.status = ''; this.search() },
     search() { this.query.page = 1; this.load() },
     reset() { this.query = blank(this.query.per_page,this.query.tab); this.dateRange = []; this.load() },
     selectStage(key) { this.query.stage = this.query.stage === key ? '' : key; this.search() },

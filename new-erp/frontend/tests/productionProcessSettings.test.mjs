@@ -5,7 +5,7 @@ import { createRequire } from 'node:module'
 
 const require = createRequire(import.meta.url)
 const compiler = require('vue-template-compiler')
-const names = ['ProductionRoutingForm', 'ProductionOperationForm', 'ProductionProcessCatalogPanel']
+const names = ['ProductionRoutingForm', 'ProductionProcessCatalogPanel']
 const sources = Object.fromEntries(await Promise.all(names.map(async name => [name,
   await readFile(new URL('../src/views/erp/production/' + name + '.vue', import.meta.url), 'utf8')
 ])))
@@ -157,16 +157,4 @@ test('catalog editing submits its actual business version and persistent creatio
   assert.equal(sent[2].code, 'assembly')
   assert.equal(sent[2].name, '装配')
   assert.equal(sent[3], creationId)
-})
-
-test('public operation payload explicitly saves the automatic assignment switch on create and edit', () => {
-  const vm = mount('ProductionOperationForm')
-  vm.sessionId = 'reserve-session'; vm.reservationToken = 'reserve-token'
-  assert.equal(vm.operationPayload().auto_assignment_enabled, false)
-  vm.form.auto_assignment_enabled = true
-  assert.equal(vm.operationPayload().auto_assignment_enabled, true)
-  assert.equal(vm.operationPayload().creation_session_id, 'reserve-session')
-  vm.$route.params.id = 8; vm.form.business_version = 6
-  assert.equal(vm.operationPayload().expected_version, 6)
-  assert.equal(Object.hasOwn(vm.operationPayload(), 'creation_session_id'), false)
 })

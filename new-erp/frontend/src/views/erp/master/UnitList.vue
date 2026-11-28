@@ -14,7 +14,7 @@
         </div>
         <div class="head-actions">
           <el-button size="small" icon="el-icon-refresh" class="btn-refresh" @click="load">刷新</el-button>
-          <el-button size="small" type="success" icon="el-icon-plus" class="btn-theme-create" @click="openCreate">新增单位</el-button>
+          <el-button v-if="canManage" size="small" type="success" icon="el-icon-plus" class="btn-theme-create" @click="openCreate">新增单位</el-button>
         </div>
       </header>
 
@@ -104,7 +104,6 @@
           <div class="filter-actions">
             <el-button size="small" type="success" icon="el-icon-search" class="btn-theme-search" @click="search">查询</el-button>
             <el-button size="small" icon="el-icon-refresh-left" class="btn-theme-reset" @click="reset">重置</el-button>
-            <el-button size="small" type="success" icon="el-icon-plus" class="btn-theme-create" @click="openCreate">新增单位</el-button>
           </div>
         </div>
 
@@ -170,11 +169,12 @@
                 <span class="code-mono text-muted date-text">{{ formatDate(row.updated_at) }}</span>
               </template>
             </el-table-column>
-            <el-table-column label="操作" width="200" :fixed="compact ? false : 'right'" align="center">
+            <el-table-column v-if="canManage || canDelete" label="操作" width="200" :fixed="compact ? false : 'right'" align="center">
               <template slot-scope="{ row }">
                 <div class="row-actions">
-                  <el-button type="text" size="mini" class="btn-action-edit" icon="el-icon-edit" @click="openEdit(row)">编辑</el-button>
+                  <el-button v-if="canManage" type="text" size="mini" class="btn-action-edit" icon="el-icon-edit" @click="openEdit(row)">编辑</el-button>
                   <el-button
+                    v-if="canManage"
                     type="text"
                     size="mini"
                     :class="row.status === 'enabled' ? 'btn-action-disable' : 'btn-action-enable'"
@@ -184,7 +184,7 @@
                     {{ row.status === 'enabled' ? '停用' : '启用' }}
                   </el-button>
                   <el-button
-                    v-if="row.status !== 'enabled'"
+                    v-if="row.status !== 'enabled' && canDelete"
                     type="text"
                     size="mini"
                     class="btn-action-delete"
@@ -361,6 +361,12 @@ export default {
     }
   },
   computed: {
+    canManage () {
+      return this.$can('master.base_archive.create')
+    },
+    canDelete () {
+      return this.$can('master.base_archive.delete')
+    },
     enabledCount () {
       return Number(this.stats.enabled || 0)
     },

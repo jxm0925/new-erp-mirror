@@ -15,10 +15,8 @@ use App\Models\Erp\ProductionRoutingOperation;
 final class BomPositionPerformanceService
 {
     private const MADE_TYPES = ['semi_finished', 'finished_product'];
-    private const MAX_DEPTH = 6;
-
     public function __construct(
-        private readonly BomMatcher $bomMatcher,
+        private readonly BomExplosionEngine $explosion,
         private readonly ProductionPerformanceRateResolver $resolver,
     ) {}
 
@@ -148,28 +146,19 @@ final class BomPositionPerformanceService
 
     private function positions(Bom $bom, $saved, array $fallback, bool $canView, string $prefix = '', float $parentQty = 1.0, array $bomPath = [], int $depth = 0): array
     {
-        if ($depth >= self::MAX_DEPTH || in_array((int) $bom->id, $bomPath, true)) return [];
-        $bomPath[] = (int) $bom->id;
+        $bomPath = $this->explosion->enterPath((int) $bom->output_item_id, $bom->bom_name ?: $bom->bom_no, $bomPath);
         $out = [];
-        foreach ($bom->items()->with('componentItem')->get() as $line) {
+        $resolved = $this->explosion->lines($bom)->keyBy('id');
+        foreach ($bom->items as $line) {
             $component = $line->componentItem;
             if (! $component || ! in_array($component->item_type, self::MADE_TYPES, true) || ! $line->position_uid) continue;
             $path = $prefix === '' ? $line->position_uid : $prefix.'/'.$line->position_uid;
-            $qtyPerRoot = $parentQty * ((float) $line->qty * (1 + (float) $line->loss_rate / 100) + (float) $line->fixed_qty);
-            $childBom = null;
-            $reason = null;
-            if ($line->child_bom_id) {
-                $candidate = Bom::query()->find($line->child_bom_id);
-                if ($candidate && $this->bomMatcher->eligibleQuery()->whereKey($candidate->id)->where('output_item_id', (int) $line->component_item_id)->exists()) {
-                    $childBom = $candidate;
-                } else {
-                    $reason = '指定的子 BOM 不可用';
-                }
-            } else {
-                $match = $this->bomMatcher->match(null, null, (int) $line->component_item_id, null);
-                $childBom = ($match['status'] ?? null) === 'matched' ? Bom::query()->find($match['bom_id']) : null;
-                if (! $childBom) $reason = '未找到子 BOM';
-            }
+            $resolvedLine = $resolved->get((int) $line->id);
+            $qtyPerRoot = BomExplosionEngine::requiredQuantity($resolvedLine, $parentQty);
+            if (! $this->explosion->shouldExpand($component, $resolvedLine)) continue;
+            $match = $this->explosion->resolveChild($resolvedLine, $component);
+            $childBom = $match['bom'];
+            $reason = $childBom ? null : ($match['block_reason'] ?: '未找到子 BOM');
             $nodes = [];
             if ($childBom && ! $childBom->routing_id) $reason = '子 BOM 未选路线';
             if ($childBom && $childBom->routing_id) {

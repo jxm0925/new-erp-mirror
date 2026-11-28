@@ -4,7 +4,7 @@ namespace App\Http\Controllers\Api\V1\Erp;
 
 use App\Http\Controllers\Controller;
 use App\Models\Erp\{Item, ItemPurchaseConversion};
-use App\Services\Erp\{AuthContextService, ItemPurchaseConversionApplicationService, UnitConversionDomainService};
+use App\Services\Erp\{AuthContextService, ItemPurchaseConversionApplicationService, MasterDataAccessService, UnitConversionDomainService};
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
 
@@ -12,6 +12,7 @@ class ItemPurchaseConversionController extends Controller
 {
     public function index(Request $request, int $itemId)
     {
+        app(MasterDataAccessService::class)->authorizeRead($request, 'items');
         Item::findOrFail($itemId);
         $query = ItemPurchaseConversion::with(['purchaseUnit.standardUnit', 'baseUnit.standardUnit'])->where('item_id', $itemId)->latest('effective_from');
         if ($request->filled('status')) $query->where('status', $request->string('status'));
@@ -21,12 +22,14 @@ class ItemPurchaseConversionController extends Controller
     /** BOM / 工单用料录入、转采购时可选的单位：库存单位 + 有效采购换算（批量）。 */
     public function unitOptions(Request $request, UnitConversionDomainService $domain)
     {
+        app(MasterDataAccessService::class)->authorizeRead($request, 'items');
         $data = $request->validate(['ids' => 'required|array|min:1|max:500', 'ids.*' => 'required|integer|min:1']);
         return response()->json(['data' => (object) $domain->itemUnitOptions(array_values(array_unique(array_map('intval', $data['ids']))))]);
     }
 
     public function options(Request $request, int $itemId, UnitConversionDomainService $domain)
     {
+        app(MasterDataAccessService::class)->authorizeRead($request, 'items');
         Item::findOrFail($itemId);
         $data = $request->validate(['ids' => 'nullable|array|max:1000', 'ids.*' => 'required|integer|min:1|distinct',
             'keyword' => 'nullable|string|max:120']);

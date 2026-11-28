@@ -34,6 +34,8 @@ CREATE TABLE `erp_crm_followups` (
   `legacy_payload` json DEFAULT NULL,
   `created_at` timestamp NULL DEFAULT NULL,
   `updated_at` timestamp NULL DEFAULT NULL,
+  `followup_schedule_mode` varchar(20) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'scheduled',
+  `combat_snapshot` json DEFAULT NULL,
   PRIMARY KEY (`id`),
   UNIQUE KEY `erp_crm_followups_legacy_unique` (`legacy_id`),
   KEY `erp_crm_followups_subject_index` (`subject_type`,`subject_id`,`contacted_at`),

@@ -12,7 +12,7 @@ class ProductionPerformanceTemplateController extends Controller
 {
     public function index(Request $request, ProductionPerformanceTemplateService $service)
     {
-        $this->user($request);
+        $this->user($request, false);
         $filters = $request->validate(['keyword' => 'nullable|string|max:120', 'status' => 'nullable|in:enabled,disabled',
             'page' => 'nullable|integer|min:1', 'per_page' => 'nullable|integer|min:1|max:100']);
         return response()->json($service->paginate($filters));
@@ -20,13 +20,13 @@ class ProductionPerformanceTemplateController extends Controller
 
     public function operations(Request $request, ProductionPerformanceTemplateService $service)
     {
-        $this->user($request);
+        $this->user($request, false);
         return response()->json(['data' => $service->operations($request->validate(['keyword' => 'nullable|string|max:80'])['keyword'] ?? null)]);
     }
 
     public function show(Request $request, int $id, ProductionPerformanceTemplateService $service)
     {
-        $this->user($request);
+        $this->user($request, false);
         return response()->json(['data' => $service->show($id)]);
     }
 
@@ -52,15 +52,29 @@ class ProductionPerformanceTemplateController extends Controller
     public function bindCategories(Request $request, int $id, ProductionPerformanceTemplateService $service)
     {
         $user = $this->user($request);
-        $data = $request->validate(['category_ids' => 'required|array|min:1|max:100', 'category_ids.*' => 'integer|min:1|distinct']);
-        return response()->json(['message' => '已指定商品分类使用本模板；已生成的工单仍按原比例。', 'data' => $service->bindCategories($id, array_map('intval', $data['category_ids']), $user)]);
+        $data = $this->categoryPayload($request, false);
+        return response()->json(['message' => '已指定商品分类使用本模板；已生成的工单仍按原比例。', 'data' => $service->bindCategories($id, $data['category_ids'], $user, isset($data['expected_version']) ? (int) $data['expected_version'] : null)]);
     }
 
     public function unbindCategories(Request $request, int $id, ProductionPerformanceTemplateService $service)
     {
         $user = $this->user($request);
-        $data = $request->validate(['category_ids' => 'required|array|min:1|max:100', 'category_ids.*' => 'integer|min:1|distinct']);
-        return response()->json(['message' => '已取消商品分类的指定，改按上级分类或默认模板计提成。', 'data' => $service->unbindCategories($id, array_map('intval', $data['category_ids']), $user)]);
+        $data = $this->categoryPayload($request, false);
+        return response()->json(['message' => '已取消商品分类的指定，改按上级分类或默认模板计提成。', 'data' => $service->unbindCategories($id, $data['category_ids'], $user, isset($data['expected_version']) ? (int) $data['expected_version'] : null)]);
+    }
+
+    public function syncCategories(Request $request, int $id, ProductionPerformanceTemplateService $service)
+    {
+        $user = $this->user($request);
+        $data = $this->categoryPayload($request, true);
+        return response()->json(['message' => '商品分类适用范围已更新；已生成的工单仍按原比例。',
+            'data' => $service->syncCategories($id, $data['category_ids'], isset($data['expected_version']) ? (int) $data['expected_version'] : null, $user)]);
+    }
+
+    private function categoryPayload(Request $request, bool $replace): array
+    {
+        return $request->validate(['category_ids' => $replace ? 'present|array' : 'required|array|min:1|max:100',
+            'category_ids.*' => 'required|integer|min:1|distinct', 'expected_version' => 'nullable|integer|min:1']);
     }
 
     public function setDefault(Request $request, int $id, ProductionPerformanceTemplateService $service)
@@ -77,13 +91,14 @@ class ProductionPerformanceTemplateController extends Controller
             'lines.*.performance_rate' => 'required|numeric|min:0|max:1']);
     }
 
-    private function user(Request $request): object
+    private function user(Request $request, bool $write = true): object
     {
         $auth = app(AuthContextService::class);
         $user = $auth->currentUser($request);
         if (! $user) throw new WorkOrderDomainException('unauthenticated', '请先登录 ERP。', 401);
-        if (! $auth->isSuperAdmin($user) && ! in_array(ProductionPerformanceTemplateService::PERMISSION, $auth->permissionCodes($user), true))
-            throw new WorkOrderDomainException('permission_denied', '当前用户没有维护提成比例的权限。', 403);
+        $required = $write ? ProductionPerformanceTemplateService::WRITE_PERMISSIONS : ProductionPerformanceTemplateService::READ_PERMISSIONS;
+        if (! $auth->isSuperAdmin($user) && ! array_intersect($required, $auth->permissionCodes($user)))
+            throw new WorkOrderDomainException('permission_denied', $write ? '当前用户没有维护提成模板的权限。' : '当前用户没有查看提成模板的权限。', 403);
         return $user;
     }
 }

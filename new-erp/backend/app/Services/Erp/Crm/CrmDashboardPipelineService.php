@@ -17,8 +17,8 @@ use Illuminate\Support\Facades\DB;
 final class CrmDashboardPipelineService
 {
     public const FUNNEL = ['recorded' => '线索录入', 'confirmed' => '有效线索',
-        'requirement' => '客户需求确认', 'solution' => '客户方案生成', 'product' => '产品方案确认',
-        'price' => '订单价格确认', 'contract' => '订单合同确认', 'won' => '成交'];
+        'requirement' => '第4步｜产品方案', 'solution' => '第5步｜营销产品', 'product' => '第6步｜达成共识',
+        'price' => '第7步｜要求承诺', 'contract' => '第8步｜确认成交', 'won' => '成交'];
     private const KINDS = ['pipeline_stage', 'pipeline_stalled', 'pipeline_overdue_followup', 'pipeline_overdue_close',
         'pipeline_active', 'pipeline_lost', 'pipeline_won', 'pipeline_unknown_stage_age', 'cohort_stage', 'cohort_conversion',
         'contact_due', 'contact_completed', 'contact_overdue', 'contact_due_soon', 'contact_pending_accept',
@@ -40,11 +40,11 @@ final class CrmDashboardPipelineService
         $stages = [];
         $dwell = [];
         $stageNames = CrmOpportunityApplicationService::STAGES;
-        if ($base) foreach ((clone $base)->where('status', 'open')->whereNotIn('stage', array_keys($stageNames))->distinct()->pluck('stage') as $unknown) {
+        if ($base) foreach ((clone $base)->where('status', 'open')->whereNotIn('stage', array_merge(array_keys($stageNames), array_keys(CrmNineStepCatalog::LEGACY)))->distinct()->pluck('stage') as $unknown) {
             $stageNames[$unknown] = $unknown === '' ? '阶段未填写' : '未知阶段（'.$unknown.'）';
         }
         foreach ($stageNames as $key => $name) {
-            $query = $base ? (clone $base)->where('status', 'open')->where('stage', $key) : null;
+            $query = $base ? (clone $base)->where('status', 'open')->whereIn('stage', $this->stageValues($key)) : null;
             $stages[] = ['key' => $key, 'name' => $name, 'can' => $base !== null,
                 'count' => $query?->count(), 'amounts' => $query ? $this->expectedAmounts($query) : [],
                 'query' => ['kind' => 'pipeline_stage', 'stage' => $key]];
@@ -204,7 +204,7 @@ final class CrmDashboardPipelineService
         $opps = (clone $opportunities)->select(['id', 'source_lead_id', 'created_at', 'won_at'])->toBase();
         $events = DB::query()->fromSub(clone $opps, 'o')->selectRaw("source_lead_id AS lead_id, 'requirement' AS stage, created_at AS arrived_at");
         $logs = DB::table('erp_crm_opportunity_stage_logs as h')->joinSub(clone $opps, 'o', 'o.id', '=', 'h.opportunity_id')
-            ->whereIn('h.action', ['create', 'stage_forward', 'stage_backward'])->where('h.created_at', '<', $cutoff);
+            ->whereIn('h.action', ['create', 'stage_forward', 'stage_backward', 'progress'])->where('h.created_at', '<', $cutoff);
         $events->unionAll((clone $logs)->selectRaw('o.source_lead_id AS lead_id, h.to_stage AS stage, h.created_at AS arrived_at'));
         $events->unionAll((clone $logs)->whereNotNull('h.from_stage')->selectRaw('o.source_lead_id AS lead_id, h.from_stage AS stage, h.created_at AS arrived_at'));
         $events->unionAll(DB::query()->fromSub(clone $opps, 'o')->whereNotNull('won_at')->where('won_at', '<', $cutoff)
@@ -219,20 +219,20 @@ final class CrmDashboardPipelineService
             ->selectRaw("o.source_lead_id AS lead_id, 'won' AS stage, link.first_effective_at AS arrived_at"));
         }
         $arrivals = DB::query()->fromSub($events, 'e')->select('lead_id');
-        foreach (array_keys(CrmOpportunityApplicationService::STAGES) as $stage) $arrivals->selectRaw("MAX(stage = ?) AS reached_{$stage}", [$stage]);
+        foreach (CrmNineStepCatalog::LEGACY as $legacy => $current) $arrivals->selectRaw("MAX(stage IN (?, ?)) AS reached_{$legacy}", [$legacy, $current]);
         $arrivals->selectRaw("MAX(stage = 'won') AS reached_won, MIN(IF(stage = 'won', arrived_at, NULL)) AS first_won_at")->groupBy('lead_id');
         $complete = DB::table('erp_crm_opportunity_stage_logs')->whereIn('opportunity_id', $oppIds)
-            ->where('action', 'create')->where('to_stage', 'requirement')->where('created_at', '<', $cutoff)
+            ->where('action', 'create')->whereIn('to_stage', ['requirement', 'step_4_solution'])->where('created_at', '<', $cutoff)
             ->selectRaw('opportunity_id, 1 AS complete')->groupBy('opportunity_id');
         $history = DB::query()->fromSub(clone $opps, 'o')->leftJoinSub($complete, 'h', 'h.opportunity_id', '=', 'o.id')
             ->selectRaw('source_lead_id, MAX(COALESCE(h.complete, 0)) AS complete')->groupBy('source_lead_id');
-        $facts = DB::query()->fromSub($leads->select(['id', 'owner_legacy_id', 'owner_name', 'status', 'legacy_id', 'confirmed_at', 'created_at', 'is_new_inquiry'])->toBase(), 'l')
+        $facts = DB::query()->fromSub($leads->select(['id', 'owner_legacy_id', 'owner_name', 'status', 'legacy_id', 'confirmed_at', 'accepted_at', 'created_at', 'is_new_inquiry'])->toBase(), 'l')
             ->leftJoinSub($arrivals, 'a', 'a.lead_id', '=', 'l.id')->leftJoinSub($history, 'h', 'h.source_lead_id', '=', 'l.id')
             ->selectRaw("'lead' AS target_type, l.id AS target_id, l.owner_legacy_id, l.owner_name, l.created_at AS recorded_at,
                 l.is_new_inquiry, a.first_won_at, 1 AS reached_recorded, 0 AS unknown_recorded")
             ->selectRaw('IF(l.confirmed_at < ?, 1, 0) AS reached_confirmed, IF(l.legacy_id IS NOT NULL AND l.confirmed_at IS NULL, 1, 0) AS unknown_confirmed', [$cutoff]);
         // 缺失日志或不可见的后续商机只能标未知；不能用当前阶段补造过去到达。
-        foreach (array_merge(array_keys(CrmOpportunityApplicationService::STAGES), ['won']) as $stage) {
+        foreach (array_merge(array_keys(CrmNineStepCatalog::LEGACY), ['won']) as $stage) {
             $facts->selectRaw("COALESCE(a.reached_{$stage}, 0) AS reached_{$stage},
                 IF(COALESCE(a.reached_{$stage}, 0) = 0 AND (l.legacy_id IS NOT NULL OR (l.status = 'converted' AND h.source_lead_id IS NULL) OR h.complete = 0), 1, 0) AS unknown_{$stage}");
         }
@@ -276,12 +276,18 @@ final class CrmDashboardPipelineService
         }
         if ($kind === 'pipeline_won') return $this->scope->period($query, $filters, 'won_at')->whereNotNull('won_at')->where('won_at', '<=', now());
         $query->where('status', 'open');
-        if ($kind === 'pipeline_stage') $query->where('stage', $filters['stage'] ?? 'requirement');
+        if ($kind === 'pipeline_stage') $query->whereIn('stage', $this->stageValues($filters['stage'] ?? 'step_4_solution'));
         elseif ($kind === 'pipeline_stalled') $query->where('stage_entered_at', '<=', now()->subDays((int) ($filters['stalled_days'] ?? 30)));
         elseif ($kind === 'pipeline_overdue_followup') $query->whereNotNull('next_contact_at')->where('next_contact_at', '<', now());
         elseif ($kind === 'pipeline_overdue_close') $query->whereNotNull('expected_close_date')->where('expected_close_date', '<', today()->toDateString());
         elseif ($kind === 'pipeline_unknown_stage_age') $query->where(fn ($q) => $q->whereNull('stage_entered_at')->orWhere('stage_entered_at', '>', now()));
         return $query;
+    }
+
+    private function stageValues(string $stage): array
+    {
+        $current = CrmNineStepCatalog::normalizeStage('opportunity', $stage);
+        return array_values(array_unique(array_filter([$current, array_search($current, CrmNineStepCatalog::LEGACY, true)])));
     }
 
     private function expectedAmounts(Builder $query): array
@@ -330,7 +336,7 @@ final class CrmDashboardPipelineService
         $cutoff = $this->cutoff($filters);
         $history = DB::query()->fromSub(clone $subjects, 's')->join('erp_crm_followups as p', function ($join) {
             $join->on('p.subject_type', '=', 's.target_type')->on('p.subject_id', '=', 's.target_id');
-        })->whereNotNull('p.next_contact_at')->where('p.contacted_at', '<', $cutoff)
+        })->whereNotNull('p.next_contact_at')->where(fn ($q) => $q->where('p.followup_schedule_mode', 'scheduled')->orWhereNull('p.followup_schedule_mode'))->where('p.contacted_at', '<', $cutoff)
             ->selectRaw("s.*, p.id AS plan_id, p.next_contact_at AS planned_at, p.contacted_at AS planned_from_at,
                 p.next_plan AS planned_action, IF(EXISTS(SELECT 1 FROM erp_crm_followups AS revised
                     WHERE revised.subject_type = p.subject_type AND revised.subject_id = p.subject_id

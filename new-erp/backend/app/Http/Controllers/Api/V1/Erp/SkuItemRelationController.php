@@ -8,6 +8,7 @@ use App\Services\Erp\SkuItemDefaultRelationService;
 use App\Services\Erp\SkuItemRelationAuditService;
 use App\Services\Erp\AuthContextService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 
 class SkuItemRelationController extends Controller
 {
@@ -48,21 +49,21 @@ class SkuItemRelationController extends Controller
 
     public function setDefaultItem(Request $request, int $skuId, SkuItemDefaultRelationService $service)
     {
-        $hasCurrent = SkuItemRelation::where('sku_id', $skuId)->where('status', 'active')->where('is_primary', true)->exists();
-        $this->authorizePermission($request, $hasCurrent ? 'sku_item_relation.change' : 'sku_item_relation.set');
         $data = $request->validate(['item_id' => 'required|exists:erp_items,id', 'factor' => 'required|numeric|gt:0', 'change_reason' => 'required|string|max:80', 'remark' => 'nullable|string|max:1000']);
-        $relation = $service->setPrimary($skuId, $data['item_id'], $data['change_reason'], $data['remark'] ?? null, $this->operatorId($request), $this->operatorName($request), (float) $data['factor']);
+        $relation = $this->saveDefaultItem($request, $skuId, $data, $service);
         return response()->json(['message' => '默认物料已保存并立即生效。', 'data' => $relation->load('item')], 201);
     }
 
-    /** Compatibility endpoint for the pre-Stage-4 client; it now follows the same one-default-item transaction. */
-    public function legacySetDefaultItem(Request $request, SkuItemDefaultRelationService $service)
+    private function saveDefaultItem(Request $request, int $skuId, array $data, SkuItemDefaultRelationService $service): SkuItemRelation
     {
-        $data = $request->validate(['sku_id' => 'required|exists:erp_skus,id', 'item_id' => 'required|exists:erp_items,id', 'factor' => 'required|numeric|gt:0', 'change_reason' => 'required|string|max:80', 'remark' => 'nullable|string|max:1000']);
-        $hasCurrent = SkuItemRelation::where('sku_id', $data['sku_id'])->where('status', 'active')->where('is_primary', true)->exists();
-        $this->authorizePermission($request, $hasCurrent ? 'sku_item_relation.change' : 'sku_item_relation.set');
-        $relation = $service->setPrimary($data['sku_id'], $data['item_id'], $data['change_reason'], $data['remark'] ?? null, $this->operatorId($request), $this->operatorName($request), (float) $data['factor']);
-        return response()->json(['message' => '默认物料已保存并立即生效。', 'data' => $relation->load('item')], 201);
+        return DB::transaction(function () use ($request, $skuId, $data, $service): SkuItemRelation {
+            Sku::whereKey($skuId)->lockForUpdate()->firstOrFail();
+            // 旧权限分别限定首次设置和更换；锁内判断防止两次首次设置并发变成越权更换。
+            $hasCurrent = SkuItemRelation::where('sku_id', $skuId)->where('status', 'active')->where('is_primary', true)->lockForUpdate()->get()->isNotEmpty();
+            $this->authorizePermission($request, $hasCurrent ? 'sku_item_relation.change' : 'sku_item_relation.set');
+            return $service->setPrimary($skuId, $data['item_id'], $data['change_reason'], $data['remark'] ?? null,
+                $this->operatorId($request), $this->operatorName($request), $data['factor']);
+        });
     }
 
     public function audit(Request $request, SkuItemRelationAuditService $audit)
@@ -92,15 +93,6 @@ class SkuItemRelationController extends Controller
         return response()->json(['message' => '错误绑定已解除，处理记录已写入日志。']);
     }
 
-    public function index(Request $request)
-    {
-        $this->authorizePermission($request, 'sku_item_relation.view');
-        $query = SkuItemRelation::with(['sku.product', 'item', 'unit', 'baseRelation']);
-        if ($request->filled('sku_id')) $query->where('sku_id', $request->integer('sku_id'));
-        if ($request->filled('status')) $query->where('status', $request->status);
-        return response()->json($query->latest()->paginate(min(100, max(5, $request->integer('per_page', 10)))));
-    }
-
     /**
      * ERP authentication is token-based and intentionally does not populate
      * Laravel's default request user resolver.  Operation attribution must use
@@ -121,7 +113,20 @@ class SkuItemRelationController extends Controller
     {
         $auth = app(AuthContextService::class); $user = $auth->currentUser($request);
         if (!$user) abort(401, '未登录或登录已过期');
-        abort_unless($auth->isSuperAdmin($user) || in_array($permission, $auth->permissionCodes($user), true), 403, '无按钮权限：'.$permission);
+        $permissions = match ($permission) {
+            'sku_item_relation.view' => [
+                'master.sku_item_relation', 'master.sku_item_relation.view', 'sku_item_relation.view',
+            ],
+            'sku_item_relation.history' => [
+                'master.sku_item_relation', 'master.sku_item_relation.view', 'sku_item_relation.history',
+            ],
+            'sku_item_relation.set', 'sku_item_relation.change' => [
+                'master.sku_item_relation.create', 'master.sku_item_relation.set_primary', $permission,
+            ],
+            'sku_item_relation.audit' => ['master.sku_item_relation.view', 'sku_item_relation.repair', 'sku_item_relation.audit'],
+            default => [$permission],
+        };
+        abort_unless($auth->isSuperAdmin($user) || array_intersect($permissions, $auth->permissionCodes($user)), 403, '无按钮权限：'.$permission);
     }
 
     private function paginateAuditRows($query, Request $request, SkuItemRelationAuditService $audit, ?string $status = null): array

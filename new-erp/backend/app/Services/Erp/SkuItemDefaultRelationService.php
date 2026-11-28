@@ -15,13 +15,14 @@ class SkuItemDefaultRelationService
         ?string $remark,
         ?int $operatorId,
         string $operatorName,
-        float $factor = 1.0,
+        int|float|string $factor = 1.0,
+        bool $allowUnchanged = false,
     ): SkuItemRelation {
         $reason = $reason ?: '首次设置';
         $this->ensureReasonRemark($reason, $remark);
-        if ($factor <= 0) throw ValidationException::withMessages(['factor' => '履约因子必须大于 0。']);
+        $factorValue = $this->validateFactor($factor);
 
-        return DB::transaction(function () use ($skuId, $itemId, $factor, $reason, $remark, $operatorId, $operatorName) {
+        return DB::transaction(function () use ($skuId, $itemId, $factorValue, $reason, $remark, $operatorId, $operatorName, $allowUnchanged) {
             $sku = Sku::with('salesUnit')->lockForUpdate()->findOrFail($skuId);
             $this->ensurePhysical($sku);
             $item = Item::with('unit')->whereKey($itemId)->where('status', 'enabled')->lockForUpdate()->first();
@@ -33,25 +34,56 @@ class SkuItemDefaultRelationService
             $active = SkuItemRelation::where('sku_id', $sku->id)->where('status', 'active')->where('is_primary', true)->lockForUpdate()->get();
             if ($active->count() > 1) throw ValidationException::withMessages(['sku_id' => '该 SKU 存在多个有效默认物料，请先在完整性检查中修复。']);
             $old = $active->first();
-            if ($old && (int) $old->item_id === $item->id && abs((float) $old->qty - $factor) < 0.00000001) {
+            if ($old && (int) $old->item_id === $item->id && bccomp((string) $old->qty, $factorValue, 8) === 0) {
+                if ($allowUnchanged) return $old;
                 throw ValidationException::withMessages(['item_id' => '新默认物料和履约因子与当前关系相同，无需保存。']);
             }
 
+            $before = $old ? ['item_id' => $old->item_id, 'factor' => (string) $old->qty] : null;
             if ($old) {
                 $old->update([
                     'status' => 'inactive', 'is_primary' => false, 'expired_at' => now(),
                     'operator_name' => $operatorName, 'change_reason' => $reason,
                 ]);
             }
-            $relation = SkuItemRelation::create([
+            // The historical combination is unique even when inactive; reactivation and
+            // factor-only edits reuse it, while the immutable log retains both factors.
+            $relation = SkuItemRelation::where('sku_id', $sku->id)->where('item_id', $item->id)
+                ->where('relation_type', 'primary')->lockForUpdate()->first() ?? new SkuItemRelation;
+            $relation->fill([
                 'sku_id' => $sku->id, 'item_id' => $item->id, 'unit_id' => $item->unit_id,
-                'relation_type' => 'primary', 'qty' => $factor, 'is_primary' => true, 'is_bundle_item' => false,
-                'status' => 'active', 'remark' => $remark, 'effective_at' => now(),
+                'relation_type' => 'primary', 'qty' => $factorValue, 'is_primary' => true, 'is_bundle_item' => false,
+                'status' => 'active', 'remark' => $remark, 'effective_at' => now(), 'expired_at' => null,
                 'operator_name' => $operatorName, 'change_reason' => $reason,
             ]);
-            $this->log($sku->id, $relation->id, $old?->item_id, $item->id, $old ? 'change_primary' : 'set_primary', $reason, $remark, $operatorId, $operatorName);
+            $relation->save();
+            $logRemark = ($remark ? $remark."\n" : '').'履约关系快照：'.json_encode([
+                'before' => $before, 'after' => ['item_id' => $item->id, 'factor' => $factorValue],
+            ], JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
+            $this->log($sku->id, $relation->id, $before['item_id'] ?? null, $item->id, $old ? 'change_primary' : 'set_primary', $reason, $logRemark, $operatorId, $operatorName);
             return $relation;
         });
+    }
+
+    public function validateFactor(int|float|string $factor): string
+    {
+        $invalid = fn () => ValidationException::withMessages(['factor' => '履约因子必须大于 0，最多 10 位整数和 8 位小数。']);
+        if (is_float($factor) && !is_finite($factor)) throw $invalid();
+        $text = is_float($factor) ? json_encode($factor, JSON_PRESERVE_ZERO_FRACTION | JSON_THROW_ON_ERROR) : trim((string) $factor);
+        if (!preg_match('/^\+?(\d+(?:\.\d*)?|\.\d+)(?:[eE]([+-]?\d+))?$/D', $text, $parts)) throw $invalid();
+        [$integer, $fraction] = array_pad(explode('.', $parts[1], 2), 2, '');
+        $exponent = (int) ($parts[2] ?? 0);
+        if (abs($exponent) > 40) throw $invalid();
+        $digits = $integer.$fraction;
+        $point = strlen($integer) + $exponent;
+        if ($point <= 0) $decimal = '0.'.str_repeat('0', -$point).$digits;
+        elseif ($point >= strlen($digits)) $decimal = $digits.str_repeat('0', $point - strlen($digits));
+        else $decimal = substr($digits, 0, $point).'.'.substr($digits, $point);
+        [$integer, $fraction] = array_pad(explode('.', $decimal, 2), 2, '');
+        $integer = ltrim($integer, '0') ?: '0';
+        $fraction = rtrim($fraction, '0');
+        if (strlen($integer) > 10 || strlen($fraction) > 8 || bccomp($decimal, '0', 8) <= 0) throw $invalid();
+        return $integer.'.'.str_pad($fraction, 8, '0');
     }
 
     public function resolveDuplicate(int $skuId, int $keepRelationId, string $reason, ?string $remark, ?int $operatorId, string $operatorName): void

@@ -18,6 +18,8 @@ use Illuminate\Support\Str;
 final class ProductionPerformanceTemplateService
 {
     public const PERMISSION = 'production.performance.manage';
+    public const READ_PERMISSIONS = ['production.performance.view', 'production.performance.edit', self::PERMISSION];
+    public const WRITE_PERMISSIONS = ['production.performance.edit', self::PERMISSION];
 
     public function paginate(array $filters): array
     {
@@ -89,41 +91,67 @@ final class ProductionPerformanceTemplateService
         });
     }
 
-    /** 商品分类使用本模板：该分类（及其下级未单独指定的分类）的商品按本模板兜底；已生成的工单仍按原比例。 */
-    public function bindCategories(int $id, array $categoryIds, object $user): array
+    /** 一次替换完整分类范围，空集合表示全部解除；历史工单的比例快照不变。 */
+    public function syncCategories(int $id, array $categoryIds, ?int $expectedVersion, object $user): array
     {
-        $actor = $this->actor($user);
-        return DB::transaction(function () use ($id, $categoryIds, $actor): array {
-            $template = ProductionPerformanceTemplate::query()->lockForUpdate()->findOrFail($id);
-            if ($template->status !== 'enabled') $this->fail('performance_template_disabled', '模板已停用，请先启用。', 422);
-            $categories = ItemCategory::query()->whereIn('id', $categoryIds)->get(['id', 'category_name']);
-            if ($categories->count() !== count($categoryIds)) $this->fail('performance_category_invalid', '部分商品分类不存在，请刷新后重选。', 422);
-            foreach ($categories as $category) {
-                $binding = ProductionPerformanceBinding::query()->lockForUpdate()->firstOrNew(['binding_key' => ProductionPerformanceBinding::categoryKey((int) $category->id)]);
-                $previous = $binding->exists ? (int) $binding->template_id : null;
-                if (! $binding->exists) $binding->created_by_legacy_id = $actor;
-                $binding->fill(['category_id' => $category->id, 'template_id' => $template->id, 'updated_by_legacy_id' => $actor])->save();
-                $this->log('bind_performance_template_category', 'item_category', (int) $category->id, $actor,
-                    ['template_id' => (int) $template->id, 'template_name' => $template->template_name, 'previous_template_id' => $previous]);
-            }
-            $template->update(['last_applied_at' => now()]);
-            return $this->show((int) $template->id);
-        });
+        return $this->changeCategories($id, $categoryIds, $expectedVersion, $user, 'replace');
     }
 
-    /** 取消商品分类的指定，改按上级分类或默认模板兜底。 */
-    public function unbindCategories(int $id, array $categoryIds, object $user): array
+    public function bindCategories(int $id, array $categoryIds, object $user, ?int $expectedVersion = null): array
+    {
+        return $this->changeCategories($id, $categoryIds, $expectedVersion, $user, 'bind');
+    }
+
+    public function unbindCategories(int $id, array $categoryIds, object $user, ?int $expectedVersion = null): array
+    {
+        return $this->changeCategories($id, $categoryIds, $expectedVersion, $user, 'unbind');
+    }
+
+    private function changeCategories(int $id, array $categoryIds, ?int $expectedVersion, object $user, string $mode): array
     {
         $actor = $this->actor($user);
-        return DB::transaction(function () use ($id, $categoryIds, $actor): array {
-            $keys = array_map(fn ($categoryId) => ProductionPerformanceBinding::categoryKey((int) $categoryId), $categoryIds);
-            $removed = ProductionPerformanceBinding::query()->where('template_id', $id)->whereIn('binding_key', $keys)->lockForUpdate()->get();
-            foreach ($removed as $binding) {
-                $binding->delete();
-                $this->log('unbind_performance_template_category', 'item_category', (int) $binding->category_id, $actor, ['template_id' => $id]);
+        $ids = array_map('intval', $categoryIds);
+        if (array_filter($ids, fn ($value) => $value < 1) || count($ids) !== count(array_unique($ids))) $this->fail('performance_category_invalid', '商品分类不能重复或为空。', 422);
+        return DB::transaction(function () use ($id, $ids, $expectedVersion, $actor, $mode): array {
+            $template = ProductionPerformanceTemplate::query()->lockForUpdate()->findOrFail($id);
+            if ($expectedVersion !== null && $expectedVersion !== (int) $template->business_version) $this->fail('performance_template_version_conflict', '模板或适用范围已被其他人修改，请刷新后重新确认。', 409);
+            $current = ProductionPerformanceBinding::query()->where('template_id', $id)->whereNotNull('category_id')->orderBy('category_id')->lockForUpdate()->get();
+            $before = $current->pluck('category_id')->map(fn ($value) => (int) $value)->all();
+            $desired = match ($mode) {
+                'bind' => array_values(array_unique(array_merge($before, $ids))),
+                'unbind' => array_values(array_diff($before, $ids)),
+                default => $ids,
+            };
+            sort($desired);
+            // 两个模板即便都还没有绑定行，也会争用同一分类行锁，不能互相抢占。
+            $categories = ItemCategory::query()->whereIn('id', array_unique(array_merge($before, $ids)))->orderBy('id')->lockForUpdate()->get()->keyBy('id');
+            // 解除只删除本模板的绑定，必须允许逐次清理停用、错类型等历史范围。
+            if ($mode !== 'unbind') {
+                foreach ($desired as $categoryId) {
+                    $category = $categories->get($categoryId);
+                    if (! $category || $category->category_type !== 'product' || $category->status !== 'enabled') $this->fail('performance_category_invalid', '只能绑定已启用的商品分类', 422);
+                }
+                if ($desired && $template->status !== 'enabled') $this->fail('performance_template_disabled', '模板已停用，请先启用。', 422);
+                $occupied = ProductionPerformanceBinding::query()->whereIn('category_id', $desired)->where('template_id', '<>', $id)->orderBy('category_id')->lockForUpdate()->first();
+                if ($occupied) $this->fail('performance_category_conflict', '商品分类“'.($categories->get((int) $occupied->category_id)?->category_name ?? $occupied->category_id).'”已指定其他模板，请先在原模板解除后再选择。', 409);
             }
+            $added = array_values(array_diff($desired, $before));
+            $removed = array_values(array_diff($before, $desired));
+            if (! $added && ! $removed) return $this->show($id);
+            if ($removed) ProductionPerformanceBinding::query()->where('template_id', $id)->whereIn('category_id', $removed)->delete();
+            foreach ($added as $categoryId) ProductionPerformanceBinding::create([
+                'binding_key' => ProductionPerformanceBinding::categoryKey($categoryId), 'category_id' => $categoryId,
+                'template_id' => $id, 'created_by_legacy_id' => $actor, 'updated_by_legacy_id' => $actor,
+            ]);
+            $previousVersion = (int) $template->business_version;
+            $template->update(['last_applied_at' => now(), 'business_version' => $previousVersion + 1, 'updated_by_legacy_id' => $actor]);
+            $this->log($mode.'_performance_template_categories', 'performance_template', $id, $actor, [
+                'template_id' => $id, 'before_category_ids' => $before, 'category_ids' => $desired,
+                'added_category_ids' => $added, 'removed_category_ids' => $removed,
+                'before_version' => $previousVersion, 'after_version' => (int) $template->business_version,
+            ]);
             return $this->show($id);
-        });
+        }, 5);
     }
 
     private function assertUnused(ProductionPerformanceTemplate $template, string $action): void

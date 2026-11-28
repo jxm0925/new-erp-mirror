@@ -32,7 +32,7 @@
       <!-- 全局统一页面提示条 -->
       <div class="erp-page-tip">
         <i class="el-icon-info" />
-        <span>统一维护系统底层公共基础业务字典与标准档案。涵盖计量单位、商品分类、付款结算方式及全渠道成交平台，为商品规格、物料管理、采购结算、销售履约及财务凭证流转提供标准化映射支撑。</span>
+        <span>统一维护系统底层公共基础业务字典与标准档案。涵盖计量单位、商品分类、付款结算方式、成交平台、承运商及业务线，为商品规格、物料管理、采购结算、销售履约及财务凭证流转提供标准化映射支撑。</span>
       </div>
 
       <!-- 模块选项卡容器 -->
@@ -115,6 +115,26 @@
               <archive-dictionary v-if="visited.carriers" ref="carrierList" kind="carriers" :active="activeTab === 'carriers'" @count-updated="c => updateCount('carriers', c)" />
             </div>
           </el-tab-pane>
+          <el-tab-pane name="business-lines">
+            <span slot="label" class="custom-tab-item">
+              <i class="el-icon-connection" />
+              <span>业务线</span>
+              <span class="tab-badge code-mono">{{ counts['business-lines'] }}</span>
+            </span>
+            <div class="tab-pane-content">
+              <archive-dictionary v-if="visited['business-lines']" ref="businessLineList" kind="business-lines" :active="activeTab === 'business-lines'" @count-updated="c => updateCount('business-lines', c)" />
+            </div>
+          </el-tab-pane>
+          <el-tab-pane name="customer-pools">
+            <span slot="label" class="custom-tab-item">
+              <i class="el-icon-connection" />
+              <span>客户池</span>
+              <span class="tab-badge code-mono">{{ counts['customer-pools'] }}</span>
+            </span>
+            <div class="tab-pane-content">
+              <archive-dictionary v-if="visited['customer-pools']" ref="customerPoolList" kind="customer-pools" :active="activeTab === 'customer-pools'" @count-updated="c => updateCount('customer-pools', c)" />
+            </div>
+          </el-tab-pane>
         </el-tabs>
       </div>
     </div>
@@ -133,7 +153,8 @@ const countsCache = {
   categories: 0,
   payments: 6,
   platforms: 1,
-  carriers: 0
+  carriers: 0,
+  'business-lines': 0, 'customer-pools': 0
 }
 
 export default {
@@ -153,7 +174,8 @@ export default {
         categories: '商品分类',
         payments: '付款方式',
         platforms: '成交平台',
-        carriers: '承运商'
+        carriers: '承运商',
+        'business-lines': '业务线', 'customer-pools': '客户池'
       }
       return map[this.activeTab] || '基础档案'
     },
@@ -167,22 +189,25 @@ export default {
         categories: '新增分类',
         payments: '新增付款方式',
         platforms: '新增平台',
-        carriers: '新增承运商'
+        carriers: '新增承运商',
+        'business-lines': '新增业务线', 'customer-pools': '新增客户池'
       }
       return map[this.activeTab] || '新增档案'
     },
     canCreateCurrent () {
-      if (this.activeTab === 'units') return true
-      if (this.activeTab === 'categories') return this.$can('master.base_archive')
+      if (this.activeTab === 'units') return this.$can('master.base_archive.create')
+      if (this.activeTab === 'categories') return this.$can('master.base_archive.create') || this.$can('master.base_archive')
       if (this.activeTab === 'payments') return this.$can('finance.payment_method.manage')
-      if (this.activeTab === 'platforms') return this.$can('master.base_archive')
+      if (this.activeTab === 'platforms') return this.$can('master.base_archive.create') || this.$can('master.base_archive')
       if (this.activeTab === 'carriers') return this.$can('master.base_archive.create')
-      return true
+      if (this.activeTab === 'customer-pools') return this.$can('master.base_archive.create')
+      if (this.activeTab === 'business-lines') return this.$can('master.base_archive.create')
+      return false
     }
   },
   created () {
     const queryTab = this.$route.query.tab
-    if (queryTab && ['units', 'categories', 'payments', 'platforms', 'carriers'].includes(queryTab)) {
+    if (queryTab && ['units', 'categories', 'payments', 'platforms', 'carriers', 'business-lines', 'customer-pools'].includes(queryTab)) {
       this.activeTab = queryTab
       this.$set(this.visited, queryTab, true)
     }
@@ -200,14 +225,18 @@ export default {
     },
     async prefetchCounts () {
       try {
-        const [uRes, cRes, pRes, plRes, carrierRes] = await Promise.allSettled([
+        const [uRes, cRes, pRes, plRes, carrierRes, businessLineRes, customerPoolRes] = await Promise.allSettled([
           listEntity('units', { per_page: 1 }),
           listArchives('categories', { per_page: 1 }),
           this.$can('finance.payment_method.view') || this.$can('finance.payment_method.manage')
             ? listArchives('payments', { per_page: 1 })
             : Promise.resolve({ data: { total: 0 } }),
           listArchives('platforms', { per_page: 1 }),
-          listArchives('carriers', { per_page: 1 })
+          listArchives('carriers', { per_page: 1 }),
+          this.$can('master.base_archive') || this.$can('master.base_archive.view') || this.$can('master.base_archive.create')
+            ? listArchives('business-lines', { per_page: 1 })
+            : Promise.resolve({ data: { total: 0 } }),
+          this.$can('master.base_archive') || this.$can('master.base_archive.view') || this.$can('master.base_archive.create') ? listArchives('customer-pools', { per_page: 1 }) : Promise.resolve({ data: { total: 0 } })
         ])
         if (uRes.status === 'fulfilled' && uRes.value && uRes.value.data) {
           this.updateCount('units', Number(uRes.value.data.total || 0))
@@ -222,6 +251,8 @@ export default {
           this.updateCount('platforms', Number(plRes.value.data.total || 0))
         }
         if (carrierRes.status === 'fulfilled' && carrierRes.value && carrierRes.value.data) this.updateCount('carriers', Number(carrierRes.value.data.total || 0))
+        if (customerPoolRes.status === 'fulfilled' && customerPoolRes.value && customerPoolRes.value.data) this.updateCount('customer-pools', Number(customerPoolRes.value.data.total || 0))
+        if (businessLineRes.status === 'fulfilled' && businessLineRes.value && businessLineRes.value.data) this.updateCount('business-lines', Number(businessLineRes.value.data.total || 0))
       } catch (_) {}
     },
     getRefComp (ref) {
@@ -243,6 +274,12 @@ export default {
       } else if (this.activeTab === 'carriers') {
         const comp = this.getRefComp(this.$refs.carrierList)
         if (comp && comp.load) comp.load()
+      } else if (this.activeTab === 'business-lines') {
+        const comp = this.getRefComp(this.$refs.businessLineList)
+        if (comp && comp.load) comp.load()
+      } else if (this.activeTab === 'customer-pools') {
+        const comp = this.getRefComp(this.$refs.customerPoolList)
+        if (comp && comp.load) comp.load()
       }
     },
     createInActiveTab () {
@@ -260,6 +297,12 @@ export default {
         if (comp && comp.openCreate) comp.openCreate()
       } else if (this.activeTab === 'carriers') {
         const comp = this.getRefComp(this.$refs.carrierList)
+        if (comp && comp.openCreate) comp.openCreate()
+      } else if (this.activeTab === 'business-lines') {
+        const comp = this.getRefComp(this.$refs.businessLineList)
+        if (comp && comp.openCreate) comp.openCreate()
+      } else if (this.activeTab === 'customer-pools') {
+        const comp = this.getRefComp(this.$refs.customerPoolList)
         if (comp && comp.openCreate) comp.openCreate()
       }
     }

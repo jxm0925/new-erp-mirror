@@ -419,12 +419,12 @@
       </div>
     </div>
 
-    <!-- 底部通栏：线索池与标签快捷雷达 -->
-    <section v-if="canViewLeads" class="crm-card radar-card">
+    <!-- 底部通栏：客户池与标签快捷雷达 -->
+    <section v-if="radarGroups.length" class="crm-card radar-card">
       <div class="radar-head">
         <div class="radar-title-wrap">
-          <h2 class="crm-section-title">线索池与标签快捷雷达</h2>
-          <span class="crm-muted">点击任意标签直接带筛选条件进入线索中心</span>
+          <h2 class="crm-section-title">客户池与标签快捷雷达</h2>
+          <span class="crm-muted">{{ radarTab === 'customer_pools' ? '点击客户池，按线索、商机或客户查看' : '点击标签，带筛选条件进入线索中心' }}</span>
         </div>
         <div class="seg-pills">
           <button
@@ -442,17 +442,17 @@
       </div>
 
       <div class="radar-chips">
-        <button
-          v-for="item in activeRadarItems"
-          :key="item.name"
-          type="button"
-          class="radar-chip"
-          :class="{ 'is-zero': !item.count }"
-          @click="openLeads(item.query)"
-        >
-          <span class="chip-name">{{ item.name }}</span>
-          <span class="chip-num">{{ item.count }}</span>
-        </button>
+        <template v-for="item in activeRadarItems">
+          <el-dropdown v-if="radarTab === 'customer_pools'" :key="'pool-' + item.name" trigger="click" :disabled="!poolTargets(item).length" @command="openRadarTarget">
+            <button type="button" class="radar-chip" :class="{ 'is-zero': !item.count }" :disabled="!poolTargets(item).length">
+              <span class="chip-name">{{ item.name }}</span><span class="chip-num">{{ item.count }}</span><i class="el-icon-arrow-down" />
+            </button>
+            <el-dropdown-menu slot="dropdown" class="crm-select-popper"><el-dropdown-item v-for="target in poolTargets(item)" :key="target.type" :command="target">{{ target.label }} <b>{{ target.count }}</b></el-dropdown-item></el-dropdown-menu>
+          </el-dropdown>
+          <button v-else :key="'tag-' + item.name" type="button" class="radar-chip" :class="{ 'is-zero': !item.count }" @click="openLeads(item.query)">
+            <span class="chip-name">{{ item.name }}</span><span class="chip-num">{{ item.count }}</span>
+          </button>
+        </template>
         <span v-if="!activeRadarItems.length" class="crm-muted">当前分类暂无标签数据</span>
       </div>
     </section>
@@ -524,7 +524,6 @@ const QUEUE_META = [
   { key: 'tomorrow', label: '明日联系', icon: 'el-icon-date', desc: '明日联系和已确认的重点客户', tone: 'is-green', valCls: '' },
   { key: 'overdue', label: '逾期跟进', icon: 'el-icon-warning-outline', desc: '超计划时间未跟进', tone: 'is-red', valCls: 'is-danger' },
   { key: 'pending_receive', label: '待接收', icon: 'el-icon-bell', desc: '分配给我待确认接收', tone: 'is-amber', valCls: 'is-warn' },
-  { key: 'pending_confirm', label: '待确认有效', icon: 'el-icon-circle-check', desc: '待确认为有效线索', tone: 'is-amber', valCls: '' },
   { key: 'pending_assign', label: '待分配', icon: 'el-icon-s-promotion', desc: '授权范围内待指派销售', tone: 'is-amber', valCls: '' },
   { key: 'pending_verify', label: '待核实', icon: 'el-icon-coordinate', desc: '身份冲突待核实归属', tone: 'is-red', valCls: 'is-danger' }
 ]
@@ -538,7 +537,6 @@ const PRIORITY_TABS = [
 const ACTION_LABELS = {
   followup: '跟进',
   receive: '接收',
-  confirm: '有效线索',
   assign: '分配',
   verify: '核实'
 }
@@ -588,6 +586,9 @@ export default {
     },
     canViewOpportunities() {
       return !this.$can || this.$can('crm.opportunity.view')
+    },
+    canViewCustomers() {
+      return !this.$can || this.$can('sales.customer') || this.$can('sales.customer.view')
     },
     canCreateLead() {
       return !!(this.metadata.abilities || {}).create
@@ -640,12 +641,14 @@ export default {
       return list
     },
     radarGroups() {
-      return [
-        { key: 'customer_pools', label: '客户池', items: this.workbench.customer_pools || [] },
+      const groups = []
+      if (this.canViewLeads || this.canViewOpportunities || this.canViewCustomers) groups.push({ key: 'customer_pools', label: '客户池', items: this.workbench.customer_pools || [] })
+      if (this.canViewLeads) groups.push(
         { key: 'lead_statuses', label: '线索状态', items: this.workbench.lead_statuses || [] },
         { key: 'customer_tags', label: '客户标签', items: this.workbench.customer_tags || [] },
         { key: 'custom_tags', label: '我的标签', items: this.workbench.custom_tags || [] }
-      ]
+      )
+      return groups
     },
     activeRadarItems() {
       const found = this.radarGroups.find(g => g.key === this.radarTab)
@@ -849,6 +852,13 @@ export default {
     },
     openLeads(query) {
       this.$router.push({ path: '/sales/leads', query: { tab: 'all', ...query } })
+    },
+    poolTargets(item) {
+      return (item.targets || []).filter(target => ({ lead: this.canViewLeads, opportunity: this.canViewOpportunities, customer: this.canViewCustomers })[target.type])
+    },
+    openRadarTarget(target) {
+      const path = { lead: '/sales/leads', opportunity: '/sales/opportunities', customer: '/sales/customers' }[target.type]
+      if (path) this.$router.push({ path, query: { tab: 'all', ...target.query } }).catch(() => {})
     },
     taskRowClass({ row }) {
       return row.is_overdue ? 'workbench-overdue-row' : ''
@@ -1549,6 +1559,8 @@ export default {
   font-size: 12px;
   cursor: pointer;
   transition: all 0.15s ease;
+  min-width: 0;
+  white-space: nowrap;
 }
 .radar-chip:hover {
   border-color: #008b4b;

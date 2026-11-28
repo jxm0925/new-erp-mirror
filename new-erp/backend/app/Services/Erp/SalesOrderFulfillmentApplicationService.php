@@ -99,6 +99,7 @@ class SalesOrderFulfillmentApplicationService
                 'confirmed_by' => $operatorName,
             ]);
             app(CrmOpportunityOrderService::class)->recordEffective($order, $actor);
+            app(\App\Services\Erp\Crm\CrmProgressApplicationService::class)->customerWon((int) $order->customer_id, $actor);
             $this->log($order, 'confirm', 'draft', 'confirmed', '销售订单已确认并锁定单位换算信息；尚未生成库存备货或生产需求。', $operatorName);
             return $order->fresh(['lines.product', 'lines.sku', 'lines.item']);
         });

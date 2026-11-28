@@ -15,8 +15,8 @@
         <el-button v-if="canViewItems" size="small" icon="el-icon-refresh" class="btn-refresh" @click="load">刷新</el-button>
         <el-button v-if="canViewItems" size="small" icon="el-icon-printer" :disabled="!selectedLabelRows.length" @click="openLabelPrint">打印标签</el-button>
         <el-button v-if="canViewCategories" size="small" icon="el-icon-folder-opened" @click="openCategories">管理分类</el-button>
-        <el-button v-if="canViewItems" size="small" icon="el-icon-upload2" class="btn-import" @click="openImport">导入物料</el-button>
-        <el-button v-if="canViewItems" size="small" type="success" icon="el-icon-plus" class="btn-theme-create" @click="openCreate">新增物料</el-button>
+        <el-button v-if="canViewItems && ($can('master.import') || $can('master.import.upload'))" size="small" icon="el-icon-upload2" class="btn-import" @click="openImport">导入物料</el-button>
+        <el-button v-if="$can('master.item.create')" size="small" type="success" icon="el-icon-plus" class="btn-theme-create" @click="openCreate">新增物料</el-button>
       </div>
     </header>
 
@@ -300,8 +300,9 @@
           <el-table-column label="操作" width="220" fixed="right" align="center">
             <template slot-scope="{ row }">
               <el-button type="text" size="small" icon="el-icon-view" class="action-link-theme" @click="openDetail(row)">详情</el-button>
-              <el-button type="text" size="small" icon="el-icon-edit" class="action-link-theme" @click="openEdit(row)">编辑</el-button>
+              <el-button v-if="$can('master.item.edit')" type="text" size="small" icon="el-icon-edit" class="action-link-theme" @click="openEdit(row)">编辑</el-button>
               <el-button
+                v-if="$can('master.item.edit')"
                 type="text"
                 size="small"
                 :class="row.status === 'enabled' ? 'danger-link' : 'success-link'"
@@ -309,7 +310,7 @@
               >
                 {{ row.status === 'enabled' ? '停用' : '启用' }}
               </el-button>
-              <el-button v-if="row.status !== 'enabled'" type="text" size="small" class="danger-link" @click="deleteItem(row)">删除</el-button>
+              <el-button v-if="row.status !== 'enabled' && $can('master.item.delete')" type="text" size="small" class="danger-link" @click="deleteItem(row)">删除</el-button>
             </template>
           </el-table-column>
         </el-table>
@@ -428,7 +429,7 @@
                 <span class="card-icon-badge"><i class="el-icon-refresh" /></span>
                 <h3>采购单位换算</h3>
               </div>
-              <el-button size="mini" type="success" plain icon="el-icon-plus" @click="openConversionCreate">新增采购换算</el-button>
+              <el-button v-if="$can('master.item.edit')" size="mini" type="success" plain icon="el-icon-plus" @click="openConversionCreate">新增采购换算</el-button>
             </div>
             <el-table :data="conversions" border size="mini" empty-text="暂无采购单位换算，系统默认采用基本单位采购">
               <el-table-column label="采购单位" min-width="110">
@@ -453,7 +454,7 @@
                   </el-tag>
                 </template>
               </el-table-column>
-              <el-table-column label="操作" width="110" align="center">
+              <el-table-column v-if="$can('master.item.edit')" label="操作" width="110" align="center">
                 <template slot-scope="{ row }">
                   <el-button v-if="row.status === 'active'" type="text" size="mini" @click="openConversionEdit(row)">编辑</el-button>
                   <el-button v-if="row.status === 'active'" type="text" size="mini" class="danger-link" @click="disableConversion(row)">停用</el-button>
@@ -503,8 +504,8 @@
 
       <div slot="footer" class="dialog-footer">
         <el-button size="small" @click="detailDialogVisible = false">关闭</el-button>
-        <el-button size="small" icon="el-icon-edit" @click="openEdit(selected)">编辑物料</el-button>
-        <el-button v-if="!selectedIsOffice" size="small" type="success" class="btn-theme-primary" @click="$router.push('/master/sku-item-relations')">
+        <el-button v-if="$can('master.item.edit')" size="small" icon="el-icon-edit" @click="openEdit(selected)">编辑物料</el-button>
+        <el-button v-if="!selectedIsOffice && ($can('master.sku_item_relation') || $can('master.sku_item_relation.view'))" size="small" type="success" class="btn-theme-primary" @click="$router.push('/master/sku-item-relations')">
           去关联SKU
         </el-button>
       </div>

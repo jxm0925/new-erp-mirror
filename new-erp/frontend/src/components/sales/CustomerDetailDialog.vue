@@ -58,9 +58,10 @@
               <div><span>初次联系</span><span>{{ date(customer.first_contact_at) }}</span></div>
               <div><span>最近联系</span><span>{{ date(customer.last_contact_at) }}</span></div>
               <div><span>下次计划</span><span>{{ date(customer.next_contact_at) }}</span></div>
-              <div><span>客户池（按线索）</span><span><el-button v-for="pool in customerOverview.customer_pools || []" :key="pool" type="text" size="mini" @click="openLeadFilter({ customer_pool: pool })">{{ pool }}</el-button><template v-if="!(customerOverview.customer_pools || []).length">—</template></span></div>
+              <div><span>维系客户池 / 生命周期</span><span><crm-progress-controls scope="customer" :subject="customer" @changed="refresh" @refresh="refresh" /></span></div>
+              <div><span>线索所在客户池</span><span><el-button v-for="pool in customerOverview.customer_pools || []" :key="pool" type="text" size="mini" @click="openLeadFilter({ customer_pool: pool })">{{ pool }}</el-button><template v-if="!(customerOverview.customer_pools || []).length">—</template></span></div>
               <div class="full"><span>客户标签</span><span><el-tag v-for="tag in customerOverview.customer_tags || []" :key="'customer-' + tag" role="button" tabindex="0" size="mini" type="success" class="customer-tag" @click="openLeadFilter({ customer_tag: tag })" @keydown.enter.native.prevent="openLeadFilter({ customer_tag: tag })" @keydown.space.native.prevent="openLeadFilter({ customer_tag: tag })">{{ tag }}</el-tag><template v-if="!(customerOverview.customer_tags || []).length">—</template></span></div>
-              <div v-if="(customerOverview.custom_tags || []).length" class="full"><span>个人标签</span><span><el-tag v-for="tag in customerOverview.custom_tags" :key="'custom-' + tag" role="button" tabindex="0" size="mini" type="info" class="customer-tag" @click="openLeadFilter({ custom_tag: tag })" @keydown.enter.native.prevent="openLeadFilter({ custom_tag: tag })" @keydown.space.native.prevent="openLeadFilter({ custom_tag: tag })">{{ tag }}</el-tag></span></div>
+              <div v-if="(customerOverview.custom_tags || []).length" class="full"><span>我的标签</span><span><el-tag v-for="tag in customerOverview.custom_tags" :key="'custom-' + tag" role="button" tabindex="0" size="mini" type="info" class="customer-tag" @click="openLeadFilter({ custom_tag: tag })" @keydown.enter.native.prevent="openLeadFilter({ custom_tag: tag })" @keydown.space.native.prevent="openLeadFilter({ custom_tag: tag })">{{ tag }}</el-tag></span></div>
               <div v-if="customer.customer_kind === 'enterprise'"><span>信用代码</span><span>{{ customer.credit_code || '未填写' }}</span></div>
               <div class="full"><span>备注</span><span>{{ customer.remark || '—' }}</span></div>
             </div>
@@ -324,6 +325,7 @@
 </template>
 
 <script>
+import CrmProgressControls from '@/components/crm/CrmProgressControls.vue'
 import { formatMoney as displayMoney } from '../../utils/money.js'
 import { erpDateTime } from '@/utils/dateTime'
 import { listCrmLeads, listCrmFollowups, listCrmOpportunities, listCustomerOrderAmounts, listCustomerReceipts, listCustomerShipments, listCustomerAftersales } from '@/api/erp/crm'
@@ -343,7 +345,7 @@ const historyPage = () => ({ rows: [], total: 0, page: 1, perPage: 10, loading: 
 
 export default {
   name: 'CustomerDetailDialog',
-  components: { CrmFollowupDialog, CrmLeadDetailDialog, CrmAttachments, CrmIdentityReviewDialog, CustomerOrderDelivery, PagedRecordSelect, CrmOpportunityFormDialog: () => import('@/components/crm/CrmOpportunityFormDialog.vue'), CrmOpportunityDetailDialog: () => import('@/components/crm/CrmOpportunityDetailDialog.vue') },
+  components: { CrmProgressControls, CrmFollowupDialog, CrmLeadDetailDialog, CrmAttachments, CrmIdentityReviewDialog, CustomerOrderDelivery, PagedRecordSelect, CrmOpportunityFormDialog: () => import('@/components/crm/CrmOpportunityFormDialog.vue'), CrmOpportunityDetailDialog: () => import('@/components/crm/CrmOpportunityDetailDialog.vue') },
   data: () => ({
     visible: false,
     loading: false,

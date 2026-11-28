@@ -13,12 +13,8 @@ import SkuList from './views/erp/master/SkuList.vue'
 import SkuForm from './views/erp/master/SkuForm.vue'
 import SkuDetail from './views/erp/master/SkuDetail.vue'
 import ItemList from './views/erp/master/ItemList.vue'
-import ItemMaterialPolicy from './views/erp/master/ItemMaterialPolicy.vue'
 import ItemForm from './views/erp/master/ItemForm.vue'
 import SkuItemRelationList from './views/erp/master/SkuItemRelationList.vue'
-import SkuItemRelationDetail from './views/erp/master/SkuItemRelationDetail.vue'
-import SkuItemSetPrimary from './views/erp/master/SkuItemSetPrimary.vue'
-import SkuItemIntegrityCheck from './views/erp/master/SkuItemIntegrityCheck.vue'
 import BaseArchives from './views/erp/master/BaseArchives.vue'
 import SupplierList from './views/erp/master/SupplierList.vue'
 import WarehouseList from './views/erp/master/WarehouseList.vue'
@@ -63,7 +59,6 @@ import SalesOrderForm from './views/erp/sales/SalesOrderForm.vue'
 import SalesOrderDetail from './views/erp/sales/SalesOrderDetail.vue'
 import SalesProductionConfirmation from './views/erp/sales/SalesProductionConfirmation.vue'
 import ProductionOperationList from './views/erp/production/ProductionOperationList.vue'
-import ProductionOperationForm from './views/erp/production/ProductionOperationForm.vue'
 import ProductionRoutingList from './views/erp/production/ProductionRoutingList.vue'
 import ProductionPerformanceTemplates from './views/erp/production/ProductionPerformanceTemplates.vue'
 import SalesShipmentBoard from './views/erp/sales/SalesShipmentBoard.vue'
@@ -127,34 +122,34 @@ const router = new VueRouter({
     { path: '/display/assembly', component: () => import('./views/erp/display/AssemblyDisplay.vue'), meta: { public: true, fullscreen: true } },
     { path: '/', redirect: '/console' },
     { path: '/console', component: ConsoleDashboard },
-    { path: '/master/products', component: ProductList, meta: { permission: 'master.product' } },
-    { path: '/master/products/new', component: ProductForm },
-    { path: '/master/products/:id/edit', component: ProductForm },
-    { path: '/master/skus', component: SkuList, meta: { permission: 'master.sku' } },
-    { path: '/master/skus/new', component: SkuForm },
-    { path: '/master/skus/:id/complete', component: SkuForm },
-    { path: '/master/skus/:id/edit', component: SkuForm },
-    { path: '/master/skus/:id', component: SkuDetail },
-    { path: '/master/items', component: ItemList, meta: { permission: ['master.item.view', 'item_category.view'] } },
-    { path: '/master/items/new', component: ItemForm },
-    { path: '/master/items/:id/edit', component: ItemForm },
+    { path: '/master/products', component: ProductList, meta: { permission: ['master.product', 'master.product.view'] } },
+    { path: '/master/products/new', component: ProductForm, meta: { permission: 'master.product.create' } },
+    { path: '/master/products/:id/edit', component: ProductForm, meta: { permission: 'master.product.edit' } },
+    { path: '/master/skus', component: SkuList, meta: { permission: ['master.sku', 'master.sku.view'] } },
+    { path: '/master/skus/new', component: SkuForm, meta: { permission: 'master.sku.create' } },
+    { path: '/master/skus/:id/complete', component: SkuForm, meta: { permission: 'master.sku.edit' } },
+    { path: '/master/skus/:id/edit', component: SkuForm, meta: { permission: 'master.sku.edit' } },
+    { path: '/master/skus/:id', component: SkuDetail, meta: { permission: ['master.sku', 'master.sku.view', 'master.sku.edit'] } },
+    { path: '/master/items', component: ItemList, meta: { permission: ['master.item', 'master.item.view', 'item_category.view'] } },
+    { path: '/master/items/new', component: ItemForm, meta: { permission: 'master.item.create' } },
+    { path: '/master/items/:id/edit', component: ItemForm, meta: { permission: 'master.item.edit' } },
     { path: '/master/items/:id/material-policy', redirect: to => `/master/items/${to.params.id}/edit` },
     { path: '/master/office-items', redirect: to => ({ path: '/master/items', query: { ...to.query, management_scope: 'office' } }) },
     { path: '/master/office-items/new', redirect: to => ({ path: '/master/items/new', query: { ...to.query, management_scope: 'office' } }) },
     { path: '/master/office-items/:id/edit', redirect: to => ({ path: `/master/items/${to.params.id}/edit`, query: { ...to.query } }) },
-    { path: '/master/sku-item-relations', component: SkuItemRelationList, meta: { permission: 'master.sku_item_relation' } },
-    { path: '/master/sku-item-relations/integrity-check', component: SkuItemIntegrityCheck },
-    { path: '/master/sku-item-relations/:skuId/set-primary', component: SkuItemSetPrimary },
-    { path: '/master/sku-item-relations/:skuId', component: SkuItemRelationDetail },
-    { path: '/master/base-archives', component: BaseArchives, meta: { permission: 'master.base_archive' } },
+    { path: '/master/sku-item-relations', component: SkuItemRelationList, meta: { permission: ['master.sku_item_relation', 'master.sku_item_relation.view'] } },
+    { path: '/master/sku-item-relations/integrity-check', redirect: { path: '/master/sku-item-relations', query: { integrity: '1' } } },
+    { path: '/master/sku-item-relations/:skuId/set-primary', redirect: to => ({ path: '/master/sku-item-relations', query: { set_sku_id: to.params.skuId } }) },
+    { path: '/master/sku-item-relations/:skuId', redirect: to => ({ path: '/master/sku-item-relations', query: { history_sku_id: to.params.skuId } }) },
+    { path: '/master/base-archives', component: BaseArchives, meta: { permission: ['master.base_archive', 'master.base_archive.view'] } },
     { path: '/master/units', redirect: '/master/base-archives' },
     { path: '/master/categories', redirect: to => ({ path: '/master/items', query: { ...to.query, manage_categories: '1' } }) },
     { path: '/master/office-categories', redirect: to => ({ path: '/master/items', query: { ...to.query, management_scope: 'office', manage_categories: '1' } }) },
-    { path: '/master/suppliers', component: SupplierList, meta: { permission: 'master.supplier' } },
-    { path: '/master/warehouse-locations', component: WarehouseList, meta: { permission: 'master.warehouse_location' } },
-    { path: '/master/warehouses', component: WarehouseList },
-    { path: '/master/locations', component: LocationList },
-    { path: '/master/imports', component: ImportWorkbench, meta: { permission: 'master.import' } },
+    { path: '/master/suppliers', component: SupplierList, meta: { permission: ['master.supplier', 'master.supplier.view'] } },
+    { path: '/master/warehouse-locations', component: WarehouseList, meta: { permission: ['master.warehouse_location', 'master.warehouse.view'] } },
+    { path: '/master/warehouses', component: WarehouseList, meta: { permission: ['master.warehouse_location', 'master.warehouse.view'] } },
+    { path: '/master/locations', component: LocationList, meta: { permission: ['master.warehouse_location', 'master.warehouse.view'] } },
+    { path: '/master/imports', component: ImportWorkbench, meta: { permission: ['master.import', 'master.import.upload', 'master.import.execute'] } },
     { path: '/purchase/requests', component: PurchaseRequestList, meta: { permission: 'purchase.request' } },
     { path: '/purchase/production-shortages', component: ProductionShortageList, meta: { permission: 'purchase.production_shortage' } },
     { path: '/purchase/requests/create', component: PurchaseDocumentForm, props: { type: 'request' } },
@@ -191,11 +186,11 @@ const router = new VueRouter({
     { path: '/inventory/material-returns', component: ProductionMaterialReturnList, meta: { permission: 'inventory.material_return' } },
     { path: '/inventory/material-deliveries', component: ProductionMaterialDeliveryList, meta: { permission: 'inventory.material_delivery' } },
     { path: '/bom', redirect: '/bom/boms' },
-    { path: '/bom/boms', component: BomList, meta: { permission: 'bom.manage' } },
-    { path: '/bom/create', component: BomForm },
-    { path: '/bom/:id/edit', component: BomForm },
-    { path: '/bom/:id/detail', component: BomDetail },
-    { path: '/bom/expand', component: BomExpand, meta: { permission: 'bom.expand' } },
+    { path: '/bom/boms', component: BomList, meta: { permission: ['bom.manage', 'bom.manage.view'] } },
+    { path: '/bom/create', component: BomForm, meta: { permission: 'bom.manage.create' } },
+    { path: '/bom/:id/edit', component: BomForm, meta: { permission: ['bom.manage.edit', 'bom.manage.view'] } },
+    { path: '/bom/:id/detail', component: BomDetail, meta: { permission: ['bom.manage', 'bom.manage.view'] } },
+    { path: '/bom/expand', component: BomExpand, meta: { permission: ['bom.expand', 'bom.manage.view', 'bom.manage'] } },
     { path: '/sales', redirect: '/sales/orders' },
     { path: '/sales/customers', component: SalesCustomerList },
     { path: '/sales/workbench', component: CrmWorkbench, meta: { permission: 'crm.workbench.view' } },
@@ -211,9 +206,9 @@ const router = new VueRouter({
     { path: '/production/operations', component: ProductionOperationList, meta: { permission: 'production.operation.view' } },
     { path: '/production/operations/new', redirect: { path: '/production/operations', query: { create: '1' } }, meta: { permission: 'production.operation.create' } },
     { path: '/production/operations/:id/edit', redirect: to => ({ path: '/production/operations', query: { edit: to.params.id } }), meta: { permission: 'production.operation.edit' } },
-    { path: '/production/operations/:id', component: ProductionOperationForm, meta: { permission: 'production.operation.view' } },
+    { path: '/production/operations/:id', redirect: to => ({ path: '/production/operations', query: { ...to.query, view: to.params.id } }), meta: { permission: 'production.operation.view' } },
     { path: '/production/routings', component: ProductionRoutingList, meta: { permission: 'production.routing.view' } },
-    { path: '/production/performance/templates', component: ProductionPerformanceTemplates, meta: { permission: 'production.performance.manage' } },
+    { path: '/production/performance/templates', component: ProductionPerformanceTemplates, meta: { permission: ['production.performance.view', 'production.performance.edit', 'production.performance.manage'] } },
     { path: '/sales/shipments', component: SalesShipmentBoard, meta: { permission: ['sales_order.shipment.view', 'sales_order.shipment.packing.execute', 'sales_order.shipment.packing.quality'] } },
     { path: '/production/routings/new', component: ProductionRoutingForm, meta: { permission: 'production.routing.create' } },
     { path: '/production/routings/:id/edit', component: ProductionRoutingForm, meta: { permission: 'production.routing.edit' } },

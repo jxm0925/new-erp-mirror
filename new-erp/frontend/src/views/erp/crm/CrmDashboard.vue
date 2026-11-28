@@ -14,8 +14,7 @@
     <el-alert v-if="metadataError" :title="metadataError" type="error" :closable="false" show-icon />
     <form class="dashboard-filters" @submit.prevent="applyFilters">
       <label>{{ tab === 'income' || tab === 'sales' ? '成交日期' : '日期' }}<el-date-picker v-model="draft.range" type="daterange" range-separator="至" start-placeholder="开始日期" end-placeholder="结束日期" value-format="yyyy-MM-dd" size="small" popper-class="crm-date-popper" :clearable="false" /></label>
-      <label>部门<el-select v-model="draft.department_legacy_id" size="small" clearable placeholder="全部授权部门" popper-class="crm-select-popper" @change="departmentChanged"><el-option v-for="item in departmentOptions" :key="item.id" :label="item.name" :value="item.id" /></el-select></label>
-      <label>小组<el-select v-model="draft.group_legacy_id" size="small" clearable placeholder="全部" popper-class="crm-select-popper" @change="salesScopeChanged"><el-option v-for="item in groupOptions" :key="item.id" :label="item.name" :value="item.id" /></el-select></label>
+      <label class="dashboard-dept-filter">部门<el-select v-model="draft.department_legacy_id" size="small" filterable clearable placeholder="全部授权部门" popper-class="crm-select-popper" @change="departmentChanged"><el-option v-for="item in departmentOptions" :key="item.id" :value="item.id" :label="item.pathLabel" class="crm-department-option"><span class="crm-department-row" :class="{'is-root':item.depth === 0}" :style="{paddingLeft:`${item.depth * 18}px`}"><span v-if="item.depth" class="crm-department-branch" aria-hidden="true">{{ item.branchPrefix }}</span><i v-else class="el-icon-office-building" aria-hidden="true" /><span class="crm-department-name">{{ item.name }}</span><small v-if="item.hasChildren" class="crm-department-level">{{ item.parent_id ? '上级' : '总公司' }}</small></span></el-option></el-select></label>
       <label class="dashboard-sales-filter">销售<paged-record-select v-if="metadataReady" v-model="draft.sales_user_legacy_id" :request="salesRequest" :params="salesPickerParams" :columns="salesColumns" :label="salesLabel" title="选择销售" placeholder="全部" :selected-rows.sync="selectedSales" @change="draft.sales_user_unassigned = false" /></label>
       <label>业务线<el-select v-model="draft.business_line" size="small" clearable placeholder="全部" popper-class="crm-select-popper"><el-option v-for="item in metadata.business_lines || []" :key="item" :value="item" :label="item" /></el-select></label>
       <div class="dashboard-filter-actions"><el-button native-type="submit" size="small" type="success" :disabled="!metadataReady" :loading="overview.loading">查询</el-button><el-button size="small" @click="resetFilters">重置</el-button></div>
@@ -82,6 +81,7 @@ import { dashboardComponentCatalog, defaultDashboardComponents, normalizeDashboa
 import { getCrmViewMetadata, getCrmView, rememberedCrmView, rememberCrmView } from '@/api/erp/crmViews'
 import { getDashboardMetadata, listDashboardSalesOptions, getDashboardOverview, listDashboardSales, listDashboardDimensions, listDashboardSources, getDashboardPipeline, getDashboardFollowups, getDashboardIncome, listDashboardOrders, listDashboardDrilldown } from '@/api/erp/crmDashboard'
 import { crmError } from '@/api/erp/crm'
+import { crmDepartmentTree } from '@/utils/crmDepartmentTree'
 import { erpDateTime } from '@/utils/dateTime'
 import { countText, amountText, moneyText, currencyAmount, pageState, pageRows, pageTotal } from '@/components/crm/dashboard/dashboardFormat'
 import '@/styles/crm.css'
@@ -89,12 +89,12 @@ import '@/styles/crm-dashboard.css'
 import '@/components/crm/dashboard/dashboardConfiguration.css'
 
 const tabs = [{key:'overview',label:'经营总览'},{key:'sales',label:'销售分析'},{key:'dimensions',label:'行业与客户'},{key:'pipeline',label:'商机进度'},{key:'sources',label:'来源与跟进'},{key:'income',label:'收入统计'}]
-const dimensions = [{value:'industry',label:'行业'},{value:'purchase_scale',label:'年采购力'},{value:'customer_level',label:'客户等级'},{value:'region',label:'地区'},{value:'business_line',label:'业务线'},{value:'customer_pool',label:'客户池'},{value:'customer_tag',label:'客户标签'},{value:'custom_tag',label:'个人标签'}]
+const dimensions = [{value:'industry',label:'行业'},{value:'purchase_scale',label:'年采购力'},{value:'customer_level',label:'客户等级'},{value:'region',label:'地区'},{value:'business_line',label:'业务线'},{value:'customer_pool',label:'客户池'},{value:'customer_tag',label:'客户标签'},{value:'custom_tag',label:'我的标签'}]
 const sourceOptions = [{value:'first_source',label:'客户首次来源'},{value:'inquiry_source',label:'本次咨询来源'},{value:'entry_method',label:'录入方式'}]
 const riskTabs = [{key:'pipeline_overdue_followup',label:'超期跟进'},{key:'pipeline_stalled',label:'阶段停留'},{key:'pipeline_overdue_close',label:'预计成交日已过'},{key:'pipeline_active',label:'全部进行中'}]
 const taskTabs = [{key:'contact_overdue',label:'逾期跟进'},{key:'contact_due_soon',label:'即将到期'},{key:'contact_pending_accept',label:'待接收'},{key:'contact_uncontacted',label:'未建立沟通'},{key:'contact_unverified',label:'待核实'}]
 const today = () => erpDateTime(new Date().toISOString(),10)
-const defaultDraft = () => ({range:[today().slice(0,7) + '-01',today()],department_legacy_id:null,group_legacy_id:null,sales_user_legacy_id:null,sales_user_unassigned:false,business_line:'',currency:'CNY'})
+const defaultDraft = () => ({range:[today().slice(0,7) + '-01',today()],department_legacy_id:null,sales_user_legacy_id:null,sales_user_unassigned:false,business_line:'',currency:'CNY'})
 
 export default {
   name: 'CrmDashboard',
@@ -110,10 +110,9 @@ export default {
     canFollowups() { return this.can('customers') || this.can('leads') || this.can('opportunities') },
     hasAnyData() { return Object.values(this.metadata.abilities || {}).some(Boolean) },
     availableTaskTabs() { return taskTabs.filter(item => this.canTask(item.key)) },
-    departmentOptions() { return (this.metadata.departments || []).filter(item => !item.parent_id || !(this.metadata.departments || []).some(parent => parent.id === item.parent_id)) },
-    groupOptions() { return (this.metadata.departments || []).filter(item => this.draft.department_legacy_id ? String(item.parent_id) === String(this.draft.department_legacy_id) : !!item.parent_id) },
-    salesPickerParams() { return {department_legacy_id:this.draft.department_legacy_id,group_legacy_id:this.draft.group_legacy_id} },
-    appliedSalesParams() { return {department_legacy_id:this.scope.department_legacy_id,group_legacy_id:this.scope.group_legacy_id} },
+    departmentOptions() { return crmDepartmentTree(this.metadata.departments || []) },
+    salesPickerParams() { return {department_legacy_id:this.draft.department_legacy_id} },
+    appliedSalesParams() { return {department_legacy_id:this.scope.department_legacy_id} },
     amountAsOf() { const metadata = this.overviewData.metadata || {}; return metadata.amount_observed_on || (metadata.amount_as_of ? erpDateTime(metadata.amount_as_of,10) : '') },
     dimensionLabel() { return (this.dimensionOptions.find(item => item.value === this.dimension) || {}).label || '行业' },
     sourceLabel() { return (sourceOptions.find(item => item.value === this.source) || {}).label || '来源' },
@@ -164,10 +163,12 @@ export default {
     openConfiguration() { this.$refs.configuration.open(this.configurationSnapshot(),this.currentView,this.viewWarnings) },
     viewWarningText(warning) { return typeof warning === 'string' ? warning : warning.message || '部分配置已失效，请重新选择后保存' },
     applyView(view) {
-      const configuration=view.configuration || {}; const filters=configuration.filters || {}; const settings=configuration.settings || {}; const defaults=this.metadata.defaults || {}
+      const configuration=view.configuration || {}; const filters={...(configuration.filters || {})}; const settings=configuration.settings || {}; const defaults=this.metadata.defaults || {}
+      const departmentLegacyId = filters.group_legacy_id || filters.department_legacy_id || null
+      delete filters.group_legacy_id
       this.currentView=view;this.viewComponents=normalizeDashboardComponents(configuration.components);this.viewWarnings=view.warnings || [];this.viewError=''
       this.tab=tabs.some(item=>item.key===configuration.page) ? configuration.page : 'overview'
-      this.draft={...defaultDraft(),...filters,range:[filters.date_from || defaults.date_from || today().slice(0,7)+'-01',filters.date_to || defaults.date_to || today()]};this.selectedSales=[]
+      this.draft={...defaultDraft(),...filters,department_legacy_id:departmentLegacyId,range:[filters.date_from || defaults.date_from || today().slice(0,7)+'-01',filters.date_to || defaults.date_to || today()]};this.selectedSales=[]
       this.dimension=settings.dimension || 'industry';this.source=settings.source || 'first_source';this.stageMode=settings.stage_mode || 'count';this.stalledDays=settings.stalled_days || 30;this.riskKind=settings.risk_kind || 'pipeline_overdue_followup';this.taskKind=settings.task_kind || 'contact_overdue';this.outstandingStatus=settings.outstanding_status || ''
       if(!this.canTask(this.taskKind)){this.taskKind=(this.availableTaskTabs[0] || {}).key || 'contact_overdue';this.viewWarnings=[...this.viewWarnings,'原跟进任务分类当前无权查看，已切换至可用分类。']}
       this.cohort={range:[settings.cohort_from || this.draft.range[0],settings.cohort_to || this.draft.range[1]],observed_on:settings.observed_on || today()}
@@ -210,12 +211,12 @@ export default {
       try { const {data} = await getDashboardMetadata(); if (session !== this.session) return; this.metadata = data; this.metadataReady = true; this.metadataError = ''; if ((data.defaults || {}).date_from) this.draft.range = [data.defaults.date_from,data.defaults.date_to]; if (!(data.currencies || []).includes(this.draft.currency)) this.draft.currency = (data.currencies || [])[0] || '' }
       catch (error) { if (session === this.session) { this.metadataError = crmError(error,'经营看板权限与筛选加载失败'); this.metadataReady = false } }
     },
-    departmentChanged() { this.draft.group_legacy_id = null; this.salesScopeChanged() },
+    departmentChanged() { this.salesScopeChanged() },
     salesScopeChanged() { this.draft.sales_user_legacy_id = null; this.draft.sales_user_unassigned = false; this.selectedSales = [] },
     applyFilters() {
       if (!this.metadataReady || !(this.draft.range || []).length) return
       this.session += 1; this.invalidateActions(); this.closeDrill(); if (this.$refs.personal) this.$refs.personal.close()
-      this.scope = {date_from:this.draft.range[0],date_to:this.draft.range[1],department_legacy_id:this.draft.department_legacy_id || undefined,group_legacy_id:this.draft.group_legacy_id || undefined,sales_user_legacy_id:this.draft.sales_user_legacy_id || undefined,sales_user_unassigned:this.draft.sales_user_unassigned || undefined,business_line:this.draft.business_line || undefined,currency:this.draft.currency || undefined}
+      this.scope = {date_from:this.draft.range[0],date_to:this.draft.range[1],department_legacy_id:this.draft.department_legacy_id || undefined,sales_user_legacy_id:this.draft.sales_user_legacy_id || undefined,sales_user_unassigned:this.draft.sales_user_unassigned || undefined,business_line:this.draft.business_line || undefined,currency:this.draft.currency || undefined}
       this.resetStates(); this.loadOverview(); this.loadTab()
     },
     resetFilters() { this.draft = defaultDraft(); if ((this.metadata.defaults || {}).date_from) this.draft.range = [this.metadata.defaults.date_from,this.metadata.defaults.date_to]; if (!(this.metadata.currencies || []).includes(this.draft.currency)) this.draft.currency = (this.metadata.currencies || [])[0] || ''; this.selectedSales = []; this.applyFilters() },

@@ -22,7 +22,7 @@ final class CrmCustomerApplicationService
     public const EDITABLE = [
         'customer_name', 'customer_short_name', 'customer_kind', 'customer_type', 'status', 'remark',
         'company_background', 'customer_grade', 'industry', 'purchasing_power', 'business_lines', 'credit_code', 'region_id',
-        'invoice_type', 'invoice_title', 'invoice_tax_no', 'invoice_address_phone', 'invoice_bank_account', 'invoice_email',
+        'customer_pool', 'referrer_customer_id', 'invoice_type', 'invoice_title', 'invoice_tax_no', 'invoice_address_phone', 'invoice_bank_account', 'invoice_email',
     ];
 
     public function __construct(
@@ -43,6 +43,8 @@ final class CrmCustomerApplicationService
             $this->guardDuplicates($data, $contacts, $addresses, null, $actor);
 
             $values = array_intersect_key($data, array_flip(self::EDITABLE));
+            if (array_key_exists('customer_pool', $values)) $values['customer_pool'] = app(CrmCustomerPoolService::class)->assertSelectable($values['customer_pool'], 'customer');
+            if (!empty($values['referrer_customer_id'])) abort_unless(SalesCustomer::query()->whereKey($values['referrer_customer_id'])->exists(), 422, '转介绍来源客户不存在。');
             $values['customer_kind'] = $values['customer_kind'] ?? 'individual';
             $values['credit_code'] = $this->dedupe->normalizeCode($values['credit_code'] ?? null);
             $values['dedupe_name_key'] = CrmCustomerDedupeService::dedupeKey($values['customer_name'] ?? null);
@@ -76,6 +78,8 @@ final class CrmCustomerApplicationService
             $before = $this->snapshot($customer);
             if (!empty($data['region_id'])) app(CustomerRegionService::class)->selectablePath((int) $data['region_id'], (int) $customer->region_id);
             $values = array_intersect_key($data, array_flip(self::EDITABLE));
+            if (array_key_exists('customer_pool', $values)) $values['customer_pool'] = app(CrmCustomerPoolService::class)->assertSelectable($values['customer_pool'], 'customer', $customer->customer_pool);
+            if (!empty($values['referrer_customer_id'])) abort_unless((int) $values['referrer_customer_id'] !== (int) $id && SalesCustomer::query()->whereKey($values['referrer_customer_id'])->exists(), 422, '转介绍来源客户无效。');
             if (array_key_exists('credit_code', $values)) $values['credit_code'] = $this->dedupe->normalizeCode($values['credit_code']);
             if (array_key_exists('customer_name', $values)) $values['dedupe_name_key'] = CrmCustomerDedupeService::dedupeKey($values['customer_name']);
             $values['crm_version'] = $customer->crm_version + 1;

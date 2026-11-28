@@ -65,7 +65,7 @@
         <aside><el-tree :data="categoryTree" node-key="id" :props="{ label: 'category_name', children: 'children' }" default-expand-all @node-click="selectCategory" /></aside>
         <main>
           <div class="cutting-search">
-            <el-select v-model="sourceQuery.item_id" size="small" placeholder="选择原材料" @change="searchSources"><el-option v-for="item in sourceItems" :key="item.item_id" :value="item.item_id" :label="[item.item_code, item.item_name, item.specification].filter(Boolean).join(' / ')" /></el-select>
+            <paged-record-select :key="`${workOrder.id}:${operationId}`" v-model="sourceQuery.item_id" value-key="item_id" :clearable="false" :request="requestSourceRequirementItems" :selected-rows="sourceItems" :columns="sourceItemColumns" :label="sourceRequirementItemLabel" title="选择本工序待开料原料" placeholder="选择原材料" @change="searchSources" />
             <el-input v-model.trim="sourceQuery.keyword" size="small" clearable placeholder="实物编号 / 批次 / 编码 / 名称 / 规格" @keyup.enter.native="searchSources" @clear="searchSources" />
             <el-button type="success" size="small" icon="el-icon-search" @click="searchSources">查询</el-button>
           </div>
@@ -125,6 +125,7 @@ import { getWorkOrderCutting, listWorkOrderCuttingSources, previewWorkOrderCutti
 import { executeProductionDecision, pendingProductionDecision } from '@/api/erp/production-decisions'
 import { pendingWarehouseCommand } from '@/api/erp/warehouse'
 import SystemRecordPicker from '@/components/system/SystemRecordPicker.vue'
+import PagedRecordSelect from '@/components/common/PagedRecordSelect.vue'
 import { errorText } from './mfg-helpers'
 
 const uuid = () => window.crypto && window.crypto.randomUUID ? window.crypto.randomUUID() : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
@@ -135,7 +136,7 @@ const clone = value => JSON.parse(JSON.stringify(value))
 
 export default {
   name: 'WorkOrderCuttingPanel',
-  components: { SystemRecordPicker },
+  components: { SystemRecordPicker, PagedRecordSelect },
   props: { workOrder: { type: Object, required: true } },
   data: () => ({
     visible: false, loading: false, busy: false, error: '', context: null, operationId: null, unitQty: 0, page: 1,
@@ -144,6 +145,7 @@ export default {
     selectedSources: [], sourceSelected: {}, preview: null, previewLoading: false, planChecked: false, planConfirmed: false, pendingIssue: false,
     sourceOpen: false, sourceLoading: false, sourceError: '', sourceRows: [], sourceTotal: 0, categories: [],
     sourceQuery: { item_id: null, keyword: '', category_id: null, page: 1 }, sourceRequest: 0,
+    sourceItemColumns: [{ prop: 'item_code', label: '物料编码' }, { prop: 'item_name', label: '物料名称' }, { prop: 'specification', label: '规格型号' }],
     batchOpen: false, batch: {}, batchError: '', actualUnits: 1, actualAssignments: [], remnants: [], batchConfirmed: false, batchRemark: '', pendingSettle: false,
     locator: { visible: false, type: 'warehouses', row: null }
   }),
@@ -213,6 +215,15 @@ export default {
     batchSourceName(key) { const row = (this.batch.input_lines || []).find(row => row.source_key === key); return row ? (row.physical_no || row.batch_no || key) + (['sheet', 'root'].includes(row.unit_kind) ? ' · ' + this.qty(row.qty) + ' ' + this.sourceUnit(row) + '（' + this.qty(row.input_measure) + ' ' + this.measureUnit(row.measure_unit) + '）' : '') : key },
     partName(key) { const row = (this.context && this.context.requirements || []).find(row => row.part_key === key); return row ? row.part_name + ' · ' + this.requirementText(row) : key },
     sourceAssignments(key) { return this.preview.assignments.filter(row => row.source_key === key) },
+    sourceRequirementItemLabel(row) { return [row.item_code, row.item_name, row.specification].filter(Boolean).join(' · ') },
+    requestSourceRequirementItems(params = {}) {
+      const keyword = String(params.keyword || '').trim().toLowerCase()
+      const ids = Array.isArray(params.ids) ? params.ids.map(String) : null
+      const rows = this.sourceItems.filter(row => (!ids || ids.includes(String(row.item_id))) && (!keyword || this.sourceRequirementItemLabel(row).toLowerCase().includes(keyword)))
+      const perPage = ids ? Math.max(1, ids.length) : Math.max(1, Number(params.per_page) || 10)
+      const page = Math.max(1, Number(params.page) || 1)
+      return Promise.resolve({ data: { data: rows.slice((page - 1) * perPage, page * perPage), total: rows.length } })
+    },
     openSources() {
       this.sourceSelected = {}
       this.selectedSources.forEach(row => {
@@ -401,7 +412,7 @@ export default {
 .cutting-search {
   margin-bottom: 14px;
 }
-.cutting-search .el-select {
+.cutting-search .paged-record-select {
   width: 190px;
 }
 .cutting-search .el-input {

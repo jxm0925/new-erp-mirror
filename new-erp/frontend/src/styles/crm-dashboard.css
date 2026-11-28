@@ -88,6 +88,9 @@
 .dashboard-filters label:first-child {
   flex: 1.8 1 290px;
 }
+.dashboard-filters label.dashboard-dept-filter {
+  flex: 1.45 1 220px;
+}
 .dashboard-filters .el-select,
 .dashboard-filters .paged-record-select {
   flex: 1;

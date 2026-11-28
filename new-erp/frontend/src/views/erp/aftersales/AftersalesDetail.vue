@@ -141,7 +141,7 @@
       </div>
       <div v-if="actionForm.action_type === 'reship'" class="as-sec" style="margin-top:10px"><div class="as-sec-h">补发物料<span class="r"><el-button type="text" size="mini" @click="reshipItems.push({ item_id: null, qty: 1, case_item_id: null })">＋ 添加物料</el-button></span></div>
         <el-table :data="reshipItems" border size="mini">
-          <el-table-column label="物料" min-width="200"><template slot-scope="{ row: r }"><paged-record-select v-model="r.item_id" entity="items" title="选择物料" placeholder="选择物料" /></template></el-table-column>
+          <el-table-column label="物料" min-width="200"><template slot-scope="{ row: r }"><paged-record-select v-model="r.item_id" entity="items" category-type="item" :params="{ status: 'enabled' }" title="选择物料" placeholder="选择物料" /></template></el-table-column>
           <el-table-column label="数量" width="110" align="right"><template slot-scope="{ row: r }"><el-input-number v-model="r.qty" size="mini" :min="0.00000001" :controls="false" style="width:80px" /></template></el-table-column>
           <el-table-column label="关联售后商品" min-width="170"><template slot-scope="{ row: r }"><el-select v-model="r.case_item_id" size="mini" clearable placeholder="可不关联"><el-option v-for="ci in (row.items || [])" :key="ci.id" :label="`${ci.item_name}${ci.serial_no ? ' · ' + ci.serial_no : ''}`" :value="ci.id" /></el-select></template></el-table-column>
           <el-table-column label="" width="60"><template slot-scope="{ $index }"><el-button type="text" size="mini" style="color:#ef4444" @click="reshipItems.splice($index, 1)">删除</el-button></template></el-table-column>

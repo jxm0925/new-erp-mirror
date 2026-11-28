@@ -1,4 +1,5 @@
 import Vue from 'vue'
+import { poolNames } from '@/utils/crmProgress'
 
 export function aiBlank(value) {
   return value == null || (typeof value === 'string' && value.trim() === '')
@@ -15,12 +16,26 @@ export function fillAiBlanks(target, suggestions) {
   return count
 }
 
+export function applyCombatDictionaries(metadata = {}) {
+  const dictionary = metadata.dictionaries || metadata
+  Vue.set(combatDictionaries, 'stage_catalog', dictionary.stage_catalog || combatDictionaries.stage_catalog || {})
+  Vue.set(combatDictionaries, 'pool_catalog', dictionary.pool_catalog || {})
+  Vue.set(combatDictionaries, 'all_customer_pools', dictionary.all_customer_pools || dictionary.customer_pools || [])
+  const probabilityOptions = dictionary.probabilities || Object.values(dictionary.stage_catalog || {}).flat().map(item => item.probability).filter(Boolean)
+  if (probabilityOptions.length) probabilities.splice(0, probabilities.length, ...new Set(probabilityOptions))
+  if (dictionary.stage_catalog) steps.splice(0, steps.length, ...Object.values(dictionary.stage_catalog).flat().map(item => item.label))
+  if (dictionary.customer_pools || dictionary.pools) pools.splice(0, pools.length, ...poolNames(dictionary))
+  if (dictionary.followup_actions) actions.splice(0, actions.length, ...dictionary.followup_actions)
+  if (dictionary.blockers) blockers.splice(0, blockers.length, ...dictionary.blockers)
+}
+
 // Sales V2 uses the same choices in the progress table and the next-day plan.
-export const pools = ["本周推进池", "今日成交池", "新线索4小时快转池", "补位客户池", "老客户唤醒池", "净水空间站", "西北B端", "经销商/渠道", "售后转机会", "其他"]
-export const probabilities = ["10%｜刚建立联系", "30%｜需求初步明确", "50%｜方案匹配中", "70%｜主要异议已识别", "80%｜明确意向", "85%｜已要求承诺", "90%｜成交条件基本具备", "95%｜待付款/签约"]
-export const steps = ["第1步｜营销自己", "第2步｜发现需求", "第3步｜确认需求", "第4步｜产品方案", "第5步｜营销产品", "第6步｜达成共识", "第7步｜要求承诺", "第8步｜确认成交", "第9步｜赢销企业"]
-export const actions = ["电话", "微信", "视频沟通", "上门/到店", "报价", "出方案", "发案例/证明", "样品/试用", "邀约参观", "售后回访", "内部协同", "其他"]
-export const blockers = ["客户未回复", "需求不清", "关键人未接触", "预算/价格", "产品/方案匹配", "安装/技术条件", "交期/库存", "决策人不同意", "竞品/已有供应商", "不愿承诺/不交定金", "暂无真实需求", "内部支持未到位", "其他"]
+export const combatDictionaries = Vue.observable({ stage_catalog: {}, pool_catalog: {}, all_customer_pools: [] })
+export const pools = Vue.observable([])
+export const probabilities = Vue.observable([])
+export const steps = Vue.observable([])
+export const actions = Vue.observable([])
+export const blockers = Vue.observable([])
 export const reasons = ["客户池结构不足", "关键问题没问透", "动作没推进到下一步", "沟通价值不足", "方案/报价不匹配", "没有拿到客户承诺", "跟进节奏不对", "内部协同延迟", "时间被非销售事务占用", "客观条件暂不具备", "能力或话术不熟练", "其他"]
 export const priorities = ["P1｜明天必须推进", "P2｜重要推进", "P3｜正常跟进"]
 export const statuses = ["待执行", "执行中", "已完成", "有风险", "取消（说明原因）"]
@@ -28,10 +43,10 @@ export const statuses = ["待执行", "执行中", "已完成", "有风险", "�
 const field = (key, label, extra = {}) => ({ key, label, ...extra })
 
 export const progressFields = [
-  field('customer_name', '客户名称', { fixed: true }), field('pool', '客户池', { options: pools }),
+  field('customer_name', '客户名称', { fixed: true }), field('pool', '客户池', { options: pools, strict: true }),
   field('priority', '重点定位', { options: ['primary', 'backup', 'review'], labels: { primary: '主攻', backup: '补位', review: '仅复盘' } }),
   field('expected_amount', '预计金额', { money: true }), field('stage_label', '当前阶段'),
-  field('probability', '成交概率', { options: probabilities }), field('nine_step', '当前九步阶段', { options: steps }),
+  field('probability', '成交概率', { options: probabilities }), field('nine_step', '当前九步阶段', { options: steps, strict: true }),
   field('action_type', '动作类型', { options: actions }), field('today_action', '今日具体动作'),
   field('today_result', '今日推进结果'), field('promise', '客户承诺 / 证据'),
   field('max_blocker', '当前最大卡点', { options: blockers }), field('reason', '原因分析', { options: reasons }),
@@ -41,9 +56,9 @@ export const progressFields = [
 
 export const planFields = [
   field('customer_name', '客户名称', { fixed: true }), field('plan_priority', '优先级', { options: priorities, edit: true }),
-  field('pool', '客户池'), field('expected_amount', '预计金额', { money: true }), field('probability', '成交概率'),
-  field('nine_step', '当前阶段'), field('next_step', '明日目标阶段'), field('contact_time', '联系时间'),
-  field('action_type', '动作类型'), field('tmr_must_action', '具体动作'), field('tmr_advance_to', '预期结果', { edit: true }),
+  field('pool', '客户池', { options: pools, strict: true }), field('expected_amount', '预计金额', { money: true }), field('probability', '成交概率', { options: probabilities }),
+  field('nine_step', '当前阶段', { options: steps, strict: true }), field('next_step', '明日目标阶段', { options: steps }), field('contact_time', '联系时间'),
+  field('action_type', '动作类型', { options: actions }), field('tmr_must_action', '具体动作'), field('tmr_advance_to', '预期结果', { edit: true }),
   field('anticipated_blocker', '预判卡点', { options: blockers, edit: true }), field('response_action', '应对动作', { edit: true }),
   field('materials', '所需资料', { edit: true }), field('expected_pay_time', '预计打款时间', { edit: true }),
   field('status', '完成状态', { options: statuses, edit: true }), field('remark', '备注', { edit: true })

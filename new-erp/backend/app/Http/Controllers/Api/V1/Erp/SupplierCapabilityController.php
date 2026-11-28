@@ -21,7 +21,7 @@ class SupplierCapabilityController extends Controller
 {
     public function summary(Request $request, int $supplierId)
     {
-        $this->authorizePermission($request, 'supplier_capability.view');
+        $this->authorizeRead($request);
         $supplier = Supplier::with([
             'categoryCapabilities' => fn ($q) => $q->where('status', 'active')->with('category'),
         ])->withCount([
@@ -54,7 +54,7 @@ class SupplierCapabilityController extends Controller
 
     public function itemRelations(Request $request, int $supplierId)
     {
-        $this->authorizePermission($request, 'supplier_capability.view');
+        $this->authorizeRead($request);
         Supplier::findOrFail($supplierId);
         $query = SupplierItemRelation::with(['item.category', 'item.unit'])
             ->where('supplier_id', $supplierId)
@@ -111,9 +111,25 @@ class SupplierCapabilityController extends Controller
         ]);
     }
 
+    public function updateItemRelation(Request $request, int $supplierId, int $relationId, SupplierCapabilityService $service)
+    {
+        $this->authorizePermission($request, 'supplier_capability.edit');
+        $data = $request->validate([
+            'supplier_id' => ['sometimes', 'integer', Rule::in([$supplierId])],
+            'item_id' => 'sometimes|required|integer|exists:erp_items,id',
+            'capability_source' => ['sometimes', 'required', Rule::in([...SupplierCapabilityService::SOURCES, 'import'])],
+            'relation_status' => ['sometimes', 'required', Rule::in(['active', 'inactive'])],
+            'is_default' => 'sometimes|boolean',
+            'effective_at' => 'nullable|date', 'expired_at' => 'nullable|date',
+            'change_reason' => 'required|string|max:100', 'remark' => 'nullable|string|max:1000',
+        ]);
+        return response()->json(['message' => '供应商物料关系已更新。',
+            'data' => $service->updateItemRelation($supplierId, $relationId, $data, $this->operatorId($request))]);
+    }
+
     public function quotations(Request $request, int $supplierId)
     {
-        $this->authorizePermission($request, 'supplier_quotation.view');
+        $this->authorizeRead($request, true);
         Supplier::findOrFail($supplierId);
         $query = ItemSupplierPrice::with(['item.unit', 'unit', 'latestPriceHistory'])
             ->where('supplier_id', $supplierId)
@@ -139,22 +155,7 @@ class SupplierCapabilityController extends Controller
         if ($request->filled('max_order_qty') && (float) $request->input('max_order_qty') <= 0) {
             $request->merge(['max_order_qty' => null]);
         }
-        $data = $request->validate([
-            'item_id' => 'required|exists:erp_items,id',
-            'unit_id' => 'required|exists:erp_units,id',
-            'price' => 'required|numeric|gt:0|decimal:0,8|max:9999999999.99999999',
-            'currency' => 'required|string|max:10',
-            'tax_mode' => ['required', Rule::in(['tax_included', 'tax_excluded'])],
-            'tax_rate' => 'required|numeric|min:0|max:100',
-            'lead_time_days' => 'nullable|integer|min:0',
-            'min_order_qty' => 'required|numeric|min:0',
-            'max_order_qty' => 'nullable|numeric|gte:min_order_qty',
-            'valid_from' => 'required|date',
-            'valid_until' => 'nullable|date|after_or_equal:valid_from',
-            'tier_prices' => 'nullable|array',
-            'remark' => 'nullable|string|max:1000',
-            'change_reason' => 'nullable|string|max:100',
-        ]);
+        $data = $request->validate($this->quotationRules());
         $data['supplier_id'] = $supplierId;
 
         $quote = DB::transaction(function () use ($data, $quotationService, $capabilityService, $request, $supplierId) {
@@ -163,8 +164,8 @@ class SupplierCapabilityController extends Controller
                 'item_id' => $data['item_id'],
                 'capability_source' => 'quotation',
                 'relation_status' => 'active',
-                'effective_at' => $data['valid_from'],
-                'expired_at' => $data['valid_until'] ?? null,
+                'effective_at' => $quote->valid_from,
+                'expired_at' => $quote->valid_until?->copy()->addDay()->startOfDay(),
                 'change_reason' => '有效报价形成具体 Item 供货关系',
                 'remark' => $data['remark'] ?? null,
             ], $this->operatorId($request));
@@ -177,7 +178,7 @@ class SupplierCapabilityController extends Controller
 
     public function purchaseHistory(Request $request, int $supplierId)
     {
-        $this->authorizePermission($request, 'supplier_capability.view');
+        $this->authorizeRead($request);
         Supplier::findOrFail($supplierId);
         $query = PurchasePriceHistory::with(['item.unit', 'unit'])
             ->where('supplier_id', $supplierId)
@@ -204,7 +205,7 @@ class SupplierCapabilityController extends Controller
 
     public function relationHistory(Request $request, int $supplierId)
     {
-        $this->authorizePermission($request, 'supplier_capability.history');
+        $this->authorizeRead($request);
         Supplier::findOrFail($supplierId);
         $query = SupplierItemRelationLog::with('item')
             ->where('supplier_id', $supplierId)
@@ -216,7 +217,7 @@ class SupplierCapabilityController extends Controller
 
     public function quotationHistory(Request $request, int $supplierId)
     {
-        $this->authorizePermission($request, 'supplier_quotation.view');
+        $this->authorizeRead($request, true);
         Supplier::findOrFail($supplierId);
         $query = SupplierQuotationHistory::with('item')
             ->where('supplier_id', $supplierId)
@@ -224,6 +225,57 @@ class SupplierCapabilityController extends Controller
         if ($request->filled('item_id')) $query->where('item_id', $request->integer('item_id'));
 
         return response()->json($query->paginate($this->perPage($request)));
+    }
+
+    public function updateQuotation(Request $request, int $supplierId, int $quotationId, SupplierQuotationService $service, SupplierCapabilityService $capabilities)
+    {
+        $this->authorizePermission($request, 'supplier_quotation.edit');
+        if ($request->filled('max_order_qty') && (float) $request->input('max_order_qty') <= 0) $request->merge(['max_order_qty' => null]);
+        $data = $request->validate($this->quotationRules(true) + [
+            'supplier_id' => ['sometimes', 'integer', Rule::in([$supplierId])],
+        ]);
+        $quote = DB::transaction(function () use ($service, $capabilities, $supplierId, $quotationId, $data, $request) {
+            $quote = $service->updateQuotation($supplierId, $quotationId, $data, $this->operatorId($request));
+            if ($quote->status === 'enabled' && $quote->quote_status === 'approved') {
+                $capabilities->saveItemRelation($supplierId, [
+                    'item_id' => $quote->item_id, 'capability_source' => 'quotation', 'relation_status' => 'active',
+                    'effective_at' => $quote->valid_from,
+                    'expired_at' => $quote->valid_until?->copy()->addDay()->startOfDay(),
+                    'change_reason' => '有效报价形成具体 Item 供货关系', 'remark' => $quote->remark,
+                ], $this->operatorId($request));
+            }
+            return $quote;
+        });
+        return response()->json(['message' => '供应商报价已更新，报价历史已保留。', 'data' => $quote]);
+    }
+
+    private function quotationRules(bool $editing = false): array
+    {
+        $required = $editing ? 'sometimes|required' : 'required';
+        return [
+            'item_id' => $required.'|integer|exists:erp_items,id', 'unit_id' => $required.'|integer|exists:erp_units,id',
+            'price' => $required.'|numeric|gt:0|decimal:0,8|max:9999999999.99999999',
+            'currency' => $required.'|string|max:10', 'tax_mode' => $required.'|in:tax_included,tax_excluded',
+            'tax_rate' => $required.'|numeric|min:0|max:100', 'lead_time_days' => 'nullable|integer|min:0',
+            'min_order_qty' => $required.'|numeric|min:0', 'max_order_qty' => 'nullable|numeric|min:0',
+            'valid_from' => $required.'|date', 'valid_until' => 'nullable|date', 'tier_prices' => 'nullable|array',
+            'use_supplier_factor' => 'sometimes|boolean',
+            'supplier_conversion_factor' => 'nullable|numeric|gt:0|decimal:0,8|max:9999999999.99999999',
+            'supplier_factor_reason' => 'nullable|string|max:255',
+            'remark' => 'nullable|string|max:1000', 'change_reason' => 'nullable|string|max:100',
+        ];
+    }
+
+    private function authorizeRead(Request $request, bool $quotation = false): void
+    {
+        $auth = app(AuthContextService::class);
+        $user = $auth->currentUser($request);
+        abort_unless($user, 401, '未登录或登录已过期。');
+        $permissions = ['master.supplier', 'master.supplier.view', 'purchase.order.view', 'purchase.plan.view',
+            ...($quotation ? ['supplier_quotation.view', 'supplier_quotation.edit']
+                : ['supplier_capability.view', 'supplier_capability.history', 'supplier_capability.edit'])];
+        abort_unless($auth->isSuperAdmin($user) || array_intersect($permissions, $auth->permissionCodes($user)),
+            403, '没有供应商资料读取权限。');
     }
 
     private function perPage(Request $request): int

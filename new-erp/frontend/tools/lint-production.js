@@ -18,7 +18,7 @@ const files = [
   'src/views/erp/production/ProductionBoard.vue',
   'src/views/erp/production/ProductionTechList.vue',
   'src/views/erp/production/ProductionTechDetail.vue',
-  'src/views/erp/production/ProductionOperationForm.vue',
+  'src/views/erp/production/ProductionRoutingList.vue',
   'src/views/erp/finance/FinanceFundingPolicyList.vue',
   'src/views/erp/sales/SalesOrderDetail.vue',
   'src/views/erp/sales/SalesProductionConfirmation.vue',

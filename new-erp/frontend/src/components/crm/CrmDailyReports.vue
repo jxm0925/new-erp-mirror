@@ -59,11 +59,20 @@
             <el-select
               :value="dept"
               size="small"
-              style="width: 190px"
+              filterable
+              style="width: 230px"
+              popper-class="crm-select-popper"
               :disabled="busy"
               @input="change('dept', $event)"
             >
-              <el-option v-for="d in access.departments" :key="d.id" :value="d.id" :label="d.name" />
+              <el-option v-for="d in departmentOptions" :key="d.id" :value="d.id" :label="d.pathLabel" class="crm-department-option">
+                <span class="crm-department-row" :class="{ 'is-root': d.depth === 0 }" :style="{ paddingLeft: `${d.depth * 18}px` }">
+                  <span v-if="d.depth" class="crm-department-branch" aria-hidden="true">{{ d.branchPrefix }}</span>
+                  <i v-else class="el-icon-office-building" aria-hidden="true" />
+                  <span class="crm-department-name">{{ d.name }}</span>
+                  <small v-if="d.hasChildren" class="crm-department-level">{{ d.parent_id ? '上级' : '总公司' }}</small>
+                </span>
+              </el-option>
             </el-select>
           </template>
         </div>
@@ -124,6 +133,7 @@
 
 <script>
 import { dailyAccess } from '@/api/erp/crmDaily'
+import { crmDepartmentTree } from '@/utils/crmDepartmentTree'
 import CrmSalesDaily from './CrmSalesDaily.vue'
 import CrmTeamDaily from './CrmTeamDaily.vue'
 
@@ -149,7 +159,10 @@ export default {
   }),
   computed: {
     canOpen() {
-      return this.mode === 'sales' ? this.access.seller : this.access.departments.length > 0
+      return this.mode === 'sales' ? this.access.seller : this.departmentOptions.length > 0
+    },
+    departmentOptions() {
+      return crmDepartmentTree(this.access.departments || [])
     },
     title() {
       return this.mode === 'sales' ? '销售作战表' : '经营作战总表'
@@ -203,7 +216,7 @@ export default {
     },
     open() {
       this.day = this.access.today
-      this.dept = this.access.departments[0]?.id || 0
+      this.dept = this.departmentOptions[0]?.id || 0
       const selfStaff = this.salesStaff.find(s => s.is_self) || this.salesStaff[0]
       this.salesId = selfStaff ? selfStaff.id : 0
       this.initAiSelection()
@@ -260,6 +273,12 @@ export default {
   max-height: 86vh;
   overflow: auto;
   background: #f4f7f6;
+}
+.crm-daily-dialog .el-select .el-input.is-focus .el-input__inner,
+.crm-daily-dialog .el-select .el-input__inner:focus,
+.crm-daily-dialog .el-input__inner:focus,
+.crm-daily-dialog .el-textarea__inner:focus {
+  border-color: #008b4b !important;
 }
 .crm-daily-dialog .el-dialog__body::-webkit-scrollbar {
   width: 7px;

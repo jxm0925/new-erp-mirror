@@ -21,6 +21,8 @@ class DatabaseSeeder extends Seeder
             ErpApprovedMasterDataSeeder::class,
             ErpApprovedWarehouseSeeder::class,
             ErpApprovedSalesReferenceSeeder::class,
+            ErpBusinessLineSeeder::class,
+            ErpCrmCustomerPoolSeeder::class,
             ErpRegionSeeder::class,
             ErpFinanceReferenceSeeder::class,
             ErpProductionCatalogSeeder::class,

@@ -22,7 +22,7 @@
           <label>时间口径<el-input :value="definition.date" size="mini" readonly /></label>
           <template v-if="isFunnel"><label>同批期间<el-date-picker v-model="cohortRange" type="daterange" :disabled="saving" size="mini" range-separator="至" value-format="yyyy-MM-dd" :clearable="false" popper-class="crm-date-popper" /></label><label>观察截至<el-date-picker v-model="configuration.settings.observed_on" type="date" :disabled="saving" size="mini" value-format="yyyy-MM-dd" :clearable="false" popper-class="crm-date-popper" /></label></template>
           <label v-if="selectedKey === 'pipeline_records'">阶段停留<el-select v-model="configuration.settings.stalled_days" size="mini" :disabled="saving" popper-class="crm-select-popper"><el-option v-for="day in [7,15,30,60,90]" :key="day" :label="day + '天'" :value="day" /></el-select></label>
-          <label>筛选条件<el-popover placement="bottom-end" width="470" trigger="click" popper-class="dashboard-global-filter-popover"><div class="dashboard-config-global-fields"><label>日期<el-date-picker v-model="filterRange" type="daterange" :disabled="saving" size="small" value-format="yyyy-MM-dd" range-separator="至" :clearable="false" popper-class="crm-date-popper" /></label><label>部门<el-select v-model="configuration.filters.department_legacy_id" size="small" :disabled="saving" clearable placeholder="全部授权部门" popper-class="crm-select-popper" @change="departmentChanged"><el-option v-for="item in departments" :key="item.id" :label="item.name" :value="item.id" /></el-select></label><label>小组<el-select v-model="configuration.filters.group_legacy_id" size="small" :disabled="saving" clearable placeholder="全部" popper-class="crm-select-popper" @change="clearSales"><el-option v-for="item in groups" :key="item.id" :label="item.name" :value="item.id" /></el-select></label><label>销售<paged-record-select :disabled="saving" v-model="configuration.filters.sales_user_legacy_id" :request="salesRequest" :params="salesParams" :columns="[{prop:'name',label:'姓名'}]" :label="salesLabel" title="选择销售" placeholder="全部" @change="configuration.filters.sales_user_unassigned = false" /></label><label>业务线<el-select v-model="configuration.filters.business_line" size="small" :disabled="saving" clearable placeholder="全部" popper-class="crm-select-popper"><el-option v-for="item in dashboardMetadata.business_lines || []" :key="item" :label="item" :value="item" /></el-select></label><label>币种<el-select v-model="configuration.filters.currency" size="small" :disabled="saving" clearable placeholder="分币种" popper-class="crm-select-popper"><el-option v-for="item in dashboardMetadata.currencies || []" :key="item" :label="item" :value="item" /></el-select></label></div><el-button slot="reference" size="mini" class="dashboard-config-filter-button">继承全局筛选<i class="el-icon-arrow-down" /></el-button></el-popover></label>
+          <label>筛选条件<el-popover placement="bottom-end" width="470" trigger="click" popper-class="dashboard-global-filter-popover"><div class="dashboard-config-global-fields"><label>日期<el-date-picker v-model="filterRange" type="daterange" :disabled="saving" size="small" value-format="yyyy-MM-dd" range-separator="至" :clearable="false" popper-class="crm-date-popper" /></label><label>部门<el-select v-model="configuration.filters.department_legacy_id" size="small" :disabled="saving" filterable clearable placeholder="全部授权部门" popper-class="crm-select-popper" @change="departmentChanged"><el-option v-for="item in departments" :key="item.id" :value="item.id" :label="item.pathLabel" class="crm-department-option"><span class="crm-department-row" :class="{'is-root':item.depth === 0}" :style="{paddingLeft:`${item.depth * 18}px`}"><span v-if="item.depth" class="crm-department-branch" aria-hidden="true">{{ item.branchPrefix }}</span><i v-else class="el-icon-office-building" aria-hidden="true" /><span class="crm-department-name">{{ item.name }}</span><small v-if="item.hasChildren" class="crm-department-level">{{ item.parent_id ? '上级' : '总公司' }}</small></span></el-option></el-select></label><label>销售<paged-record-select :disabled="saving" v-model="configuration.filters.sales_user_legacy_id" :request="salesRequest" :params="salesParams" :columns="[{prop:'name',label:'姓名'}]" :label="salesLabel" title="选择销售" placeholder="全部" @change="configuration.filters.sales_user_unassigned = false" /></label><label>业务线<el-select v-model="configuration.filters.business_line" size="small" :disabled="saving" clearable placeholder="全部" popper-class="crm-select-popper"><el-option v-for="item in dashboardMetadata.business_lines || []" :key="item" :label="item" :value="item" /></el-select></label><label>币种<el-select v-model="configuration.filters.currency" size="small" :disabled="saving" clearable placeholder="分币种" popper-class="crm-select-popper"><el-option v-for="item in dashboardMetadata.currencies || []" :key="item" :label="item" :value="item" /></el-select></label></div><el-button slot="reference" size="mini" class="dashboard-config-filter-button">继承全局筛选<i class="el-icon-arrow-down" /></el-button></el-popover></label>
         </div>
         <p v-if="isDimension" class="dashboard-config-setting-note">客户维度分布、交叉表和经营对比共用此分析维度。</p>
         <el-checkbox v-model="selected.drilldown" :disabled="saving">支持点击查看明细</el-checkbox>
@@ -41,13 +41,14 @@ import { dashboardPages, dashboardComponentCatalog, normalizeDashboardComponents
 import { listDashboardSalesOptions } from '@/api/erp/crmDashboard'
 import { getCrmViewMetadata, listCrmViews, getCrmView, createCrmView, updateCrmView, deleteCrmView } from '@/api/erp/crmViews'
 import { crmError } from '@/api/erp/crm'
+import { crmDepartmentTree } from '@/utils/crmDepartmentTree'
 
 const copy = value => JSON.parse(JSON.stringify(value))
 export default {
   name: 'DashboardConfigurationDialog',
   components: {PagedRecordSelect},
   props: {dashboardMetadata:Object, dimensions:Array, sources:Array},
-  data: () => ({visible:false, saving:false, error:'', warnings:[], metadata:{}, metadataReady:false, sequence:0, current:null, configuration:{filters:{},settings:{},components:[]}, name:'', shareKey:'personal:', category:'overview', selectedKey:'dimension_cross', dragKey:'', pages:dashboardPages, catalog:dashboardComponentCatalog, picker:{visible:false,keyword:'',rows:[],total:0,page:1,loading:false,restoring:false,error:'',sequence:0}}),
+  data: () => ({visible:false, saving:false, error:'', warnings:[], metadata:{}, metadataReady:false, sequence:0, current:null, configuration:{filters:{},settings:{},components:defaultDashboardComponents()}, name:'', shareKey:'personal:', category:'overview', selectedKey:'dimension_cross', dragKey:'', pages:dashboardPages, catalog:dashboardComponentCatalog, picker:{visible:false,keyword:'',rows:[],total:0,page:1,loading:false,restoring:false,error:'',sequence:0}}),
   computed: {
     selected() { return this.configuration.components.find(item => item.key === this.selectedKey) },
     definition() { return this.catalog.find(item => item.key === this.selectedKey) },
@@ -55,9 +56,8 @@ export default {
     isFunnel() { return ['sales_funnels','pipeline_funnel'].includes(this.selectedKey) },
     statisticObject() { if (!this.definition) return ''; const key = this.definition.key; return key.includes('funnel') ? '同批线索' : key.includes('income') || /amount/.test(key) ? '有效订单' : /pipeline|stages|opportunit|expected/.test(key) ? '商机' : /followup|records|due|completed/.test(key) ? '跟进任务' : '客户' },
     shareOptions() { return [{key:'personal:',label:'仅自己',scope:'personal',scope_id:null},...(this.metadata.share_scopes || []).filter(item => item.scope !== 'personal').map(item => ({...item,key:`${item.scope}:${item.scope_id}`,label:item.label || item.name || (item.scope === 'group' ? '本小组' : '本部门')}))] },
-    departments() { return (this.dashboardMetadata.departments || []).filter(item => !item.parent_id || !(this.dashboardMetadata.departments || []).some(parent => parent.id === item.parent_id)) },
-    groups() { return (this.dashboardMetadata.departments || []).filter(item => this.configuration.filters.department_legacy_id ? String(item.parent_id) === String(this.configuration.filters.department_legacy_id) : !!item.parent_id) },
-    salesParams() { return {department_legacy_id:this.configuration.filters.department_legacy_id,group_legacy_id:this.configuration.filters.group_legacy_id} },
+    departments() { return crmDepartmentTree(this.dashboardMetadata.departments || []) },
+    salesParams() { return {department_legacy_id:this.configuration.filters.department_legacy_id} },
     filterRange: {get() {return [this.configuration.filters.date_from,this.configuration.filters.date_to]}, set(value) {this.$set(this.configuration.filters,'date_from',(value || [])[0]);this.$set(this.configuration.filters,'date_to',(value || [])[1])}},
     cohortRange: {get() {return [this.configuration.settings.cohort_from,this.configuration.settings.cohort_to]}, set(value) {this.configuration.settings.cohort_from=(value || [])[0];this.configuration.settings.cohort_to=(value || [])[1]}}
   },
@@ -69,10 +69,10 @@ export default {
     ability(key) {return !!(this.dashboardMetadata.abilities || {})[key]},
     dimensionAllowed(value) {return this.ability('customers') && (!['customer_pool','customer_tag','custom_tag'].includes(value) || this.ability('leads')) && (value !== 'custom_tag' || this.shareKey === 'personal:')},
     component(key) {return this.configuration.components.find(item => item.key === key)},
-    categoryComponents(category) {return this.catalog.filter(item => item.category === category).sort((a,b) => this.component(a.key).order - this.component(b.key).order)},
+    categoryComponents(category) {return this.catalog.filter(item => item.category === category).sort((a,b) => ((this.component(a.key) || a).order || 0) - ((this.component(b.key) || b).order || 0))},
     selectCategory(category) {const definition=this.categoryComponents(category)[0];if(definition)this.selectedKey=definition.key},
     async open(configuration, current, warnings = []) {
-      const sequence=++this.sequence; this.configuration=copy(configuration);this.configuration.components=normalizeDashboardComponents(configuration.components);this.current=current ? copy(current) : null;this.name=current ? current.name : '我的经营看板';this.shareKey=current ? `${current.scope}:${current.scope_id || ''}` : 'personal:';this.warnings=warnings.slice();this.error='';this.visible=true;this.saving=false;this.metadataReady=false;this.category=configuration.page || 'overview';this.selectCategory(this.category)
+      const sequence=++this.sequence; this.configuration=copy(configuration);if(this.configuration.filters && this.configuration.filters.group_legacy_id){this.$set(this.configuration.filters,'department_legacy_id',this.configuration.filters.group_legacy_id);this.$delete(this.configuration.filters,'group_legacy_id')}this.configuration.components=normalizeDashboardComponents(configuration.components);this.current=current ? copy(current) : null;this.name=current ? current.name : '我的经营看板';this.shareKey=current ? `${current.scope}:${current.scope_id || ''}` : 'personal:';this.warnings=warnings.slice();this.error='';this.visible=true;this.saving=false;this.metadataReady=false;this.category=configuration.page || 'overview';this.selectCategory(this.category)
       try {
         const {data}=await getCrmViewMetadata({resource:'dashboard'});if(sequence!==this.sequence || !this.visible)return
         this.metadata=data.data || data;this.metadataReady=true;this.$emit('catalog',this.metadata.dashboard_components || [])
@@ -84,7 +84,7 @@ export default {
       catch(error) {if(sequence===this.sequence)this.error=crmError(error,'看板配置加载失败，请重新打开后重试')}
     },
     close(done) {if(this.saving)return;this.sequence+=1;this.picker.sequence+=1;this.visible=false;this.picker.visible=false;if(typeof done==='function')done()},
-    departmentChanged() {this.$set(this.configuration.filters,'group_legacy_id',null);this.clearSales()},
+    departmentChanged() {this.$delete(this.configuration.filters,'group_legacy_id');this.clearSales()},
     clearSales() {this.$set(this.configuration.filters,'sales_user_legacy_id',null);this.$set(this.configuration.filters,'sales_user_unassigned',false)},
     componentAvailable(key) {const item=(this.metadata.dashboard_components || []).find(item=>item.key===key);return this.metadataReady && !!item && item.available!==false},
     ordered() {return this.configuration.components.filter(item=>item.position===this.selected.position).sort((a,b)=>a.order-b.order)},
@@ -98,7 +98,7 @@ export default {
       if(this.configuration.components.some(item=>!item.title.trim())){this.error='请填写组件名称';return}
       const share=this.shareOptions.find(item=>item.key===this.shareKey)
       if(!share){this.error='共享范围已失效，请重新选择';return}
-      if(share.scope!=='personal' && this.configuration.settings.dimension==='custom_tag'){this.error='个人标签仅可保存为个人看板，请先更换分析维度';return}
+      if(share.scope!=='personal' && this.configuration.settings.dimension==='custom_tag'){this.error='我的标签仅可保存为个人看板，请先更换分析维度';return}
       const sequence=this.sequence;const update=!asNew && this.current && this.current.can_update
       const body={resource:'dashboard',name:this.name.trim(),scope:share.scope,scope_id:share.scope_id,configuration:copy(this.configuration)}
       if(update)body.expected_version=this.current.version

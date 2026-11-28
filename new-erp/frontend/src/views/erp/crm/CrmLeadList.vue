@@ -103,7 +103,7 @@
       <div v-if="showPoolFilter" class="filter-item">
         <span>客户池</span>
         <el-select popper-class="crm-select-popper" v-model="query.customer_pool" size="small" filterable clearable placeholder="全部客户池" @change="search">
-          <el-option v-for="item in metadata.customer_pools || []" :key="item" :value="item" :label="item" />
+          <el-option v-for="item in pools" :key="item" :value="item" :label="item" />
         </el-select>
       </div>
       <div class="filter-item">
@@ -261,34 +261,24 @@
           </template>
         </el-table-column>
 
-        <el-table-column v-if="column.key === 'state' && query.tab !== 'public_pool'" :key="column.key" label="状态 / 客户池" min-width="145">
+        <el-table-column v-if="column.key === 'state' && query.tab !== 'public_pool'" :key="column.key" label="状态 / 客户池 / 九步阶段" min-width="145">
           <template slot-scope="{row}">
             <div class="cell-primary-line">
               <el-tag v-if="hasField('status')" size="mini" :type="statusType(row.status)" class="status-tag">
                 {{ row.status_label || (metadata.statuses || {})[row.status] || row.status }}
               </el-tag>
-              <span v-if="hasField('status') && row.confirmed_at" class="confirmed-pill" title="已确认为有效线索">
-                <i class="el-icon-check" /> 有效线索
-              </span>
             </div>
-            <div v-if="hasField('customer_pool') && row.customer_pool" class="cell-sub-line">
-              <span class="pool-badge">{{ row.customer_pool }}</span>
-            </div>
-            <div v-else-if="hasField('status') && row.status === 'invalid' && row.invalid_reason" class="cell-sub-line crm-overdue">
-              原因：{{ row.invalid_reason }}
-            </div>
-            <div v-else-if="hasField('customer_pool')" class="cell-sub-line">
-              <span class="crm-muted">未入客户池</span>
-            </div>
+            <div v-if="hasField('customer_pool') || hasField('nine_step_stage')" class="cell-sub-line"><crm-progress-controls scope="lead" :subject="row" :metadata="metadata" :show-pool="hasField('customer_pool')" :show-stage="hasField('nine_step_stage')" @changed="load" @refresh="load" /></div>
+            <div v-if="hasField('status') && row.status === 'invalid' && row.invalid_reason" class="cell-sub-line crm-overdue">原因：{{ row.invalid_reason }}</div>
           </template>
         </el-table-column>
 
-        <el-table-column v-if="column.key === 'schedule' && query.tab !== 'public_pool'" :key="column.key" label="最近联系 / 下次计划" min-width="175">
+        <el-table-column v-if="column.key === 'latest_followup'" :key="column.key" label="最近跟进" min-width="210">
+          <template slot-scope="{row}"><div class="cell-sub-line">{{ date(row.latest_followup_at || row.last_contact_at) }}</div><el-tooltip v-if="row.latest_followup_summary" :content="row.latest_followup_content || row.latest_followup_summary" placement="top"><div class="crm-followup-summary">{{ row.latest_followup_summary }}</div></el-tooltip><span v-else class="crm-muted">暂无跟进内容</span></template>
+        </el-table-column>
+
+        <el-table-column v-if="column.key === 'schedule' && query.tab !== 'public_pool'" :key="column.key" label="下次联系 / 计划" min-width="175">
           <template slot-scope="{row}">
-            <div v-if="hasField('last_contact_at')" class="cell-sub-line">
-              <span class="schedule-lbl">最近：</span>
-              <span class="text-strong">{{ date(row.last_contact_at) }}</span>
-            </div>
             <div v-if="hasField('next_contact_at')" class="cell-sub-line">
               <span class="schedule-lbl">下次：</span>
               <span :class="{ 'crm-overdue text-strong': isOverdue(row), 'due-today text-strong': isDueToday(row) }">
@@ -327,6 +317,7 @@
               <el-button
                 v-for="action in rowActions(row).slice(0, 3)"
                 :key="action.key"
+                :loading="quickActionId === row.id && ['accept', 'claim'].includes(action.key)" :disabled="quickActionId === row.id"
                 type="text"
                 size="mini"
                 :icon="action.icon"
@@ -387,7 +378,7 @@
 
     <crm-lead-form-dialog ref="form" @saved="load" />
     <crm-lead-detail-dialog ref="detail" @changed="load" />
-    <crm-lead-action-dialog ref="action" @changed="load" />
+    <crm-lead-action-dialog ref="action" @busy="quickActionId = $event" @changed="load" />
     <crm-followup-dialog ref="follow" @saved="load" />
     <crm-identity-review-dialog ref="review" @saved="load" />
     <crm-opportunity-form-dialog ref="opportunityForm" @saved="opportunitySaved" />
@@ -397,8 +388,10 @@
 </template>
 
 <script>
+import CrmProgressControls from '@/components/crm/CrmProgressControls.vue'
 import { formatMoney as displayMoney } from '../../../utils/money.js'
 import { getCrmLeadMetadata, listCrmLeads, crmError, crmDate } from '@/api/erp/crm'
+import { poolNames } from '@/utils/crmProgress'
 import { crmDepartmentTree } from '@/utils/crmDepartmentTree'
 import CrmLeadFormDialog from '@/components/crm/CrmLeadFormDialog.vue'
 import CrmLeadDetailDialog from '@/components/crm/CrmLeadDetailDialog.vue'
@@ -437,7 +430,6 @@ const ACTION_META = [
   { key: 'claim', label: '领取', icon: 'el-icon-thumb', cls: '' },
   { key: 'review', label: '核实', icon: 'el-icon-coordinate', cls: 'crm-warn-link' },
   { key: 'edit', label: '编辑', icon: 'el-icon-edit', cls: '' },
-  { key: 'confirm', label: '有效线索', icon: 'el-icon-circle-check', cls: '' },
   { key: 'pool', label: '客户池', icon: 'el-icon-collection-tag', cls: '' },
   { key: 'transfer', label: '转交', icon: 'el-icon-sort', cls: '' },
   { key: 'return', label: '退回', icon: 'el-icon-refresh-left', cls: 'crm-danger-link' },
@@ -447,7 +439,7 @@ const ACTION_META = [
 
 export default {
   name: 'CrmLeadList',
-  components: {
+  components: { CrmProgressControls,
     CrmListViewControls,
     CrmLeadFormDialog,
     CrmLeadDetailDialog,
@@ -461,7 +453,7 @@ export default {
   data: () => ({
     columnGroups: leadColumnGroups,
     viewConfiguration: { columns: leadColumnGroups.flatMap(group => group.fields), filters: {}, sort: { field: '', direction: 'desc' }, group_by: '' },
-    metadata: {},
+    metadata: {}, quickActionId: null,
     rows: [],
     total: 0,
     counts: {},
@@ -479,6 +471,7 @@ export default {
     ]
   }),
   computed: {
+    pools() { return poolNames(this.metadata, 'lead', this.query.customer_pool) },
     departmentOptions() { return crmDepartmentTree(this.metadata.departments || []) },
     viewColumns() { return orderedColumnGroups(this.viewConfiguration.columns,this.columnGroups) },
     viewTableKey() { return this.viewConfiguration.columns.join(',') + ':' + this.viewConfiguration.group_by + ':' + (this.query.tab === 'public_pool' ? 'pool' : 'std') },
@@ -1000,7 +993,6 @@ export default {
 .new-badge,
 .entry-pill,
 .pending-pill,
-.confirmed-pill,
 .pool-badge,
 .overdue-pill,
 .today-pill,
@@ -1044,11 +1036,6 @@ export default {
   background: #fffbeb;
   color: #b45309;
   border: 1px solid #fde68a;
-}
-.confirmed-pill {
-  background: #f0fdf4;
-  color: #00763f;
-  border: 1px solid #bbf7d0;
 }
 .pool-badge {
   background: #f0fdf4;

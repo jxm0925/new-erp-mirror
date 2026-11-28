@@ -4,20 +4,38 @@ namespace App\Services\Erp;
 
 use App\Models\Erp\ProductionStage;
 use App\Models\Erp\ProductionPackagingScheme;
+use App\Models\Erp\Item;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\ValidationException;
 
 /** Small maintainable process catalogs share one permission, command and audit boundary. */
 class ProductionProcessCatalogService
 {
+    public const PACKAGING_QUANTITY_RULES = ['required', 'numeric', 'gt:0', 'regex:/^\d{1,10}(?:\.\d{1,8})?$/'];
+
+    public static function packagingItemRules(): array
+    {
+        return ['items' => 'array', 'items.*.item_id' => 'required|integer|min:1|distinct',
+            'items.*.qty_per_unit' => self::PACKAGING_QUANTITY_RULES, 'items.*.remark' => 'nullable|string|max:255'];
+    }
+
     public function paginate(string $type, array $filters, array $permissions, bool $super): mixed
     {
         $this->authorize($permissions, $super, false);
         $model = $this->model($type);
-        return $model::query()->when($filters['keyword'] ?? null, fn ($q, $v) => $q->where(fn ($sub) => $sub->where('code', 'like', "%{$v}%")->orWhere('name', 'like', "%{$v}%")))
+        return $model::query()->when($type === 'packaging-schemes', fn ($q) => $q->with('items.item.unit')->withCount('items'))
+            ->when($filters['keyword'] ?? null, fn ($q, $v) => $q->where(fn ($sub) => $sub->where('code', 'like', "%{$v}%")->orWhere('name', 'like', "%{$v}%")))
             ->when($filters['status'] ?? null, fn ($q, $v) => $q->where('status', $v))
             ->orderBy('sort')->orderBy('id')->paginate(min(50, max(1, (int) ($filters['per_page'] ?? 10))));
+    }
+
+    public function detail(string $type, int $id, array $permissions, bool $super): array
+    {
+        $this->authorize($permissions, $super, false);
+        $model = $this->model($type);
+        return $model::query()->when($type === 'packaging-schemes', fn ($q) => $q->with('items.item.unit')->withCount('items'))->findOrFail($id)->toArray();
     }
 
     public function save(string $type, ?int $id, array $data, object $actor, array $permissions, bool $super): array
@@ -36,6 +54,7 @@ class ProductionProcessCatalogService
                     'request_hash' => $hash, 'catalog_type' => $type, 'operator_legacy_id' => $actorId, 'created_at' => now(), 'updated_at' => now()]);
                 $row = $id ? $model::query()->whereKey($id)->lockForUpdate()->firstOrFail() : new $model;
                 if ($id && (int) $row->business_version !== (int) ($data['expected_version'] ?? 0)) throw ValidationException::withMessages(['expected_version' => '档案已变化，请刷新后重试。']);
+                if ($type === 'packaging-schemes' && $row->exists) $row->load('items.item.unit');
                 $before = $row->exists ? $row->toArray() : null;
                 if (($data['status'] ?? 'enabled') === 'disabled' && $id && $row->status !== 'disabled') {
                     $routes = $this->routingRefs($type, $id, true);
@@ -48,6 +67,10 @@ class ProductionProcessCatalogService
                     'business_version' => $id ? (int) $row->business_version + 1 : 1, 'updated_by_legacy_id' => $actorId]);
                 if (! $id) $row->created_by_legacy_id = $actorId;
                 $row->save();
+                if ($type === 'packaging-schemes') {
+                    if (array_key_exists('items', $data)) $this->syncPackagingItems($row, $data['items']);
+                    $row->load('items.item.unit')->loadCount('items');
+                }
                 $response = $row->toArray();
                 DB::table('erp_production_execution_events')->insert(['aggregate_type' => 'process_'.$type, 'aggregate_id' => $row->id,
                     'action' => $id ? 'update' : 'create', 'before_status' => $before['status'] ?? null, 'after_status' => $row->status,
@@ -84,6 +107,7 @@ class ProductionProcessCatalogService
                 throw ValidationException::withMessages(['id' => '还有没完工的工单在这个生产阶段里生产，不能删除，请改为“停用”。']);
             if ($type === 'packaging-schemes' && DB::table('erp_shipment_packing_contents')->where('packaging_scheme_id', $id)->exists())
                 throw ValidationException::withMessages(['id' => '发货打包记录用过这个包装方案，不能删除，请改为“停用”。']);
+            if ($type === 'packaging-schemes') $row->load('items.item.unit');
             $before = $row->toArray();
             $row->delete();
             $actorId = (int) ($actor->legacy_id ?? $actor->id);
@@ -94,6 +118,31 @@ class ProductionProcessCatalogService
                 'operator_legacy_id' => $actorId, 'operator_name' => $actor->nickname ?? $actor->username ?? null,
                 'occurred_at' => now(), 'created_at' => now(), 'updated_at' => now()]);
         }, 5);
+    }
+
+    private function syncPackagingItems(ProductionPackagingScheme $scheme, array $rows): void
+    {
+        $rows = array_values($rows);
+        $validated = Validator::make(['items' => $rows], self::packagingItemRules(), [
+            'items.*.item_id.distinct' => '标准包装材料不能重复。',
+            'items.*.qty_per_unit.gt' => '标准包装材料的单台用量必须大于 0。',
+            'items.*.qty_per_unit.regex' => '单台用量最多 10 位整数、8 位小数。',
+        ])->validate()['items'];
+        $ids = collect($validated)->pluck('item_id')->map(fn ($id) => (int) $id);
+        if ($ids->unique()->count() !== $ids->count()) throw ValidationException::withMessages(['items' => '标准包装材料不能重复。']);
+        // 物料状态与方案明细一起锁定，避免校验后被停用或切到办公范围。
+        $items = Item::query()->whereIn('id', $ids)->orderBy('id')->lockForUpdate()->get()->keyBy('id');
+        foreach ($validated as $index => $line) {
+            $item = $items->get((int) $line['item_id']);
+            if (! $item || $item->status !== 'enabled' || $item->managementScope() !== 'factory') {
+                throw ValidationException::withMessages(["items.{$index}.item_id" => '标准包装材料必须选择启用的工厂物料。']);
+            }
+        }
+        $scheme->items()->delete();
+        $scheme->items()->createMany(array_map(fn ($line, $index) => [
+            'item_id' => (int) $line['item_id'], 'qty_per_unit' => $line['qty_per_unit'],
+            'sort_order' => $index, 'remark' => $line['remark'] ?? null,
+        ], $validated, array_keys($validated)));
     }
 
     /** 引用这个档案的工艺路线（编号+版本），$activeOnly 只看生效中的；最多列 5 条。 */
@@ -129,7 +178,7 @@ class ProductionProcessCatalogService
 
     private function authorize(array $permissions, bool $super, bool $write): void
     {
-        $required = $write ? ['production.routing.create', 'production.routing.edit'] : ['production.routing.view', 'production.work_order.view', 'production.task.view'];
+        $required = $write ? ['production.routing.create', 'production.routing.edit'] : ['production.routing.view', 'production.routing.create', 'production.routing.edit', 'production.work_order.view', 'production.task.view'];
         if (! $super && array_intersect($required, $permissions) === []) abort(403, '当前用户没有工艺档案权限。');
     }
 }

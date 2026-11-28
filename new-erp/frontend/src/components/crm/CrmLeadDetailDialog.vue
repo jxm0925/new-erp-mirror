@@ -4,7 +4,6 @@
       <div class="detail-head-main">
         <b>线索详情 · {{ lead.customer_name || '加载中' }}</b>
         <el-tag v-if="lead.status_label" size="mini" :type="statusType">{{ lead.status_label }}</el-tag>
-        <span v-if="lead.confirmed_at" class="head-pill is-green"><i class="el-icon-check" /> 有效线索</span>
         <span v-if="lead.customer_kind" class="head-pill">{{ lead.customer_kind === 'enterprise' ? '企业客户' : '个人客户' }}</span>
         <span v-if="lead.lead_no" class="head-no">
           {{ lead.lead_no }}
@@ -42,7 +41,7 @@
           </div>
           <div class="metric-item is-green">
             <div class="m-label">所在客户池</div>
-            <div class="m-value">{{ lead.customer_pool || '未入池' }}</div>
+            <div class="m-value"><crm-progress-controls scope="lead" :subject="lead" @changed="changed" @refresh="changed" /></div>
             <div class="m-sub">{{ lead.is_new_inquiry ? '新咨询线索' : '老客/复购咨询' }}</div>
           </div>
           <div class="metric-item">
@@ -176,7 +175,7 @@
                 </span>
               </div>
               <div v-if="(lead.abilities && lead.abilities.edit_custom_tags) || (lead.custom_tags || []).length" class="kv-row full">
-                <span>个人标签</span>
+                <span>我的标签</span>
                 <span>
                   <template v-if="(lead.custom_tags || []).length">
                     <el-tag v-for="item in lead.custom_tags" :key="item" size="mini" type="info" class="crm-tag">{{ item }}</el-tag>
@@ -239,8 +238,6 @@
             </div>
           </div>
         </section>
-
-        <section class="crm-box"><crm-drawing-requests :key="'drawing-requests-' + session" :subject="{ type: 'lead', id: lead.id }" editable @changed="changed" /></section>
 
         <section class="crm-box records-box">
           <div class="records-header">
@@ -312,10 +309,9 @@
       <el-button v-if="allowed.edit" size="small" icon="el-icon-edit" @click="$refs.form.open(lead.id)">编辑</el-button>
       <el-button v-if="allowed.return" size="small" icon="el-icon-refresh-left" @click="act('return')">退回</el-button>
       <el-button v-if="allowed.assign" size="small" type="success" icon="el-icon-s-promotion" @click="act('assign')">分配线索</el-button>
-      <el-button v-if="allowed.accept" size="small" type="success" icon="el-icon-check" @click="act('accept')">接收线索</el-button>
-      <el-button v-if="allowed.claim" size="small" type="success" icon="el-icon-thumb" @click="act('claim')">领取线索</el-button>
+      <el-button v-if="allowed.accept" size="small" type="success" icon="el-icon-check" :loading="quickActionId === lead.id" @click="act('accept')">接收线索</el-button>
+      <el-button v-if="allowed.claim" size="small" type="success" icon="el-icon-thumb" :loading="quickActionId === lead.id" @click="act('claim')">领取线索</el-button>
       <el-button v-if="allowed.follow" size="small" type="success" icon="el-icon-chat-line-round" @click="editFollowup()">记录跟进</el-button>
-      <el-button v-if="allowed.confirm" size="small" icon="el-icon-circle-check" @click="act('confirm')">有效线索</el-button>
       <el-button v-if="allowed.convert" size="small" type="success" icon="el-icon-aim" @click="$refs.opportunityForm.open({lead})">转为商机</el-button>
       <el-button v-if="lead.opportunity_id" size="small" icon="el-icon-connection" @click="$refs.opportunityDetail.open(lead.opportunity_id)">查看商机</el-button>
       <el-dropdown v-if="allowed.transfer || allowed.recycle || allowed.pool || allowed.invalidate" @command="act">
@@ -331,7 +327,7 @@
     </div>
 
     <template v-if="visible">
-      <crm-lead-action-dialog ref="action" :key="`action-${session}`" @changed="changed" />
+      <crm-lead-action-dialog ref="action" @busy="quickActionId = $event" :key="`action-${session}`" @changed="changed" />
       <crm-followup-dialog ref="follow" :key="`follow-${session}`" @saved="changed" />
       <crm-lead-form-dialog ref="form" :key="`form-${session}`" @saved="changed" />
       <crm-identity-review-dialog ref="review" :key="`review-${session}`" @saved="changed" />
@@ -343,30 +339,29 @@
 </template>
 
 <script>
+import CrmProgressControls from '@/components/crm/CrmProgressControls.vue'
 import { getCrmLead, listCrmLeadLogs, listCrmFollowups, crmError, crmDate } from '@/api/erp/crm'
 import CrmAttachments from './CrmAttachments.vue'
 import CrmLeadActionDialog from './CrmLeadActionDialog.vue'
 import CrmLeadFormDialog from './CrmLeadFormDialog.vue'
 import CrmFollowupDialog from './CrmFollowupDialog.vue'
 import CrmIdentityReviewDialog from './CrmIdentityReviewDialog.vue'
-import CrmDrawingRequests from './CrmDrawingRequests.vue'
 import '@/styles/crm.css'
 
 export default {
   name: 'CrmLeadDetailDialog',
-  components: {
+  components: { CrmProgressControls,
     CrmAttachments,
     CrmLeadActionDialog,
     CrmLeadFormDialog,
     CrmFollowupDialog,
     CrmIdentityReviewDialog,
-    CrmDrawingRequests,
     CrmOpportunityFormDialog: () => import('./CrmOpportunityFormDialog.vue'),
     CrmOpportunityDetailDialog: () => import('./CrmOpportunityDetailDialog.vue'),
     CustomerDetailDialog: () => import('@/components/sales/CustomerDetailDialog.vue')
   },
   data: () => ({
-    visible: false,
+    visible: false, quickActionId: null,
     loading: false,
     session: 0,
     sequence: 0,
@@ -679,7 +674,7 @@ export default {
   flex: 1;
   min-width: 0;
 }
-.record-tabs :deep(.el-tabs__header) {
+.record-tabs ::v-deep .el-tabs__header {
   margin: 0;
 }
 

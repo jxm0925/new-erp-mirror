@@ -1,9 +1,9 @@
 <template>
-  <div class="archive-dictionary" :class="{ 'carrier-dictionary': kind === 'carriers' }">
+  <div class="archive-dictionary" :class="{ 'carrier-dictionary': compactArchive }">
     <el-empty v-if="!canRead" description="暂无查看权限" />
     <template v-else>
       <!-- 概览指标卡片网格 -->
-      <section v-if="kind !== 'carriers'" class="metric-overview-grid">
+      <section v-if="!compactArchive" class="metric-overview-grid">
         <!-- 分类模式指标卡片 -->
         <template v-if="kind === 'categories'">
           <div class="metric-card metric-all" :class="{ active: !query.status }" title="查看全部商品分类" @click="filterStatus('')">
@@ -135,15 +135,12 @@
           <div class="filter-actions">
             <el-button size="small" type="success" icon="el-icon-search" class="btn-theme-search" @click="search">查询</el-button>
             <el-button size="small" icon="el-icon-refresh-left" class="btn-theme-reset" @click="reset">重置</el-button>
-            <el-button v-if="canManage" size="small" type="success" icon="el-icon-plus" class="btn-theme-create" @click="openCreate()">
-              新增{{ label }}
-            </el-button>
           </div>
         </div>
 
         <div class="table-wrap">
           <el-table ref="table" v-loading="loading" :data="rows" border size="small" row-key="id" class="enterprise-table">
-            <el-table-column v-if="kind !== 'carriers'" :prop="codeField" :label="kind === 'platforms' ? '平台编号' : '编码'" min-width="120">
+            <el-table-column v-if="!compactArchive" :prop="codeField" :label="kind === 'platforms' ? '平台编号' : '编码'" min-width="120">
               <template slot-scope="{ row }">
                 <span class="code-mono archive-code-chip">{{ row[codeField] }}</span>
               </template>
@@ -154,10 +151,12 @@
                 <span class="archive-name-text">{{ row[nameField] }}</span>
               </template>
             </el-table-column>
-            <el-table-column v-if="kind === 'carriers'" prop="code" label="业务编码" min-width="150"><template slot-scope="{ row }">{{ row.code || '—' }}</template></el-table-column>
-            <el-table-column v-if="kind === 'carriers'" prop="sort" label="排序" width="90" align="center" />
+            <el-table-column v-if="compactArchive" :prop="codeField" label="业务编码" min-width="150"><template slot-scope="{ row }">{{ row[codeField] || '—' }}</template></el-table-column>
+            <el-table-column v-if="kind === 'customer-pools'" label="所属阶段分组" min-width="150"><template slot-scope="{row}">{{ poolGroups[row.group_code] || row.group_code }}</template></el-table-column>
+            <el-table-column v-if="kind === 'customer-pools'" label="适用范围" min-width="180"><template slot-scope="{row}"><el-tag v-for="scope in row.applicable_scopes || []" :key="scope" size="mini" type="success" class="usage-tag">{{ scopeLabels[scope] || scope }}</el-tag></template></el-table-column>
+            <el-table-column v-if="compactArchive" :prop="sortField" label="排序" width="90" align="center" />
 
-            <el-table-column v-if="!['payments', 'carriers'].includes(kind)" label="所属层级" min-width="130">
+            <el-table-column v-if="!['payments', 'carriers', 'business-lines', 'customer-pools'].includes(kind)" label="所属层级" min-width="130">
               <template slot-scope="{ row }">
                 <span v-if="isRoot(row)" class="root-badge"><i class="el-icon-folder" /> 一级（根）</span>
                 <span v-else class="sub-badge"><i class="el-icon-caret-right" /> {{ parentName(row) }}</span>
@@ -214,13 +213,13 @@
               </template>
             </el-table-column>
 
-            <el-table-column v-if="kind !== 'carriers'" :prop="sortField" label="排序" width="70" align="center">
+            <el-table-column v-if="!compactArchive" :prop="sortField" label="排序" width="70" align="center">
               <template slot-scope="{ row }">
                 <span class="code-mono sort-val">{{ row[sortField] }}</span>
               </template>
             </el-table-column>
 
-            <el-table-column v-if="!['platforms', 'carriers'].includes(kind)" prop="remark" label="备注说明" min-width="140" show-overflow-tooltip>
+            <el-table-column v-if="!['platforms', 'carriers'].includes(kind)" prop="remark" label="备注说明" min-width="140">
               <template slot-scope="{ row }">
                 <span class="remark-text">{{ row.remark || '-' }}</span>
               </template>
@@ -232,7 +231,7 @@
               </template>
             </el-table-column>
 
-            <el-table-column v-if="canManage" label="操作" :width="['payments', 'carriers'].includes(kind) ? 160 : 260" :fixed="compact ? false : 'right'" align="center">
+            <el-table-column v-if="canManage" label="操作" :width="kind === 'customer-pools' ? 220 : ['payments', 'carriers', 'business-lines'].includes(kind) ? 160 : 260" :fixed="compact ? false : 'right'" align="center">
               <template slot-scope="{ row }">
                 <div class="row-actions">
                   <el-button v-if="canCreateChild(row)" type="text" size="mini" class="btn-action-child" icon="el-icon-plus" @click="openCreate(row)">新增下级</el-button>
@@ -247,7 +246,7 @@
                     {{ isEnabled(row) ? '停用' : '启用' }}
                   </el-button>
                   <el-button
-                    v-if="kind === 'categories' && !isEnabled(row) && $can('master.base_archive.delete')"
+                    v-if="(kind === 'categories' && !isEnabled(row) && $can('master.base_archive.delete')) || kind === 'customer-pools'"
                     type="text"
                     size="mini"
                     class="btn-action-delete"
@@ -283,33 +282,39 @@
     <el-dialog
       :title="(form.id ? '编辑' : '新增') + label"
       :visible.sync="dialogVisible"
-      :width="kind === 'carriers' ? '568px' : '620px'"
+      :width="compactArchive ? '568px' : '620px'"
       top="7vh"
       append-to-body
       :close-on-click-modal="false"
       :close-on-press-escape="!saving"
       :show-close="!saving"
       :before-close="beforeClose"
-      :custom-class="kind === 'carriers' ? 'base-archive-dialog carrier-archive-dialog' : 'base-archive-dialog'"
-      :class="{ 'carrier-dialog-shell': kind === 'carriers' }"
+      :custom-class="compactArchive ? 'base-archive-dialog carrier-archive-dialog' : 'base-archive-dialog'"
+      :class="{ 'carrier-dialog-shell': compactArchive }"
       @closed="clearValidation"
     >
       <div class="dialog-header-banner">
         <i :class="bannerIconClass" class="banner-icon" />
         <div class="banner-text">
           <p class="banner-title">{{ kind === 'carriers' ? '维护销售订单承运商' : (form.id ? '修改' + label + '基础属性' : '录入新' + label) }}</p>
-          <p class="banner-sub">{{ kind === 'carriers' ? '请填写名称，停用不影响历史单据。' : '请确保编码在全系统内唯一且符合主数据编码规范' }}</p>
+          <p class="banner-sub">{{ compactArchive ? '请填写名称，停用不影响历史单据。' : '请确保编码在全系统内唯一且符合主数据编码规范' }}</p>
         </div>
       </div>
 
       <el-form ref="form" :model="form" label-position="top" size="small" :disabled="saving" class="archive-dialog-form" @submit.native.prevent>
-        <template v-if="kind === 'carriers'">
-          <el-form-item label="承运商名称" prop="name" :rules="[{ required: true, message: '请输入承运商名称', trigger: 'blur' }]"><el-input v-model.trim="form.name" maxlength="160" /></el-form-item>
-          <el-form-item label="业务编码（选填）" prop="code"><el-input v-model.trim="form.code" maxlength="80" /><div class="field-help">用于业务识别，可留空。</div></el-form-item>
+        <template v-if="compactArchive">
+          <el-form-item :label="label + '名称'" :prop="nameField" :rules="[{ required: true, message: '请输入' + label + '名称', trigger: 'blur' }]"><el-input v-model.trim="form[nameField]" :maxlength="kind === 'business-lines' ? 80 : 160" /></el-form-item>
+          <el-form-item :label="kind === 'customer-pools' ? '业务编码' : '业务编码（选填）'" :prop="codeField" :required="kind === 'customer-pools'"><el-input v-model.trim="form[codeField]" :maxlength="kind === 'business-lines' ? 64 : 80" /><div class="field-help">{{ kind === 'customer-pools' ? '填写唯一的客户池业务编码。' : kind === 'business-lines' ? (form.id ? '留空时保留原编码。' : '留空时自动生成。') : '用于业务识别，可留空。' }}</div></el-form-item>
+          <template v-if="kind === 'customer-pools'">
+            <el-form-item label="所属阶段分组" required><el-select v-model="form.group_code"><el-option v-for="(name,code) in poolGroups" :key="code" :value="code" :label="name" /></el-select></el-form-item>
+            <el-form-item label="适用范围" required><el-checkbox-group v-model="form.applicable_scopes"><el-checkbox v-for="(name,scope) in scopeLabels" :key="scope" :label="scope">{{ name }}</el-checkbox></el-checkbox-group></el-form-item>
+            <el-form-item label="历史别名"><el-select v-model="form.legacy_aliases" multiple filterable allow-create default-first-option><el-option v-for="name in form.legacy_aliases || []" :key="name" :value="name" :label="name" /></el-select></el-form-item>
+          </template>
           <div class="form-grid-2col carrier-last-fields">
-            <el-form-item label="显示排序"><el-input-number v-model="form.sort" :min="0" :max="9999" :precision="0" controls-position="right" class="full" /></el-form-item>
+            <el-form-item label="显示排序"><el-input-number v-model="form[sortField]" :min="0" :max="9999" :precision="0" controls-position="right" class="full" /></el-form-item>
             <el-form-item label="启用状态"><el-radio-group v-model="form.status" class="status-radio-group"><el-radio label="enabled"><span class="radio-label-text text-success">正常启用</span></el-radio><el-radio label="disabled"><span class="radio-label-text text-muted">停用</span></el-radio></el-radio-group></el-form-item>
           </div>
+          <el-form-item v-if="kind === 'business-lines'" label="备注说明"><el-input v-model.trim="form.remark" type="textarea" :rows="3" maxlength="500" show-word-limit /></el-form-item>
         </template>
         <template v-else>
         <div class="form-grid-2col">
@@ -411,10 +416,12 @@
 </template>
 
 <script>
+import { deleteCrmCustomerPool } from '@/api/erp/crm'
 import { erpDateTime } from '../../../utils/dateTime'
+import { safeUuid } from '../../../utils/id'
 import { listArchives, saveArchive, setArchiveStatus, deleteProductCategory } from '../../../api/erp/base-archives'
 
-const labels = { categories: '商品分类', payments: '付款方式', platforms: '成交平台', carriers: '承运商' }
+const labels = { categories: '商品分类', payments: '付款方式', platforms: '成交平台', carriers: '承运商', 'business-lines': '业务线', 'customer-pools': '客户池' }
 
 export default {
   name: 'ArchiveDictionary',
@@ -434,20 +441,29 @@ export default {
       formParentName: '',
       query: { keyword: '', status: '', usage: '', page: 1, per_page: 10 },
       loadSequence: 0,
-      compact: window.innerWidth <= 900
+      poolGroups: { lead: '线索快转与培育', opportunity: '商机重点攻坚', customer: '交付与老客经营' }, scopeLabels: { lead: '线索', opportunity: '商机', customer: '客户' }, compact: window.innerWidth <= 900
     }
   },
   computed: {
     label () { return labels[this.kind] },
-    codeField () { return this.kind === 'carriers' ? 'code' : (this.kind === 'payments' ? 'method_code' : this.kind === 'categories' ? 'category_code' : 'legacy_id') },
-    nameField () { return this.kind === 'payments' ? 'method_name' : this.kind === 'categories' ? 'category_name' : 'name' },
-    sortField () { return this.kind === 'categories' ? 'sort_order' : 'sort' },
-    canManage () { return this.$can(this.kind === 'carriers' ? 'master.base_archive.create' : (this.kind === 'payments' ? 'finance.payment_method.manage' : 'master.base_archive')) },
-    canRead () { return this.kind === 'carriers' ? this.$can('master.base_archive') : (this.canManage || (this.kind === 'payments' && this.$can('finance.payment_method.view'))) },
+    compactArchive () { return ['carriers', 'business-lines', 'customer-pools'].includes(this.kind) },
+    codeField () { if (this.kind === 'customer-pools') return 'pool_code'; return this.compactArchive ? 'code' : (this.kind === 'payments' ? 'method_code' : this.kind === 'categories' ? 'category_code' : 'legacy_id') },
+    nameField () { if (this.kind === 'customer-pools') return 'pool_name'; return this.kind === 'payments' ? 'method_name' : this.kind === 'categories' ? 'category_name' : 'name' },
+    sortField () { return ['categories', 'business-lines', 'customer-pools'].includes(this.kind) ? 'sort_order' : 'sort' },
+    canManage () {
+      if (this.compactArchive) return this.$can('master.base_archive.create')
+      if (this.kind === 'payments') return this.$can('finance.payment_method.manage')
+      return this.$can('master.base_archive.create') || this.$can('master.base_archive')
+    },
+    canRead () {
+      if (this.kind === 'payments') return this.canManage || this.$can('finance.payment_method.view')
+      return this.canManage || this.$can('master.base_archive') || this.$can('master.base_archive.view')
+    },
     bannerIconClass () {
       if (this.kind === 'categories') return 'el-icon-price-tag'
       if (this.kind === 'payments') return 'el-icon-bank-card'
       if (this.kind === 'carriers') return 'el-icon-truck'
+      if (this.kind === 'business-lines') return 'el-icon-connection'
       return 'el-icon-shopping-cart-2'
     },
     enabledCount () {
@@ -491,6 +507,7 @@ export default {
       })
     },
     async load () {
+      if (!this.canRead) return
       const sequence = ++this.loadSequence
       this.loading = true
       try {
@@ -499,7 +516,7 @@ export default {
         this.rows = data.data || []
         this.total = Number(data.total || 0)
         this.stats = data.stats || {}
-        this.$emit('count-updated', this.kind === 'carriers' ? Number(this.stats.total ?? this.total) : this.total)
+        this.$emit('count-updated', this.compactArchive ? Number(this.stats.total ?? this.total) : this.total)
         if (!this.rows.length && this.query.page > 1 && this.total <= (this.query.page - 1) * this.query.per_page) {
           this.query.page = Math.max(1, Math.ceil(this.total / this.query.per_page))
           return this.load()
@@ -539,7 +556,7 @@ export default {
         : row.parent_name || '无（主平台）'
     },
     canCreateChild (row) {
-      return !['payments', 'carriers'].includes(this.kind) && this.isEnabled(row) && (this.kind === 'categories' || !Number(row.parent_legacy_id))
+      return !['payments', 'carriers', 'business-lines', 'customer-pools'].includes(this.kind) && this.isEnabled(row) && (this.kind === 'categories' || !Number(row.parent_legacy_id))
     },
     tradeTypeText (value) {
       return { domestic: '国内交易', foreign: '国外交易' }[value] || value
@@ -548,11 +565,12 @@ export default {
       return value ? erpDateTime(value, 16) : '—'
     },
     openCreate (parent) {
+      if (!this.canManage) return
       this.form = {
         [this.codeField]: '',
         [this.nameField]: '',
         [this.sortField]: 0,
-        status: 'enabled',
+        status: 'enabled', group_code: 'lead', applicable_scopes: ['lead'], legacy_aliases: [],
         remark: '',
         parent_id: parent ? parent.id : null,
         parent_legacy_id: parent ? parent.legacy_id : 0,
@@ -565,12 +583,13 @@ export default {
         available_for_receipt: true,
         available_for_payment: true
       }
-      if (['platforms', 'carriers'].includes(this.kind)) this.form.client_request_id = window.crypto.randomUUID()
+      if (['platforms', 'carriers', 'business-lines'].includes(this.kind)) this.form.client_request_id = safeUuid()
       this.formParentName = parent ? parent[this.nameField] : ''
       this.dialogVisible = true
       this.clearValidation()
     },
     openEdit (row) {
+      if (!this.canManage) return
       this.form = {
         ...row,
         payment_mode: row.payment_mode || '',
@@ -603,8 +622,13 @@ export default {
         }
         const f = this.form
         let payload
-        if (this.kind === 'carriers') {
-          payload = { id: f.id, name: f.name, code: f.code || null, sort: f.sort, status: f.status }
+        if (this.compactArchive) {
+          payload = { id: f.id, name: f.name, code: f.code || null, [this.sortField]: f[this.sortField], status: f.status }
+          if (this.kind === 'customer-pools') {
+            if (!f.pool_code || !f.pool_name || !f.group_code || !f.applicable_scopes.length) return this.$message.warning('请填写客户池编码、名称、分组与适用范围')
+            payload = { id: f.id, pool_code: f.pool_code, pool_name: f.pool_name, group_code: f.group_code, applicable_scopes: f.applicable_scopes, legacy_aliases: f.legacy_aliases || [], sort_order: f.sort_order, status: f.status }
+          }
+          if (this.kind === 'business-lines') payload.remark = f.remark
           if (f.id) payload.expected_version = f.business_version
           else payload.client_request_id = f.client_request_id
         } else if (this.kind === 'categories') {
@@ -661,6 +685,7 @@ export default {
       })
     },
     async toggleStatus (row) {
+      if (!this.canManage) return
       const enabled = !this.isEnabled(row)
       try {
         await this.$confirm(`确认${enabled ? '启用' : '停用'}“${row[this.nameField]}”？`, this.label, { type: 'warning' })
@@ -672,6 +697,15 @@ export default {
       }
     },
     async remove (row) {
+      if (this.kind === 'customer-pools') {
+        try {
+          await this.$confirm(`确认删除客户池“${row.pool_name}”？已有业务引用的客户池请改为停用。`, '删除客户池', { type: 'warning' })
+          await deleteCrmCustomerPool(row)
+          this.$message.success('客户池已删除')
+          await this.load()
+        } catch (e) { if (e !== 'cancel' && e !== 'close') this.$message.error(e.userMessage || '删除失败') }
+        return
+      }
       try {
         await this.$confirm(`确认删除商品分类“${row.category_name}”？已被引用或仍有下级的分类不能删除。`, '删除商品分类', { type: 'warning' })
         await deleteProductCategory(row.id)
@@ -1019,6 +1053,14 @@ export default {
 
 .btn-action-edit:hover {
   color: #1d4ed8 !important;
+}
+
+.carrier-dictionary .btn-action-edit {
+  color: #008b4b !important;
+}
+
+.carrier-dictionary .btn-action-edit:hover {
+  color: #00763f !important;
 }
 
 .btn-action-disable {

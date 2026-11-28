@@ -561,14 +561,10 @@ export default {
       return rows.filter(row => this.categoryScope(row) === this.form.management_scope && !excluded.has(Number(row.id)))
     },
     canManage() {
-      const profile = JSON.parse(localStorage.getItem('erp_me') || '{}')
-      const permissions = JSON.parse(localStorage.getItem('erp_permissions') || '[]')
-      return !!profile.is_super_admin || permissions.includes('item_category.manage')
+      return this.$can('item_category.manage')
     },
     canViewItems() {
-      const profile = JSON.parse(localStorage.getItem('erp_me') || '{}')
-      const permissions = JSON.parse(localStorage.getItem('erp_permissions') || '[]')
-      return !!profile.is_super_admin || permissions.includes('master.item.view')
+      return this.$can('master.item') || this.$can('master.item.view')
     }
   },
   watch: {

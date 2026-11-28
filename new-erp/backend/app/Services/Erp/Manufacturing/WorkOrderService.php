@@ -138,16 +138,19 @@ final class WorkOrderService
             && $item->manufacturing_strategy !== 'purchase' && ! $item->isPurchaseFulfilledItem() && ! $item->isPhantom();
     }
 
-    public function createForParent(int $parentId, int $componentItemId, ?float $qty, object $actor, ?int $operationId = null): MfgWorkOrder
+    public function createForParent(int $parentId, int $componentItemId, ?float $qty, object $actor, ?int $operationId = null, ?int $materialId = null): MfgWorkOrder
     {
-        return DB::transaction(function () use ($parentId, $componentItemId, $qty, $actor, $operationId) {
+        return DB::transaction(function () use ($parentId, $componentItemId, $qty, $actor, $operationId, $materialId) {
             $parent = MfgWorkOrder::query()->with('operations')->lockForUpdate()->findOrFail($parentId);
             CancellationProductionService::assertProductionAllowed((int) $parent->id);
             if (! in_array($parent->status, ['planned', 'released', 'in_progress', 'paused'], true)) $this->fail('status_invalid', '工单已结束，不能再开半成品工单。');
             $parent->setRelation('materials', MfgWorkOrderMaterial::query()->where('work_order_id', $parent->id)->orderBy('id')->lockForUpdate()->get());
-            $componentMaterials = $parent->materials->where('component_item_id', $componentItemId);
+            $allComponentMaterials = $parent->materials->where('component_item_id', $componentItemId);
+            $componentMaterials = $allComponentMaterials;
             if ($operationId !== null) $componentMaterials = $componentMaterials->where('work_order_operation_id', $operationId);
             if ($componentMaterials->isEmpty()) $this->fail('component_invalid', $operationId === null ? '这个物料不在本工单的用料里。' : '这个物料不在本工序的用料里。');
+            if ($materialId !== null && ! $componentMaterials->contains('id', $materialId)) $this->fail('component_invalid', '所选用料行不属于本工单、本工序或这个半成品。');
+            if ($materialId !== null) $componentMaterials = $componentMaterials->where('id', $materialId);
             $operationIds = $parent->operations->where('execution_context', 'production')->whereIn('id', $componentMaterials->pluck('work_order_operation_id'))->pluck('id');
             // 与接单、改派共用主工单锁；锁内重读本人接单身份，旧页面和管理员也不能绕过。
             $owner = MfgTaskParticipant::query()->where('work_order_id', $parent->id)->whereIn('work_order_operation_id', $operationIds)
@@ -158,7 +161,21 @@ final class WorkOrderService
             if ($item->isPhantom()) $this->fail('phantom_item', $item->item_name.' 是虚拟件，用料已展开在本工单里，不单独开工单。');
             if (! self::isChildOrderItem($item))
                 $this->fail('purchase_item', $item->item_name.' 不是自制半成品（外购件、原料请找采购），不能开生产工单。');
-            $gap = $this->semiGap($parent, $componentItemId);
+            $engine = app(\App\Services\Erp\BomExplosionEngine::class);
+            $positions = $allComponentMaterials->map(fn ($material) => $engine->materialPosition((array) $parent->bom_snapshot,
+                $componentItemId, $material->bom_item_id ? (int) $material->bom_item_id : null, $material->position_path));
+            $selections = $positions->map(fn ($position) => $engine->resolveChild($position, $item, lock: true));
+            if ($materialId === null && $selections->only($componentMaterials->keys()->all())->map(fn ($selection) => $selection['status'].'|'.$selection['bom']?->id)->unique()->count() > 1)
+                $this->fail('bom_position_ambiguous', '这个半成品有多个子 BOM 版本，请从具体用料行开半成品工单。');
+            $selectedKey = $componentMaterials->keys()->first();
+            if ($materialId !== null) $selectedKey = $componentMaterials->search(fn ($material) => (int) $material->id === $materialId);
+            $selection = $selections->get($selectedKey);
+            $position = $positions->get($selectedKey);
+            if (! in_array($selection['status'], ['matched', 'leaf'], true)) $this->fail('bom_unavailable', $selection['block_reason']);
+            $selectedBomId = $selection['bom']?->id;
+            $sameVersionIds = $allComponentMaterials->filter(fn ($material, $key) => in_array($selections->get($key)['status'], ['matched', 'leaf'], true)
+                && $selections->get($key)['bom']?->id === $selectedBomId)->pluck('id')->all();
+            $gap = min($this->semiGap($parent, $componentItemId), $this->semiVersionGap($parent, $componentItemId, $sameVersionIds, $selectedBomId));
             if ($gap <= 0.00001) $this->fail('no_gap', $item->item_name.' 仓库可用库存加已开的半成品工单（含返工、待处置的不良件）已经够用，不用再开。');
             $max = ceil(round($gap, 4));
             if ($qty === null) $qty = $max;
@@ -174,7 +191,11 @@ final class WorkOrderService
             ], $item, (float) $qty, $actor);
             MfgWorkOrderLink::create(['parent_work_order_id' => $parent->id, 'child_work_order_id' => $child->id, 'component_item_id' => $item->id,
                 'qty' => $qty, 'created_by_legacy_id' => $this->actorId($actor), 'created_by_name' => $this->actorName($actor)]);
-            $this->applyPlan($child, $item, null, null);
+            $childSnapshot = $position['child_bom_snapshot'] ?? null;
+            if ($selectedBomId && (! is_array($childSnapshot) || (int) ($childSnapshot['id'] ?? 0) !== (int) $selectedBomId))
+                $childSnapshot = $this->plans->freezeBom($engine->snapshot($selection['bom']), (int) $item->id, true);
+            $confirmedPlan = $selectedBomId ? $this->plans->build($item, null, null, null, (float) $qty, (int) $selectedBomId, null, $childSnapshot) : null;
+            $this->applyPlan($child, $item, $selectedBomId ? (int) $selectedBomId : null, null, confirmedPlan: $confirmedPlan);
             $num = rtrim(rtrim(number_format((float) $qty, 4, '.', ''), '0'), '.');
             $this->log($child, 'created', null, 'planned', "总装工单 {$parent->work_order_no} 缺 {$item->item_name}，开半成品工单 {$num}".($item->unit?->unit_name ?: ''), $actor, ['parent_work_order_id' => $parent->id]);
             if (! $child->block_reason) $this->doRelease($child, $actor, true);
@@ -243,6 +264,27 @@ final class WorkOrderService
         // 退回来还冻结着（等处置、返工中）的不良件不算缺口；报废生效后才出缺口。
         $held = MaterialReturnService::heldDefectiveQty((int) $parent->id)[$componentItemId] ?? 0;
         return round(max(0, (float) $short - (float) $open - (float) $held), 4);
+    }
+
+    /** 同料不同子版本只能补该版本对应的需求；全物料缺口仍另外限制总量，防止重复补做。 */
+    private function semiVersionGap(MfgWorkOrder $parent, int $itemId, array $materialIds, ?int $bomId): float
+    {
+        $operations = $parent->operations->map(fn ($op) => ['key' => 'o'.$op->id, 'operation_name' => $op->operation_name,
+            'sequence' => (int) $op->sequence, 'execution_context' => $op->execution_context ?: 'production'])->all();
+        $executionQty = $parent->units()->exists() ? count(CancellationProductionService::productionUnitIds((int) $parent->id)) : (float) $parent->planned_qty;
+        $materials = $parent->materials->map(fn ($m) => ['id' => (int) $m->id, 'operation_key' => 'o'.$m->work_order_operation_id,
+            'component_item_id' => (int) $m->component_item_id, 'required_qty' => app(MaterialIssueService::class)->neededFor($m, $parent, $executionQty),
+            'issued_qty' => (float) $m->issued_qty, 'participates_in_kitting' => true])->all();
+        $short = collect($this->plans->kitting($materials, $operations))->flatMap(fn ($op) => $op['materials'])
+            ->whereIn('id', $materialIds)->sum('shortage_qty');
+        $links = MfgWorkOrderLink::query()->where('parent_work_order_id', $parent->id)->where('component_item_id', $itemId)->lockForUpdate()->get();
+        $children = MfgWorkOrder::query()->whereIn('id', $links->pluck('child_work_order_id'))
+            ->whereIn('status', ['planned', 'released', 'in_progress', 'paused'])->where('source_type', 'work_order')->whereNull('rework_of_work_order_id')
+            ->when($bomId, fn ($q) => $q->where('bom_id', $bomId), fn ($q) => $q->whereNull('bom_id'))->lockForUpdate()->get();
+        $scrapped = MfgWorkOrderUnit::query()->whereIn('work_order_id', $children->pluck('id'))->where('status', 'scrapped')
+            ->selectRaw('work_order_id, COUNT(*) AS n')->groupBy('work_order_id')->pluck('n', 'work_order_id');
+        $open = $children->sum(fn ($child) => max(0, (float) $child->planned_qty - (float) $child->stored_qty - (float) ($scrapped[$child->id] ?? 0)));
+        return round(max(0, (float) $short - (float) $open), 4);
     }
 
     /**
@@ -333,7 +375,7 @@ final class WorkOrderService
     }
 
     /** @return list<int> 本次实际自动下达的工单；不自动启动手工备货、技术待处理或订单处置中的工单。 */
-    public function retryBlockedForMasterData(?int $bomId, ?int $routingId, object $actor): array
+    public function retryBlockedForMasterData(?int $bomId, ?int $routingId, object $actor, bool $strict = false): array
     {
         $bom = $bomId ? app(BomMatcher::class)->eligibleQuery()->find($bomId) : null;
         $routing = $routingId ? ProductionRouting::query()->where('status', 'active')->find($routingId) : null;
@@ -350,7 +392,7 @@ final class WorkOrderService
                     ->where(fn ($failed) => $failed->where('bom_snapshot->phantom_expansion_complete', false)
                         ->orWhere(fn ($legacy) => $legacy->whereNull('bom_snapshot->phantom_expansion_complete')->where('block_reason', 'like', '%虚拟件%'))));
             }))
-            ->chunkById(100, function ($rows) use ($bom, $routing, $bomId, $routingId, $phantomItemId, $actor, &$released, &$matchingItems) {
+            ->chunkById(100, function ($rows) use ($bom, $routing, $bomId, $routingId, $phantomItemId, $actor, $strict, &$released, &$matchingItems) {
                 foreach ($rows as $row) {
                     try {
                         $itemId = (int) $row->item_id;
@@ -391,6 +433,8 @@ final class WorkOrderService
                         }, 5);
                         if ($didRelease) $released[] = (int) $row->id;
                     } catch (\Throwable $error) {
+                        // 原子保存/生效把技术异常交还外层事务回滚；正常业务缺料仍由上方保存点保留计划和原因。
+                        if ($strict) throw $error;
                         report($error);
                     }
                 }

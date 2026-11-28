@@ -221,6 +221,17 @@
               <el-button slot="append" icon="el-icon-search" class="btn-picker-open" @click="picker=true">选择物料</el-button>
             </el-input>
           </div>
+          <div v-if="defaultRelation && defaultRelation.item" class="item-factor-config">
+            <div class="factor-field">
+              <label>履约换算系数</label>
+              <el-input-number v-model="form.default_item_factor" size="small" :min="0.00000001" :precision="8" :controls="false" class="factor-number" />
+              <span class="factor-formula">销售 <b>1</b> {{ selectedUnitName }} = 履约消耗 <b>{{ formatFactor(form.default_item_factor) }}</b> {{ defaultItemUnitName }}</span>
+            </div>
+            <div v-if="editing" class="factor-field">
+              <label>关系变更说明</label>
+              <el-input v-model.trim="form.default_item_remark" size="small" maxlength="200" placeholder="更换默认物料或修改换算系数时可填写备注（选填）" />
+            </div>
+          </div>
           <el-table :data="defaultRelation ? [defaultRelation.item] : []" size="small" border class="item-summary-table" empty-text="当前尚未绑定默认物料">
             <el-table-column prop="item_code" label="物料编码" min-width="140">
               <template slot-scope="{ row }">
@@ -382,7 +393,7 @@
 
 <script>
 import PagedRecordSelect from '@/components/common/PagedRecordSelect.vue'
-import { listEntity, getEntity, saveEntity, replacePrimaryRelation, uploadSkuImage } from '../../../api/erp/master'
+import { listEntity, getEntity, saveIntegratedSku, uploadSkuImage } from '../../../api/erp/master'
 import { legacyMediaUrl } from '../../../utils/legacyMedia'
 import { reserveForCreatePage, clearCreatePageReservation } from '../../../utils/documentNumberReservation'
 import ProductSkuPicker from '../../../components/sales/ProductSkuPicker.vue'
@@ -405,6 +416,8 @@ const empty = () => ({
   delivery_inspection_required: false,
   electric_mode: 'hidden',
   need_pump_mode: 'hidden',
+  default_item_factor: 1,
+  default_item_remark: '',
   status: 'draft'
 })
 
@@ -435,6 +448,10 @@ export default {
       return this.defaultRelation && this.defaultRelation.item
         ? `${this.defaultRelation.item.item_code} | ${this.defaultRelation.item.item_name}`
         : ''
+    },
+    defaultItemUnitName () {
+      const u = this.defaultRelation && this.defaultRelation.item && this.defaultRelation.item.unit
+      return u ? (u.unit_name || u.symbol) : '基本单位'
     },
     currentSalesUnit () {
       return this.units.find(x => Number(x.id) === Number(this.form.sales_unit_id)) ||
@@ -487,6 +504,7 @@ export default {
             this.products.push(r.data.product)
           }
           this.defaultRelation = (this.form.item_relations || []).find(x => x.status === 'active' && x.is_primary && x.item && x.item.status === 'enabled') || null
+          this.form.default_item_factor = Number((this.defaultRelation && this.defaultRelation.qty) || 1)
         } else {
           const productId = Number(this.$route.query.product_id || 0)
           if (productId) {
@@ -532,8 +550,12 @@ export default {
       return ({ finished_product: '成品', semi_finished: '半成品', raw_material: '原材料', packaging: '包装物', service: '服务' })[value] || value || '—'
     },
     chooseItem (row) {
-      this.defaultRelation = { item: row }
+      this.defaultRelation = { item: row, qty: this.form.default_item_factor || 1 }
+      if (!(Number(this.form.default_item_factor) > 0)) this.form.default_item_factor = 1
       this.picker = false
+    },
+    formatFactor (val) {
+      return Number(val || 1).toFixed(8).replace(/0+$/, '').replace(/\.$/, '')
     },
     validateImage (file) {
       const allowed = ['image/jpeg', 'image/png', 'image/webp', 'image/gif']
@@ -581,33 +603,31 @@ export default {
       }
       this.loading = true
       try {
-        const relationChanged = this.form.line_type === 'physical' && !!(selectedItemId && Number(selectedItemId) !== Number(this.currentPrimaryItemId()))
-        const stageBeforeEnable = status === 'enabled' && (!this.editing || relationChanged)
-        const firstStatus = stageBeforeEnable ? 'draft' : status
-        const payload = { ...this.form, sale_price: this.form.sale_price ?? null, status: firstStatus }
+        const factor = Number(this.form.default_item_factor || 1)
+        if (this.form.line_type === 'physical' && selectedItemId && !(factor > 0)) {
+          this.loading = false
+          return this.$message.error('履约换算系数必须大于 0')
+        }
+        const payload = {
+          ...this.form,
+          sale_price: this.form.sale_price ?? null,
+          status
+        }
+        if (this.form.line_type === 'physical' && selectedItemId) {
+          payload.default_item_id = selectedItemId
+          payload.default_item_factor = factor
+          payload.default_item_reason = this.editing ? '主数据修正' : '首次设置'
+          if (this.form.default_item_remark) payload.default_item_remark = this.form.default_item_remark
+        }
         if (!this.$can('inventory.amount.view')) delete payload.reference_cost
         if (!this.editing && this.reservation) {
           payload.reservation_token = this.reservation.reservation_token
           payload.creation_session_id = this.reservation.creation_session_id
         }
-        const r = await saveEntity('skus', payload)
-        const sku = r.data.data
+        await saveIntegratedSku(this.editing ? this.form.id : null, payload)
         if (!this.editing) clearCreatePageReservation(this.reservation)
-        if (relationChanged) {
-          await replacePrimaryRelation({
-            sku_id: sku.id,
-            item_id: selectedItemId,
-            factor: 1,
-            change_reason: this.editing ? '主数据修正' : '首次设置'
-          })
-        }
-        if (stageBeforeEnable) {
-          const enabledPayload = { ...sku, ...this.form, id: sku.id, status: 'enabled' }
-          if (!this.$can('inventory.amount.view')) delete enabledPayload.reference_cost
-          await saveEntity('skus', enabledPayload)
-        }
         this.$message.success(status === 'enabled' ? 'SKU 已成功启用' : status === 'disabled' ? 'SKU 已停用' : '草稿保存成功')
-        this.$router.push('/master/skus')
+        this.back()
       } catch (e) {
         this.$message.error(e.userMessage || '保存失败')
       } finally {
@@ -616,13 +636,23 @@ export default {
     }
   },
   watch: {
-    picker (v) { if (v) this.loadItems() }
+    picker (v) { if (v) this.loadItems() },
+    'form.line_type' (v) {
+      if (v !== 'physical') {
+        this.defaultRelation = null
+      }
+    }
   }
 }
 </script>
 
 <style scoped>
 .field-tip { color: #909399; font-size: 12px; line-height: 1.6; margin-top: 4px; }
+.item-factor-config { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px 18px; margin: 12px 0; padding: 12px 14px; background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 6px; }
+.factor-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.factor-field label { font-size: 12px; font-weight: 600; color: #166534; }
+.factor-number { width: 160px; }
+.factor-formula { font-size: 12px; color: #15803d; }
 .sku-editor-page {
   padding: 16px 20px 30px;
   background: #f8fafc;

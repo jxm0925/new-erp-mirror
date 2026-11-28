@@ -106,8 +106,9 @@ class MfgWorkOrderController extends Controller
     public function semiOrder(Request $request, int $id, WorkOrderService $service, WorkOrderQueryService $query)
     {
         [$user, $amounts] = $this->user($request, 'production.work_order.create');
-        $data = $request->validate(['component_item_id' => 'required|integer|min:1', 'qty' => 'nullable|numeric|min:0.0001|max:100000', 'operation_id' => 'nullable|integer|min:1']);
-        $child = $service->createForParent($id, (int) $data['component_item_id'], isset($data['qty']) ? (float) $data['qty'] : null, $user, isset($data['operation_id']) ? (int) $data['operation_id'] : null);
+        $data = $request->validate(['component_item_id' => 'required|integer|min:1', 'qty' => 'nullable|numeric|min:0.0001|max:100000', 'operation_id' => 'nullable|integer|min:1', 'material_id' => 'nullable|integer|min:1']);
+        $child = $service->createForParent($id, (int) $data['component_item_id'], isset($data['qty']) ? (float) $data['qty'] : null, $user,
+            isset($data['operation_id']) ? (int) $data['operation_id'] : null, isset($data['material_id']) ? (int) $data['material_id'] : null);
         $text = $child->status === 'released' ? '已下达给下料组' : '资料不全，停在计划：'.$child->block_reason;
         return response()->json(['message' => "半成品工单 {$child->work_order_no} 已开，{$text}。", 'data' => $query->detail($id, $amounts), 'child_id' => $child->id]);
     }

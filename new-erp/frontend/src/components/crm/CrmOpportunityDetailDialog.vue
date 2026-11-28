@@ -3,15 +3,16 @@
     <div slot="title" class="crm-inline"><b>{{ opportunity.name || '商机详情' }}</b><span class="crm-muted">客户 {{ opportunity.customer_name }} · 负责人 {{ opportunity.owner_name || '—' }} / {{ opportunity.department_name || '—' }}</span></div>
     <el-alert v-if="error" :title="error" type="error" :closable="false" show-icon />
     <div v-loading="loading" v-if="opportunity.id">
-      <div class="crm-opportunity-stages"><div v-for="(label,key) in stages" :key="key" class="crm-opportunity-stage" :class="stageClass(key)">{{ label }}</div><div class="crm-opportunity-stage" :class="{current: opportunity.status === 'won'}">{{ opportunity.status === 'lost' ? '已丢单' : '已成交' }}</div></div>
+      <div class="crm-opportunity-stages"><div v-for="(label,key) in stages" :key="key" class="crm-opportunity-stage" :class="stageClass(key)" role="button" :tabindex="allowed.stage ? 0 : -1" @click="changeToStage(key)" @keydown.enter="changeToStage(key)">{{ label }}</div><div class="crm-opportunity-stage" :class="{current: opportunity.status === 'won'}">{{ opportunity.status === 'lost' ? '已丢单' : '已成交' }}</div></div>
       <div class="crm-opportunity-metrics">
         <div><span>预计金额</span><b>{{ money(opportunity.expected_amount,opportunity.currency) }}</b></div>
         <div><span>预计成交日期</span><b>{{ shortDate(opportunity.expected_close_date) }}</b></div>
         <div><span>来源线索</span><el-button v-if="opportunity.source_lead_id && canViewLead" type="text" @click="$refs.lead.open(opportunity.source_lead_id)">{{ opportunity.source_lead_no || opportunity.source_lead_id }}</el-button><b v-else>{{ opportunity.source_lead_no || '—' }}</b></div>
         <div><span>本阶段停留</span><b>{{ opportunity.stage_age_days === undefined ? '—' : opportunity.stage_age_days + ' 天' }}</b></div>
       </div>
+      <div class="crm-opportunity-section"><crm-progress-controls scope="opportunity" :subject="opportunity" :metadata="metadata" @changed="changed" @refresh="changed" /></div>
       <el-tabs v-model="tab" @tab-click="loadTab"><el-tab-pane label="概览" name="overview" /><el-tab-pane label="图纸需求" name="drawing_requests" /><el-tab-pane label="业务附件" name="files" /><el-tab-pane v-if="canViewOrder" label="关联订单" name="orders" /><el-tab-pane label="跟进记录" name="followups" /><el-tab-pane label="阶段历史" name="logs" /></el-tabs>
-      <crm-drawing-requests v-if="tab === 'drawing_requests'" :key="'drawing-requests-' + session" :subject="{ type: 'opportunity', id: opportunity.id }" :editable="allowed.file" @changed="changed" />
+      <small class="crm-sub">第4步｜产品方案：在此发起技术图纸需求并完善产品方案。</small><crm-drawing-requests v-if="tab === 'drawing_requests'" :key="'drawing-requests-' + session" :subject="{ type: 'opportunity', id: opportunity.id }" :editable="allowed.file" @changed="changed" />
       <section v-if="tab === 'overview'" class="crm-box">
         <h3 class="crm-section-title">商机概览</h3>
         <el-descriptions :column="2" border size="small"><el-descriptions-item label="商机编号">{{ opportunity.opportunity_no }}</el-descriptions-item><el-descriptions-item label="业务线">{{ opportunity.business_line || '—' }}</el-descriptions-item><el-descriptions-item label="对接人">{{ opportunity.contact_name || '—' }}</el-descriptions-item><el-descriptions-item label="当前状态">{{ opportunity.status_label }} · {{ opportunity.stage_label }}</el-descriptions-item><el-descriptions-item label="采购需求" :span="2">{{ opportunity.demand_summary || '—' }}</el-descriptions-item><el-descriptions-item label="最近跟进">{{ date(opportunity.last_contact_at) }}</el-descriptions-item><el-descriptions-item label="下次跟进">{{ date(opportunity.next_contact_at) }}</el-descriptions-item><el-descriptions-item label="下次计划" :span="2">{{ opportunity.next_plan || '—' }}</el-descriptions-item><template v-if="opportunity.status === 'lost'"><el-descriptions-item label="丢单原因">{{ opportunity.lost_reason }}</el-descriptions-item><el-descriptions-item label="竞品 / 去向">{{ opportunity.lost_destination }}</el-descriptions-item><el-descriptions-item label="丢单说明" :span="2">{{ opportunity.lost_note }}</el-descriptions-item></template></el-descriptions>
@@ -39,19 +40,20 @@
     <el-dialog class="crm-dialog" :title="actionTitle" :visible.sync="action.visible" :width="action.mode === 'stage' ? '660px' : '620px'" append-to-body :close-on-click-modal="false" :before-close="closeAction">
       <el-descriptions :column="1" border size="small"><el-descriptions-item label="商机">{{ action.subject.name }}</el-descriptions-item><el-descriptions-item label="当前阶段">{{ action.subject.stage_label }}</el-descriptions-item></el-descriptions>
       <el-form label-width="100px" size="small" :disabled="action.saving">
-        <template v-if="action.mode === 'stage'"><el-form-item label="操作"><el-radio-group v-model="action.form.direction"><el-radio label="forward" :disabled="stageIndex(action.subject.stage) >= stageKeys.length - 1">推进到下一阶段</el-radio><el-radio label="backward" :disabled="stageIndex(action.subject.stage) <= 0">退回上一阶段</el-radio></el-radio-group></el-form-item><el-form-item label="目标阶段"><el-input :value="targetStage" disabled /></el-form-item><el-form-item label="阶段说明" required><el-input v-model.trim="action.form.reason" type="textarea" :rows="2" maxlength="2000" /></el-form-item><el-form-item label="关联附件"><paged-record-select v-if="action.visible" :key="'stage-file-' + actionSession" v-model="action.form.file_id" :request="loadActionFiles" :columns="fileColumns" :label="fileLabel" title="选择关联附件" /></el-form-item><el-form-item label="预计金额"><erp-money-input v-model="action.form.expected_amount"><template slot="prepend">{{ action.subject.currency }}</template></erp-money-input></el-form-item><el-form-item label="预计成交日期"><el-date-picker v-model="action.form.expected_close_date" type="date" value-format="yyyy-MM-dd" popper-class="crm-date-popper" /></el-form-item><div class="crm-note">阶段变化记入阶段历史；“已成交”只能由关联订单生效自动产生。退回上一阶段需填写原因。</div></template>
+        <template v-if="action.mode === 'stage'"><el-form-item label="目标阶段"><el-select v-model="action.form.target_stage" popper-class="crm-select-popper"><el-option v-for="(label,key) in stages" :key="key" :value="key" :label="label" /></el-select></el-form-item><el-form-item label="阶段说明"><el-input v-model.trim="action.form.reason" type="textarea" :rows="2" maxlength="2000" /></el-form-item><el-form-item label="关联附件"><paged-record-select v-if="action.visible" :key="'stage-file-' + actionSession" v-model="action.form.file_id" :request="loadActionFiles" :columns="fileColumns" :label="fileLabel" title="选择关联附件" /></el-form-item><el-form-item label="预计金额"><erp-money-input v-model="action.form.expected_amount"><template slot="prepend">{{ action.subject.currency }}</template></erp-money-input></el-form-item><el-form-item label="预计成交日期"><el-date-picker v-model="action.form.expected_close_date" type="date" value-format="yyyy-MM-dd" popper-class="crm-date-popper" /></el-form-item><div class="crm-note">阶段变化自动记入历史；关联订单生效后自动标记已成交。</div></template>
         <template v-if="action.mode === 'lose'"><el-form-item label="丢单原因" required><el-select v-model="action.form.lost_reason" filterable allow-create default-first-option popper-class="crm-select-popper"><el-option v-for="item in ['选择竞品','价格原因','需求取消','暂缓采购','其他']" :key="item" :value="item" :label="item" /></el-select></el-form-item><el-form-item label="竞品 / 去向"><el-input v-model.trim="action.form.lost_destination" maxlength="200" /></el-form-item><el-form-item label="说明" required><el-input v-model.trim="action.form.lost_note" type="textarea" :rows="3" maxlength="2000" /></el-form-item><div class="crm-note warning">丢单后进入“已丢单”，阶段历史和跟进记录保留；已有生效关联订单的商机不能丢单。</div></template>
         <template v-if="action.mode === 'file'"><el-form-item label="类型" required><el-select v-model="action.form.category" popper-class="crm-select-popper"><el-option v-for="(label,key) in salesFileCategories" :key="key" :value="key" :label="label" /></el-select></el-form-item><el-form-item label="状态"><el-radio-group v-model="action.form.status"><el-radio label="current">当前版</el-radio><el-radio label="pending">待客户确认</el-radio></el-radio-group></el-form-item><el-form-item label="附件" required><crm-attachments v-if="action.visible" :key="'upload-' + actionSession" v-model="action.attachments" @busy="action.uploading = $event" /></el-form-item><el-form-item label="说明"><el-input v-model.trim="action.form.note" type="textarea" :rows="2" maxlength="1000" /></el-form-item></template>
         <el-form-item v-if="action.mode === 'confirm'" label="确认说明" required><el-input v-model.trim="action.form.reason" type="textarea" :rows="2" maxlength="2000" /></el-form-item>
         <div v-if="action.mode === 'deleteFile'" class="crm-note warning crm-opportunity-content">确认从本商机的业务附件列表删除“{{ fileLabel(action.file) }}”吗？已有绘图需求、技术图纸、订单及历史记录中的关联资料继续保留。</div>
       </el-form>
-      <span slot="footer"><el-button size="small" :disabled="action.saving" @click="closeAction">取消</el-button><el-button size="small" :type="['lose','deleteFile'].includes(action.mode) ? 'danger' : 'success'" :loading="action.saving" :disabled="action.uploading" @click="submitAction">{{ action.mode === 'deleteFile' ? '确认删除' : action.mode === 'lose' ? '确认丢单' : action.mode === 'stage' ? (action.form.direction === 'backward' ? '确认退回' : '确认推进') : '确认保存' }}</el-button></span>
+      <span slot="footer"><el-button size="small" :disabled="action.saving" @click="closeAction">取消</el-button><el-button size="small" :type="['lose','deleteFile'].includes(action.mode) ? 'danger' : 'success'" :loading="action.saving" :disabled="action.uploading" @click="submitAction">{{ action.mode === 'deleteFile' ? '确认删除' : action.mode === 'lose' ? '确认丢单' : action.mode === 'stage' ? '确认阶段' : '确认保存' }}</el-button></span>
     </el-dialog>
   </el-dialog>
 </template>
 <script>
+import CrmProgressControls from '@/components/crm/CrmProgressControls.vue'
 import { formatMoney as displayMoney } from '../../utils/money.js'
-import { getCrmOpportunity, getCrmOpportunityMetadata, listCrmOpportunityFiles, listCrmOpportunityLogs, listCrmOpportunityOrders, listCrmFollowups, actCrmOpportunity, saveCrmOpportunityFile, confirmCrmOpportunityFile, deleteCrmOpportunityFile, downloadCrmAttachment, crmDate, crmError } from '@/api/erp/crm'
+import { updateCrmProgress, getCrmOpportunity, getCrmOpportunityMetadata, listCrmOpportunityFiles, listCrmOpportunityLogs, listCrmOpportunityOrders, listCrmFollowups, actCrmOpportunity, saveCrmOpportunityFile, confirmCrmOpportunityFile, deleteCrmOpportunityFile, downloadCrmAttachment, crmDate, crmError } from '@/api/erp/crm'
 import { erpDateTime } from '@/utils/dateTime'
 import { statusText } from '@/utils/erpStatus'
 import TechnicalDrawingDetailDialog from '@/components/technical-drawings/TechnicalDrawingDetailDialog.vue'
@@ -66,7 +68,7 @@ const page = () => ({ rows: [], total: 0, page: 1, loading: false, sequence: 0 }
 const blankAction = () => ({ visible: false, mode: '', saving: false, uploading: false, subject: {}, file: null, form: {}, attachments: [] })
 export default {
   name: 'CrmOpportunityDetailDialog',
-  components: { TechnicalDrawingDetailDialog, CrmDrawingRequests, CrmAttachments, CrmFollowupDialog, CrmOpportunityFormDialog, PagedRecordSelect, SalesOrderAttachmentPreviewDialog, CrmLeadDetailDialog: () => import('./CrmLeadDetailDialog.vue') },
+  components: { CrmProgressControls, TechnicalDrawingDetailDialog, CrmDrawingRequests, CrmAttachments, CrmFollowupDialog, CrmOpportunityFormDialog, PagedRecordSelect, SalesOrderAttachmentPreviewDialog, CrmLeadDetailDialog: () => import('./CrmLeadDetailDialog.vue') },
   data: () => ({ visible: false, loading: false, session: 0, sequence: 0, actionSession: 0, opportunity: {}, metadata: {}, error: '', tab: 'files', previewVisible: false, previewFile: null, files: page(), orders: page(), followups: page(), logs: page(), action: blankAction(), fileColumns: [{ prop: 'name', label: '文件名称' }, { prop: 'category_version_label', label: '资料类别 / 版本' }] }),
   computed: {
     allowed() { return this.opportunity.abilities || {} },
@@ -76,10 +78,16 @@ export default {
     canViewOrder() { return !this.$can || this.$can('sales_order.view') },
     actionTitle() { return ({stage:'推进阶段',lose:'丢单',file:'上传业务附件',confirm:'确认当前版本',deleteFile:'删除业务附件'})[this.action.mode] || '' },
     salesFileCategories() { return Object.fromEntries(Object.entries(this.metadata.file_categories || {}).filter(([key]) => key !== 'solution')) },
-    targetStage() { const index = this.stageIndex(this.action.subject.stage) + (this.action.form.direction === 'backward' ? -1 : 1); return this.stages[this.stageKeys[index]] || '关联订单生效后自动成交' }
   },
   beforeDestroy() { this.session += 1; this.actionSession += 1 },
   methods: {
+    async changeToStage(stage) {
+      if (!this.allowed.stage || this.loading || this.opportunity.stage === stage) return
+      this.loading = true
+      try { await updateCrmProgress('opportunity', this.opportunity.id, { business_version: this.opportunity.version || this.opportunity.business_version, stage }); await this.changed() }
+      catch (error) { this.$message.error(crmError(error, '阶段更新失败')) }
+      finally { this.loading = false }
+    },
     date: crmDate,
     statusText,
     downloadAttachment: downloadCrmAttachment,
@@ -141,7 +149,7 @@ export default {
     openAction(mode,file = null) {
       this.actionSession += 1
       const subject = { ...this.opportunity }
-      this.action = {visible:true,mode,saving:false,uploading:false,subject,file,attachments:[],form:{version:subject.version,direction:this.stageIndex(subject.stage) === this.stageKeys.length - 1 ? 'backward' : 'forward',reason:'',file_id:null,expected_amount:subject.expected_amount,expected_close_date:erpDateTime(subject.expected_close_date,10) || null,category:'requirement',status:'current',note:'',lost_reason:'',lost_destination:'',lost_note:''}}
+      this.action = {visible:true,mode,saving:false,uploading:false,subject,file,attachments:[],form:{version:subject.version,target_stage:subject.stage,reason:'',file_id:null,expected_amount:subject.expected_amount,expected_close_date:erpDateTime(subject.expected_close_date,10) || null,category:'requirement',status:'current',note:'',lost_reason:'',lost_destination:'',lost_note:''}}
     },
     closeAction() { if (this.action.saving) return; this.actionSession += 1; this.action.visible = false },
     fileCategoryVersion(row) { return `${row.category_label || '资料'} V${row.version_no}` },
@@ -150,7 +158,7 @@ export default {
     async submitAction() {
       const action = this.action; if (action.saving || action.uploading) return
       const form = {...action.form}; const id = action.subject.id; const session = this.session; const actionSession = this.actionSession
-      if ((action.mode === 'stage' || action.mode === 'confirm') && !form.reason) return this.$message.warning('请填写说明')
+      if (action.mode === 'confirm' && !form.reason) return this.$message.warning('请填写说明')
       if (action.mode === 'lose' && (!form.lost_reason || !form.lost_note)) return this.$message.warning('请填写丢单原因及说明')
       if (action.mode === 'file' && action.attachments.length !== 1) return this.$message.warning('每次请选择一个新版本附件')
       if (action.mode === 'stage' && form.expected_amount !== null && form.expected_amount !== '' && (!Number.isFinite(Number(form.expected_amount)) || Number(form.expected_amount) < 0)) return this.$message.warning('预计金额须为不小于零的数字')
@@ -160,6 +168,7 @@ export default {
         if (action.mode === 'file') await saveCrmOpportunityFile(id,{...form,attachment_id:action.attachments[0].id})
         else if (action.mode === 'confirm') await confirmCrmOpportunityFile(id,action.file.id,{version:form.version,reason:form.reason})
         else if (action.mode === 'deleteFile') await deleteCrmOpportunityFile(id,action.file.id,{version:form.version})
+        else if (action.mode === 'stage') await actCrmOpportunity(id, 'stage', { ...form, stage: form.target_stage })
         else await actCrmOpportunity(id,action.mode,form)
         if (session !== this.session || actionSession !== this.actionSession) return
         action.visible = false; this.$message.success(action.mode === 'deleteFile' ? '业务附件已删除' : '商机已更新'); await this.changed()

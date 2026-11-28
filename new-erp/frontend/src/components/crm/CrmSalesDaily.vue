@@ -40,6 +40,7 @@
 
       <div class="sheet-toolbar-group">
         <el-button size="small" icon="el-icon-refresh" @click="reload">刷新</el-button>
+        <el-button v-if="ready && editable" size="small" icon="el-icon-refresh" @click="syncFollowups">同步今日跟进</el-button>
         <el-button v-if="ready && editable" size="small" icon="el-icon-document" @click="persist(false)">保存草稿</el-button>
         <el-dropdown v-if="ready && editable" split-button type="success" size="small" :disabled="!hasAi || busy"
           @click="analyze(true)" @command="analyze(false)">
@@ -282,10 +283,10 @@
         </div>
         <crm-combat-grid :rows="customerPlanRows" :columns="planFields" :suggestions="projectSuggestions" :editable="editable" :show-money="amountsAvailable"
           empty-text="在重点客户推进里填写明日动作后自动带入" @project="detail" />
-        <div v-if="form.plan.length" class="subsection-head">
-          <span class="tool-label">补充事项（非客户专项任务，共 {{ form.plan.length }} 项）</span>
+        <div v-if="otherPlanRows.length" class="subsection-head">
+          <span class="tool-label">补充事项（非客户专项任务，共 {{ otherPlanRows.length }} 项）</span>
         </div>
-        <el-table v-if="form.plan.length" :data="form.plan" border size="mini" class="combat-table" empty-text="在客户池填写明日动作后，计划会显示在这里">
+        <el-table v-if="otherPlanRows.length" :data="otherPlanRows" border size="mini" class="combat-table" empty-text="在客户池填写明日动作后，计划会显示在这里">
           <el-table-column label="序号" width="58" align="center">
             <template slot-scope="{ $index }">{{ $index + 1 }}</template>
           </el-table-column>
@@ -475,9 +476,10 @@
 <script>
 import CrmCombatGrid from './CrmCombatGrid.vue'
 import CrmAiFieldHint from './CrmAiFieldHint.vue'
-import { progressFields, planFields, reviewFields, tableValues, aiBlank, fillAiBlanks } from './combatTemplates'
+import { applyCombatDictionaries, progressFields, planFields, reviewFields, tableValues, aiBlank, fillAiBlanks } from './combatTemplates'
 import {
   dailyCandidates,
+  syncDailyFollowups,
   readDaily,
   saveDaily,
   saveSupervisorNote,
@@ -540,8 +542,11 @@ export default {
     pendingLocalDraft: null
   }),
   computed: {
+    otherPlanRows() { return this.form.plan.filter(row => row.source !== 'followup') },
     customerPlanRows() {
-      return this.form.pool_others.filter(r => r.tmr_must_action || ['primary', 'backup'].includes(r.priority))
+      const tomorrow = new Date(this.date + 'T12:00:00'); tomorrow.setDate(tomorrow.getDate() + 1)
+      const nextDate = `${tomorrow.getFullYear()}-${String(tomorrow.getMonth() + 1).padStart(2, '0')}-${String(tomorrow.getDate()).padStart(2, '0')}`
+      return this.form.pool_others.filter(r => r.source === 'followup' ? (r.followup_schedule_mode === 'scheduled' && String(r.contact_time || '').slice(0, 10) === nextDate) : (r.tmr_must_action || ['primary', 'backup'].includes(r.priority)))
     },
     v2Targets() {
       return [
@@ -687,6 +692,7 @@ export default {
       return `crm_combat_draft_${sid}_${this.date}`
     },
     apply(data, checkLocalDraft = true) {
+      applyCombatDictionaries(data.dictionaries || {})
       this.record = data
       const b = data.body || {}
       const itemMap = Object.fromEntries((b.items || []).map(x => [x.key, x]))
@@ -702,6 +708,13 @@ export default {
           tmr_advance_to: r.tmr_advance_to || (it?.expected_result || '')
         }
       })
+      for (const plan of (b.plan || []).filter(row => row.source === 'followup')) {
+        const row = poolOthers.find(item => item.key === plan.subject_key)
+        if (!row) continue
+        for (const [field, target] of Object.entries({ action: 'tmr_must_action', time: 'contact_time', result: 'tmr_advance_to', blocker: 'anticipated_blocker', remark: 'remark' })) {
+          if (plan[field] !== undefined && plan[field] !== (plan.auto_snapshot || {})[field]) row[target] = plan[field]
+        }
+      }
       const subjectsMap = Object.fromEntries((data.subjects || []).map(s => [s.key, s]))
       this.form = {
         ...emptyForm(),
@@ -806,6 +819,17 @@ export default {
         this.$emit('working', false)
       }
     },
+    syncFollowups() {
+      if (!this.editable) return
+      return this.run(async () => {
+        // 先保存当前人工主攻与求助，再按新版本合并跟进，防止按钮覆盖未保存选择。
+        if (this.dirty || !this.record.version) await this.write(false)
+        const { data } = await syncDailyFollowups({ date: this.date, version: this.record.version })
+        this.apply(data, false)
+        this.$emit('changed')
+        this.$message.success('今日跟进已同步，主攻与求助已保留')
+      })
+    },
     async reload() {
       if (this.dirty) {
         try {
@@ -821,8 +845,20 @@ export default {
       })
     },
     async write(confirm) {
+      const tomorrow = new Date(this.date + 'T12:00:00'); tomorrow.setDate(tomorrow.getDate() + 1)
+      const nextDate = `${tomorrow.getFullYear()}-${String(tomorrow.getMonth() + 1).padStart(2, '0')}-${String(tomorrow.getDate()).padStart(2, '0')}`
+      const plans = this.form.plan.filter(plan => {
+        if (plan.source !== 'followup') return true
+        const row = this.form.pool_others.find(item => item.key === plan.subject_key)
+        return row && row.followup_schedule_mode === 'scheduled' && String(row.contact_time || '').slice(0, 10) === nextDate
+      }).map(plan => {
+        if (plan.source !== 'followup') return plan
+        const row = this.form.pool_others.find(item => item.key === plan.subject_key)
+        return { ...plan, action: row.tmr_must_action || '', time: row.contact_time || '', result: row.tmr_advance_to || '', blocker: row.anticipated_blocker || row.max_blocker || '', remark: row.remark || '' }
+      })
       const payload = {
         ...this.form,
+        plan: plans,
         version: this.record.version,
         date: this.date,
         confirm
@@ -1014,21 +1050,25 @@ export default {
         kind: s.kind,
         id: s.id,
         number: s.number,
-        pool: s.pool || (s.kind === 'opportunity' ? '商机推进池' : '跟进池'),
+        pool: s.pool || '',
+        subject_version: s.subject_version || s.business_version || s.version,
+        source: s.source || 'manual',
         customer_name: s.customer_name || '',
         project: s.project || '',
         expected_amount: s.expected_amount ?? null,
         currency: s.currency || this.form.currency,
         stage: s.stage_label || '',
         stage_label: s.stage_label || '',
-        probability: '',
+        probability: s.probability || s.win_probability || '',
+        nine_step: s.nine_step || s.nine_step_stage || s.stage_label || '',
         priority: '',
         tmr_must_action: '',
         action_type: '',
         contact_time: '',
         tmr_advance_to: '',
         expected_pay_time: s.close_date || '',
-        max_blocker: '',
+        max_blocker: s.max_blocker || s.current_blocker || '',
+        promise: s.promise || s.customer_promise || '',
         help_request: '',
         owner: this.salesName,
         status: '待推进'
@@ -1044,7 +1084,7 @@ export default {
         kind: '',
         id: null,
         number: '',
-        pool: '补位池',
+        pool: '',
         customer_name: '',
         project: '',
         expected_amount: null,
@@ -1109,7 +1149,7 @@ export default {
         return exportDaily('销售日报V2-' + this.salesName + '-' + this.date, [
           ['基础目标与实绩', base], ['重点客户推进', tableValues(this.progressFields, pool, this.amountsAvailable)],
           ['明日作战计划', tableValues(this.planFields, plans, this.amountsAvailable)], ['今日问题复盘', review],
-          ['补充事项', [['事项','客户','时间','动作','结果','卡点','原因','备注'], ...this.form.plan.map(p => [p.task,p.customer_name,p.time,p.action,p.result,p.blocker,p.reason,p.remark])]]])
+          ['补充事项', [['事项','客户','时间','动作','结果','卡点','原因','备注'], ...this.otherPlanRows.map(p => [p.task,p.customer_name,p.time,p.action,p.result,p.blocker,p.reason,p.remark])]]])
       })
     }
   }

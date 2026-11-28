@@ -57,18 +57,42 @@ class SupplierCapabilityService
         });
     }
 
-    public function saveItemRelation(int $supplierId, array $data, ?int $operatorId): SupplierItemRelation
+    public function updateItemRelation(int $supplierId, int $relationId, array $data, ?int $operatorId): SupplierItemRelation
     {
-        return DB::transaction(function () use ($supplierId, $data, $operatorId) {
+        abort_if(isset($data['supplier_id']) && (int) $data['supplier_id'] !== $supplierId, 422, '不能改变供货关系的供应商。');
+        return $this->saveItemRelation($supplierId, $data, $operatorId, $relationId);
+    }
+
+    public function saveItemRelation(int $supplierId, array $data, ?int $operatorId, ?int $relationId = null): SupplierItemRelation
+    {
+        return $this->persistItemRelation($supplierId, $data, $operatorId, $relationId);
+    }
+
+    public function importItemRelation(int $supplierId, array $data, ?int $operatorId): SupplierItemRelation
+    {
+        $data['capability_source'] = 'import';
+        return $this->persistItemRelation($supplierId, $data, $operatorId, null, true);
+    }
+
+    private function persistItemRelation(int $supplierId, array $data, ?int $operatorId, ?int $relationId = null, bool $imported = false): SupplierItemRelation
+    {
+        return DB::transaction(function () use ($supplierId, $data, $operatorId, $relationId, $imported) {
             Supplier::whereKey($supplierId)->lockForUpdate()->firstOrFail();
+            if ($relationId !== null) {
+                $itemId = SupplierItemRelation::where('supplier_id', $supplierId)->whereKey($relationId)->value('item_id');
+                abort_unless($itemId, 404);
+                abort_if(isset($data['item_id']) && (int) $data['item_id'] !== (int) $itemId, 422, '不能改变供货关系的物料，请为新物料另建关系。');
+                $data['item_id'] = (int) $itemId;
+            }
             Item::whereKey($data['item_id'])->lockForUpdate()->firstOrFail();
 
             $relation = SupplierItemRelation::where('supplier_id', $supplierId)
                 ->where('item_id', $data['item_id'])
-                ->where('relation_status', 'active')
+                ->when($relationId !== null, fn ($query) => $query->whereKey($relationId), fn ($query) => $query->where('relation_status', 'active'))
                 ->lockForUpdate()
                 ->latest('id')
                 ->first();
+            abort_if($relationId !== null && !$relation, 404);
             $old = $relation?->toArray();
 
             if (!$relation) {
@@ -81,7 +105,16 @@ class SupplierCapabilityService
 
             $sourceRank = ['category_candidate' => 1, 'purchase_history' => 2, 'quotation' => 3, 'manual_confirmed' => 4];
             $existingSource = $relation->capability_source;
-            $incomingSource = $data['capability_source'];
+            $incomingSource = $data['capability_source'] ?? $existingSource ?? 'manual_confirmed';
+            abort_unless(in_array($incomingSource, ['manual_confirmed', 'quotation', 'purchase_history'], true)
+                || ($incomingSource === 'import' && ($imported || $existingSource === 'import')),
+                422, '品类候选不能直接保存为正式物料供货关系。');
+            $status = $data['relation_status'] ?? ($relation->relation_status ?: 'active');
+            if ($relationId !== null && $relation->relation_status !== 'active' && $status === 'active') {
+                abort_if(SupplierItemRelation::where('supplier_id', $supplierId)->where('item_id', $relation->item_id)
+                    ->where('relation_status', 'active')->whereKeyNot($relation->id)->exists(),
+                    422, '该供应商和物料已有启用的供货关系，请编辑现有关系。');
+            }
             $resolvedSource = $existingSource
                 && ($sourceRank[$existingSource] ?? 0) > ($sourceRank[$incomingSource] ?? 0)
                 ? $existingSource
@@ -90,20 +123,29 @@ class SupplierCapabilityService
 
             $relation->fill([
                 'capability_source' => $resolvedSource,
-                'relation_status' => $data['relation_status'] ?? ($relation->relation_status ?: 'active'),
-                'is_default' => array_key_exists('is_default', $data) ? (bool) $data['is_default'] : (bool) $relation->is_default,
-                'effective_at' => $preserveStrongerDates ? $relation->effective_at : ($data['effective_at'] ?? $relation->effective_at ?? now()),
-                'expired_at' => $preserveStrongerDates ? $relation->expired_at : ($data['expired_at'] ?? $relation->expired_at),
-                'remark' => $data['remark'] ?? null,
+                'relation_status' => $status,
+                'is_default' => $status === 'active'
+                    && (array_key_exists('is_default', $data) ? (bool) $data['is_default'] : (bool) $relation->is_default),
+                'effective_at' => $preserveStrongerDates ? $relation->effective_at
+                    : (array_key_exists('effective_at', $data) ? $data['effective_at'] : ($relation->effective_at ?? now())),
+                'expired_at' => $preserveStrongerDates ? $relation->expired_at
+                    : (array_key_exists('expired_at', $data) ? $data['expired_at'] : $relation->expired_at),
+                'remark' => array_key_exists('remark', $data) ? $data['remark'] : $relation->remark,
                 'updated_by' => $operatorId,
-            ])->save();
+            ]);
+            abort_if($relation->effective_at && $relation->expired_at && $relation->expired_at->lessThanOrEqualTo($relation->effective_at),
+                422, '供货关系的失效时间必须晚于生效时间。');
+            $relation->save();
 
             if ($relation->is_default && $relation->relation_status === 'active') {
                 $this->switchDefaultSupplier($relation, $operatorId, $data['change_reason'] ?? '设置默认供应商');
-            } elseif ($relation->relation_status !== 'active') {
-                Item::whereKey($relation->item_id)
-                    ->where('default_supplier_id', $relation->supplier_id)
-                    ->update(['default_supplier_id' => null, 'updated_at' => now()]);
+            } elseif (($old['is_default'] ?? false) || $relation->relation_status !== 'active') {
+                $hasOtherDefault = $this->activeRelationQuery()->where('item_id', $relation->item_id)
+                    ->where('supplier_id', $relation->supplier_id)->where('is_default', true)->whereKeyNot($relation->id)->exists();
+                if (!$hasOtherDefault) {
+                    Item::whereKey($relation->item_id)->where('default_supplier_id', $relation->supplier_id)
+                        ->update(['default_supplier_id' => null, 'updated_at' => now()]);
+                }
             }
 
             $this->writeLog($relation, $old ? 'update' : 'create', $old, $relation->fresh()->toArray(), $data['change_reason'] ?? null, $operatorId);
@@ -115,7 +157,10 @@ class SupplierCapabilityService
     public function disableRelation(SupplierItemRelation $relation, string $reason, ?int $operatorId): SupplierItemRelation
     {
         return DB::transaction(function () use ($relation, $reason, $operatorId) {
-            $locked = SupplierItemRelation::whereKey($relation->id)->lockForUpdate()->firstOrFail();
+            Supplier::whereKey($relation->supplier_id)->lockForUpdate()->firstOrFail();
+            Item::whereKey($relation->item_id)->lockForUpdate()->firstOrFail();
+            $locked = SupplierItemRelation::where('supplier_id', $relation->supplier_id)->where('item_id', $relation->item_id)
+                ->whereKey($relation->id)->lockForUpdate()->firstOrFail();
             $old = $locked->toArray();
             $locked->update([
                 'relation_status' => 'inactive',

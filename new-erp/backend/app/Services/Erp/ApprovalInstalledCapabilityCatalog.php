@@ -3,6 +3,7 @@
 namespace App\Services\Erp;
 
 use App\Services\Erp\ApprovalActions\CompleteApplicationAction;
+use App\Services\Erp\ApprovalActions\BomAction;
 use App\Services\Erp\ApprovalActions\SalesOrderChangeAction;
 use App\Services\Erp\ApprovalActions\UpdateRegisteredFieldsAction;
 
@@ -80,6 +81,34 @@ class ApprovalInstalledCapabilityCatalog
                 'result_event' => 'node_decision',
                 'handler_class' => SalesOrderChangeAction::class,
             ]],
+        ], [
+            'key' => 'bom', 'label' => 'BOM 生效业务适配器', 'version' => 'v1.0', 'source_table' => 'erp_boms',
+            'defaults' => [
+                'object_code' => 'BOM', 'object_name' => '物料清单(BOM)', 'business_module' => '生产基础配置', 'primary_key' => 'id',
+                'route_pattern' => '/bom/{id}/detail', 'event_code' => 'submit_approval', 'event_name' => '提交 BOM 生效审批',
+                'manual_start_allowed' => false, 'event_trigger_allowed' => true,
+            ],
+            'field_labels' => [
+                'id' => '记录编号', 'bom_no' => 'BOM 编码', 'bom_name' => '方案名称', 'product_id' => '归属商品', 'sku_id' => '关联 SKU',
+                'output_item_id' => '产出物料', 'routing_id' => '工艺路线', 'bom_type' => '方案类型', 'version' => '版本',
+                'is_default' => '默认版本', 'status' => '启用状态', 'audit_status' => '审核状态', 'submitted_at' => '提交时间',
+                'effective_date' => '生效日期', 'expire_date' => '失效日期', 'created_by' => '创建人', 'remark' => '备注',
+            ],
+            'field_defaults' => [
+                'id' => ['reference_enabled' => true],
+                'bom_no' => ['condition_enabled' => true, 'display_enabled' => true, 'search_enabled' => true],
+                'bom_name' => ['condition_enabled' => true, 'display_enabled' => true, 'search_enabled' => true],
+                'output_item_id' => ['condition_enabled' => true, 'display_enabled' => true, 'reference_enabled' => true],
+                'version' => ['condition_enabled' => true, 'display_enabled' => true],
+                'status' => ['condition_enabled' => true, 'display_enabled' => true],
+                'audit_status' => ['condition_enabled' => true, 'display_enabled' => true],
+                'created_by' => ['condition_enabled' => true, 'reference_enabled' => true],
+                'remark' => ['display_enabled' => true, 'approval_writable' => true],
+            ],
+            'actions' => [
+                ['action_code' => 'bom.approve', 'action_name' => '审批通过后生效 BOM 并按提交选择设为默认', 'result_event' => 'approved', 'handler_class' => BomAction::class],
+                ['action_code' => 'bom.reject', 'action_name' => '驳回 BOM 生效申请并返回草稿', 'result_event' => 'rejected', 'handler_class' => BomAction::class],
+            ],
         ]];
     }
 

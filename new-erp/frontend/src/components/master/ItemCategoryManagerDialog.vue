@@ -42,13 +42,7 @@ export default {
       set(value) { this.$emit('input', value) }
     },
     canViewCategories() {
-      try {
-        const profile = JSON.parse(localStorage.getItem('erp_me') || '{}')
-        const permissions = JSON.parse(localStorage.getItem('erp_permissions') || '[]')
-        return !!(profile && profile.is_super_admin) || (Array.isArray(permissions) && permissions.includes('item_category.view'))
-      } catch (_) {
-        return false
-      }
+      return this.$can('item_category.view')
     }
   },
   methods: {

@@ -517,9 +517,23 @@ final class WorkOrderQueryService
         $ids = collect($kitting)->flatMap(fn ($op) => collect($op['materials'])->pluck('component_item_id'))->unique()->values();
         $items = Item::query()->whereIn('id', $ids)->get()->keyBy('id');
         $bomLines = collect(data_get($wo->bom_snapshot, 'items', []))->keyBy('id');
-        $open = $wo->id ? MaterialIssueService::openChildQty((int) $wo->id) : [];
+        $openQuantities = $wo->id ? MaterialIssueService::openChildQuantities((int) $wo->id) : ['by_item' => [], 'by_bom' => []];
+        $open = $openQuantities['by_item'];
+        $openByBom = $openQuantities['by_bom'];
         $held = $wo->id ? MaterialReturnService::heldDefectiveQty((int) $wo->id) : [];
         $shortByItem = collect($kitting)->flatMap(fn ($op) => $op['materials'])->groupBy('component_item_id')->map(fn ($rows) => $rows->sum('shortage_qty'));
+        $childBomIds = [];
+        $versionKey = function (array $material) use ($bomLines, $items, &$childBomIds): string {
+            $itemId = (int) $material['component_item_id'];
+            $line = $bomLines->get($material['bom_item_id'] ?? null);
+            $bomId = (int) ($line['child_bom_id'] ?? 0);
+            if (! $bomId && $line && ($item = $items->get($itemId)) && WorkOrderService::isChildOrderItem($item)) {
+                if (! array_key_exists($itemId, $childBomIds)) $childBomIds[$itemId] = app(\App\Services\Erp\BomExplosionEngine::class)->resolveChild($line, $item)['bom']?->id;
+                $bomId = (int) $childBomIds[$itemId];
+            }
+            return $itemId.'|'.$bomId;
+        };
+        $shortByVersion = collect($kitting)->flatMap(fn ($op) => $op['materials'])->groupBy($versionKey)->map(fn ($rows) => $rows->sum('shortage_qty'));
         $openWo = in_array($wo->status, ['planned', 'released', 'in_progress', 'paused'], true);
         $user = request()->attributes->get('erp_user') ?? app(\App\Services\Erp\AuthContextService::class)->currentUser(request());
         $claimedOperations = MfgTaskParticipant::query()->where('work_order_id', $wo->id)->where('employee_legacy_id', (int) ($user->legacy_id ?? $user->id ?? 0))
@@ -533,11 +547,14 @@ final class WorkOrderQueryService
                 $item = $items->get($m['component_item_id']);
                 $m = array_merge($m, self::materialSpecInfo($item, $bomLines->get($m['bom_item_id'] ?? null)));
                 $m['can_make'] = $openWo && $item && WorkOrderService::isChildOrderItem($item);
-                $m['in_production_qty'] = (float) ($open[$m['component_item_id']] ?? 0);
+                $version = $versionKey($m);
+                $m['in_production_qty'] = (float) ($openByBom[$version] ?? 0);
                 // 退回冻结、返工中的不良件：不算缺口，防止重复补单。
                 $m['held_qty'] = (float) ($held[$m['component_item_id']] ?? 0);
                 $m['purchasable'] = $item && ShortageService::purchasable($item);
-                $m['make_qty'] = $m['can_make'] ? max(0, ceil(round((float) ($shortByItem[$m['component_item_id']] ?? 0) - $m['in_production_qty'] - $m['held_qty'], 4))) : 0;
+                $globalGap = max(0, (float) ($shortByItem[$m['component_item_id']] ?? 0) - (float) ($open[$m['component_item_id']] ?? 0) - $m['held_qty']);
+                $versionGap = max(0, (float) ($shortByVersion[$version] ?? 0) - $m['in_production_qty']);
+                $m['make_qty'] = $m['can_make'] ? max(0, ceil(round(min($globalGap, $versionGap), 4))) : 0;
                 $m['can_order'] = $m['can_make'] && $m['make_qty'] > 0 && $claimedOperations->has($operationId);
                 if ($m['participates_in_kitting'] && ($m['issue_mode'] ?? 'receive') === 'receive' && (float) $m['issued_qty'] + (float) ($prepared[$m['id'] ?? 0] ?? 0) + 0.00001 < (float) $m['required_qty']) $pending = true;
             }

@@ -25,16 +25,24 @@ final class CrmCustomerController extends Controller
 
     public function dedupe(Request $request, CrmCustomerDedupeService $dedupe)
     {
-        $user = $this->user($request, 'sales.customer');
+        $user = $this->user($request);
+        abort_unless($this->access->can($user, 'sales.customer') || $this->access->can($user, 'crm.lead.create') || $this->access->can($user, 'crm.lead.edit'), 403, '没有客户查重权限。');
         $data = $request->validate([
             'customer_kind' => 'nullable|in:enterprise,individual', 'customer_name' => 'nullable|string|max:160',
             'phones' => 'nullable|array|max:10', 'phones.*' => 'nullable|string|max:80', 'wechat' => 'nullable|string|max:80',
             'email' => 'nullable|string|max:160', 'credit_code' => 'nullable|string|max:40', 'region_id' => 'nullable|integer',
             'full_address' => 'nullable|string|max:500', 'platform_legacy_id' => 'nullable|integer', 'platform_buyer_id' => 'nullable|string|max:160',
-            'exclude_id' => 'nullable|integer',
+            'exclude_id' => 'nullable|integer', 'customer_id' => 'nullable|integer|min:1', 'exclude_lead_id' => 'nullable|integer|min:1',
         ]);
         $matches = $dedupe->match($data, $data['exclude_id'] ?? null);
-        return response()->json(['data' => $dedupe->present($matches, $user)]);
+        return response()->json(['data' => $dedupe->present($matches, $user), 'is_new_inquiry' => app(\App\Services\Erp\Crm\CrmLeadApplicationService::class)->isNewInquiry(isset($data['customer_id']) ? (int) $data['customer_id'] : null, $data, isset($data['exclude_lead_id']) ? (int) $data['exclude_lead_id'] : null)]);
+    }
+
+    public function progress(Request $request, int $id)
+    {
+        $actor=$this->user($request);
+        $row=app(\App\Services\Erp\Crm\CrmProgressApplicationService::class)->update('customer',$id,$request->validate(\App\Services\Erp\Crm\CrmProgressApplicationService::rules()),$actor);
+        return response()->json(['message'=>'客户进度已更新','data'=>$row->toArray()]);
     }
 
     public function logs(Request $request, int $id)

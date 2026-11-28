@@ -2,14 +2,21 @@
   <section class="master-page import-page">
     <div class="import-steps"><div v-for="(step,i) in steps" :key="step" :class="{active:stage===i,done:stage>i}"><b>{{stage>i?'✓':i+1}}</b><span>{{step}}<small>{{stage===i?'当前步骤':stage>i?'已完成':'待处理'}}</small></span></div></div>
     <div v-if="!batch" class="upload-surface">
-      <h1>{{ importType === 'Item' && importManagementScope ? `导入${scopeLabel(importManagementScope)}` : '导入工作台' }}</h1><p>上传 Excel，先预检并修正错误，再确认导入正确数据。</p>
-      <el-form label-position="top" class="upload-form"><el-form-item label="导入类型"><el-select v-model="importType" style="width:100%"><el-option v-for="type in types" :key="type" :label="type" :value="type" /></el-select></el-form-item>
-      <el-form-item v-if="importType === 'Item'" label="管理范围"><el-select v-model="importManagementScope" :disabled="busy" style="width:100%"><el-option label="按表内范围或明确物料类型" value="" /><el-option label="工厂物料" value="factory" /><el-option label="办公用品" value="office" /></el-select></el-form-item>
-      <el-form-item label="选择文件"><el-upload drag action="#" :auto-upload="false" :limit="1" :on-change="fileChanged" :on-remove="()=>file=null" accept=".xlsx,.xls,.csv"><i class="el-icon-upload" /><div class="el-upload__text">将文件拖到此处，或<em>点击选择</em></div><div slot="tip" class="el-upload__tip">支持 xlsx、xls、csv，单个文件不超过 10MB</div></el-upload></el-form-item>
-      <el-button type="success" :loading="busy" :disabled="!file" @click="upload">上传并开始预检</el-button></el-form>
+      <h1>{{ importType === 'Item' && importManagementScope ? `导入${scopeLabel(importManagementScope)}` : '导入工作台' }}</h1><p>下载对应主数据标准模板填写后上传，先预检并核对规则，再单事务确认落库。</p>
+      <el-form label-position="top" class="upload-form">
+        <el-form-item label="导入类型">
+          <div style="display:flex;gap:10px;align-items:center;">
+            <el-select v-model="importType" style="flex:1"><el-option v-for="type in types" :key="type" :label="typeLabel(type)" :value="type" /></el-select>
+            <el-button v-if="canUpload" size="small" icon="el-icon-download" :loading="downloadingTemplate" @click="downloadTemplate">下载标准模板</el-button>
+          </div>
+        </el-form-item>
+        <el-form-item v-if="importType === 'Item'" label="管理范围"><el-select v-model="importManagementScope" :disabled="busy" style="width:100%"><el-option label="按表内范围或明确物料类型" value="" /><el-option label="工厂物料" value="factory" /><el-option label="办公用品" value="office" /></el-select></el-form-item>
+        <el-form-item label="选择文件"><el-upload drag action="#" :auto-upload="false" :limit="1" :on-change="fileChanged" :on-remove="()=>file=null" accept=".xlsx,.xls,.csv"><i class="el-icon-upload" /><div class="el-upload__text">将文件拖到此处，或<em>点击选择</em></div><div slot="tip" class="el-upload__tip">支持 xlsx、xls、csv，单个文件不超过 10MB</div></el-upload></el-form-item>
+        <el-button v-if="canUpload" type="success" :loading="busy" :disabled="!file" @click="upload">上传并开始预检</el-button>
+      </el-form>
     </div>
     <template v-else>
-      <div class="batch-strip"><div><span>文件名称</span><strong>{{batch.file_name}}</strong></div><div><span>导入类型</span><strong>{{batch.import_type}}</strong></div><div v-if="batch.import_type === 'Item' && batch.management_scope"><span>管理范围</span><strong>{{scopeLabel(batch.management_scope)}}</strong></div><div><span>批次号</span><strong>{{batch.batch_no}}</strong></div><el-button size="small" @click="reset">重新上传</el-button><el-button v-if="batch.error_rows" size="small" icon="el-icon-download" @click="exportErrors">下载错误明细</el-button></div>
+      <div class="batch-strip"><div><span>文件名称</span><strong>{{batch.file_name}}</strong></div><div><span>导入类型</span><strong>{{typeLabel(batch.import_type)}}</strong></div><div v-if="batch.import_type === 'Item' && batch.management_scope"><span>管理范围</span><strong>{{scopeLabel(batch.management_scope)}}</strong></div><div><span>批次号</span><strong>{{batch.batch_no}}</strong></div><el-button size="small" @click="reset(true)">重新上传</el-button><el-button v-if="batch.error_rows && canUpload" size="small" icon="el-icon-download" @click="exportErrors">下载错误明细</el-button></div>
       <div class="import-summary"><span>总行数 <b>{{batch.total_rows}}</b></span><span>可导入 <b class="ok">{{batch.valid_rows+batch.warning_rows}}</b></span><span>警告 <b class="warn">{{batch.warning_rows}}</b></span><span>错误 <b class="error">{{batch.error_rows}}</b></span></div>
       <div class="table-panel import-table">
         <div class="table-tabs"><button v-for="tab in tabs" :key="tab.value" :class="{active:filter===tab.value}" @click="filter=tab.value;loadRows()">{{tab.label}}</button></div>
@@ -19,18 +26,27 @@
           <el-table-column prop="error_field" label="字段" width="120" /><el-table-column prop="error_reason" label="校验信息" min-width="180" /><el-table-column prop="suggestion" label="建议处理" min-width="180" />
         </el-table>
       </div>
-      <div class="import-actions"><span><i class="el-icon-success" /> <b>{{batch.valid_rows+batch.warning_rows}}</b> 条正确数据可导入<small>导入只写入新系统主数据，历史来源信息不会保留。</small></span><el-button @click="reset">返回</el-button><el-button type="success" :loading="busy" :disabled="stage>1" @click="confirm">确认导入 {{batch.valid_rows+batch.warning_rows}} 条</el-button></div>
+      <div class="import-actions"><span><i class="el-icon-success" /> <b>{{batch.valid_rows+batch.warning_rows}}</b> 条正确数据可导入<small>导入数据统一通过正式主数据领域服务校验落库。</small></span><el-button @click="reset(true)">返回</el-button><el-button v-if="canExecute" type="success" :loading="busy" :disabled="stage>1 || !(batch.valid_rows+batch.warning_rows)" @click="confirm">确认导入 {{batch.valid_rows+batch.warning_rows}} 条</el-button></div>
     </template>
   </section>
 </template>
 <script>
-import { uploadImport, previewImport, importRows, confirmImport, downloadImportErrors } from '../../../api/erp/master'
+import { uploadImport, previewImport, importRows, confirmImport, deleteImportBatch, downloadImportErrors, downloadImportTemplate } from '../../../api/erp/master'
 import { materialScopeLabel } from '../../../utils/materialManagementScope.mjs'
 import pagedScroll from '../../../directives/pagedScroll'
 import { createPageState, queryPage, invalidatePage } from '../../../utils/pagedQuery'
 import cachedPageRoute from '../../../utils/cachedPageRoute'
 
 const importTypes = ['Product', 'SKU', 'Item', 'Supplier', 'Warehouse', 'Location', 'SKU-Item Relation']
+const typeNames = {
+  Product: 'Product（商品档案）',
+  SKU: 'SKU（销售规格）',
+  Item: 'Item（物料与办公用品）',
+  Supplier: 'Supplier（供应商档案）',
+  Warehouse: 'Warehouse（实体仓库）',
+  Location: 'Location（仓库库位）',
+  'SKU-Item Relation': 'SKU-Item Relation（SKU默认物料映射）'
+}
 export default {
   mixins: [cachedPageRoute],
   directives: { pagedScroll },
@@ -38,30 +54,53 @@ export default {
     return {
       steps: ['上传文件', '数据预检', '确认导入', '完成'], stage: 0,
       types: importTypes, importType: importTypes.includes(this.$route.query.type) ? this.$route.query.type : 'Product',
-      importManagementScope: ['factory','office'].includes(this.$route.query.management_scope) ? this.$route.query.management_scope : '',
-      file: null, batch: null, rows: [], busy: false, filter: '', uploadSequence: 0,
+      importManagementScope: ['factory', 'office'].includes(this.$route.query.management_scope) ? this.$route.query.management_scope : '',
+      file: null, batch: null, rows: [], busy: false, downloadingTemplate: false, filter: '', uploadSequence: 0,
       rowPage: createPageState(10),
       tabs: [{ label: '全部', value: '' }, { label: '仅错误', value: 'error' }, { label: '仅警告', value: 'warning' }, { label: '可导入', value: 'valid' }]
     }
   },
+  computed: {
+    canUpload () {
+      return this.$can('master.import.upload') || this.$can('master.import')
+    },
+    canExecute () {
+      return this.$can('master.import.execute')
+    }
+  },
   watch: {
     'pageRoute.query.management_scope' (scope) {
-      const value = ['factory','office'].includes(scope) ? scope : ''
+      const value = ['factory', 'office'].includes(scope) ? scope : ''
       if (value === this.importManagementScope) return
-      this.reset()
+      this.reset(true)
       this.importManagementScope = value
     },
     'pageRoute.query.type' (type) {
       if (!importTypes.includes(type) || type === this.importType) return
-      this.reset()
+      this.reset(true)
       this.importType = type
     }
   },
   methods: {
-    scopeLabel(scope) { return materialScopeLabel(scope) },
+    typeLabel (type) { return typeNames[type] || type },
+    scopeLabel (scope) { return materialScopeLabel(scope) },
     fileChanged (file) { this.file = file.raw },
+    async downloadTemplate () {
+      if (this.downloadingTemplate) return
+      this.downloadingTemplate = true
+      try {
+        const params = { import_type: this.importType }
+        if (this.importType === 'Item' && this.importManagementScope) params.management_scope = this.importManagementScope
+        const safeName = `${this.importType.replace(/\s+/g, '-')}-标准导入模板.xlsx`
+        await downloadImportTemplate(params, safeName)
+      } catch (e) {
+        this.$message.error(e.userMessage || '标准模板下载失败')
+      } finally {
+        this.downloadingTemplate = false
+      }
+    },
     async upload () {
-      if (this.busy || !this.file) return
+      if (this.busy || !this.file || !this.canUpload) return
       const sequence = ++this.uploadSequence
       this.busy = true
       try {
@@ -99,7 +138,7 @@ export default {
     },
     loadMoreRows () { return this.loadRows(true) },
     async confirm () {
-      if (this.busy || !this.batch || this.stage > 1) return
+      if (this.busy || !this.batch || this.stage > 1 || !this.canExecute) return
       const batchId = this.batch.id
       const sequence = this.uploadSequence
       try {
@@ -119,11 +158,15 @@ export default {
       try { await downloadImportErrors(this.batch.id, this.batch.batch_no + '-errors.csv') }
       catch (e) { this.$message.error(e.userMessage || '错误明细下载失败') }
     },
-    reset () {
+    reset (cleanupUnconfirmed = false) {
+      const staleBatch = cleanupUnconfirmed && this.batch && !this.batch.confirmed_at && this.stage < 3 ? this.batch : null
       this.uploadSequence += 1
       invalidatePage(this.rowPage)
       this.rowPage = createPageState(10)
       this.stage = 0; this.file = null; this.batch = null; this.rows = []; this.filter = ''; this.busy = false
+      if (staleBatch && staleBatch.id && this.$can('master.import.delete')) {
+        deleteImportBatch(staleBatch.id).catch(() => {})
+      }
     },
     rowClass ({ row }) { return row.validation_status === 'error' ? 'error-row' : row.validation_status === 'warning' ? 'warning-row' : '' }
   }

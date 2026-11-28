@@ -29,9 +29,9 @@
             style="width: 100%"
             :allow-create="!col.strict"
             :aria-label="col.label"
-            @input="$set(row, col.key, $event)"
+            @input="setField(row, col, $event)"
           >
-            <el-option v-for="v in col.options" :key="v" :value="v" :label="col.labels && col.labels[v] || v" />
+            <el-option v-for="v in fieldOptions(col, row)" :key="v" :value="v" :label="col.labels && col.labels[v] || v" />
           </el-select>
           <el-input
             v-else
@@ -42,7 +42,7 @@
             :min="col.money ? 0 : undefined"
             :aria-label="col.label"
             maxlength="500"
-            @input="$set(row, col.key, $event)"
+            @input="setField(row, col, $event)"
           />
           <crm-ai-field-hint
             v-if="suggestions && aiBlank(row[col.key])"
@@ -69,8 +69,9 @@
 </template>
 
 <script>
+import { poolNames, stageOptions } from '@/utils/crmProgress'
 import CrmAiFieldHint from './CrmAiFieldHint.vue'
-import { aiBlank, fillAiBlanks } from './combatTemplates'
+import { combatDictionaries, aiBlank, fillAiBlanks } from './combatTemplates'
 
 const NARROW_KEYS = new Set(['priority', 'status', 'contact_time', 'deadline', 'expected_pay_time'])
 const WIDE_KEYS = new Set([
@@ -90,6 +91,19 @@ export default {
     emptyText: { type: String, default: '暂无记录' }
   },
   methods: {
+    fieldOptions(col, row) {
+      let options = col.options || []
+      if (col.key === 'pool') options = poolNames(combatDictionaries, row.kind, row[col.key])
+      if (col.key === 'nine_step' && row.kind) options = stageOptions(combatDictionaries, row.kind).map(item => item.label)
+      return [...new Set([...options, row[col.key]].filter(value => value !== null && value !== undefined && value !== ''))]
+    },
+    setField(row, col, value) {
+      this.$set(row, col.key, value)
+      if (col.key === 'nine_step' && row.kind) {
+        const stage = stageOptions(combatDictionaries, row.kind).find(item => item.value === value || item.label === value)
+        if (stage && stage.probability) this.$set(row, 'probability', stage.probability)
+      }
+    },
     aiBlank,
     fillAiBlanks,
     hasValue(val) {

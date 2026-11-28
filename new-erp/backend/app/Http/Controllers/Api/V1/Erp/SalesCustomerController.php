@@ -9,6 +9,7 @@ use App\Models\Erp\CrmLead;
 use App\Services\Erp\AuthContextService;
 use App\Services\Erp\Crm\CrmCustomerAccessService;
 use App\Services\Erp\Crm\CrmCustomerApplicationService;
+use App\Services\Erp\Crm\CrmCustomerPoolService;
 use App\Services\Erp\Crm\CrmLeadApplicationService;
 use App\Services\Erp\Crm\CrmListViewQueryService;
 use App\Services\Erp\Crm\CrmOrderAmountQueryService;
@@ -53,6 +54,7 @@ class SalesCustomerController extends Controller
             'keyword' => 'nullable|string|max:160', 'status' => 'nullable|string|max:30', 'phone' => 'nullable|string|max:80',
             'customer_kind' => 'nullable|in:enterprise,individual', 'industry' => 'nullable|string|max:80', 'customer_grade' => 'nullable|string|max:40',
             'owner_legacy_id' => 'nullable|integer', 'owner_name' => 'nullable|string|max:80',
+            'customer_pool' => 'nullable|string|max:80',
             'page' => 'nullable|integer|min:1', 'per_page' => 'nullable|integer|min:1|max:100',
         ] + CrmListViewQueryService::rules('customers'));
         $picker = !empty($filters['picker']);
@@ -83,6 +85,9 @@ class SalesCustomerController extends Controller
             if (!empty($filters[$field])) $query->where($field, $filters[$field]);
         }
         if (!empty($filters['owner_legacy_id'])) $query->where('owner_legacy_id', (int) $filters['owner_legacy_id']);
+        if (!empty($filters['customer_pool'])) {
+            $query->whereIn('customer_pool', app(CrmCustomerPoolService::class)->queryNames($filters['customer_pool']));
+        }
         if ($phone = trim((string) ($filters['phone'] ?? ''))) $query->where('contact_phone', 'like', "%{$phone}%");
 
         CrmListViewQueryService::apply($query, $filters);
@@ -125,6 +130,7 @@ class SalesCustomerController extends Controller
         $abilities = $this->access->abilities($customer, $user);
         abort_unless($abilities['view'], 403, '该客户由其他部门负责，你无权查看详情，可申请协作。');
         $money = app(CrmOrderAmountQueryService::class)->forCustomers(collect([$customer]), $user);
+        $customer->customer_pool = app(\App\Services\Erp\Crm\CrmCustomerPoolService::class)->normalize($customer->customer_pool);
         return response()->json($customer->toArray() + [
             'owner_department_name' => $this->access->departmentName($customer->owner_department_legacy_id),
             'abilities' => $abilities,
@@ -167,6 +173,7 @@ class SalesCustomerController extends Controller
             'selectable' => $abilities['select'] && in_array($customer->status, ['enabled', 'potential'], true),
             'owner_department_name' => $this->access->departmentName($customer->owner_department_legacy_id),
         ];
+        $row['customer_pool'] = app(\App\Services\Erp\Crm\CrmCustomerPoolService::class)->normalize($customer->customer_pool);
         if ($picker && !$row['selectable']) unset($row['customer_grade'], $row['industry'], $row['purchasing_power'], $row['business_lines']);
         return $row;
     }
@@ -194,9 +201,10 @@ class SalesCustomerController extends Controller
             'customer_kind' => ['required', Rule::in(['enterprise', 'individual'])],
             'status' => 'required|in:enabled,disabled,blacklisted,potential', 'remark' => 'nullable|string',
             'company_background' => 'nullable|string|max:5000', 'customer_grade' => 'nullable|string|max:40', 'industry' => 'nullable|string|max:80',
-            'purchasing_power' => 'nullable|string|max:40', 'business_lines' => 'nullable|array|max:20', 'business_lines.*' => 'string|max:60',
+            'purchasing_power' => 'nullable|string|max:40', 'business_lines' => 'nullable|array|max:20', 'business_lines.*' => 'string|max:80',
             'credit_code' => 'nullable|string|max:40', 'region_id' => 'nullable|integer|exists:erp_regions,id',
             'duplicate_confirmed' => 'nullable|boolean', 'duplicate_reason' => 'nullable|required_if:duplicate_confirmed,true|string|max:500',
+            'customer_pool' => 'nullable|string|max:80', 'referrer_customer_id' => 'nullable|integer|min:1',
             'invoice_type' => 'nullable|in:vat_normal,vat_special', 'invoice_title' => 'nullable|string|max:200', 'invoice_tax_no' => 'nullable|string|max:60',
             'invoice_address_phone' => 'nullable|string|max:300', 'invoice_bank_account' => 'nullable|string|max:300', 'invoice_email' => 'nullable|email|max:160',
             'contacts' => 'nullable|array', 'contacts.*.id' => 'nullable|integer', 'contacts.*.contact_name' => 'required|string|max:80', 'contacts.*.mobile' => 'nullable|string|max:80', 'contacts.*.phone' => 'nullable|string|max:80', 'contacts.*.email' => 'nullable|email|max:160', 'contacts.*.wechat' => 'nullable|string|max:80', 'contacts.*.position' => 'nullable|string|max:80', 'contacts.*.is_default' => 'boolean', 'contacts.*.status' => 'nullable|in:enabled,disabled', 'contacts.*.remark' => 'nullable|string',

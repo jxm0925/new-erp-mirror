@@ -7,11 +7,15 @@ use App\Models\Erp\CrmLead;
 use App\Services\Erp\AuthContextService;
 use App\Services\Erp\Crm\CrmAssignmentAccessService;
 use App\Services\Erp\Crm\CrmAttachmentApplicationService;
+use App\Services\Erp\Crm\CrmBusinessLineOptions;
 use App\Services\Erp\Crm\CrmCustomerAccessService;
 use App\Services\Erp\Crm\CrmContactPlanQueryService;
 use App\Services\Erp\Crm\CrmDuplicateReviewApplicationService;
 use App\Services\Erp\Crm\CrmFollowupApplicationService;
 use App\Services\Erp\Crm\CrmLeadApplicationService;
+use App\Services\Erp\Crm\CrmNineStepCatalog;
+use App\Services\Erp\Crm\CrmProgressApplicationService;
+use App\Services\Erp\Crm\CrmCustomerPoolService;
 use App\Services\Erp\Crm\CrmSalesDelegationService;
 use App\Services\Erp\Crm\CrmListViewQueryService;
 use App\Services\Erp\Crm\CrmSalesStaffService;
@@ -40,8 +44,9 @@ final class CrmLeadController extends Controller
         foreach (['lead_type', 'trade_type'] as $field) $dictionaries[$field] = (clone $query)->whereNotNull($field)->distinct()->limit(100)->pluck($field)->all();
         $dictionaries['customer_tags'] = (clone $query)->whereNotNull('customer_tags')->select('customer_tags')->limit(500)->get()->pluck('customer_tags')->flatten()->unique()->values()->all();
         $dictionaries['custom_tags'] = (clone $query)->where('created_by_legacy_id', $actor->legacy_id)->whereNotNull('custom_tags')->select('custom_tags')->limit(500)->get()->pluck('custom_tags')->flatten()->unique()->values()->all();
+        $dictionaries['business_lines'] = CrmBusinessLineOptions::forVisibleRecords(leads: $query);
         $abilities = [];
-        foreach (['create', 'edit', 'assign', 'transfer', 'recycle', 'claim', 'follow', 'pool', 'invalidate', 'confirm'] as $action) $abilities[$action] = $access->can($actor, 'crm.lead.'.$action);
+        foreach (['create', 'edit', 'assign', 'transfer', 'recycle', 'claim', 'follow', 'pool', 'invalidate'] as $action) $abilities[$action] = $access->can($actor, 'crm.lead.'.$action);
         $super = app(AuthContextService::class)->isSuperAdmin($actor);
         foreach (['assign', 'transfer', 'recycle'] as $action) {
             $abilities[$action] = $abilities[$action] && ($super || ($grant && in_array($action, $grant->actions, true)));
@@ -52,15 +57,17 @@ final class CrmLeadController extends Controller
             || ($grant && in_array('claim', $grant->actions, true)));
         return response()->json(['data' => [
             'can_self_delegate' => $isSales,
-            'customer_pools' => CrmLeadApplicationService::POOLS, 'statuses' => CrmLeadApplicationService::STATUSES,
+            ...CrmNineStepCatalog::metadata('lead'), 'statuses' => CrmLeadApplicationService::STATUSES,
             'source_channels' => $channels, 'trade_types' => array_values(array_unique(array_merge(['内贸销售', '内贸业务', '外贸'], $dictionaries['trade_type']))),
             'lead_types' => array_values(array_unique(array_merge(['普通咨询'], $dictionaries['lead_type']))),
             'customer_tags' => $dictionaries['customer_tags'], 'custom_tags' => $dictionaries['custom_tags'],
+            'dictionaries' => ['business_lines' => $dictionaries['business_lines']],
             'platforms' => DB::table('erp_sales_order_trade_platforms')->where('parent_legacy_id', 0)->where('enabled', true)->orderBy('sort')->orderBy('legacy_id')
                 ->get(['legacy_id', 'name', 'legacy_payload'])->map(fn ($row) => ['id' => (int) $row->legacy_id, 'name' => $row->name] + TradePlatformApplicationService::buyerIdentity($row->legacy_payload))->values(),
             'entry_methods' => ['self' => '销售自录', 'operations' => '运营代录'],
             'entry_department_ids' => $entryDepartmentIds,
-            'departments' => DB::table('erp_departments')->whereIn('legacy_id', $ids)->orderBy('sort')->orderBy('legacy_id')->get(['legacy_id as id', 'parent_legacy_id as parent_id', 'name']),
+            'departments' => DB::table('erp_departments')->whereIn('legacy_id', $ids)->whereNull('deleted_at')->where('status', 'normal')
+                ->orderBy('sort')->orderBy('legacy_id')->get(['legacy_id as id', 'parent_legacy_id as parent_id', 'name'])->map(fn ($d) => (array) $d + ['trade_type' => CrmNineStepCatalog::tradeType((int) $d->id)]),
             'current_user' => ['id' => (int) $actor->legacy_id, 'name' => ($actor->nickname ?? null) ?: $actor->username,
                 'department_legacy_id' => $dept, 'department_name' => $access->departmentName($dept), 'is_sales' => $isSales],
             'abilities' => $abilities, 'automatic_recycle_enabled' => false,
@@ -77,18 +84,19 @@ final class CrmLeadController extends Controller
             'exclude_id' => 'nullable|integer|min:1',
             'recycle_reason' => 'nullable|string|max:500',
             'base_confirmed' => 'nullable|boolean', 'unconverted' => 'nullable|boolean', 'convertible' => 'nullable|boolean',
-            'customer_pool' => ['nullable', Rule::in(CrmLeadApplicationService::POOLS)], 'entry_method' => 'nullable|in:self,operations',
+            'customer_pool' => 'nullable|string|max:80', 'entry_method' => 'nullable|in:self,operations',
             'customer_tag' => 'nullable|string|max:80', 'custom_tag' => 'nullable|string|max:80',
             'due' => 'nullable|in:today,overdue,pending', 'per_page' => 'nullable|integer|min:1|max:100', 'page' => 'nullable|integer|min:1',
         ] + CrmListViewQueryService::rules('leads'));
-        $query = CrmLead::query()->with(['customer', 'attachments']);
+        $query = CrmLead::query()->with(['customer', 'attachments', 'latestFollowup']);
         $this->leads->applyVisible($query, $actor);
+        if (!empty($data['customer_pool'])) $query->whereIn('customer_pool', app(CrmCustomerPoolService::class)->queryNames($data['customer_pool']));
         $handlingOwners = array_merge([(int) $actor->legacy_id], app(CrmSalesDelegationService::class)->activeOwnerIds($actor));
         if (!empty($data['exclude_id'])) $query->where('id', '!=', $data['exclude_id']);
         if (!empty($data['base_confirmed'])) $query->whereNotNull('confirmed_at');
         if (!empty($data['unconverted'])) $query->whereNotExists(fn ($o) => $o->from('erp_crm_opportunities')->whereColumn('source_lead_id', 'erp_crm_leads.id'));
         if (!empty($data['convertible'])) app(\App\Services\Erp\Crm\CrmOpportunityApplicationService::class)->applyConvertible($query, $actor);
-        foreach (['status', 'source_channel', 'department_legacy_id', 'customer_id', 'customer_pool', 'entry_method'] as $field) if (!empty($data[$field])) $query->where($field, $data[$field]);
+        foreach (['status', 'source_channel', 'department_legacy_id', 'customer_id', 'entry_method'] as $field) if (!empty($data[$field])) $query->where($field, $data[$field]);
         if (isset($data['customer_tag']) && $data['customer_tag'] !== '') $query->whereJsonContains('customer_tags', $data['customer_tag']);
         if (isset($data['custom_tag']) && $data['custom_tag'] !== '') $query->where('created_by_legacy_id', $actor->legacy_id)->whereJsonContains('custom_tags', $data['custom_tag']);
         if (!empty($data['recycle_reason'])) $query->where('recycle_reason', 'like', '%'.trim($data['recycle_reason']).'%');
@@ -173,7 +181,12 @@ final class CrmLeadController extends Controller
     public function claim(Request $request, int $id) { return $this->action($request, $id, 'claim'); }
     public function changePool(Request $request, int $id) { return $this->action($request, $id, 'pool'); }
     public function invalidate(Request $request, int $id) { return $this->action($request, $id, 'invalidate'); }
-    public function confirm(Request $request, int $id) { return $this->action($request, $id, 'confirm'); }
+    public function progress(Request $request, int $id)
+    {
+        $actor=$this->user($request);
+        $lead=app(CrmProgressApplicationService::class)->update('lead',$id,$request->validate(CrmProgressApplicationService::rules()),$actor);
+        return response()->json(['message'=>'线索进度已更新','data'=>$this->leads->present($lead,$actor)]);
+    }
 
     public function followups(Request $request, CrmFollowupApplicationService $followups)
     {
@@ -216,7 +229,7 @@ final class CrmLeadController extends Controller
         $actor = $this->user($request, 'crm.lead.'.$action);
         $data = $request->validate(['version' => 'required|integer|min:1', 'reason' => 'nullable|string|max:500', 'note' => 'nullable|string|max:500',
             'target_department_legacy_id' => 'nullable|integer|min:1',
-            'to_user_legacy_id' => 'nullable|integer|min:1', 'customer_pool' => ['nullable', Rule::in(CrmLeadApplicationService::POOLS)],
+            'to_user_legacy_id' => 'nullable|integer|min:1', 'customer_pool' => 'nullable|string|max:80',
             'transfer_customer' => 'nullable|boolean', 'customer_version' => 'nullable|integer|min:1', 'assignment_attachment_ids' => 'nullable|array|max:30',
             'assignment_attachment_ids.*' => 'required|integer|min:1|distinct']);
         return response()->json(['message' => '操作已完成', 'data' => $this->leads->present($this->leads->act($id, $action, $data, $actor), $actor)]);
@@ -227,14 +240,14 @@ final class CrmLeadController extends Controller
         $rules = ['mode' => 'required|in:draft,submit,review', 'version' => ($editing ? 'required' : 'nullable').'|integer|min:1',
             'customer_id' => 'nullable|integer|min:1', 'customer_kind' => 'nullable|in:enterprise,individual', 'customer_name' => 'nullable|string|max:160',
             'customer_grade' => 'nullable|string|max:40', 'industry' => 'nullable|string|max:80', 'purchasing_power' => 'nullable|string|max:40',
-            'customer_business_lines' => 'nullable|array|max:20', 'customer_business_lines.*' => 'required|string|max:60|distinct',
+            'customer_business_lines' => 'nullable|array|max:20', 'customer_business_lines.*' => 'required|string|max:80|distinct',
             'contact_id' => 'nullable|integer|min:1', 'contact_name' => 'nullable|string|max:80', 'contact_role' => 'nullable|string|max:80',
             'mobile' => 'nullable|string|max:80', 'contact_value2' => 'nullable|string|max:80', 'wechat' => 'nullable|string|max:80',
             'email' => 'nullable|email|max:160', 'credit_code' => 'nullable|string|max:40', 'region_id' => 'nullable|integer|min:1',
             'province' => 'nullable|string|max:80', 'city' => 'nullable|string|max:80', 'district' => 'nullable|string|max:80',
             'detail_address' => 'nullable|string|max:500', 'full_address' => 'nullable|string|max:500', 'trade_type' => 'nullable|string|max:80',
             'department_legacy_id' => 'nullable|integer|min:1', 'source_channel' => 'nullable|string|max:120', 'lead_type' => 'nullable|string|max:80',
-            'is_new_inquiry' => 'nullable|boolean', 'customer_pool' => ['nullable', Rule::in(CrmLeadApplicationService::POOLS)],
+            'is_new_inquiry' => 'nullable|boolean', 'customer_pool' => 'nullable|string|max:80',
             'expected_amount' => 'nullable|numeric|min:0|max:9999999999999999.99', 'currency' => 'nullable|string|size:3',
             'content' => 'nullable|string|max:100000', 'demand_summary' => 'nullable|string|max:5000',
             'platform_legacy_id' => 'nullable|integer|min:1', 'platform_buyer_id' => 'nullable|string|max:160',
@@ -250,9 +263,11 @@ final class CrmLeadController extends Controller
     {
         return $request->validate(['subject_type' => ($editing ? 'nullable' : 'required').'|in:customer,lead,opportunity', 'subject_id' => ($editing ? 'nullable' : 'required').'|integer|min:1',
             'version' => ($editing ? 'required' : 'nullable').'|integer|min:1', 'reason' => ($editing ? 'required' : 'nullable').'|string|max:500',
-            'contact_id' => 'nullable|integer|min:1', 'contact_name' => 'required|string|max:100', 'method' => 'required|string|max:80',
+            'contact_id' => 'nullable|integer|min:1', 'contact_name' => 'required|string|max:100', 'method' => $editing ? 'required|string|max:80' : ['required', Rule::in(CrmNineStepCatalog::actions())],
             'contacted_at' => 'required|date|before_or_equal:now', 'content' => 'required|string|max:100000', 'result' => 'required|string|max:120',
-            'next_contact_at' => 'required|date|after:contacted_at', 'next_plan' => 'required|string|max:5000',
+            'next_contact_at' => 'nullable|date|after:contacted_at', 'next_plan' => 'nullable|string|max:5000',
+            'followup_schedule_mode' => 'nullable|in:scheduled,nurture,completed', 'schedule_mode' => 'nullable|in:scheduled,nurture,completed',
+            ...array_diff_key(CrmProgressApplicationService::rules(), array_flip(['version','reason'])),
             'attachment_ids' => 'nullable|array|max:30', 'attachment_ids.*' => 'required|integer|min:1|distinct']);
     }
 

@@ -21,13 +21,14 @@
       <div class="head-actions">
         <el-button size="small" icon="el-icon-refresh" class="btn-refresh" @click="refresh">刷新</el-button>
         <el-button
+          v-if="$can('master.sku.edit')"
           size="small"
           type="success"
           icon="el-icon-edit"
           class="btn-theme-create"
-          @click="$router.push({ path: '/master/skus/' + id + '/edit', query: $route.query })"
+          @click="$router.push({ path: '/master/skus/' + id + (sku && sku.status === 'draft' ? '/complete' : '/edit'), query: $route.query })"
         >
-          编辑 SKU
+          {{ sku && sku.status === 'draft' ? '去补全 SKU' : '编辑 SKU' }}
         </el-button>
       </div>
     </header>
@@ -85,13 +86,13 @@
               <h2>默认物料关系与履历</h2>
             </div>
             <el-button
-              v-if="(sku.line_type || sku.order_line_type) === 'physical'"
+              v-if="(sku.line_type || sku.order_line_type) === 'physical' && ($can('master.sku_item_relation') || $can('master.sku_item_relation.view'))"
               type="text"
               size="small"
               class="action-link-theme"
-              @click="$router.push('/master/sku-item-relations')"
+              @click="$router.push({ path: '/master/sku-item-relations', query: { set_sku_id: sku.id } })"
             >
-              前往关系维护中心 →
+              打开默认物料维护弹窗 →
             </el-button>
           </div>
 

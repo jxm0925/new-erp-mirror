@@ -2,6 +2,12 @@ import api from './master'
 import { erpDateTime } from '@/utils/dateTime'
 
 export const getCrmLeadMetadata = () => api.get('/v1/erp/crm/leads/metadata')
+export const getCrmProgressCatalog = () => api.get('/v1/erp/crm/customer-pools/catalog')
+export const listCrmCustomerPools = params => api.get('/v1/erp/crm/customer-pools', { params })
+export const saveCrmCustomerPool = data => data.id ? api.put(`/v1/erp/crm/customer-pools/${data.id}`, data) : api.post('/v1/erp/crm/customer-pools', data)
+export const setCrmCustomerPoolStatus = (row, status) => api.post(`/v1/erp/crm/customer-pools/${row.id}/status`, { status, expected_version: row.business_version })
+export const deleteCrmCustomerPool = row => api.delete(`/v1/erp/crm/customer-pools/${row.id}`, { data: { expected_version: row.business_version } })
+export const updateCrmProgress = (scope, id, data) => api.post(`/v1/erp/crm/${{ lead: 'leads', opportunity: 'opportunities', customer: 'customers' }[scope]}/${id}/progress`, data)
 export const listCrmLeads = params => api.get('/v1/erp/crm/leads', { params })
 export const getCrmLead = id => api.get(`/v1/erp/crm/leads/${id}`)
 export const saveCrmLead = data => data.id ? api.put(`/v1/erp/crm/leads/${data.id}`, data) : api.post('/v1/erp/crm/leads', data)

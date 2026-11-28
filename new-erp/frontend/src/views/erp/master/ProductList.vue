@@ -13,15 +13,15 @@
       </div>
       <div class="head-actions">
         <el-button size="small" icon="el-icon-refresh" class="btn-refresh" @click="fetchAll">刷新</el-button>
-        <el-button size="small" icon="el-icon-upload2" class="btn-import" @click="$router.push({ path: '/master/imports', query: { type: 'Product' } })">导入商品</el-button>
-        <el-button size="small" type="success" icon="el-icon-plus" class="btn-theme-create" @click="openProductCreate">新增商品</el-button>
+        <el-button v-if="$can('master.import') || $can('master.import.upload')" size="small" icon="el-icon-upload2" class="btn-import" @click="$router.push({ path: '/master/imports', query: { type: 'Product' } })">导入商品</el-button>
+        <el-button v-if="$can('master.product.create')" size="small" type="success" icon="el-icon-plus" class="btn-theme-create" @click="openProductCreate">新增商品</el-button>
       </div>
     </header>
 
     <!-- 统一页面提示条 -->
     <div class="erp-page-tip">
       <i class="el-icon-info" />
-      <span>维护标准商品与套装商品档案，管理规格维度与笛卡尔积 SKU，打通采购、销售与生产主数据链路。</span>
+      <span>维护标准商品主档案，管理多维度规格与笛卡尔积 SKU，打通采购、销售与生产主数据链路。</span>
     </div>
 
     <!-- 顶部概览指标卡片 -->
@@ -123,8 +123,8 @@
                     <span class="sub-hint"><i class="el-icon-info" /> 点击行或操作按钮可直达 SKU 独立详情与编辑页</span>
                   </div>
                   <div class="nested-actions">
-                    <el-button size="mini" type="success" plain icon="el-icon-plus" @click.stop="openSkuCreate(row)">单独新增SKU</el-button>
-                    <el-button size="mini" type="success" plain icon="el-icon-s-grid" @click.stop="openSkuMatrix(row)">生成SKU矩阵</el-button>
+                    <el-button v-if="$can('master.sku.create')" size="mini" type="success" plain icon="el-icon-plus" @click.stop="openSkuCreate(row)">单独新增SKU</el-button>
+                    <el-button v-if="$can('master.sku.create')" size="mini" type="success" plain icon="el-icon-s-grid" @click.stop="openSkuMatrix(row)">生成SKU矩阵</el-button>
                   </div>
                 </div>
 
@@ -171,8 +171,9 @@
                   <el-table-column label="操作" min-width="210" align="center">
                     <template slot-scope="{ row: sku }">
                       <el-button type="text" size="mini" icon="el-icon-view" @click.stop="openSkuDetail(sku)">详情</el-button>
-                      <el-button type="text" size="mini" icon="el-icon-edit" @click.stop="openSkuEdit(sku)">编辑</el-button>
+                      <el-button v-if="$can('master.sku.edit')" type="text" size="mini" icon="el-icon-edit" @click.stop="openSkuEdit(sku)">{{ sku.status === 'draft' ? '去补全' : '编辑' }}</el-button>
                       <el-button
+                        v-if="sku.status !== 'draft' && $can('master.sku.edit')"
                         type="text"
                         size="mini"
                         :class="sku.status === 'enabled' ? 'danger-link' : 'success-link'"
@@ -180,7 +181,7 @@
                       >
                         {{ sku.status === 'enabled' ? '停用' : '启用' }}
                       </el-button>
-                      <el-button v-if="sku.status !== 'enabled'" type="text" size="mini" class="danger-link" @click.stop="deleteSku(sku)">删除</el-button>
+                      <el-button v-if="sku.status !== 'enabled' && $can('master.sku.delete')" type="text" size="mini" class="danger-link" @click.stop="deleteSku(sku)">删除</el-button>
                     </template>
                   </el-table-column>
                 </el-table>
@@ -227,7 +228,7 @@
           </el-table-column>
           <el-table-column label="商品类型" width="105" align="center">
             <template slot-scope="{ row }">
-              <el-tag size="mini" :type="row.product_type === 'bundle' ? 'warning' : 'primary'" effect="plain">
+              <el-tag size="mini" :type="row.product_type === 'bundle' ? 'warning' : 'success'" effect="plain">
                 {{ row.product_type === 'bundle' ? '套装商品' : '标准商品' }}
               </el-tag>
             </template>
@@ -257,8 +258,9 @@
           <el-table-column label="操作" width="220" fixed="right" align="center">
             <template slot-scope="{ row }">
               <el-button type="text" size="small" icon="el-icon-view" @click.stop="openProductDetail(row)">详情</el-button>
-              <el-button type="text" size="small" icon="el-icon-edit" @click.stop="openProductEdit(row)">编辑</el-button>
+              <el-button v-if="$can('master.product.edit')" type="text" size="small" icon="el-icon-edit" @click.stop="openProductEdit(row)">编辑</el-button>
               <el-button
+                v-if="$can('master.product.edit')"
                 type="text"
                 size="small"
                 :class="row.status === 'enabled' ? 'danger-link' : 'success-link'"
@@ -266,7 +268,7 @@
               >
                 {{ row.status === 'enabled' ? '停用' : '启用' }}
               </el-button>
-              <el-button v-if="row.status !== 'enabled'" type="text" size="small" class="danger-link" @click.stop="deleteProduct(row)">删除</el-button>
+              <el-button v-if="row.status !== 'enabled' && $can('master.product.delete')" type="text" size="small" class="danger-link" @click.stop="deleteProduct(row)">删除</el-button>
             </template>
           </el-table-column>
         </el-table>
@@ -305,7 +307,7 @@
             <div class="banner-title-line">
               <h2>{{ selectedProduct.product_name }}</h2>
               <span class="status-pill" :class="selectedProduct.status">{{ statusText(selectedProduct.status) }}</span>
-              <el-tag size="mini" :type="selectedProduct.product_type === 'bundle' ? 'warning' : 'primary'" effect="plain">
+              <el-tag size="mini" :type="selectedProduct.product_type === 'bundle' ? 'warning' : 'success'" effect="plain">
                 {{ selectedProduct.product_type === 'bundle' ? '套装商品' : '标准商品' }}
               </el-tag>
             </div>
@@ -337,7 +339,7 @@
           <div class="detail-section-card">
             <div class="sec-title-bar">
               <h4 class="sec-title"><i class="el-icon-connection" /> SKU 规格结构速览（共 {{ skuTotal(selectedProduct) }} 条）</h4>
-              <el-button type="text" size="mini" icon="el-icon-plus" @click="openSkuCreate(selectedProduct)">新增SKU</el-button>
+              <el-button v-if="$can('master.sku.create')" type="text" size="mini" icon="el-icon-plus" @click="openSkuCreate(selectedProduct)">新增SKU</el-button>
             </div>
             <div v-if="skuList(selectedProduct).length" class="modal-sku-preview-table">
               <el-table :data="skuList(selectedProduct)" size="mini" border max-height="220">
@@ -358,7 +360,7 @@
                 <el-table-column label="操作" width="110" align="center">
                   <template slot-scope="{ row }">
                     <el-button type="text" size="mini" @click="openSkuDetail(row)">详情</el-button>
-                    <el-button type="text" size="mini" @click="openSkuEdit(row)">编辑</el-button>
+                    <el-button v-if="$can('master.sku.edit')" type="text" size="mini" @click="openSkuEdit(row)">编辑</el-button>
                   </template>
                 </el-table-column>
               </el-table>
@@ -369,9 +371,9 @@
       </div>
       <div slot="footer" class="dialog-footer">
         <el-button size="small" @click="detailDialogVisible = false">关闭</el-button>
-        <el-button size="small" icon="el-icon-s-grid" @click="openSkuMatrix(selectedProduct)">生成SKU矩阵</el-button>
-        <el-button size="small" icon="el-icon-plus" @click="openSkuCreate(selectedProduct)">新增SKU</el-button>
-        <el-button size="small" type="success" icon="el-icon-edit" @click="openProductEdit(selectedProduct)">编辑此商品</el-button>
+        <el-button v-if="$can('master.sku.create')" size="small" icon="el-icon-s-grid" @click="openSkuMatrix(selectedProduct)">生成SKU矩阵</el-button>
+        <el-button v-if="$can('master.sku.create')" size="small" icon="el-icon-plus" @click="openSkuCreate(selectedProduct)">新增SKU</el-button>
+        <el-button v-if="$can('master.product.edit')" size="small" type="success" icon="el-icon-edit" @click="openProductEdit(selectedProduct)">编辑此商品</el-button>
       </div>
     </el-dialog>
 
@@ -447,9 +449,7 @@
 <script>
 import PagedRecordSelect from '@/components/common/PagedRecordSelect.vue'
 import { erpDateTime } from '../../../utils/dateTime'
-import { saveProductSkuMatrix } from '../../../api/erp/master'
-import { listEntity, saveEntity, disableEntity, enableEntity, deleteEntity } from '../../../api/erp/master'
-import { reserveForCreatePage, clearCreatePageReservation } from '../../../utils/documentNumberReservation'
+import { listProductSkuSpecs, saveProductSkuMatrix, listEntity, disableEntity, enableEntity, deleteEntity } from '../../../api/erp/master'
 
 export default {
   components: { PagedRecordSelect },
@@ -469,6 +469,7 @@ export default {
       filters: { keyword: '', category_id: '', status: '', page: 1, per_page: 10 },
       total: 0,
       stats: {},
+      productSpecSignatures: [],
       skuMatrix: { sale_price: undefined, status: 'enabled', dimensions: [] }
     }
   },
@@ -495,7 +496,10 @@ export default {
         if (index >= dims.length) return [picked]
         return dims[index].values.flatMap(v => combine(index + 1, [...picked, { name: dims[index].name, value: v }]))
       }
-      const existedSpecs = new Set(this.skuList(this.selectedProduct).map(s => this.normalSpec(s.spec_text || s.sku_name)))
+      const existedSpecs = new Set([
+        ...this.productSpecSignatures,
+        ...this.skuList(this.selectedProduct).map(s => this.normalSpec(s.spec_text || s.sku_name))
+      ])
       const seenSpecs = new Set()
       return combine(0, []).map(combo => {
         const spec = combo.map(x => x.value).join(' / ')
@@ -626,8 +630,9 @@ export default {
       this.detailDialogVisible = false
       this.$router.push({ path: '/master/skus/new', query: { product_id: product.id, from: 'product' } })
     },
-    openSkuMatrix(product) {
+    async openSkuMatrix(product) {
       this.selectedProduct = { ...product }
+      this.productSpecSignatures = []
       this.skuMatrix = {
         sale_price: undefined,
         status: 'draft',
@@ -636,6 +641,12 @@ export default {
         ]
       }
       this.matrixDialogVisible = true
+      try {
+        const { data } = await listProductSkuSpecs(product.id)
+        this.productSpecSignatures = (data.data || []).map(row => row.normalized_spec || this.normalSpec(row.spec_text || row.sku_name))
+      } catch (_) {
+        this.productSpecSignatures = []
+      }
     },
     addSkuDimension() {
       this.skuMatrix.dimensions.push({ name: '', valuesText: '' })
@@ -661,19 +672,13 @@ export default {
       this.saving = true
       try {
         const productId = this.selectedProduct.id
-        const matrix = []
-        const matrixReservations = []
-        for (const row of creatableRows) {
-          const page = `/master/products/${productId}#sku-matrix`
-          const reservation = await reserveForCreatePage('sku', page, `${page}:${this.normalSpec(row.spec_model)}`)
-          matrixReservations.push(reservation)
-          matrix.push({ sku_name: row.sku_name, spec_text: row.spec_model, sale_price: row.sale_price,
-            sku_code: reservation.document_no, reservation_token: reservation.reservation_token,
-            creation_session_id: reservation.creation_session_id })
-        }
+        const matrix = creatableRows.map(row => ({
+          sku_name: row.sku_name,
+          spec_text: row.spec_model,
+          sale_price: row.sale_price
+        }))
         await saveProductSkuMatrix(productId, matrix)
-        matrixReservations.forEach(clearCreatePageReservation)
-        this.$message.success(`已生成 ${creatableRows.length} 个 SKU，跳过 ${rows.length - creatableRows.length} 个已存在/重复项`)
+        this.$message.success(`已单事务生成 ${creatableRows.length} 个 SKU${rows.length > creatableRows.length ? `，跳过 ${rows.length - creatableRows.length} 个已存在/重复项` : ''}`)
         this.matrixDialogVisible = false
         await this.fetchAll()
         const p = this.products.find(x => x.id === this.selectedProduct.id)

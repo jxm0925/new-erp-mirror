@@ -40,6 +40,11 @@
           <el-option label="黑名单" value="blacklisted" />
         </el-select>
       </label>
+      <label>维系客户池
+        <el-select v-model="query.customer_pool" size="small" clearable filterable placeholder="全部客户池" @change="search">
+          <el-option v-for="name in pools" :key="name" :value="name" :label="name" />
+        </el-select>
+      </label>
       <el-button size="small" type="success" icon="el-icon-search" @click="search">查询</el-button>
       <el-button size="small" icon="el-icon-refresh" @click="reset">重置</el-button>
     </section>
@@ -67,7 +72,7 @@
           <el-table-column v-else-if="column.key === 'deal'" :key="column.key" :label="column.label" min-width="145" align="right"><template slot-scope="{row}"><el-button v-if="row.money_abilities && row.money_abilities.view_amounts && row.money_abilities.view_orders" type="text" size="mini" class="amount-link" @click="openOrders(row)"><span v-for="item in (row.money_summary && row.money_summary.currencies) || []" :key="item.currency" class="amount-line" :title="item.verification_count ? '含待核实订单' : ''">{{ orderMoney(item.deal_amount,item.currency) }}</span><span v-if="!row.money_summary">—</span><span v-else-if="!row.money_summary.currencies.length">无生效订单</span></el-button><template v-else-if="row.money_abilities && row.money_abilities.view_amounts"><span v-for="item in (row.money_summary && row.money_summary.currencies) || []" :key="item.currency" class="amount-line">{{ orderMoney(item.deal_amount,item.currency) }}</span><span v-if="!row.money_summary">—</span><span v-else-if="!row.money_summary.currencies.length">无生效订单</span></template><span v-else class="muted">—</span></template></el-table-column>
           <el-table-column v-else-if="column.key === 'open_opportunity_count'" :key="column.key" :label="column.label" min-width="110" align="right"><template slot-scope="{row}"><el-button v-if="row.opportunity_summary" type="text" size="mini" @click="openOpportunities(row)">{{ row.opportunity_summary.open_count }}</el-button><span v-else>—</span></template></el-table-column>
           <el-table-column v-else-if="column.key === 'expected_amounts'" :key="column.key" :label="column.label" min-width="145" align="right"><template slot-scope="{row}"><el-button v-if="row.opportunity_summary" type="text" class="amount-link" @click="openOpportunities(row)"><span v-for="item in row.opportunity_summary.currencies || []" :key="item.currency" class="amount-line">{{ orderMoney(item.expected_amount,item.currency) }}</span><span v-if="!(row.opportunity_summary.currencies || []).length">无进行中商机</span></el-button><span v-else>—</span></template></el-table-column>
-          <el-table-column v-else-if="column.key === 'pools'" :key="column.key" :label="column.label" min-width="150"><template slot-scope="{row}"><el-tag v-for="pool in row.customer_pools || []" :key="pool" size="mini" type="success" class="pool-tag">{{ pool }}</el-tag><span v-if="!(row.customer_pools || []).length">—</span></template></el-table-column>
+          <el-table-column v-else-if="column.key === 'pools'" :key="column.key" label="维系客户池 / 生命周期" min-width="210"><template slot-scope="{row}"><crm-progress-controls scope="customer" :subject="row" @changed="load" @refresh="load" /></template></el-table-column>
           <el-table-column v-else-if="column.key === 'schedule'" :key="column.key" :label="column.label" min-width="140"><template slot-scope="{row}"><b v-if="hasField('last_contact_at')">{{ date(row.last_contact_at) }}</b><small v-if="hasField('next_contact_at')" :class="['cell-sub',overdue(row) ? 'red' : '']">{{ row.next_contact_at ? date(row.next_contact_at) + (overdue(row) ? ' 已逾期' : '') : '—' }}</small></template></el-table-column>
           <el-table-column v-else-if="column.key === 'status'" :key="column.key" :label="column.label" width="80"><template slot-scope="{row}"><span :class="['status-dot',row.status]" />{{ statusText(row.status) }}</template></el-table-column>
           <el-table-column v-else :key="column.key" :label="column.label" min-width="150"><template slot-scope="{row}">{{ extraValue(row,column.key) }}</template></el-table-column>
@@ -101,8 +106,11 @@
 </template>
 
 <script>
+import CrmProgressControls from '@/components/crm/CrmProgressControls.vue'
 import { formatMoney as displayMoney } from '../../../utils/money.js'
 import { listSalesCustomers } from '@/api/erp/sales'
+import { getCrmProgressCatalog } from '@/api/erp/crm'
+import { poolNames } from '@/utils/crmProgress'
 import CustomerDrawer from '@/components/sales/CustomerDrawer.vue'
 import CustomerDetailDialog from '@/components/sales/CustomerDetailDialog.vue'
 import CrmListViewControls from '@/components/crm/CrmListViewControls.vue'
@@ -111,11 +119,11 @@ import CrmLeadDetailDialog from '@/components/crm/CrmLeadDetailDialog.vue'
 import CrmOpportunityDetailDialog from '@/components/crm/CrmOpportunityDetailDialog.vue'
 import { customerColumnGroups, orderedColumnGroups, listViewQuery, listViewGroupSpan } from '@/components/crm/listViewColumns'
 
-const blankQuery = (perPage = 10, tab = 'mine') => ({ tab, keyword: '', industry: '', customer_grade: '', owner_name: '', status: '', page: 1, per_page: perPage })
+const blankQuery = (perPage = 10, tab = 'mine') => ({ tab, keyword: '', industry: '', customer_grade: '', owner_name: '', status: '', customer_pool: '', page: 1, per_page: perPage })
 
 export default {
   name: 'SalesCustomerList',
-  components: { CustomerDrawer, CustomerDetailDialog, CrmListViewControls, CrmCustomerListExpansion, CrmLeadDetailDialog, CrmOpportunityDetailDialog },
+  components: { CrmProgressControls, CustomerDrawer, CustomerDetailDialog, CrmListViewControls, CrmCustomerListExpansion, CrmLeadDetailDialog, CrmOpportunityDetailDialog },
   data: () => ({
     columnGroups: customerColumnGroups,
     viewConfiguration: { columns: customerColumnGroups.filter(group => !['open_opportunity_count','expected_amounts','region','credit_code','first_source','customer_tags','remark'].includes(group.key)).flatMap(group => group.fields), filters: {}, sort: { field: '', direction: 'desc' }, group_by: '' },
@@ -127,6 +135,7 @@ export default {
     tabs: {},
     ownerOptions: [],
     loading: false,
+    poolMetadata: {},
     query: blankQuery(),
     gradeOptions: ['A级', 'B级', 'C级', 'D级'],
     industryOptions: ['水质处理', '连锁洗衣', '外贸出口', '企业自用', '政府单位', '农牧养殖', '商贸公司', '建筑施工', '加工配套', '未知']
@@ -134,11 +143,22 @@ export default {
   async mounted() {
     const configuration = await this.$refs.views.initialize()
     if (configuration) this.applyView(configuration, false)
+    this.readRouteQuery()
     this.load()
+    try { const { data } = await getCrmProgressCatalog(); this.poolMetadata = data.data || data }
+    catch (error) { this.$message.error(error.userMessage || '客户池加载失败') }
   },
   beforeDestroy() { this.sequence += 1 },
-  watch: { viewTableKey() { this.expandedCustomerRows = [] } },
+  watch: {
+    viewTableKey() { this.expandedCustomerRows = [] },
+    '$route.query'() {
+      if (this.$route.path !== '/sales/customers') return
+      this.readRouteQuery(true)
+      this.load()
+    }
+  },
   computed: {
+    pools() { return poolNames(this.poolMetadata, 'customer', this.query.customer_pool) },
     viewColumns() { return orderedColumnGroups(this.viewConfiguration.columns,this.columnGroups) },
     viewTableKey() { return this.viewConfiguration.columns.join(',') + ':' + this.viewConfiguration.group_by + ':' + this.tableRevision },
     canExpand() { return !this.$can || this.$can('crm.lead.view') || this.$can('crm.opportunity.view') },
@@ -146,6 +166,16 @@ export default {
     viewFilterOptions() { return { tab: { mine: '我负责的', collab: '我协作的', all: '全部可见' }, status: { enabled: '启用', potential: '潜在', disabled: '停用', blacklisted: '黑名单' } } }
   },
   methods: {
+    readRouteQuery(reset = false) {
+      const route = this.$route.query
+      if (!reset && !Object.keys(route).length) return
+      const query = blankQuery(10, 'all')
+      Object.keys(query).forEach(key => { if (typeof route[key] === 'string') query[key] = route[key] })
+      query.page = Math.max(1, Number.parseInt(query.page, 10) || 1)
+      query.per_page = [10,20,50,100].includes(Number(query.per_page)) ? Number(query.per_page) : 10
+      if (!['mine', 'collab', 'all'].includes(query.tab)) query.tab = 'all'
+      this.query = query
+    },
     viewGroupSpan: listViewGroupSpan,
     handleExpandChange(row, expandedRows) { this.expandedCustomerRows = expandedRows },
     hasField(key) { return this.viewConfiguration.columns.includes(key) },

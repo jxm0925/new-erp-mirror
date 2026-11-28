@@ -21,9 +21,7 @@
             <h2>做什么、做多少</h2>
             <div class="f-grid">
               <label class="span2"><span class="req">产品</span>
-                <el-select v-model="form.item_id" filterable remote clearable :remote-method="searchItems" :loading="itemLoading" placeholder="输入物料编码或名称搜索" @change="onItem" @focus="items.length || searchItems('')">
-                  <el-option v-for="it in items" :key="it.id" :label="`${it.item_name} · ${it.item_code}`" :value="it.id" />
-                </el-select>
+                <paged-record-select v-model="form.item_id" entity="items" category-type="item" management-scope="factory" :request="requestProductionItems" :selected-rows="selectedItemRows" clearable title="选择生产产品（物料）" placeholder="点击弹窗选择可生产的成品或半成品" @change="onItem" />
               </label>
               <label><span class="req">数量</span><el-input-number v-model="form.planned_qty" :min="1" :max="100000" :step="1" controls-position="right" @change="schedulePreview" /></label>
               <label><span>为什么备货</span>
@@ -128,7 +126,7 @@ export default {
   components: { PagedRecordSelect },
   data: () => ({
     form: { item_id: null, planned_qty: 1, stock_reason: 'alert', planned_start_date: day(0), planned_finish_date: day(7), owner_legacy_id: null, warehouse_id: null, bom_id: null, routing_id: null, remark: '', priority: 3 },
-    items: [], itemLoading: false, owners: [], preview: null, previewLoading: false, saving: '', timer: null, previewSeq: 0
+    selectedItemRows: [], owners: [], preview: null, previewLoading: false, saving: '', timer: null, previewSeq: 0
   }),
   computed: {
     planWarnings() { return this.preview && !this.preview.bom_selection_error ? this.preview.block_reasons : [] },
@@ -145,26 +143,17 @@ export default {
   methods: {
     qty, money, bomLabel,
     back() { this.$router.push('/production/work-orders') },
-    async searchItems(keyword) {
-      this.itemLoading = true
-      try {
-        const { data } = await searchProductionOptions('items', { keyword: keyword || undefined, per_page: 20 })
-        this.items = data.data || []
-      } catch (e) {
-        this.$message.error(errorText(e, '产品加载失败'))
-      } finally {
-        this.itemLoading = false
-      }
-    },
+    requestProductionItems(params = {}) { return searchProductionOptions('items', { per_page: 10, ...params }) },
     async searchOwners(keyword) { try { this.owners = await searchProductionUsers(keyword) } catch (e) { this.owners = [] } },
-    onItem() {
+    onItem(itemId, rows = []) {
+      this.selectedItemRows = rows
       clearTimeout(this.timer)
       this.previewSeq++
       this.previewLoading = false
       this.form.bom_id = null
       this.form.routing_id = null
       this.preview = null
-      if (this.form.item_id) this.loadPreview(true)
+      if (itemId) this.loadPreview(true)
     },
     schedulePreview() {
       clearTimeout(this.timer)

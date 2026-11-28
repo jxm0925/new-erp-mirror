@@ -17,7 +17,7 @@
         <el-button size="small" icon="el-icon-back" class="btn-default" @click="$router.push('/bom/boms')">
           返回 BOM 管理
         </el-button>
-        <el-button size="small" type="success" icon="el-icon-cpu" class="btn-theme-create" @click="expand">
+        <el-button v-if="$can(['bom.expand', 'bom.manage.view'])" size="small" type="success" icon="el-icon-cpu" class="btn-theme-create" @click="expand">
           执行用料算量
         </el-button>
       </div>
@@ -98,11 +98,6 @@
           />
         </div>
 
-        <div class="form-action-group">
-          <el-button size="small" type="success" icon="el-icon-cpu" class="btn-theme-submit" @click="expand">
-            计算展开
-          </el-button>
-        </div>
       </div>
     </section>
 
@@ -360,7 +355,7 @@ export default {
     if (this.form.bom_id) this.expand()
   },
   methods: {
-    requestBoms: listBoms,
+    requestBoms(params) { return listBoms({ ...params, for_expansion: 1 }) },
     bomLabel(row) { return [row.bom_no, row.bom_name, row.version].filter(Boolean).join(' / ') },
     cutRequirement(row, aggregate) {
       if (cuttingQuantityBasis(row) === 'total_length') {
@@ -384,6 +379,7 @@ export default {
       }
     },
     async expand() {
+      if (!this.$can(['bom.expand', 'bom.manage.view'])) return
       const payload = this.requestPayload()
       if (!payload.bom_id && !payload.sku_id && !payload.output_item_id) {
         return this.$message.error('请选择需要展开算量的 BOM 方案、SKU 或产出物料')

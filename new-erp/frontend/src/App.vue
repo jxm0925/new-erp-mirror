@@ -188,6 +188,13 @@ export default {
   computed: {
     routeViewKey() {
       if (['/finance/payables', '/sales/leads'].includes(this.$route.path)) return this.$route.path
+      if (this.$route.path === '/master/sku-item-relations') {
+        const query = { ...this.$route.query }
+        delete query.integrity
+        delete query.set_sku_id
+        delete query.history_sku_id
+        return this.$router.resolve({ path: this.$route.path, query, hash: this.$route.hash }).route.fullPath
+      }
       if (/^\/sales\/orders\/[^/]+\/detail$/.test(this.$route.path)) {
         const query = { ...this.$route.query }
         delete query.confirm_production

@@ -146,7 +146,7 @@
               </el-col>
               <el-col :xs="24" :sm="12">
                 <el-form-item label="业务线">
-                  <el-select v-model="form.business_lines" multiple filterable allow-create default-first-option placeholder="未填写，可多选" style="width:100%">
+                  <el-select v-model="form.business_lines" multiple filterable placeholder="未填写，可多选" style="width:100%">
                     <el-option v-for="item in businessLineOptions" :key="item" :label="item" :value="item" />
                   </el-select>
                 </el-form-item>
@@ -321,6 +321,7 @@
 
 <script>
 import { createSalesCustomer, getSalesCustomer, updateSalesCustomer } from '@/api/erp/sales'
+import { listBusinessLines } from '@/api/erp/base-archives'
 import { clearCreatePageReservation, reserveForCreatePage } from '@/utils/documentNumberReservation'
 import { customerProfileOptions } from '@/utils/customerProfileOptions'
 import CustomerRegionSelect from './CustomerRegionSelect.vue'
@@ -405,10 +406,11 @@ export default {
     gradeOptions: customerProfileOptions.customer_grade,
     industryOptions: customerProfileOptions.industry,
     purchasingOptions: customerProfileOptions.purchasing_power,
-    businessLineOptions: customerProfileOptions.business_lines,
+    businessLines: [],
     form: blankForm()
   }),
   computed: {
+    businessLineOptions() { return [...new Set([...this.businessLines, ...(this.form.business_lines || [])].filter(Boolean))] },
     ownerText() {
       if (this.form.owner_name) return this.form.owner_name
       return this.form.id ? '暂无（首次录入线索或有效订单的销售自动归属）' : '保存后自动归属：销售本人建档即为负责销售'
@@ -428,6 +430,23 @@ export default {
     }
   },
   methods: {
+    async loadBusinessLines(session) {
+      const names = []
+      let page = 1
+      let lastPage = 1
+      try {
+        do {
+          const { data } = await listBusinessLines({ status: 'enabled', page, per_page: 100 })
+          if (session !== this.openSession || !this.innerVisible) return
+          names.push(...(data.data || []).map(row => row.name))
+          lastPage = Number(data.last_page) || 1
+          page += 1
+        } while (page <= lastPage)
+        this.businessLines = names
+      } catch (error) {
+        if (session === this.openSession && this.innerVisible) this.$message.error('业务线选项加载失败，请重新打开客户窗口')
+      }
+    },
     requestDuplicateReview(row) {
       const contacts = this.form.contacts || []
       const addresses = this.form.addresses || []
@@ -447,6 +466,7 @@ export default {
     openForm(defaultKind = 'individual') {
       this.openSession += 1
       this.form = blankForm(defaultKind)
+      this.businessLines = []
       this.numberReservation = null
       this.rawInputText = ''
       this.recognizedCustomerName = ''
@@ -459,7 +479,7 @@ export default {
       const session = this.openSession
       this.loading = true
       try {
-        const reservation = await reserveForCreatePage('customer', '/sales/customers/create')
+        const [reservation] = await Promise.all([reserveForCreatePage('customer', '/sales/customers/create'), this.loadBusinessLines(session)])
         if (session !== this.openSession || !this.innerVisible) return
         this.numberReservation = reservation
         this.form.customer_code = reservation.document_no
@@ -475,7 +495,7 @@ export default {
       const session = this.openSession
       this.loading = true
       try {
-        const { data } = await getSalesCustomer(id)
+        const [{ data }] = await Promise.all([getSalesCustomer(id), this.loadBusinessLines(session)])
         if (session !== this.openSession || !this.innerVisible) return
         if (!(data.abilities && data.abilities.edit)) {
           this.innerVisible = false

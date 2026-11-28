@@ -121,6 +121,7 @@ import {
   exportDaily,
   helpStatus
 } from '@/api/erp/crmDaily'
+import { applyCombatDictionaries } from './combatTemplates'
 import CrmSalesDaily from './CrmSalesDaily.vue'
 import CrmCockpitV3 from './CrmCockpitV3.vue'
 
@@ -180,6 +181,7 @@ export default {
   },
   methods: {
     apply(data) {
+      applyCombatDictionaries(data.dictionaries || {})
       this.data = data
       const b = data.body || {}
       const stored = b.cockpit || {}

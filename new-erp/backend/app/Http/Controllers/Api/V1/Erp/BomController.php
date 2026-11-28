@@ -3,11 +3,11 @@
 namespace App\Http\Controllers\Api\V1\Erp;
 
 use App\Http\Controllers\Controller;
-use App\Models\Erp\{Bom, BomItem, BomItemOperation, BomLog, InventoryBalance, Item, Product, Sku};
+use App\Models\Erp\{Bom, BomItem, BomItemOperation, BomLog, InventoryBalance, Item, Sku};
 use App\Services\Erp\AuthContextService;
+use App\Services\Erp\BomExplosionEngine;
 use App\Services\Erp\BomLifecycleApplicationService;
 use App\Services\Erp\DocumentNumberService;
-use App\Services\Erp\ItemManagementScopeService;
 use App\Services\Erp\Manufacturing\WorkOrderService;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
@@ -26,13 +26,16 @@ class BomController extends Controller
 
     public function index(Request $request)
     {
-        $this->authorizePermission($request, 'bom.manage.view');
-        $query = Bom::with(['product', 'sku.product', 'outputItem.unit'])->latest('updated_at');
+        $forExpansion = $request->boolean('for_expansion');
+        if ($forExpansion) $this->authorizeExpansion($request);
+        else $this->authorizePermission($request, ['bom.manage', 'bom.manage.view']);
+        $query = ($forExpansion ? app(BomExplosionEngine::class)->eligibleQuery() : Bom::query())
+            ->with(['product', 'sku.product', 'outputItem.unit', 'approvalTask'])->latest('updated_at');
         if ($request->has('ids')) {
             $selected = $request->validate(['ids' => 'required|array|min:1|max:1000', 'ids.*' => 'required|integer|min:1|distinct']);
             $query->whereIn('id', $selected['ids']);
         }
-        if ($request->input('deleted') === 'only') $query->onlyTrashed();
+        if (! $forExpansion && $request->input('deleted') === 'only') $query->onlyTrashed();
         $keyword = trim((string) $request->input('keyword'));
         if ($keyword !== '') {
             $query->where(fn (Builder $q) => $q
@@ -45,20 +48,26 @@ class BomController extends Controller
         foreach (['status', 'audit_status', 'bom_type', 'product_id', 'sku_id', 'output_item_id'] as $field) {
             if ($request->filled($field)) $query->where($field, $request->input($field));
         }
+        if ($request->input('submission_state') === 'draft') $query->where('status', 'draft')->where('audit_status', '<>', 'approved')->whereNull('submitted_at');
+        if ($request->input('submission_state') === 'pending') $query->where('status', 'draft')->where('audit_status', 'pending')->whereNotNull('submitted_at');
         if ($request->filled('is_default')) {
             $query->where('is_default', filter_var($request->input('is_default'), FILTER_VALIDATE_BOOLEAN));
         }
         if ($request->filled('date_from')) $query->whereDate('updated_at', '>=', $request->input('date_from'));
         if ($request->filled('date_to')) $query->whereDate('updated_at', '<=', $request->input('date_to'));
-        $stats = [
-            'total' => Bom::count(),
-            'active' => Bom::where('status', 'active')->count(),
-            'pending' => Bom::where('audit_status', 'pending')->count(),
-            'default' => Bom::where('is_default', true)->count(),
-        ];
+        $stats = null;
+        if (! $forExpansion && $request->boolean('include_stats')) {
+            $counts = (clone $query)->reorder()->toBase()->selectRaw("COUNT(*) AS total,
+                COALESCE(SUM(CASE WHEN status = 'draft' AND audit_status <> 'approved' AND submitted_at IS NULL THEN 1 ELSE 0 END), 0) AS draft,
+                COALESCE(SUM(CASE WHEN status = 'draft' AND audit_status = 'pending' AND submitted_at IS NOT NULL THEN 1 ELSE 0 END), 0) AS pending,
+                COALESCE(SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END), 0) AS active")->first();
+            $stats = collect((array) $counts)->map(fn ($count) => (int) $count)->all();
+        }
+        $page = $query->orderByDesc('id')->paginate(isset($selected) ? count($selected['ids']) : $this->perPage($request));
+        $page->through(fn ($bom) => app(\App\Services\Erp\BomApplicationService::class)->withApprovalState($bom));
         return response()->json([
-            ...$query->orderByDesc('id')->paginate(isset($selected) ? count($selected['ids']) : $this->perPage($request))->toArray(),
-            'stats' => $stats,
+            ...$page->toArray(),
+            ...($stats === null ? [] : ['stats' => $stats]),
         ]);
     }
 
@@ -66,42 +75,22 @@ class BomController extends Controller
     {
         $operator = $this->authorizePermission($request, 'bom.manage.create');
         $payload = $this->validateBom($request);
-        $this->assertProductionTarget($payload);
-        $this->assertNoCycleForCandidate((int) $payload['output_item_id'], $payload['items']);
-        $operatorId = (int) $operator->legacy_id;
-        $canEditRate = $this->canPerformance($request, 'edit');
-        return DB::transaction(function () use ($payload, $operatorId, $operator, $canEditRate, $request) {
-            $this->standards()->assertRouting($payload['routing_id'] ?? null, (int) $payload['output_item_id']);
-            $numbers = app(DocumentNumberService::class);
-            $bomNo = $numbers->reservedNumber($payload['reservation_token'], 'bom', $operatorId, $payload['creation_session_id']);
-            $bom = Bom::create($this->mainPayload($payload) + [
-                'bom_no' => $bomNo,
-                'status' => 'draft',
-                'audit_status' => 'pending',
-                'submitted_at' => null,
-                'is_default' => false,
-            ]);
-            $this->saveItems($bom, $payload['items']);
-            $this->standards()->save($bom, $payload['operation_standards'] ?? [], $canEditRate, $operator);
-            if (isset($payload['position_performance'])) $this->positionPerformance()->save($bom->fresh('items'), $payload['position_performance'], $canEditRate, $operator);
-            $this->assertNoCycle($bom->fresh(['items.componentItem']));
-            $numbers->consume($payload['reservation_token'], 'bom', $bomNo, $operatorId, 'bom', $bom->id);
-            $this->log($bom, 'create', '新增 BOM 草稿', $operatorId);
-            return response()->json(['message' => 'BOM 已保存为草稿', 'data' => $this->withStandards($request, $bom->fresh(self::RELATIONS))], 201);
-        }, 5);
+        $service = app(\App\Services\Erp\BomApplicationService::class);
+        $bom = $service->create($payload, $operator, $this->canPerformance($request, 'edit'));
+        return response()->json(['message' => $service->resultMessage($bom, 'BOM 已保存为草稿'), 'data' => $this->withStandards($request, $bom->fresh(self::RELATIONS))], 201);
     }
 
     /** BOM 行可选的用料工序：产出物料适用工艺路线里的车间工序。 */
     public function operationOptions(Request $request)
     {
-        $this->authorizePermission($request, 'bom.manage.view');
+        $this->authorizePermission($request, ['bom.manage', 'bom.manage.view', 'bom.manage.create', 'bom.manage.edit']);
         $data = $request->validate(['output_item_id' => 'required|integer|exists:erp_items,id']);
         return response()->json(['data' => app(\App\Services\Erp\BomOperationBindingService::class)->options((int) $data['output_item_id'])]);
     }
 
     public function show(Request $request, int $id)
     {
-        $this->authorizePermission($request, 'bom.manage.view');
+        $this->authorizePermission($request, ['bom.manage', 'bom.manage.view', 'bom.manage.edit']);
         $query = Bom::with(self::RELATIONS);
         if ($request->input('deleted') === 'only') $query->onlyTrashed();
         $bom = $query->findOrFail($id);
@@ -113,131 +102,54 @@ class BomController extends Controller
     {
         $operator = $this->authorizePermission($request, 'bom.manage.edit');
         $payload = $this->validateBom($request, $id);
-        $canEditRate = $this->canPerformance($request, 'edit');
-        return DB::transaction(function () use ($id, $payload, $operator, $canEditRate, $request) {
-            $bom = Bom::query()->lockForUpdate()->findOrFail($id);
-            $reopen = $bom->status === 'inactive';
-            abort_unless($reopen || $bom->status === 'draft', 422, '只有草稿或停用 BOM 可以编辑。');
-            abort_if($bom->submitted_at && (! $reopen || $bom->audit_status === 'pending'), 422, 'BOM 已提交审核，不能继续编辑；如需修改请先驳回或复制新版本。');
-            $this->assertProductionTarget($payload);
-            $this->assertNoCycleForCandidate((int) $payload['output_item_id'], $payload['items'], $bom->id);
-            $this->standards()->assertRouting($payload['routing_id'] ?? null, (int) $payload['output_item_id']);
-            // 停用版本修改后必须重新提交审核，不能沿用修改前的审批结论。
-            $state = $reopen ? ['status' => 'draft', 'audit_status' => 'pending', 'submitted_at' => null, 'is_default' => false] : [];
-            $previousPositions = $canEditRate && isset($payload['position_performance'])
-                ? $this->positionPerformance()->tree($bom, false)['positions'] : [];
-            $bom->update($this->mainPayload($payload) + $state + ['updated_by' => $operator->legacy_id]);
-            // 旧明细可能已被下料产出引用，仅软删并以新行保存当前明细。
-            BomItem::where('bom_id', $bom->id)->delete();
-            $this->saveItems($bom, $payload['items']);
-            // 旧客户端不提交工时提成时保留原设置；换路线时由服务删除不属于新路线的节点设置。
-            $this->standards()->save($bom, $payload['operation_standards'] ?? [], $canEditRate, $operator);
-            if (isset($payload['position_performance'])) $this->positionPerformance()->save($bom->fresh('items'), $payload['position_performance'], $canEditRate, $operator, $previousPositions);
-            $this->assertNoCycle($bom->fresh(['items.componentItem']));
-            $this->log($bom, 'update', $reopen ? '编辑停用 BOM，已转为草稿，须重新提交审核。' : '编辑 BOM 草稿', (int) $operator->legacy_id);
-            return response()->json(['message' => $reopen ? 'BOM 已保存为草稿，请重新提交审核' : 'BOM 已更新', 'data' => $this->withStandards($request, $bom->fresh(self::RELATIONS))]);
-        }, 5);
+        $service = app(\App\Services\Erp\BomApplicationService::class);
+        $bom = $service->update($id, $payload, $operator, $this->canPerformance($request, 'edit'));
+        return response()->json(['message' => $service->resultMessage($bom, 'BOM 草稿已保存'), 'data' => $this->withStandards($request, $bom->fresh(self::RELATIONS))]);
     }
 
     public function submit(Request $request, int $id)
     {
         $operator = $this->authorizePermission($request, 'bom.manage.edit');
-        return DB::transaction(function () use ($id, $operator) {
-            // 与编辑、删除和恢复共用主记录锁，避免过期状态在删除后继续流转。
-            $bom = Bom::with('items.componentItem')->lockForUpdate()->findOrFail($id);
-            abort_if($bom->status !== 'draft', 422, '只有草稿 BOM 可以提交审核。');
-            abort_if($bom->submitted_at, 422, 'BOM 已提交审核，请勿重复提交。');
-            abort_if($bom->items->isEmpty(), 422, 'BOM 至少需要一行物料明细。');
-            $this->assertFactoryBom($bom);
-            app(\App\Services\Erp\BomOperationBindingService::class)->assertBomBindings($bom);
-            $this->assertNoCycle($bom);
-            $bom->update(['audit_status' => 'pending', 'submitted_at' => now()]);
-            $this->log($bom, 'submit', '提交审核', (int) $operator->legacy_id);
-            return response()->json(['message' => 'BOM 已提交审核', 'data' => $bom->fresh(self::RELATIONS)]);
-        }, 5);
+        $options = $request->validate(['client_command_id' => 'sometimes|string|max:120', 'set_default' => 'sometimes|boolean']);
+        $service = app(\App\Services\Erp\BomApplicationService::class);
+        $bom = $service->submit($id, $options, $operator);
+        return response()->json(['message' => $service->resultMessage($bom, 'BOM 已提交生效'), 'data' => $service->withApprovalState($bom->fresh(self::RELATIONS))]);
     }
 
     public function approve(Request $request, int $id)
     {
         $operator = $this->authorizePermission($request, 'bom.manage.edit');
-        return DB::transaction(function () use ($id, $operator) {
-            $bom = Bom::with('items.componentItem')->lockForUpdate()->findOrFail($id);
-            abort_if($bom->audit_status !== 'pending' || !$bom->submitted_at, 422, '只有已提交的待审核 BOM 可以审核通过。');
-            $this->assertFactoryBom($bom);
-            app(\App\Services\Erp\BomOperationBindingService::class)->assertBomBindings($bom);
-            $this->assertNoCycle($bom);
-            $bom->update(['audit_status' => 'approved']);
-            $this->log($bom, 'approve', '审核通过', (int) $operator->legacy_id);
-            app(WorkOrderService::class)->retryBlockedForMasterDataAfterCommit((int) $bom->id, null, $operator);
-            return response()->json(['message' => 'BOM 已审核通过', 'data' => $bom->fresh(self::RELATIONS)]);
-        }, 5);
+        $bom = app(\App\Services\Erp\BomApplicationService::class)->approveLegacy($id, $operator);
+        return response()->json(['message' => '历史待审 BOM 已审核通过，可继续启用', 'data' => $bom->fresh(self::RELATIONS)]);
     }
 
     public function reject(Request $request, int $id)
     {
         $operator = $this->authorizePermission($request, 'bom.manage.edit');
-        return DB::transaction(function () use ($id, $operator) {
-            $bom = Bom::query()->lockForUpdate()->findOrFail($id);
-            abort_if($bom->audit_status !== 'pending' || !$bom->submitted_at, 422, '只有已提交的待审核 BOM 可以驳回。');
-            $bom->update(['audit_status' => 'rejected', 'submitted_at' => null]);
-            $this->log($bom, 'reject', '审核驳回', (int) $operator->legacy_id);
-            return response()->json(['message' => 'BOM 已驳回', 'data' => $bom->fresh(self::RELATIONS)]);
-        }, 5);
+        $data = $request->validate(['remark' => 'nullable|string|max:2000']);
+        $bom = app(\App\Services\Erp\BomApplicationService::class)->rejectLegacy($id, trim((string) ($data['remark'] ?? '')), $operator);
+        return response()->json(['message' => 'BOM 已驳回', 'data' => $bom->fresh(self::RELATIONS)]);
     }
 
     public function activate(Request $request, int $id)
     {
         $operator = $this->authorizePermission($request, 'bom.manage.toggle_status');
-        return DB::transaction(function () use ($id, $operator) {
-            $bom = Bom::with('items.componentItem')->lockForUpdate()->findOrFail($id);
-            abort_if($bom->audit_status !== 'approved', 422, 'BOM 审核通过后才能启用。');
-            abort_if($bom->status === 'archived', 422, '已归档 BOM 不能启用。');
-            $this->assertFactoryBom($bom);
-            // 停用期间工序或路线可能已调整，启用前按当前路线重新校验用料工序。
-            app(\App\Services\Erp\BomOperationBindingService::class)->assertBomBindings($bom);
-            $this->assertNoCycle($bom);
-            $bom->update(['status' => 'active']);
-            $this->log($bom, 'activate', '启用 BOM', (int) $operator->legacy_id);
-            app(WorkOrderService::class)->retryBlockedForMasterDataAfterCommit((int) $bom->id, null, $operator);
-            return response()->json(['message' => 'BOM 已启用', 'data' => $bom->fresh(self::RELATIONS)]);
-        }, 5);
+        $bom = app(\App\Services\Erp\BomApplicationService::class)->activate($id, $operator);
+        return response()->json(['message' => 'BOM 已启用', 'data' => $bom->fresh(self::RELATIONS)]);
     }
 
     public function deactivate(Request $request, int $id)
     {
         $operator = $this->authorizePermission($request, 'bom.manage.toggle_status');
-        return DB::transaction(function () use ($id, $operator) {
-            $bom = Bom::query()->lockForUpdate()->findOrFail($id);
-            abort_if($bom->status !== 'active', 422, '只有启用 BOM 可以停用。');
-            abort_if($bom->is_default, 422, '默认 BOM 不能直接停用；请先为同一生产对象选择新的默认 BOM。');
-            $bom->update(['status' => 'inactive']);
-            $this->log($bom, 'deactivate', '停用 BOM', (int) $operator->legacy_id);
-            return response()->json(['message' => 'BOM 已停用', 'data' => $bom->fresh(self::RELATIONS)]);
-        }, 5);
+        $bom = app(\App\Services\Erp\BomApplicationService::class)->deactivate($id, $operator);
+        return response()->json(['message' => 'BOM 已停用', 'data' => $bom->fresh(self::RELATIONS)]);
     }
 
     public function setDefault(Request $request, int $id)
     {
         $operator = $this->authorizePermission($request, 'bom.manage.toggle_status');
-        return DB::transaction(function () use ($id, $operator) {
-            $candidate = Bom::findOrFail($id);
-            // 同一生产对象按 ID 取锁，状态判断使用取锁后的记录。
-            $scope = $this->productionScopeQuery(Bom::query(), $candidate)->orderBy('id')->lockForUpdate()->get();
-            $bom = $scope->firstWhere('id', $id);
-            abort_unless($bom, 404);
-            abort_if(
-                $bom->status !== 'active' || $bom->audit_status !== 'approved' || !$this->isEffective($bom, now()),
-                422,
-                '只有已审核、已启用且在有效期内的 BOM 才能设为默认。'
-            );
-            abort_if($bom->is_default, 422, '当前 BOM 已是默认，无需重复设置。');
-            $this->assertFactoryBom($bom);
-            $scope->where('id', '!=', $bom->id)->each->update(['is_default' => false]);
-            $bom->update(['is_default' => true]);
-            $this->log($bom, 'set_default', '设为默认 BOM', (int) $operator->legacy_id);
-            app(WorkOrderService::class)->retryBlockedForMasterDataAfterCommit((int) $bom->id, null, $operator);
-            return response()->json(['message' => '默认 BOM 已更新', 'data' => $bom->fresh(self::RELATIONS)]);
-        }, 5);
+        $bom = app(\App\Services\Erp\BomApplicationService::class)->setDefault($id, $operator);
+        return response()->json(['message' => '默认 BOM 已更新', 'data' => $bom->fresh(self::RELATIONS)]);
     }
 
     public function copyVersion(Request $request, int $id)
@@ -258,7 +170,8 @@ class BomController extends Controller
                 abort_if($source->bom_type === 'custom', 422, '定制 BOM 不能复制到其他物料。');
                 abort_if($source->items->contains(fn ($line) => (int) $line->component_item_id === $targetItemId), 422, 'BOM 组成物料不能等于产出物料。');
                 $this->assertProductionTarget(['output_item_id' => $targetItemId]);
-                $this->assertNoCycleForCandidate($targetItemId, $source->items->map(fn ($line) => ['component_item_id' => (int) $line->component_item_id])->all());
+                $this->assertNoCycleForCandidate($targetItemId, $source->items->map(fn ($line) => ['component_item_id' => (int) $line->component_item_id,
+                    'child_bom_id' => $line->child_bom_id ? (int) $line->child_bom_id : null])->all());
                 $targetItem = Item::query()->findOrFail($targetItemId);
             }
             $copy = Bom::create([
@@ -330,6 +243,7 @@ class BomController extends Controller
 
     public function expand(Request $request)
     {
+        $this->authorizeExpansion($request);
         $data = $request->validate([
             'bom_id' => ['nullable', Rule::exists('erp_boms', 'id')->whereNull('deleted_at')],
             'sku_id' => 'nullable|exists:erp_skus,id',
@@ -339,14 +253,23 @@ class BomController extends Controller
             'business_date' => 'nullable|date',
         ]);
         $businessDate = $this->businessDate($data['business_date'] ?? null);
-        $bom = isset($data['bom_id'])
-            ? Bom::with(self::RELATIONS)->findOrFail($data['bom_id'])
-            : $this->findDefaultBom($data['product_id'] ?? null, $data['sku_id'] ?? null, $data['output_item_id'] ?? null, $businessDate);
-        abort_if(!$bom, 422, '未配置有效 BOM。');
-        abort_if(!$this->isUsableBom($bom, $businessDate), 422, '只能展开已审核、启用且在有效期内的 BOM。');
+        $engine = app(BomExplosionEngine::class);
+        $itemId = $data['output_item_id'] ?? null;
+        $productId = $data['product_id'] ?? null;
+        if (isset($data['bom_id'])) $itemId ??= (int) Bom::findOrFail($data['bom_id'])->output_item_id;
+        elseif (isset($data['sku_id'])) {
+            $itemMatch = app(\App\Services\Erp\SkuItemMatcher::class)->match($data);
+            abort_unless($itemMatch['match_status'] === 'matched', 422, $itemMatch['block_reason'] ?: 'SKU 未配置可用于生产的默认物料。');
+            $itemId ??= $itemMatch['matched_item_id'];
+            $productId ??= (int) Sku::findOrFail($data['sku_id'])->product_id;
+        }
+        abort_unless($itemId, 422, '请选择 BOM、SKU 或产出物料。');
+        $selection = $engine->select($productId, $data['sku_id'] ?? null, (int) $itemId, $data['bom_id'] ?? null, $businessDate->toDateString(), requireMaterials: true, matchScope: ! isset($data['bom_id']));
+        abort_unless($selection['status'] === 'matched', 422, $selection['block_reason']);
+        $bom = $selection['bom']->loadMissing(self::RELATIONS);
 
         $plannedQty = (float) $data['planned_qty'];
-        $expanded = $this->expandBomRecursive($bom->fresh(self::RELATIONS), $plannedQty, $businessDate);
+        $expanded = $engine->expand($bom, $plannedQty, $businessDate->toDateString());
         $itemIds = collect($expanded['aggregate_lines'])->pluck('component_item_id')->unique()->values();
         $stocks = $this->stockMap($itemIds);
         $lines = collect($expanded['aggregate_lines'])->map(function (array $line) use ($stocks, $plannedQty) {
@@ -462,7 +385,11 @@ class BomController extends Controller
     private function validateBom(Request $request, ?int $id = null): array
     {
         $data = $request->validate([
-            'bom_no' => ['nullable', 'string', 'max:80', Rule::unique('erp_boms', 'bom_no')->ignore($id)],
+            // 编号只认预占；已提交但响应丢失的同命令重试不能被唯一校验提前拦截。
+            'bom_no' => ['nullable', 'string', 'max:80'],
+            'client_command_id' => 'sometimes|string|max:120',
+            'submit_after_save' => 'sometimes|boolean',
+            'set_default' => 'sometimes|boolean',
             'reservation_token' => $id ? 'prohibited' : 'required|uuid',
             'creation_session_id' => $id ? 'prohibited' : 'required|uuid',
             'bom_name' => 'required|string|max:160',
@@ -532,16 +459,25 @@ class BomController extends Controller
         return $data;
     }
 
-    private function authorizePermission(Request $request, string $permission): object
+    private function authorizePermission(Request $request, string|array $permission): object
     {
         $auth = app(AuthContextService::class);
         $user = $auth->currentUser($request);
         abort_unless($user, 401, '未登录或登录已过期。');
         abort_unless(
-            $auth->isSuperAdmin($user) || in_array($permission, $auth->permissionCodes($user), true),
+            $auth->isSuperAdmin($user) || array_intersect((array) $permission, $auth->permissionCodes($user)),
             403,
-            '无按钮权限：'.$permission
+            '无按钮权限：'.implode(' / ', (array) $permission)
         );
+        return $user;
+    }
+
+    private function authorizeExpansion(Request $request): object
+    {
+        $auth = app(AuthContextService::class);
+        $user = $auth->currentUser($request);
+        abort_unless($user, 401, '未登录或登录已过期。');
+        abort_unless($auth->isSuperAdmin($user) || array_intersect(['bom.expand', 'bom.manage.view', 'bom.manage'], $auth->permissionCodes($user)), 403, '无 BOM 展开算量权限。');
         return $user;
     }
 
@@ -573,327 +509,22 @@ class BomController extends Controller
         $bom->setAttribute('performance_permissions', ['view' => $this->canPerformance($request, 'view'), 'edit' => $this->canPerformance($request, 'edit')]);
         $bom->setAttribute('position_performance', $this->positionPerformance()->tree($bom, $this->canPerformance($request, 'view')));
         $bom->setAttribute('technical_drawings', app(\App\Services\Erp\TechnicalDrawingSourceService::class)->forSource('bom', $bom->id));
-        return $bom;
-    }
-
-    private function mainPayload(array $payload): array
-    {
-        return collect($payload)->only([
-            'bom_name', 'product_id', 'sku_id', 'output_item_id', 'routing_id', 'bom_type', 'version',
-            'effective_date', 'expire_date', 'source_product_id', 'source_sku_id',
-            'source_standard_bom_id', 'custom_description', 'remark',
-        ])->all();
-    }
-
-    private function saveItems(Bom $bom, array $items): void
-    {
-        // 用料工序只能选产出物料适用路线里的车间工序，否则工单下达时匹配不到。
-        app(\App\Services\Erp\BomOperationBindingService::class)->assertBindings((int) $bom->output_item_id,
-            collect($items)->map(fn (array $line) => ['operation_id' => $line['operation_id'] ?? null,
-                'label' => $line['component_item_name'] ?? \App\Models\Erp\Item::query()->whereKey($line['component_item_id'] ?? 0)->value('item_name')])->all());
-        app(ItemManagementScopeService::class)->assertProductionAllowed(Item::query()->lockForUpdate()->findOrFail($bom->output_item_id), 'output_item_id');
-        $duplicates = collect($items)->countBy(function (array $line): string {
-            $length = array_key_exists('cut_length_mm', $line) && $line['cut_length_mm'] !== null
-                ? number_format((float) $line['cut_length_mm'], 2, '.', '')
-                : 'ordinary';
-            return ((int) $line['component_item_id']).'|'.$length.'|'.number_format((float) ($line['cut_width_mm'] ?? 0), 2, '.', '').'|'.number_format((float) ($line['cut_thickness_mm'] ?? 0), 2, '.', '');
-        })->filter(fn (int $count) => $count > 1);
-        abort_if($duplicates->isNotEmpty(), 422, '同一 BOM 中相同物料与相同下料尺寸不能重复；请合并件数。');
-        // 位置标识跨编辑沿用（编辑会软删旧行另存新行），重复或缺失时生成新的；行号只用于显示排序。
-        $usedUids = [];
-        foreach (array_values($items) as $index => $line) {
-            abort_if((int) $line['component_item_id'] === (int) $bom->output_item_id, 422, 'BOM 组成物料不能等于产出物料。');
-            $item = Item::with('unit')->lockForUpdate()->findOrFail($line['component_item_id']);
-            app(ItemManagementScopeService::class)->assertProductionAllowed($item, 'items.'.$index.'.component_item_id');
-            abort_if(in_array($item->status, ['disabled', 'inactive'], true), 422, '停用物料不能作为 BOM 组成物料。');
-            abort_if(!$item->unit || $item->unit->status !== 'enabled', 422, 'BOM 组成 Item 必须维护启用的库存基本单位。');
-            $hasCutLength = array_key_exists('cut_length_mm', $line) && $line['cut_length_mm'] !== null;
-            $hasPieceQty = array_key_exists('piece_qty', $line) && $line['piece_qty'] !== null;
-            app(\App\Services\Erp\CuttingOutputEligibilityService::class)->validateBomLine($item, $line);
-            $cutting = in_array($item->cuttingMode(), ['length', 'sheet'], true);
-            if (! $cutting) {
-                abort_if($hasCutLength || $hasPieceQty, 422, "普通物料 {$item->item_name} 不能填写下料长度或段数。");
-                abort_if(isset($line['total_length_mm']) || ($line['cutting_quantity_basis'] ?? 'dimensions_pieces') !== 'dimensions_pieces', 422, '普通物料不能填写管材总长度。');
-                abort_if(! empty($line['stock_dimensions']), 422, '普通物料不能填写下料原料标准尺寸。');
-            }
-            $domain = app(\App\Services\Erp\UnitConversionDomainService::class);
-            $baseUnit = $domain->canonicalUnit($item->unit);
-            $quantitySnapshot = $cutting ? app(\App\Services\Erp\CuttingQuantityCalculator::class)->calculate($item, $baseUnit, $line,
-                ! empty($line['stock_dimensions']) ? ['dimensions' => $line['stock_dimensions'], 'source' => ['type' => 'bom_explicit']] : null,
-                'items.'.$index) : null;
-            // The form prefills this exact master standard; normalize provenance only after validating all submitted dimensions.
-            if ($item->cuttingMode() === 'length' && ($quantitySnapshot['stock_source']['type'] ?? null) === 'bom_explicit'
-                && array_keys($quantitySnapshot['stock_dimensions'] ?? []) === ['length_mm']
-                && bccomp((string) ($item->standard_stock_length_mm ?? '0'), '0', 2) > 0
-                && bccomp($quantitySnapshot['stock_dimensions']['length_mm'], (string) $item->standard_stock_length_mm, 2) === 0) {
-                $quantitySnapshot['stock_source'] = ['type' => 'item_standard_length', 'item_id' => (int) $item->id];
-            }
-            if (! $cutting) {
-                $domain->assertUnitPrecision($line['qty'], $baseUnit, 'items.'.$index.'.qty');
-                $domain->assertUnitPrecision($line['fixed_qty'] ?? 0, $baseUnit, 'items.'.$index.'.fixed_qty');
-            } else {
-                // 根/张基本单位用于整件库存；BOM 理论份额允许小数，固定耗用
-                // 仍受已有 DECIMAL(14,4) 存储边界约束，不能静默截断。
-                $fixed = (float) ($line['fixed_qty'] ?? 0);
-                abort_if(abs($fixed - round($fixed, 4)) > 0.00000001 || $fixed > 9999999999.9999, 422, '下料固定用量最多保留四位小数。');
-            }
-            $childBomId = (int) ($line['child_bom_id'] ?? 0) ?: null;
-            if ($childBomId && ! Bom::query()->whereKey($childBomId)->where('output_item_id', $item->id)->exists()) {
-                abort(422, "半成品 {$item->item_name} 指定的子 BOM 不是该物料的 BOM。");
-            }
-            $operationId = (int) ($line['operation_id'] ?? 0);
-            $uid = strtolower((string) ($line['position_uid'] ?? ''));
-            if ($uid === '' || isset($usedUids[$uid])) $uid = (string) Str::uuid();
-            $usedUids[$uid] = true;
-            $created = BomItem::create([
-                'bom_id' => $bom->id,
-                'line_no' => $line['line_no'] ?? (($index + 1) * 10),
-                'position_uid' => $uid,
-                'child_bom_id' => $childBomId,
-                'component_item_id' => $item->id,
-                'component_item_code' => $item->item_code,
-                'component_item_name' => $item->item_name,
-                'cut_length_mm' => $hasCutLength ? $line['cut_length_mm'] : null,
-                'cut_width_mm' => $line['cut_width_mm'] ?? null,
-                'cut_thickness_mm' => $line['cut_thickness_mm'] ?? null,
-                'allow_cut_rotation' => $line['allow_cut_rotation'] ?? false,
-                'piece_qty' => $hasPieceQty ? $line['piece_qty'] : null,
-                'qty' => $quantitySnapshot['stored_qty'] ?? $line['qty'],
-                'cutting_quantity_snapshot' => $quantitySnapshot,
-                'unit_id' => $baseUnit->id,
-                'loss_rate' => $line['loss_rate'] ?? 0,
-                'fixed_qty' => $line['fixed_qty'] ?? 0,
-                'replaceable' => $line['replaceable'] ?? false,
-                'remark' => $line['remark'] ?? null,
-            ]);
-            if ($operationId) BomItemOperation::create(['bom_item_id' => $created->id, 'operation_id' => $operationId]);
-        }
-        app(\App\Services\Erp\TechnicalDrawingSourceService::class)->retainBomPositions($bom, array_keys($usedUids));
+        return app(\App\Services\Erp\BomApplicationService::class)->withApprovalState($bom);
     }
 
     private function assertProductionTarget(array $payload): void
     {
-        $productId = $payload['product_id'] ?? null;
-        $skuId = $payload['sku_id'] ?? null;
-        $outputItem = Item::whereKey($payload['output_item_id'])->where('status', 'enabled')->first();
-        if ($outputItem) app(ItemManagementScopeService::class)->assertProductionAllowed($outputItem, 'output_item_id');
-
-        abort_if(
-            ($productId === null) !== ($skuId === null),
-            422,
-            'Product 与 SKU 必须同时关联，或同时留空。'
-        );
-
-        if ($productId === null) {
-            abort_unless(
-                $outputItem && $outputItem->is_production_item,
-                422,
-                'Item-only BOM 的产出物料必须已启用且可用于生产。'
-            );
-
-            return;
-        }
-
-        $product = Product::whereKey($productId)->where('status', 'enabled')->first();
-        $sku = Sku::whereKey($skuId)->where('status', 'enabled')->first();
-        abort_unless($product && $sku && $outputItem, 422, '归属 Product、关联 SKU 和产出物料必须全部启用。');
-        abort_if((int) $sku->product_id !== (int) $product->id, 422, '关联 SKU 不属于所选 Product。');
-        $validOutput = DB::table('erp_sku_item_relations')
-            ->where('sku_id', $sku->id)
-            ->where('item_id', $outputItem->id)
-            ->where('status', 'active')
-            ->where('is_primary', true)
-            ->exists();
-        abort_unless($validOutput, 422, '产出物料必须是该 SKU 当前有效的默认生产/履约物料。');
+        app(\App\Services\Erp\BomApplicationService::class)->assertProductionTarget($payload);
     }
 
     private function assertFactoryBom(Bom $bom): void
     {
-        $ids = array_merge([(int) $bom->output_item_id], $bom->items->pluck('component_item_id')->all());
-        foreach (Item::query()->whereIn('id', $ids)->get() as $item) {
-            app(ItemManagementScopeService::class)->assertProductionAllowed($item, 'items');
-        }
-    }
-
-    private function expandBomRecursive(Bom $bom, float $plannedQty, Carbon $businessDate, array $itemPath = [], array $labelPath = [], int $level = 0): array
-    {
-        $currentLabel = $bom->outputItem?->item_name ?: $bom->outputItem?->item_code ?: $bom->bom_no;
-        if (in_array((int) $bom->output_item_id, $itemPath, true)) {
-            $start = array_search((int) $bom->output_item_id, $itemPath, true);
-            $cycle = array_slice($labelPath, $start);
-            $cycle[] = $currentLabel;
-            abort(422, '循环引用：' . implode(' → ', $cycle));
-        }
-        $itemPath[] = (int) $bom->output_item_id;
-        $labelPath[] = $currentLabel;
-        $tree = [];
-        $aggregate = [];
-        $resolved = app(\App\Services\Erp\LengthCutRequirementService::class)->resolveBomLines($bom, null)->keyBy('id');
-
-        foreach ($bom->items as $line) {
-            $calculation = $resolved->get((int) $line->id)['cutting_quantity_snapshot'] ?? null;
-            $totalLength = ($calculation['quantity_basis'] ?? null) === 'total_length';
-            $lengthFacts = ['cutting_quantity_basis' => $totalLength ? 'total_length' : 'dimensions_pieces',
-                'total_length_mm' => $totalLength ? $calculation['total_length_mm'] : null,
-                'required_total_length_mm' => $totalLength ? bcmul((string) $calculation['total_length_mm'], (string) $plannedQty, 8) : null];
-            $unitQty = (float) ($calculation['theoretical_qty'] ?? $line->qty);
-            $lossRate = (float) $line->loss_rate;
-            $fixedQty = (float) $line->fixed_qty;
-            $demandQty = round($unitQty * $plannedQty * (1 + $lossRate / 100) + $fixedQty, $calculation ? 8 : 4);
-            $componentLabel = $line->component_item_name ?: $line->componentItem?->item_name ?: $line->component_item_code;
-            $pathLabels = array_merge($labelPath, [$componentLabel]);
-            $childBom = $this->findDefaultBom(null, null, (int) $line->component_item_id, $businessDate);
-
-            $tree[] = $lengthFacts + [
-                'level' => $level + 1,
-                'path' => implode(' → ', $pathLabels),
-                'parent_bom_id' => $bom->id,
-                'parent_bom_no' => $bom->bom_no,
-                'component_item_id' => $line->component_item_id,
-                'component_item_code' => $line->component_item_code,
-                'component_item_name' => $componentLabel,
-                'unit_name' => $line->unit?->unit_name ?: $line->componentItem?->unit?->unit_name,
-                'unit_qty' => $unitQty,
-                'cut_length_mm' => $line->cut_length_mm === null ? null : (float) $line->cut_length_mm,
-                'cut_width_mm' => $line->cut_width_mm === null ? null : (float) $line->cut_width_mm,
-                'cut_thickness_mm' => $line->cut_thickness_mm === null ? null : (float) $line->cut_thickness_mm,
-                'piece_qty' => $line->piece_qty === null ? null : (int) $line->piece_qty,
-                'required_piece_qty' => $line->piece_qty === null ? null : round((float) $line->piece_qty * $plannedQty, 4),
-                'loss_rate' => $lossRate,
-                'fixed_qty' => $fixedQty,
-                'demand_qty' => $demandQty,
-                'is_leaf' => !$childBom,
-                'child_bom_id' => $childBom?->id,
-                'child_bom_no' => $childBom?->bom_no,
-                'replaceable' => (bool) $line->replaceable,
-                'remark' => $line->remark,
-            ];
-
-            if ($childBom) {
-                $child = $this->expandBomRecursive($childBom, $demandQty, $businessDate, $itemPath, $labelPath, $level + 1);
-                $tree = array_merge($tree, $child['tree_lines']);
-                foreach ($child['aggregate_lines'] as $leaf) {
-                    $this->mergeAggregate($aggregate, $leaf);
-                }
-            } else {
-                $this->mergeAggregate($aggregate, $lengthFacts + [
-                    'component_item_id' => $line->component_item_id,
-                    'component_item_code' => $line->component_item_code,
-                    'component_item_name' => $componentLabel,
-                    'unit_name' => $line->unit?->unit_name ?: $line->componentItem?->unit?->unit_name,
-                    'unit_qty' => $unitQty,
-                    'cut_length_mm' => $line->cut_length_mm === null ? null : (float) $line->cut_length_mm,
-                    'cut_width_mm' => $line->cut_width_mm === null ? null : (float) $line->cut_width_mm,
-                    'cut_thickness_mm' => $line->cut_thickness_mm === null ? null : (float) $line->cut_thickness_mm,
-                    'piece_qty' => $line->piece_qty === null ? null : (int) $line->piece_qty,
-                    'required_piece_qty' => $line->piece_qty === null ? null : round((float) $line->piece_qty * $plannedQty, 4),
-                    'loss_rate' => $lossRate,
-                    'fixed_qty' => $fixedQty,
-                    'demand_qty' => $demandQty,
-                    'replaceable' => (bool) $line->replaceable,
-                    'remark' => $line->remark,
-                    'paths' => [implode(' → ', $pathLabels)],
-                ]);
-            }
-        }
-        return ['tree_lines' => $tree, 'aggregate_lines' => array_values($aggregate)];
-    }
-
-    private function mergeAggregate(array &$aggregate, array $leaf): void
-    {
-        $lengthKey = ($leaf['cutting_quantity_basis'] ?? null) === 'total_length' ? 'total_length' : ($leaf['cut_length_mm'] === null ? 'ordinary' : number_format((float) $leaf['cut_length_mm'], 2, '.', ''));
-        $key = ((int) $leaf['component_item_id']).'|'.$lengthKey.'|'.number_format((float) ($leaf['cut_width_mm'] ?? 0), 2, '.', '').'|'.number_format((float) ($leaf['cut_thickness_mm'] ?? 0), 2, '.', '');
-        if (!isset($aggregate[$key])) {
-            $aggregate[$key] = $leaf;
-            return;
-        }
-        $totalLength = ($leaf['cutting_quantity_basis'] ?? null) === 'total_length';
-        $aggregate[$key]['demand_qty'] = round($aggregate[$key]['demand_qty'] + $leaf['demand_qty'], $totalLength ? 8 : 4);
-        if ($totalLength) {
-            $aggregate[$key]['required_total_length_mm'] = bcadd((string) $aggregate[$key]['required_total_length_mm'], (string) $leaf['required_total_length_mm'], 8);
-            $aggregate[$key]['total_length_mm'] = null;
-        }
-        if (($leaf['required_piece_qty'] ?? null) !== null) {
-            $aggregate[$key]['required_piece_qty'] = round(
-                (float) ($aggregate[$key]['required_piece_qty'] ?? 0) + (float) $leaf['required_piece_qty'],
-                4
-            );
-        }
-        $aggregate[$key]['paths'] = array_values(array_unique(array_merge($aggregate[$key]['paths'] ?? [], $leaf['paths'] ?? [])));
-        $aggregate[$key]['replaceable'] = $aggregate[$key]['replaceable'] || ($leaf['replaceable'] ?? false);
-    }
-
-    private function assertNoCycle(Bom $bom): void
-    {
-        $this->detectCycleFromBom($bom->fresh(['outputItem', 'items.componentItem']), [], []);
+        app(\App\Services\Erp\BomApplicationService::class)->assertFactoryBom($bom);
     }
 
     private function assertNoCycleForCandidate(int $outputItemId, array $items, ?int $ignoreBomId = null): void
     {
-        $rootLabel = $this->itemLabel($outputItemId);
-        foreach ($items as $line) {
-            $componentItemId = (int) $line['component_item_id'];
-            $this->detectCycleFromCandidateItem(
-                $componentItemId,
-                $outputItemId,
-                [$rootLabel, $this->itemLabel($componentItemId)],
-                $ignoreBomId,
-                []
-            );
-        }
-    }
-
-    private function detectCycleFromCandidateItem(int $currentItemId, int $targetItemId, array $labelPath, ?int $ignoreBomId, array $visited): void
-    {
-        if ($currentItemId === $targetItemId) {
-            abort(422, '循环引用：' . implode(' → ', $labelPath));
-        }
-
-        $visitKey = $currentItemId . ':' . $targetItemId;
-        if (isset($visited[$visitKey])) {
-            return;
-        }
-        $visited[$visitKey] = true;
-
-        $children = Bom::with(['outputItem', 'items.componentItem'])
-            ->where('output_item_id', $currentItemId)
-            ->when($ignoreBomId, fn ($q) => $q->whereKeyNot($ignoreBomId))
-            ->get();
-
-        foreach ($children as $childBom) {
-            foreach ($childBom->items as $line) {
-                $nextItemId = (int) $line->component_item_id;
-                $this->detectCycleFromCandidateItem(
-                    $nextItemId,
-                    $targetItemId,
-                    array_merge($labelPath, [$this->itemLabel($nextItemId, $line->component_item_name ?: $line->component_item_code)]),
-                    $ignoreBomId,
-                    $visited
-                );
-            }
-        }
-    }
-
-    private function detectCycleFromBom(Bom $bom, array $itemPath, array $labelPath): void
-    {
-        $label = $bom->outputItem?->item_name ?: $bom->outputItem?->item_code ?: $bom->bom_no;
-        if (in_array((int) $bom->output_item_id, $itemPath, true)) {
-            $start = array_search((int) $bom->output_item_id, $itemPath, true);
-            $cycle = array_slice($labelPath, $start);
-            $cycle[] = $label;
-            abort(422, '循环引用：' . implode(' → ', $cycle));
-        }
-        $itemPath[] = (int) $bom->output_item_id;
-        $labelPath[] = $label;
-        foreach ($bom->items as $line) {
-            $children = Bom::with(['outputItem', 'items.componentItem'])
-                ->where('output_item_id', $line->component_item_id)
-                ->when($bom->id, fn ($q) => $q->whereKeyNot($bom->id))
-                ->get();
-            foreach ($children as $child) {
-                $this->detectCycleFromBom($child, $itemPath, $labelPath);
-            }
-        }
+        app(\App\Services\Erp\BomApplicationService::class)->assertNoCycleForCandidate($outputItemId, $items, $ignoreBomId);
     }
 
     private function stockMap($itemIds)
@@ -909,50 +540,9 @@ class BomController extends Controller
             ->keyBy('item_id');
     }
 
-    private function itemLabel(int $itemId, ?string $fallback = null): string
-    {
-        $item = Item::query()->find($itemId);
-        return $item?->item_name ?: $item?->item_code ?: $fallback ?: ('Item#' . $itemId);
-    }
-
-    private function findDefaultBom(?int $productId, ?int $skuId, ?int $outputItemId, ?Carbon $businessDate = null): ?Bom
-    {
-        $businessDate ??= now();
-        return Bom::with(self::RELATIONS)
-            ->where('status', 'active')
-            ->where('audit_status', 'approved')
-            ->where('is_default', true)
-            ->when($productId !== null, fn ($q) => $q->where('product_id', $productId))
-            ->when($skuId !== null, fn ($q) => $q->where('sku_id', $skuId))
-            ->when($outputItemId !== null, fn ($q) => $q->where('output_item_id', $outputItemId))
-            ->where(fn ($q) => $q->whereNull('effective_date')->orWhereDate('effective_date', '<=', $businessDate))
-            ->where(fn ($q) => $q->whereNull('expire_date')->orWhereDate('expire_date', '>=', $businessDate))
-            ->first();
-    }
-
-    private function isUsableBom(Bom $bom, Carbon $businessDate): bool
-    {
-        return $bom->status === 'active' && $bom->audit_status === 'approved' && $this->isEffective($bom, $businessDate);
-    }
-
-    private function isEffective(Bom $bom, Carbon $businessDate): bool
-    {
-        $effectiveOk = !$bom->effective_date || Carbon::parse($bom->effective_date)->startOfDay()->lte($businessDate);
-        $expireOk = !$bom->expire_date || Carbon::parse($bom->expire_date)->endOfDay()->gte($businessDate);
-        return $effectiveOk && $expireOk;
-    }
-
     private function businessDate(?string $date): Carbon
     {
         return $date ? Carbon::parse($date)->startOfDay() : now()->startOfDay();
-    }
-
-    private function productionScopeQuery(Builder $query, Bom $bom): Builder
-    {
-        return $query
-            ->where('product_id', $bom->product_id)
-            ->where('sku_id', $bom->sku_id)
-            ->where('output_item_id', $bom->output_item_id);
     }
 
     private function versionHistory(Bom $bom)

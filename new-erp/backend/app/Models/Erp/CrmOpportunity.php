@@ -12,6 +12,8 @@ class CrmOpportunity extends MasterModel
         'first_contact_at' => 'datetime', 'last_contact_at' => 'datetime', 'next_contact_at' => 'datetime',
     ];
 
+    public function latestFollowup() { return $this->hasOne(CrmFollowup::class, 'subject_id')->ofMany(['contacted_at' => 'max', 'id' => 'max'], fn ($q) => $q->where('subject_type', 'opportunity')); }
+
     public function customer() { return $this->belongsTo(SalesCustomer::class, 'customer_id'); }
     public function sourceLead() { return $this->belongsTo(CrmLead::class, 'source_lead_id'); }
     public function files() { return $this->hasMany(CrmOpportunityFile::class, 'opportunity_id'); }

@@ -6,8 +6,12 @@ use App\Http\Controllers\Controller;
 use App\Models\Erp\CrmOpportunity;
 use App\Models\Erp\CrmOpportunityFile;
 use App\Services\Erp\AuthContextService;
+use App\Services\Erp\Crm\CrmBusinessLineOptions;
 use App\Services\Erp\Crm\CrmCustomerAccessService;
 use App\Services\Erp\Crm\CrmOpportunityApplicationService;
+use App\Services\Erp\Crm\CrmNineStepCatalog;
+use App\Services\Erp\Crm\CrmProgressApplicationService;
+use App\Services\Erp\Crm\CrmCustomerPoolService;
 use App\Services\Erp\Crm\CrmListViewQueryService;
 use App\Services\Erp\Crm\CrmOpportunityOrderService;
 use App\Services\Erp\Crm\CrmSalesStaffService;
@@ -21,17 +25,21 @@ final class CrmOpportunityController extends Controller
 
     public function metadata(Request $request, CrmCustomerAccessService $access, CrmSalesStaffService $staff)
     {
-        $actor = $this->user($request, 'view');
+        $actor = app(AuthContextService::class)->currentUser($request);
+        abort_unless($actor, 401, '未登录');
+        $canView = $access->can($actor, 'crm.opportunity.view');
+        abort_unless($canView || $access->can($actor, 'crm.opportunity.create'), 403, '没有商机查看或创建权限。');
         $query = CrmOpportunity::query();
-        $this->opportunities->applyVisible($query, $actor);
+        if ($canView) $this->opportunities->applyVisible($query, $actor);
+        else $query->whereRaw('1 = 0');
         $department = $staff->departmentOf((int) $actor->legacy_id);
         $abilities = [];
         foreach (['view', 'create', 'edit', 'stage', 'lose', 'follow', 'file', 'order'] as $action) $abilities[$action] = $access->can($actor, 'crm.opportunity.'.$action);
         return response()->json(['data' => [
-            'stages' => CrmOpportunityApplicationService::STAGES, 'statuses' => CrmOpportunityApplicationService::STATUSES,
+            ...CrmNineStepCatalog::metadata('opportunity'), 'stages' => CrmOpportunityApplicationService::STAGES, 'statuses' => CrmOpportunityApplicationService::STATUSES,
             'file_categories' => CrmOpportunityApplicationService::FILE_CATEGORIES, 'file_statuses' => CrmOpportunityApplicationService::FILE_STATUSES,
             'currencies' => array_values(array_unique(array_merge(['CNY', 'USD', 'EUR', 'HKD'], (clone $query)->distinct()->pluck('currency')->all()))),
-            'business_lines' => (clone $query)->whereNotNull('business_line')->where('business_line', '!=', '')->distinct()->orderBy('business_line')->limit(100)->pluck('business_line'),
+            'business_lines' => CrmBusinessLineOptions::forVisibleRecords(opportunities: $query),
             'current_user' => ['id' => (int) $actor->legacy_id, 'name' => ($actor->nickname ?? null) ?: $actor->username,
                 'department_legacy_id' => $department, 'department_name' => $access->departmentName($department)], 'abilities' => $abilities,
         ]]);
@@ -39,7 +47,8 @@ final class CrmOpportunityController extends Controller
 
     public function owners(Request $request)
     {
-        $actor = $this->user($request, 'view');
+        $actor = app(AuthContextService::class)->currentUser($request);
+        abort_unless($actor, 401, '未登录');
         return response()->json($this->opportunities->owners($request->validate(['keyword' => 'nullable|string|max:100'] + $this->pageRules() + $this->idsRules()), $actor));
     }
 
@@ -49,13 +58,13 @@ final class CrmOpportunityController extends Controller
         $data = $request->validate([
             'keyword' => 'nullable|string|max:160', 'tab' => 'nullable|in:all,mine,delegated,collaborating,won,lost',
             'status' => ['nullable', Rule::in(array_keys(CrmOpportunityApplicationService::STATUSES))],
-            'stage' => ['nullable', Rule::in(array_keys(CrmOpportunityApplicationService::STAGES))],
+            'stage' => ['nullable', Rule::in(array_merge(array_keys(CrmOpportunityApplicationService::STAGES), array_keys(CrmNineStepCatalog::LEGACY)))],
             'customer_id' => 'nullable|integer|min:1', 'source_lead_id' => 'nullable|integer|min:1', 'business_line' => 'nullable|string|max:120',
             'expected_close_from' => 'nullable|date_format:Y-m-d',
             'expected_close_to' => ['nullable', 'date_format:Y-m-d', Rule::when($request->filled('expected_close_from'), 'after_or_equal:expected_close_from')],
-            'collaboratable' => 'nullable|boolean',
+            'collaboratable' => 'nullable|boolean', 'customer_pool' => 'nullable|string|max:80',
         ] + $this->pageRules() + $this->idsRules() + CrmListViewQueryService::rules('opportunities'));
-        $query = CrmOpportunity::query()->with('customer');
+        $query = CrmOpportunity::query()->with(['customer', 'latestFollowup']);
         $this->opportunities->applyVisible($query, $actor);
         if (!empty($data['collaboratable'])) {
             $this->opportunities->applyManageable($query, $actor);
@@ -64,7 +73,16 @@ final class CrmOpportunityController extends Controller
             }
         }
         if (!empty($data['ids'])) $query->whereIn('id', $data['ids']);
-        foreach (['customer_id', 'source_lead_id', 'business_line', 'stage', 'status'] as $field) if (!empty($data[$field])) $query->where($field, $data[$field]);
+        foreach (['customer_id', 'source_lead_id', 'business_line', 'status'] as $field) if (filled($data[$field] ?? null)) $query->where($field, $data[$field]);
+        if (!empty($data['customer_pool'])) {
+            // 历史空池承接来源线索，和雷达、日报采用相同有效池，计数点开才能落到同一批商机。
+            $effectivePool = DB::raw("COALESCE(NULLIF(erp_crm_opportunities.customer_pool, ''), (SELECT crm_source_lead.customer_pool FROM erp_crm_leads AS crm_source_lead WHERE crm_source_lead.id = erp_crm_opportunities.source_lead_id LIMIT 1))");
+            $query->whereIn($effectivePool, app(CrmCustomerPoolService::class)->queryNames($data['customer_pool']));
+        }
+        if (!empty($data['stage'])) {
+            $stage = CrmNineStepCatalog::normalizeStage('opportunity', $data['stage']);
+            $query->whereIn('stage', [$stage, array_search($stage, CrmNineStepCatalog::LEGACY, true) ?: $stage]);
+        }
         if (!empty($data['expected_close_from'])) $query->whereDate('expected_close_date', '>=', $data['expected_close_from']);
         if (!empty($data['expected_close_to'])) $query->whereDate('expected_close_date', '<=', $data['expected_close_to']);
         if (!empty($data['keyword'])) {
@@ -84,7 +102,7 @@ final class CrmOpportunityController extends Controller
         elseif ($tab === 'collaborating') { $this->opportunities->applyCollaborating($query, $actor); $query->where('status', 'open'); }
         elseif (in_array($tab, ['won', 'lost'], true)) $query->where('status', $tab);
         $open = (clone $query)->where('status', 'open');
-        $stageCounts = (clone $open)->selectRaw('stage, COUNT(*) AS total')->groupBy('stage')->pluck('total', 'stage');
+        $stageCounts = (clone $open)->selectRaw('stage, COUNT(*) AS total')->groupBy('stage')->get()->groupBy(fn ($r) => CrmNineStepCatalog::normalizeStage('opportunity', $r->stage))->map(fn ($rows) => (int) $rows->sum('total'));
         // 预计金额按币种汇总；未填金额独立计数，不伪装成零或成交事实。
         $amounts = (clone $open)->whereNotNull('expected_amount')->selectRaw('currency, SUM(expected_amount) AS amount')->groupBy('currency')->pluck('amount', 'currency');
         $summary = ['open_count' => (clone $open)->count(), 'unknown_amount_count' => (clone $open)->whereNull('expected_amount')->count(),
@@ -116,9 +134,15 @@ final class CrmOpportunityController extends Controller
     public function stage(Request $request, int $id)
     {
         $actor = $this->user($request, 'stage');
-        $data = $request->validate(['version' => 'required|integer|min:1', 'direction' => 'required|in:forward,backward', 'reason' => 'required|string|max:5000',
-            'file_id' => 'nullable|integer|min:1', 'expected_amount' => 'nullable|numeric|decimal:0,2|min:0|max:9999999999999999.99', 'expected_close_date' => 'nullable|date_format:Y-m-d']);
+        $data = $request->validate(CrmProgressApplicationService::rules() + ['direction' => 'nullable|in:forward,backward']);
         return response()->json(['message' => '商机阶段已调整', 'data' => $this->opportunities->present($this->opportunities->stage($id, $data, $actor), $actor)]);
+    }
+
+    public function progress(Request $request, int $id)
+    {
+        $actor=$this->user($request,'stage');
+        $row=app(CrmProgressApplicationService::class)->update('opportunity',$id,$request->validate(CrmProgressApplicationService::rules()),$actor);
+        return response()->json(['message'=>'商机进度已更新','data'=>$this->opportunities->present($row,$actor)]);
     }
 
     public function lose(Request $request, int $id)
@@ -195,6 +219,7 @@ final class CrmOpportunityController extends Controller
             'name' => 'required|string|max:160', 'contact_id' => 'nullable|integer|min:1', 'owner_legacy_id' => 'nullable|integer|min:1', 'business_line' => 'nullable|string|max:120',
             'expected_amount' => 'nullable|numeric|decimal:0,2|min:0|max:9999999999999999.99', 'currency' => 'nullable|string|size:3',
             'expected_close_date' => 'nullable|date_format:Y-m-d', 'demand_summary' => 'nullable|string|max:5000',
+            'customer_pool' => 'nullable|string|max:80', 'trade_type' => 'nullable|string|max:80',
             'next_contact_at' => 'nullable|date', 'next_plan' => 'nullable|string|max:5000', 'files' => 'nullable|array|max:30',
         ];
         foreach ($this->fileRules() as $field => $rule) $rules['files.*.'.$field] = $rule;

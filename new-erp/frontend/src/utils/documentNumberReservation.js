@@ -1,4 +1,5 @@
 import { reserveDocumentNumber } from '../api/erp/master'
+import { safeUuid } from './id'
 
 const currentUserId = () => {
   try {
@@ -8,14 +9,6 @@ const currentUserId = () => {
 }
 
 const sessionKey = (userId, documentType, page) => `erp:number-session:v2:${encodeURIComponent(process.env.VUE_APP_BASE_API || '')}:${userId}:${documentType}:${page || 'create'}`
-
-const uuid = () => {
-  if (window.crypto && typeof window.crypto.randomUUID === 'function') return window.crypto.randomUUID()
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
-    const r = Math.random() * 16 | 0
-    return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16)
-  })
-}
 
 // 矩阵用规格区分缓存会话，发送后端的页面路径保持长度受限。
 export const reserveForCreatePage = async (documentType, page, storageContext = page) => {
@@ -28,7 +21,7 @@ export const reserveForCreatePage = async (documentType, page, storageContext = 
   const key = sessionKey(userId, documentType, storageContext)
   let creationSessionId = sessionStorage.getItem(key)
   if (!creationSessionId) {
-    creationSessionId = uuid()
+    creationSessionId = safeUuid()
     sessionStorage.setItem(key, creationSessionId)
   }
   const response = await reserveDocumentNumber({

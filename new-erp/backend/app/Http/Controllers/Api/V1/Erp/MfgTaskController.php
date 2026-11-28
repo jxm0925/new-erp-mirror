@@ -198,19 +198,6 @@ class MfgTaskController extends Controller
             'data' => $result['result']]);
     }
 
-    public function workers(Request $request, int $id, TaskQueryService $query)
-    {
-        $this->user($request, ['production.operation.view']);
-        return response()->json(['data' => $query->operationWorkers($id)]);
-    }
-
-    public function saveWorkers(Request $request, int $id, TaskService $tasks)
-    {
-        [$user] = $this->user($request, ['production.operation.edit']);
-        $data = $request->validate(['employee_legacy_ids' => 'present|array|max:200', 'employee_legacy_ids.*' => 'integer|min:1']);
-        return response()->json(['message' => '能做的人已保存。', 'data' => $tasks->saveWorkers($id, $data['employee_legacy_ids'], $user)]);
-    }
-
     public static function publicUrl(Request $request, string $path): string
     {
         $url = Storage::disk('public')->url($path);

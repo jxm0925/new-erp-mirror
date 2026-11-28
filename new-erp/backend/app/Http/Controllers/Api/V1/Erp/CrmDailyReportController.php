@@ -56,7 +56,7 @@ final class CrmDailyReportController extends Controller
         $params = $r->validate([
             'sales_id' => 'nullable|integer|min:1',
             'project_keys' => 'sometimes|array|max:100',
-            'project_keys.*' => ['string', 'distinct', 'regex:/^(lead|opportunity):[1-9][0-9]*$/'],
+            'project_keys.*' => ['string', 'distinct', 'regex:/^(lead|opportunity|customer):[1-9][0-9]*$/'],
         ]);
         $salesId = $params['sales_id'] ?? null;
         $salesId = $salesId !== null ? (int) $salesId : null;
@@ -69,6 +69,11 @@ final class CrmDailyReportController extends Controller
     public function saveSales(Request $r)
     {
         return $this->reports->saveSales($this->actor($r, true), $this->day($r), $r->all());
+    }
+
+    public function syncFollowups(Request $r)
+    {
+        return $this->reports->syncFollowups($this->actor($r, true), $this->day($r), $this->version($r));
     }
 
     public function saveSupervisorNote(Request $r)

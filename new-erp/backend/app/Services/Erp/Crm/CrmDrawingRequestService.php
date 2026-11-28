@@ -27,7 +27,7 @@ final class CrmDrawingRequestService
         $create = false;
         if (!empty($filters['subject_type']) && !empty($filters['subject_id'])) {
             $subject = $this->subject($filters['subject_type'], (int) $filters['subject_id'], $actor);
-            $create = $this->canManageSubject($subject, $actor);
+            $create = $filters['subject_type'] === 'opportunity' && $this->canManageSubject($subject, $actor);
         }
         return ['current_user' => ['id' => (int) $actor->legacy_id, 'name' => $this->name($actor)],
             'abilities' => ['create' => $create, 'deliver' => $this->isTechnician($actor)],
@@ -138,6 +138,7 @@ final class CrmDrawingRequestService
             'reference_attachment_ids' => 'nullable|array|max:100', 'reference_attachment_ids.*' => 'required|integer|min:1|distinct',
             'version' => 'nullable|integer|min:1', 'request_key' => 'required|string|max:64|regex:/^[A-Za-z0-9_-]+$/'])->validate();
         $data['title'] = trim($data['title']); $data['requirement'] = trim($data['requirement']);
+        abort_if(!$id && $data['subject_type'] === 'lead', 422, '线索阶段无需提交图纸需求，请转为商机后在商机中提交。');
         abort_if($data['title'] === '' || $data['requirement'] === '', 422, '请填写需求名称和具体要求。');
         if (!$id || isset($data['reference_attachment_ids'])) {
             $data['reference_attachment_ids'] = array_map('intval', $data['reference_attachment_ids'] ?? []);
@@ -238,7 +239,7 @@ final class CrmDrawingRequestService
         $manage = false;
         try { $manage = $this->canManageSubject($this->requestSubject($request, $actor), $actor); }
         catch (\Symfony\Component\HttpKernel\Exception\HttpExceptionInterface|\Illuminate\Database\Eloquent\ModelNotFoundException $error) {}
-        return ['create' => $manage, 'edit' => $manage && $request->status === 'pending',
+        return ['create' => $request->opportunity_id !== null && $manage, 'edit' => $manage && $request->status === 'pending',
             'delete' => $manage && $request->status === 'pending' && !($hasRevisions ?? $request->revisions()->exists()),
             'deliver' => $this->isTechnician($actor) && (int) $request->technician_legacy_id === (int) $actor->legacy_id,
             'confirm' => $manage];

@@ -6,16 +6,13 @@ use App\Models\Erp\Bom;
 
 class BomMatcher
 {
-    public function __construct(private readonly LengthCutRequirementService $lengthCutRequirements)
+    public function __construct(private readonly BomExplosionEngine $engine)
     {
     }
 
     public function eligibleQuery(?string $businessDate = null): \Illuminate\Database\Eloquent\Builder
     {
-        $date = $businessDate ?? now()->toDateString();
-        return Bom::query()->where('audit_status', 'approved')->whereIn('status', ['active', 'enabled', 'published'])
-            ->where(fn ($q) => $q->whereNull('effective_date')->orWhere('effective_date', '<=', $date))
-            ->where(fn ($q) => $q->whereNull('expire_date')->orWhere('expire_date', '>=', $date));
+        return $this->engine->eligibleQuery($businessDate);
     }
 
     public function match(?int $productId, ?int $skuId, ?int $itemId, ?array $configuration = null, ?int $pinnedBomId = null, bool $lock = false, bool $requireMaterials = false): array
@@ -24,53 +21,14 @@ class BomMatcher
             return $this->blocked('not_checked', 'Item 未匹配，不能匹配 BOM');
         }
 
-        $query = $this->eligibleQuery()
-            ->when($lock, fn ($q) => $q->lockForUpdate(), fn ($q) => $q->with(['items.componentItem.unit.standardUnit', 'items.unit.standardUnit']))
-            // 已确认需求引用的是具体版本。默认版本改变不得替换已选的生产资料；
-            // 原版本失效则显式阻断，由技术岗位修订，不能自动回退到另一份 BOM。
-            ->when($pinnedBomId !== null, fn ($q) => $q->whereKey($pinnedBomId))
-            ->where('output_item_id', $itemId);
-
-        $matches = $query
-            ->when($productId === null && $skuId === null, function ($itemOnly) {
-                $itemOnly->whereNull('product_id')->whereNull('sku_id');
-            }, function ($matchedScope) use ($productId, $skuId) {
-                $matchedScope->where(function ($q) use ($productId, $skuId) {
-                    $q->where(function ($exact) use ($productId, $skuId) {
-                        if ($productId) $exact->where('product_id', $productId);
-                        if ($skuId) $exact->where('sku_id', $skuId);
-                    })->orWhere(function ($itemOnly) {
-                        $itemOnly->whereNull('product_id')->whereNull('sku_id');
-                    });
-                });
-            });
-        $matches = $matches->when($requireMaterials, fn ($q) => $q->withExists('items'))
-            ->orderByDesc('is_default')->orderByDesc('id')->get();
-
-        if ($matches->isEmpty()) return $this->blocked('missing', $pinnedBomId !== null
-            ? '已确认的 BOM 版本已失效或不适用于该产出，请先修订生产资料'
-            : '未找到已审核且有效的 BOM');
-        if ($requireMaterials) {
-            $first = $matches->first();
-            $matches = $matches->where('items_exists', true);
-            if ($matches->isEmpty()) return $this->blocked('empty_materials', self::emptyMaterialsMessage($first->bom_no));
+        $selection = $this->engine->select($productId, $skuId, $itemId, $pinnedBomId, lock: $lock, requireMaterials: $requireMaterials);
+        if ($selection['status'] !== 'matched') {
+            $result = $this->blocked($selection['status'], $selection['block_reason']);
+            $result['candidates'] = array_map(fn (Bom $bom) => $this->candidate($bom), $selection['candidates']);
+            return $result;
         }
-        if ($matches->count() > 1 && $matches->where('is_default', true)->count() !== 1) {
-            return [
-                'status' => 'conflict',
-                'block_reason' => '存在多个可用 BOM，且默认 BOM 不唯一',
-                'bom_id' => null,
-                'bom_version_id' => null,
-                'bom_version' => null,
-                'bom_snapshot' => null,
-                'candidates' => $matches->map(fn ($bom) => $this->candidate($bom))->all(),
-            ];
-        }
-
-        $bom = $matches->where('is_default', true)->first() ?: $matches->first();
-        if ($lock) $this->loadLockedLines($bom);
-        if ($requireMaterials && $bom->items->isEmpty()) return $this->blocked('empty_materials', self::emptyMaterialsMessage($bom->bom_no));
-        $resolvedItems = $this->lengthCutRequirements->resolveBomLines($bom, $configuration);
+        $bom = $selection['bom'];
+        $resolvedItems = $this->engine->lines($bom, $configuration);
         return [
             'status' => 'matched',
             'block_reason' => null,
@@ -94,14 +52,12 @@ class BomMatcher
 
     public static function emptyMaterialsMessage(string $bomNo): string
     {
-        return "「{$bomNo}」没有有效用料，请选择其他 BOM 版本，或在 BOM 管理中补齐用料。";
+        return BomExplosionEngine::emptyMaterialsMessage($bomNo);
     }
 
     public function loadLockedLines(Bom $bom): void
     {
-        // 锁内当前读，避免订单事务先前的普通查询复用旧版 BOM 明细或工序绑定。
-        $bom->load(['items' => fn ($q) => $q->lockForUpdate(), 'items.componentItem.unit.standardUnit', 'items.unit.standardUnit',
-            'items.operationBinding' => fn ($q) => $q->lockForUpdate()]);
+        $this->engine->loadLockedLines($bom);
     }
 
     private function blocked(string $status, string $reason): array

@@ -45,7 +45,16 @@ export default {
     queryParams() { return this.managementScope ? { management_scope: this.managementScope, ...this.params } : this.params },
     requestContext() { return JSON.stringify([this.entity, this.valueKey, this.queryParams]) },
     recordFields() { return ({ products: ['product_code', 'product_name'], skus: ['sku_code', 'sku_name'], items: ['item_code', 'item_name'], units: ['unit_code', 'unit_name'], categories: ['category_code', 'category_name'], suppliers: ['supplier_code', 'supplier_name'], warehouses: ['warehouse_code', 'warehouse_name'], locations: ['location_code', 'location_name'] })[this.entity] || ['code', 'name'] },
-    recordColumns() { return this.columns.length ? this.columns : [{ prop: this.recordFields[0], label: '编码' }, { prop: this.recordFields[1], label: '名称' }] },
+    recordColumns() {
+      if (this.columns.length) return this.columns
+      if (this.entity === 'items') return [
+        { prop: 'item_code', label: '物料编码' },
+        { prop: 'item_name', label: '物料名称' },
+        { prop: 'spec', label: '规格型号', format: row => row.spec || '—' },
+        { prop: 'unit', label: '单位', format: row => (row.unit && (row.unit.unit_name || row.unit.symbol)) || row.unit_name || '—' }
+      ]
+      return [{ prop: this.recordFields[0], label: '编码' }, { prop: this.recordFields[1], label: '名称' }]
+    },
     displayText() { return this.currentRows.map(row => Object.keys(row).length > 1 ? this.recordLabel(row) : this.resolveLoading ? '正在加载已选记录' : '已选记录不可用').join('、') }
   },
   watch: {
@@ -86,6 +95,10 @@ export default {
       const serial = ++this.openSerial
       await this.resolveSelected()
       if (serial !== this.openSerial || this.disabled) return
+      this.categories = []
+      this.visible = true
+      if (this.categoryType === 'item' && !this.$can('item_category.view')) return
+      // 分类仅辅助筛选，独立加载以免慢请求阻塞右侧分页搜索。
       if (this.categoryRequest || this.categoryType) {
         try {
           const { data } = await (this.categoryRequest ? this.categoryRequest() : this.categoryType === 'product' ? listEntity('categories', { category_type: 'product', tree: 1 }) : getItemCategoryTree({ management_scope: this.managementScope || this.params.management_scope || undefined }))
@@ -94,10 +107,9 @@ export default {
         } catch (error) {
           if (serial !== this.openSerial) return
           this.categories = []
-          this.$message.error(error.userMessage || '分类加载失败')
+          if (!(this.categoryType === 'item' && error.response?.status === 403)) this.$message.error(error.userMessage || '分类加载失败')
         }
       }
-      this.visible = true
     },
     confirm(rows) {
       this.remember(rows)

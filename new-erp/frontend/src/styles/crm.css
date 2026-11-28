@@ -70,10 +70,12 @@
 .crm-page .el-tabs__header {
   margin: 0;
 }
-.crm-page .el-tabs__item.is-active, .crm-page .el-tabs__item:hover, .crm-page .el-button--text, .crm-dialog .el-button--text {
+.crm-page .el-tabs__item.is-active, .crm-page .el-tabs__item:hover,
+.crm-dialog .el-tabs__item.is-active, .crm-dialog .el-tabs__item:hover,
+.crm-page .el-button--text, .crm-dialog .el-button--text {
   color: #008b4b;
 }
-.crm-page .el-tabs__active-bar {
+.crm-page .el-tabs__active-bar, .crm-dialog .el-tabs__active-bar {
   background: #008b4b;
 }
 .crm-page .el-table th.el-table__cell, .crm-dialog .el-table th.el-table__cell {
@@ -398,4 +400,15 @@ button.crm-opportunity-stage {
     flex: 1;
     min-width: 0;
   }
+}
+
+.crm-followup-summary {
+  color: #475569;
+  line-height: 1.5;
+  min-width: 0;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  word-break: break-word;
 }

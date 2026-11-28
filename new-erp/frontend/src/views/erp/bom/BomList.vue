@@ -27,7 +27,7 @@
       <div class="head-actions">
         <el-button size="small" icon="el-icon-refresh" class="btn-refresh" :loading="loading" @click="load">刷新</el-button>
         <el-button v-if="$can('bom.manage.view')" size="small" icon="el-icon-delete" class="btn-default" @click="openDeletedDialog">回收站</el-button>
-        <el-button size="small" icon="el-icon-share" class="btn-default" @click="$router.push('/bom/expand')">
+        <el-button v-if="$can(['bom.expand', 'bom.manage.view'])" size="small" icon="el-icon-share" class="btn-default" @click="$router.push('/bom/expand')">
           BOM 展开算量
         </el-button>
         <el-button v-if="$can('bom.manage.edit')" size="small" icon="el-icon-set-up" class="btn-default" :disabled="!selected.length" @click="openBatch">
@@ -88,9 +88,9 @@
 
       <div
         class="metric-card metric-pending"
-        :class="{ active: query.audit_status === 'pending' }"
+        :class="{ active: query.submission_state === 'pending' }"
         title="点击筛选待审核方案"
-        @click="filterAudit('pending')"
+        @click="filterSubmission('pending')"
       >
         <div class="metric-icon-box"><i class="el-icon-time" /></div>
         <div class="metric-info">
@@ -101,14 +101,14 @@
 
       <div
         class="metric-card metric-default"
-        :class="{ active: query.is_default === 'true' }"
-        title="点击筛选默认启用方案"
-        @click="filterDefault('true')"
+        :class="{ active: query.submission_state === 'draft' }"
+        title="点击筛选草稿方案"
+        @click="filterSubmission('draft')"
       >
         <div class="metric-icon-box"><i class="el-icon-star-on" /></div>
         <div class="metric-info">
-          <span class="metric-label">默认生效方案</span>
-          <strong class="metric-val code-mono">{{ (stats.default || 0).toLocaleString() }}</strong>
+          <span class="metric-label">未提交草稿</span>
+          <strong class="metric-val code-mono">{{ (stats.draft || 0).toLocaleString() }}</strong>
         </div>
       </div>
     </section>
@@ -134,7 +134,7 @@
 
           <paged-record-select v-model="query.output_item_id" size="small" clearable placeholder="产出物料" class="filter-select-md" @change="search" entity="items" title="选择产出物料" :params="{ management_scope: 'factory' }" category-type="item" />
 
-          <el-select v-model="query.status" size="small" clearable placeholder="启用状态" class="filter-select-xs" @change="search">
+          <el-select v-model="query.status" size="small" clearable placeholder="启用状态" class="filter-select-xs" @change="clearSubmissionAndSearch">
             <el-option label="全部状态" value="" />
             <el-option label="草稿" value="draft" />
             <el-option label="启用" value="active" />
@@ -142,7 +142,7 @@
             <el-option label="已归档" value="archived" />
           </el-select>
 
-          <el-select v-model="query.audit_status" size="small" clearable placeholder="审核状态" class="filter-select-xs" @change="search">
+          <el-select v-model="query.audit_status" size="small" clearable placeholder="审核状态" class="filter-select-xs" @change="clearSubmissionAndSearch">
             <el-option label="全部审核" value="" />
             <el-option label="待审核" value="pending" />
             <el-option label="已审核" value="approved" />
@@ -266,13 +266,13 @@
               <el-button type="text" size="small" class="theme-btn-link" icon="el-icon-view" @click="openDetail(row)">查看</el-button>
               <el-button v-if="canEditBom(row)" type="text" size="small" class="theme-btn-link" icon="el-icon-edit" @click="$router.push(`/bom/${row.id}/edit`)">编辑</el-button>
               <el-button v-if="isDraftEditable(row) && canAction('submit')" type="text" size="small" class="theme-btn-link" icon="el-icon-check" @click="action(row, 'submit')">提交</el-button>
-              <el-button v-if="isPendingAudit(row) && canAction('approve')" type="text" size="small" class="theme-btn-link" icon="el-icon-circle-check" @click="action(row, 'approve')">通过</el-button>
-              <el-button v-if="isPendingAudit(row) && canAction('reject')" type="text" size="small" class="danger-btn-link" icon="el-icon-circle-close" @click="action(row, 'reject')">驳回</el-button>
+              <el-button v-if="isLegacyPendingAudit(row) && canAction('approve')" type="text" size="small" class="theme-btn-link" icon="el-icon-circle-check" @click="action(row, 'approve')">通过</el-button>
+              <el-button v-if="isLegacyPendingAudit(row) && canAction('reject')" type="text" size="small" class="danger-btn-link" icon="el-icon-circle-close" @click="action(row, 'reject')">驳回</el-button>
               <el-button v-if="isApprovedInactive(row) && canAction('activate')" type="text" size="small" class="theme-btn-link" icon="el-icon-video-play" @click="action(row, 'activate')">启用</el-button>
               <el-button v-if="isActiveApproved(row) && canAction('deactivate')" type="text" size="small" class="danger-btn-link" icon="el-icon-video-pause" @click="action(row, 'deactivate')">停用</el-button>
               <el-button v-if="canSetDefault(row) && canAction('setDefault')" type="text" size="small" class="warning-btn-link" icon="el-icon-star-off" @click="action(row, 'setDefault')">设默认</el-button>
               <el-button v-if="row.audit_status === 'approved' && $can('bom.manage.create')" type="text" size="small" class="theme-btn-link" icon="el-icon-document-copy" @click="copyVersion(row)">复制新版</el-button>
-              <el-button v-if="isActiveApproved(row) && isEffective(row)" type="text" size="small" class="theme-btn-link highlight-action" icon="el-icon-share" @click="$router.push({ path: '/bom/expand', query: { bom_id: row.id } })">展开算量</el-button>
+              <el-button v-if="$can(['bom.expand', 'bom.manage.view']) && isActiveApproved(row) && isEffective(row)" type="text" size="small" class="theme-btn-link highlight-action" icon="el-icon-share" @click="$router.push({ path: '/bom/expand', query: { bom_id: row.id } })">展开算量</el-button>
               <el-button v-if="canDeleteBom(row)" type="text" size="small" class="danger-btn-link" icon="el-icon-delete" @click="action(row, 'delete')">移入回收站</el-button>
             </div>
           </template>
@@ -378,7 +378,7 @@
         <div class="dialog-banner-icon warning"><i class="el-icon-warning-outline" /></div>
         <div class="dialog-banner-text">
           <span class="dialog-banner-title">请确认执行【{{ opDialog.text }}】操作</span>
-          <span class="dialog-banner-desc">{{ opDialog.type === 'delete' ? '移入回收站后可恢复，原方案信息和物料明细会保留。' : opDialog.type === 'restore' ? '恢复后保持删除前状态，不会自动启用。' : '该操作会变更 BOM 的流转状态或默认生效配置，请核对方案信息。' }}</span>
+          <span class="dialog-banner-desc">{{ opDialog.type === 'delete' ? '移入回收站后可恢复，原方案信息和物料明细会保留。' : opDialog.type === 'restore' ? '恢复后保持删除前状态，不会自动启用。' : opDialog.type === 'submit' ? '启用审批流程时，审批通过后生效；未启用审批流程时直接生效。' : '该操作会变更 BOM 的流转状态或默认生效配置，请核对方案信息。' }}</span>
         </div>
       </div>
       <div v-if="opDialog.row" class="dialog-target-card">
@@ -386,6 +386,7 @@
         <div class="target-row"><span class="target-label">BOM 名称：</span><span class="target-val">{{ opDialog.row.bom_name }}</span></div>
         <div class="target-row"><span class="target-label">当前版本：</span><span class="target-val code-mono">{{ opDialog.row.version }}</span></div>
       </div>
+      <el-checkbox v-if="opDialog.type === 'submit' && $can('bom.manage.toggle_status')" v-model="opDialog.setDefault" :disabled="opDialog.loading">生效后设为默认版本</el-checkbox>
       <span slot="footer" class="dialog-footer">
         <el-button size="small" class="btn-default" @click="opDialog.visible = false">取消</el-button>
         <el-button v-if="canAction(opDialog.type)" size="small" type="success" class="btn-theme-submit" :loading="opDialog.loading" @click="confirmAction">确定{{ opDialog.text }}</el-button>
@@ -488,10 +489,10 @@
                 icon="el-icon-check"
                 @click="action(detailDialog.data, 'submit')"
               >
-                提交审核
+                提交生效
               </el-button>
               <el-button
-                v-if="isPendingAudit(detailDialog.data) && canAction('approve')"
+                v-if="isLegacyPendingAudit(detailDialog.data) && canAction('approve')"
                 size="mini"
                 type="success"
                 icon="el-icon-circle-check"
@@ -500,7 +501,7 @@
                 审核通过
               </el-button>
               <el-button
-                v-if="isPendingAudit(detailDialog.data) && canAction('reject')"
+                v-if="isLegacyPendingAudit(detailDialog.data) && canAction('reject')"
                 size="mini"
                 type="danger"
                 plain
@@ -547,7 +548,7 @@
                 复制新版
               </el-button>
               <el-button
-                v-if="isActiveApproved(detailDialog.data) && isEffective(detailDialog.data)"
+                v-if="$can(['bom.expand', 'bom.manage.view']) && isActiveApproved(detailDialog.data) && isEffective(detailDialog.data)"
                 size="mini"
                 type="success"
                 icon="el-icon-share"
@@ -861,6 +862,7 @@ import PagedRecordSelect from '@/components/common/PagedRecordSelect.vue'
 import TechnicalDrawingSourcePanel from '@/components/technical-drawings/TechnicalDrawingSourcePanel.vue'
 import { listEntity } from '@/api/erp/master'
 import { listBoms, getBom, deleteBom, restoreBom, submitBom, approveBom, rejectBom, activateBom, deactivateBom, setDefaultBom, copyBomVersion, exportBomOperationStandards, batchPreviewBomOperationStandards, batchApplyBomOperationStandards, importPreviewBomOperationStandards, importApplyBomOperationStandards } from '@/api/erp/bom'
+import { executeProductionDecision, pendingProductionDecision } from '@/api/erp/production-decisions'
 import { listPerformanceTemplates } from '@/api/erp/production'
 import { cuttingQuantityBasis, totalLengthMetres } from '@/utils/cutting-quantity.mjs'
 
@@ -873,7 +875,7 @@ export default {
     total: 0,
     page: 1,
     perPage: 10,
-    stats: { total: 0, active: 0, pending: 0, default: 0 },
+    stats: { total: 0, active: 0, pending: 0, draft: 0 },
     products: [],
     skus: [],
     items: [],
@@ -884,11 +886,12 @@ export default {
       output_item_id: '',
       status: '',
       audit_status: '',
+      submission_state: '',
       bom_type: '',
       is_default: '',
       dateRange: []
     },
-    opDialog: { visible: false, loading: false, row: null, type: '', text: '' },
+    opDialog: { visible: false, loading: false, row: null, type: '', text: '', setDefault: false },
     versionDialog: { visible: false, loading: false, row: null, version: '', target: 'same', output_item_id: null },
     deletedDialog: { visible: false, loading: false, keyword: '', rows: [], total: 0, page: 1, perPage: 10 },
     detailDialog: { visible: false, loading: false, activeTab: 'basic', data: null, deleted: false },
@@ -899,6 +902,8 @@ export default {
   }),
   computed: {
     activeFilterTag() {
+      if (this.query.submission_state === 'draft') return '筛选: 未提交草稿'
+      if (this.query.submission_state === 'pending') return '筛选: 待审核'
       if (this.query.status === 'active') return '筛选: 正常启用'
       if (this.query.status === 'inactive') return '筛选: 已停用'
       if (this.query.audit_status === 'pending') return '筛选: 待审核'
@@ -1104,7 +1109,8 @@ export default {
         date_to,
         dateRange: undefined,
         page: this.page,
-        per_page: this.perPage
+        per_page: this.perPage,
+        include_stats: 1
       }
     },
     async load() {
@@ -1124,8 +1130,8 @@ export default {
           this.stats = {
             total: this.total,
             active: this.rows.filter(x => x.status === 'active').length,
-            pending: this.rows.filter(x => x.audit_status === 'pending').length,
-            default: this.rows.filter(x => x.is_default).length
+            pending: this.rows.filter(x => x.status === 'draft' && x.audit_status === 'pending' && x.submitted_at).length,
+            draft: this.rows.filter(x => x.status === 'draft' && x.audit_status !== 'approved' && !x.submitted_at).length
           }
         }
       } catch (error) {
@@ -1183,6 +1189,7 @@ export default {
         output_item_id: '',
         status: '',
         audit_status: '',
+        submission_state: '',
         bom_type: '',
         is_default: '',
         dateRange: []
@@ -1190,24 +1197,28 @@ export default {
       this.search()
     },
     filterAll() {
+      this.query.submission_state = ''
       this.query.status = ''
       this.query.audit_status = ''
       this.query.is_default = ''
       this.search()
     },
     filterStatus(st) {
+      this.query.submission_state = ''
       this.query.status = st
       this.query.audit_status = ''
       this.query.is_default = ''
       this.search()
     },
     filterAudit(aud) {
+      this.query.submission_state = ''
       this.query.audit_status = aud
       this.query.status = ''
       this.query.is_default = ''
       this.search()
     },
     filterDefault(def) {
+      this.query.submission_state = ''
       this.query.is_default = def
       this.query.status = ''
       this.query.audit_status = ''
@@ -1215,6 +1226,17 @@ export default {
     },
     clearFilterTag() {
       this.filterAll()
+    },
+    clearSubmissionAndSearch() {
+      this.query.submission_state = ''
+      this.search()
+    },
+    filterSubmission(state) {
+      this.query.submission_state = state
+      this.query.status = ''
+      this.query.audit_status = ''
+      this.query.is_default = ''
+      this.search()
     },
     statusText(v) {
       return ({ draft: '草稿', active: '启用', inactive: '已停用', archived: '已归档' })[v] || v
@@ -1232,6 +1254,11 @@ export default {
     },
     displayAuditText(row) {
       if (this.isDraftEditable(row)) return '未提交'
+      if (row.approval_task_id && this.isPendingAudit(row)) {
+        if (row.approval_action_status === 'FAILED') return '处理失败'
+        if (row.approval_task_status === 'CANCELLED') return '审批已取消'
+        return '审批中'
+      }
       return this.auditText(row.audit_status)
     },
     displayStatusClass(row) {
@@ -1250,6 +1277,7 @@ export default {
     },
     isDraftEditable(row) { return row.status === 'draft' && !row.submitted_at },
     isPendingAudit(row) { return row.audit_status === 'pending' && Boolean(row.submitted_at) },
+    isLegacyPendingAudit(row) { return this.isPendingAudit(row) && !row.approval_task_id },
     canEditBom(row) { return this.$can('bom.manage.edit') && !row.deleted_at && !this.isPendingAudit(row) && (this.isDraftEditable(row) || row.status === 'inactive') },
     canDeleteBom(row) { return this.$can('bom.manage.delete') && !row.deleted_at && !row.is_default && !this.isPendingAudit(row) && (row.status === 'inactive' || (this.isDraftEditable(row) && row.audit_status === 'pending')) },
     isApprovedInactive(row) { return row.audit_status === 'approved' && row.status !== 'active' && row.status !== 'archived' },
@@ -1388,10 +1416,11 @@ export default {
     },
     action(row, type) {
       if (!row || !this.canAction(type) || (row.deleted_at && type !== 'restore')) return
+      if (['approve', 'reject'].includes(type) && !this.isLegacyPendingAudit(row)) return
       if (type === 'delete' && !this.canDeleteBom(row)) return
       if (type === 'restore' && (!row.deleted_at || !this.$can('bom.manage.delete'))) return
       const text = {
-        submit: '提交审核',
+        submit: '提交生效',
         approve: '审核通过',
         reject: '驳回',
         activate: '启用',
@@ -1400,7 +1429,7 @@ export default {
         delete: '移入回收站',
         restore: '恢复'
       }[type]
-      this.opDialog = { visible: true, loading: false, row, type, text }
+      this.opDialog = { visible: true, loading: false, row, type, text, setDefault: false }
     },
     async confirmAction() {
       const { row, type, text } = this.opDialog
@@ -1417,8 +1446,15 @@ export default {
       }[type]
       this.opDialog.loading = true
       try {
-        await api(row.id)
-        this.$message.success(`${text}成功`)
+        let response
+        if (type === 'submit') {
+          const options = { set_default: Boolean(this.opDialog.setDefault && this.$can('bom.manage.toggle_status')) }
+          const key = 'bom_submit_' + row.id
+          const pending = pendingProductionDecision(key)
+          if (pending && Boolean(pending.set_default) !== options.set_default) return this.$message.warning('上次提交结果尚未确认，请先刷新核对 BOM 状态；继续重试时须保持上次默认版本选择。')
+          response = await executeProductionDecision(key, options, payload => api(row.id, payload))
+        } else response = await api(row.id)
+        this.$message.success(response.data.message || `${text}成功`)
         this.opDialog.visible = false
         if (type === 'delete' || type === 'restore') {
           if (this.detailDialog.data && this.detailDialog.data.id === row.id) {
@@ -1474,6 +1510,7 @@ export default {
 .bom-list-page {
   padding: 16px 20px 24px;
   background: #f8fafc;
+  min-width: 0;
   min-height: calc(100vh - 54px);
   box-sizing: border-box;
 }
@@ -1483,6 +1520,8 @@ export default {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
   background: #ffffff;
   padding: 16px 20px;
   border-radius: 8px;
@@ -1493,6 +1532,8 @@ export default {
   display: flex;
   align-items: center;
   gap: 12px;
+  min-width: 0;
+  max-width: 100%;
 }
 .head-icon {
   width: 40px;
@@ -1509,6 +1550,7 @@ export default {
 .head-title-wrap {
   display: flex;
   flex-direction: column;
+  min-width: 0;
 }
 .title-row {
   display: flex;
@@ -1544,7 +1586,20 @@ export default {
 .head-actions {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
   gap: 10px;
+  min-width: 0;
+  max-width: 100%;
+  margin-left: auto;
+}
+.head-actions .el-button,
+.filter-actions .el-button {
+  flex-shrink: 0;
+}
+.head-actions .el-button + .el-button,
+.filter-actions .el-button + .el-button {
+  margin-left: 0;
 }
 .btn-refresh {
   background: #ffffff !important;
@@ -1673,6 +1728,7 @@ export default {
   align-items: center;
   flex-wrap: wrap;
   gap: 12px;
+  min-width: 0;
   padding-bottom: 16px;
   margin-bottom: 14px;
   border-bottom: 1px solid #f1f5f9;
@@ -1682,6 +1738,13 @@ export default {
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
+  min-width: 0;
+  max-width: 100%;
+}
+.filter-fields > * {
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 .filter-input-search {
   width: 250px;
@@ -1698,7 +1761,10 @@ export default {
 .filter-actions {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
+  min-width: 0;
+  max-width: 100%;
 }
 .btn-theme-submit {
   background: #008b4b !important;

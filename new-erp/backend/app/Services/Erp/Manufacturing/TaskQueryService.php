@@ -481,12 +481,6 @@ final class TaskQueryService
         ];
     }
 
-    public function operationWorkers(int $operationId): array
-    {
-        return ProductionOperationWorker::query()->where('operation_id', $operationId)->orderBy('id')->get()
-            ->map(fn ($w) => ['id' => (int) $w->employee_legacy_id, 'name' => $w->employee_name])->values()->all();
-    }
-
     private function pendingScraps($opNames): array
     {
         $rows = MfgUnitReport::query()->where('review_status', 'pending')->orderBy('id')->limit(50)->get();

@@ -27,7 +27,8 @@ class RbacBootstrapService
         }
         $created = $this->seedPermissions($force);
         $this->ensureDefaultMenuGroups();
-        $grantableCreated = array_values(array_diff($created, ['inventory.amount.view', 'inventory.inbound.confirm']));
+        // 新拆出的模板查看/编辑权限由角色管理显式分配，已有 manage 授权继续有效。
+        $grantableCreated = array_values(array_diff($created, ['inventory.amount.view', 'inventory.inbound.confirm', 'production.performance.view', 'production.performance.edit']));
         // 已完成旧业务员升级的实例即使人工清空全部授权，也不能被当成全新安装恢复默认矩阵。
         $freshInstall = Schema::hasTable('erp_rbac_role_permissions') && ! DB::table('erp_rbac_role_permissions')->exists()
             && !DB::table('erp_operation_logs')->where('module', 'system_management')->where('target_type', 'business_staff_backfill')->exists();
@@ -559,6 +560,8 @@ class RbacBootstrapService
             ['production.material_return.request', '申请生产退料', 'button', 'production.board', null, null, 'el-icon-mouse', 5],
             ['production.tech.manage', '上传图纸和定制 BOM', 'button', 'production.tech', null, null, 'el-icon-mouse', 1],
             ['production.performance.manage', '维护提成模板', 'button', 'production.performance', null, null, 'el-icon-setting', 2],
+            ['production.performance.view', '查看提成模板', 'button', 'production.performance', null, null, 'el-icon-view', 1],
+            ['production.performance.edit', '编辑提成模板', 'button', 'production.performance', null, null, 'el-icon-edit', 3],
             ['production.serial.view', '查看序列号追溯', 'button', 'production.serial', null, null, 'el-icon-mouse', 1],
             ['production.serial.assign', '指定/调整部件编号', 'button', 'production.serial', null, null, 'el-icon-mouse', 2],
             ['production.operation.view', '查看工序', 'button', 'production.operation', null, null, 'el-icon-mouse', 1],

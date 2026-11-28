@@ -16,7 +16,7 @@ use Illuminate\Support\Facades\DB;
 final class CrmWorkbenchQueryService
 {
     public const TASKS = ['all' => '全部待办', 'today' => '今日联系', 'tomorrow' => '明日联系', 'overdue' => '逾期跟进', 'pending_receive' => '待接收',
-        'pending_confirm' => '待确认有效线索', 'pending_assign' => '待分配', 'pending_verify' => '待核实'];
+        'pending_assign' => '待分配', 'pending_verify' => '待核实'];
     public const PRIORITIES = ['closing' => '预计成交', 'confirmation' => '待客户确认', 'stalled' => '停滞商机'];
 
     public function __construct(
@@ -41,7 +41,7 @@ final class CrmWorkbenchQueryService
         $leadQuery = CrmLead::query();
         $this->leads->applyVisible($leadQuery, $actor);
         if (!$canLead) $leadQuery->whereRaw('1 = 0');
-        $pools = (clone $leadQuery)->whereNotNull('customer_pool')->selectRaw('customer_pool, COUNT(*) AS total')->groupBy('customer_pool')->pluck('total', 'customer_pool');
+        $pools = $this->poolCounts($actor, clone $leadQuery);
         $statuses = (clone $leadQuery)->selectRaw('status, COUNT(*) AS total')->groupBy('status')->pluck('total', 'status');
         $department = $this->staff->departmentOf((int) $actor->legacy_id);
         $isSales = $this->assignments->activeSales((int) $actor->legacy_id);
@@ -54,9 +54,9 @@ final class CrmWorkbenchQueryService
                 'department_legacy_id' => $department, 'department_name' => $this->access->departmentName($department)],
             'summary' => $summary,
             'task_abilities' => ['all' => true, 'today' => $canContact, 'tomorrow' => $canContact, 'overdue' => $canContact,
-                'pending_receive' => $canLead, 'pending_confirm' => $canLead,
+                'pending_receive' => $canLead,
                 'pending_assign' => $manager('assign'), 'pending_verify' => $manager('verify')],
-            'customer_pools' => array_map(fn ($pool) => ['name' => $pool, 'count' => (int) ($pools[$pool] ?? 0), 'query' => ['tab' => 'all', 'customer_pool' => $pool]], CrmLeadApplicationService::POOLS),
+            'customer_pools' => $this->poolRadar($pools, $actor),
             'lead_statuses' => collect(CrmLeadApplicationService::STATUSES)->map(fn ($name, $status) => ['name' => $name, 'count' => (int) ($statuses[$status] ?? 0), 'query' => ['tab' => 'all', 'status' => $status]])->values()->all(),
             'customer_tags' => $this->tags(clone $leadQuery, 'customer_tags', 'customer_tag'),
             'custom_tags' => $this->tags((clone $leadQuery)->where('created_by_legacy_id', $actor->legacy_id), 'custom_tags', 'custom_tag'),
@@ -79,10 +79,11 @@ final class CrmWorkbenchQueryService
         }
         $latest = $this->latestFollowups($subjects);
         $daily = collect();
-        if ($this->includeDaily($actor, $type) && ($subjects['lead'] || $subjects['opportunity'])) {
+        if ($this->includeDaily($actor, $type) && array_filter($subjects)) {
             $daily = app(CrmDailyFacts::class)->pendingActions($actor, $type)
                 ->where(fn ($q) => $q->where(fn ($lead) => $lead->where('a.subject_type','lead')->whereIn('a.subject_id',$subjects['lead']))
-                    ->orWhere(fn ($opp) => $opp->where('a.subject_type','opportunity')->whereIn('a.subject_id',$subjects['opportunity'])))
+                    ->orWhere(fn ($opp) => $opp->where('a.subject_type','opportunity')->whereIn('a.subject_id',$subjects['opportunity']))
+                    ->orWhere(fn ($customer) => $customer->where('a.subject_type','customer')->whereIn('a.subject_id',$subjects['customer'])))
                 ->orderBy('a.planned_at')->get(['a.*'])->groupBy(fn ($r) => $r->subject_type.':'.$r->subject_id);
         }
         return $page->through(function ($task) use ($actor, $type, $targets, $latest, $daily) {
@@ -99,6 +100,47 @@ final class CrmWorkbenchQueryService
             }
             return $row;
         });
+    }
+
+    private function poolCounts(object $actor, Builder $leads): array
+    {
+        $queries = ['lead' => $leads->where('status', 'active')->selectRaw('customer_pool as pool, COUNT(*) as total')->groupBy('customer_pool')];
+        if ($this->access->can($actor, 'crm.opportunity.view')) {
+            $opps = CrmOpportunity::query()->where('status', 'open');
+            $this->opportunities->applyVisible($opps, $actor);
+            $queries['opportunity'] = $opps->selectRaw("COALESCE(NULLIF(customer_pool, ''), (SELECT l.customer_pool FROM erp_crm_leads l WHERE l.id = erp_crm_opportunities.source_lead_id)) as pool, COUNT(*) as total")->groupBy('pool');
+        }
+        if ($this->access->can($actor, 'sales.customer')) {
+            $customers = SalesCustomer::query();
+            $this->access->applyVisible($customers, $actor);
+            $queries['customer'] = $customers->selectRaw('customer_pool as pool, COUNT(*) as total')->groupBy('customer_pool');
+        }
+        $counts = [];
+        foreach ($queries as $kind => $query) foreach ($query->get() as $row) {
+            $pool = app(CrmCustomerPoolService::class)->normalize($row->pool);
+            if ($pool) $counts[$pool][$kind] = ($counts[$pool][$kind] ?? 0) + (int) $row->total;
+        }
+        return $counts;
+    }
+
+    private function poolRadar(array $pools, object $actor): array
+    {
+        $types = [
+            'lead' => ['label' => '跟进中线索', 'path' => '/sales/leads', 'permission' => 'crm.lead.view', 'query' => ['tab' => 'all', 'status' => 'active']],
+            'opportunity' => ['label' => '进行中商机', 'path' => '/sales/opportunities', 'permission' => 'crm.opportunity.view', 'query' => ['tab' => 'all', 'status' => 'open']],
+            'customer' => ['label' => '维系客户', 'path' => '/sales/customers', 'permission' => 'sales.customer', 'query' => ['tab' => 'all']],
+        ];
+        $types = array_filter($types, fn ($type) => $this->access->can($actor, $type['permission']));
+        $names = array_values(array_unique(array_merge(array_column(app(CrmCustomerPoolService::class)->options(), 'pool_name'), array_keys($pools))));
+        $rows = [];
+        foreach ($names as $pool) {
+            $counts = array_replace(['lead' => 0, 'opportunity' => 0, 'customer' => 0], $pools[$pool] ?? []);
+            $targets = [];
+            foreach ($types as $kind => $type) $targets[] = ['type' => $kind, 'label' => $type['label'], 'count' => $counts[$kind],
+                'path' => $type['path'], 'query' => $type['query'] + ['customer_pool' => $pool]];
+            $rows[] = ['name' => $pool, 'count' => array_sum($counts), 'counts' => $counts, 'targets' => $targets];
+        }
+        return $rows;
     }
 
     public function priorities(object $actor, array $filters)
@@ -125,7 +167,7 @@ final class CrmWorkbenchQueryService
             return [
                 'id' => (int) $opportunity->id, 'customer_id' => (int) $opportunity->customer_id,
                 'customer_name' => $opportunity->customer_name, 'name' => $opportunity->name,
-                'stage' => $opportunity->stage, 'stage_label' => CrmOpportunityApplicationService::STAGES[$opportunity->stage] ?? $opportunity->stage,
+                'stage' => $opportunity->stage, 'stage_label' => CrmOpportunityApplicationService::STAGES[CrmNineStepCatalog::normalizeStage('opportunity', $opportunity->stage)] ?? $opportunity->stage,
                 'expected_amount' => $opportunity->expected_amount, 'currency' => $opportunity->currency,
                 'expected_close_date' => $opportunity->expected_close_date?->toDateString(),
                 'is_close_overdue' => $opportunity->expected_close_date?->lt(today()) ?? false,
@@ -168,8 +210,6 @@ final class CrmWorkbenchQueryService
                     CrmContactPlanQueryService::applyDue($q, 'next_contact_at', $kind);
                 } elseif ($kind === 'pending_receive') {
                     $q->where('status', 'pending_acceptance')->whereIn('pending_user_legacy_id', $handlingOwners);
-                } elseif ($kind === 'pending_confirm') {
-                    $q->where('status', 'active')->whereIn('owner_legacy_id', $handlingOwners)->whereNull('confirmed_at');
                 } elseif ($kind === 'pending_assign') {
                     $q->where('status', 'pending_assignment');
                     $this->managementRange($q, $actor, 'assign', 'department_legacy_id', 'source_channel');
@@ -200,6 +240,7 @@ final class CrmWorkbenchQueryService
                         ->orWhere(fn ($tie) => $tie->whereColumn('newer.contacted_at', 'direct.contacted_at')->whereColumn('newer.id', '>', 'direct.id')));
             });
         $this->access->applyVisible($customer, $actor);
+        $customer->where(fn ($q) => $q->where('direct.followup_schedule_mode', 'scheduled')->orWhereNull('direct.followup_schedule_mode'));
         if (!$this->access->can($actor, 'sales.customer')) $customer->whereRaw('1 = 0');
         CrmContactPlanQueryService::applyDue($customer, 'direct.next_contact_at', $type);
         $customer->selectRaw("'customer' AS target_type, erp_sales_customers.id AS target_id, direct.next_contact_at AS planned_at");
@@ -214,7 +255,7 @@ final class CrmWorkbenchQueryService
     private function includeDaily(object $actor, string $type): bool
     {
         return in_array($type, ['today','tomorrow','overdue','all'], true)
-            && ($this->access->can($actor, 'crm.lead.view') || $this->access->can($actor, 'crm.opportunity.view'));
+            && ($this->access->can($actor, 'crm.lead.view') || $this->access->can($actor, 'crm.opportunity.view') || $this->access->can($actor, 'sales.customer'));
     }
 
     private function managementRange(Builder|QueryBuilder $query, object $actor, string $action, string $department, string $channel): void
@@ -312,15 +353,14 @@ final class CrmWorkbenchQueryService
         if ($isOverdue) $taskKinds[] = 'overdue';
         elseif ($canContact && $nextContact && $nextContact->gte(today()) && $nextContact->lt(today()->addDay())) $taskKinds[] = 'today';
         elseif ($canContact && $nextContact && $nextContact->gte(today()->addDay()) && $nextContact->lt(today()->addDays(2))) $taskKinds[] = 'tomorrow';
-        if ($task->target_type === 'lead' && $target->status === 'active' && !$target->confirmed_at) $taskKinds[] = 'pending_confirm';
         if ($kind === 'all') $kind = $taskKinds[0] ?? 'today';
         $action = match ($kind) {
-            'pending_receive' => 'receive', 'pending_confirm' => 'confirm', 'pending_assign' => 'assign', 'pending_verify' => 'verify', default => 'followup',
+            'pending_receive' => 'receive', 'pending_assign' => 'assign', 'pending_verify' => 'verify', default => 'followup',
         };
         $ability = match ($action) { 'receive' => 'accept', 'followup' => 'follow', default => $action };
         if (empty($allowed[$ability])) $action = 'view';
         $actions = $action === 'view' ? [] : [$action];
-        foreach (['followup' => 'follow', 'receive' => 'accept', 'confirm' => 'confirm', 'assign' => 'assign', 'verify' => 'verify'] as $candidate => $ability) {
+        foreach (['followup' => 'follow', 'receive' => 'accept', 'assign' => 'assign', 'verify' => 'verify'] as $candidate => $ability) {
             if (!empty($allowed[$ability]) && ($candidate !== 'followup' || $canContact)) $actions[] = $candidate;
         }
         return ['id' => $task->target_type.':'.$task->target_id, 'target_type' => $task->target_type, 'target_id' => (int) $task->target_id,

@@ -16,17 +16,46 @@ class ProductionMasterDataController extends Controller
     public function enableOperation(Request $request, int $id, ProductionMasterDataService $service) { return $this->respond($request, ['message' => '工序已启用。', 'data' => $service->setOperationEnabled($id, true, $this->stateData($request), $this->user($request), ...$this->context($request))]); }
     public function disableOperation(Request $request, int $id, ProductionMasterDataService $service) { return $this->respond($request, ['message' => '工序已停用。', 'data' => $service->setOperationEnabled($id, false, $this->stateData($request), $this->user($request), ...$this->context($request))]); }
     public function operationReferences(Request $request, int $id, ProductionMasterDataService $service) { return $this->respond($request, ['data' => $service->operationReferences($id, ...$this->context($request))]); }
+    public function operationWorkers(Request $request, int $id, ProductionMasterDataService $service) { return $this->respond($request, ['data' => $service->operationWorkers($id, ...$this->context($request))]); }
+    public function updateOperationWorkers(Request $request, int $id, ProductionMasterDataService $service)
+    {
+        $data = $request->validate(['employee_legacy_ids' => 'present|array|max:200', 'employee_legacy_ids.*' => 'integer|min:1']);
+        return $this->respond($request, ['message' => '能做的人已保存。', 'data' => $service->updateOperationWorkers($id, $data['employee_legacy_ids'], $this->user($request), ...$this->context($request))]);
+    }
     public function destroyOperation(Request $request, int $id, ProductionMasterDataService $service) { return $this->respond($request, ['message' => '未被引用的停用工序已删除。', 'data' => $service->deleteOperation($id, $this->stateData($request), $this->user($request), ...$this->context($request))]); }
     public function routings(Request $request, ProductionMasterDataService $service) { return $this->respond($request, $service->routings($this->filters($request), ...$this->context($request))); }
     public function routing(Request $request, int $id, ProductionMasterDataService $service) { return $this->respond($request, ['data' => $service->routing($id, ...$this->context($request))]); }
-    public function storeRouting(Request $request, ProductionMasterDataService $service) { return $this->respond($request, ['message' => '工艺路线草稿已新增。', 'data' => $service->createRouting($this->routingData($request, false), $this->user($request), ...$this->context($request))], 201); }
-    public function updateRouting(Request $request, int $id, ProductionMasterDataService $service) { return $this->respond($request, ['message' => '工艺路线已保存。', 'data' => $service->updateRouting($id, $this->routingData($request, true), $this->user($request), ...$this->context($request))]); }
+    public function storeRouting(Request $request, ProductionMasterDataService $service)
+    {
+        $routing = $service->createRouting($this->routingData($request, false), $this->user($request), ...$this->context($request));
+        return $this->respond($request, ['message' => $routing->status === 'active' ? '工艺路线已保存并生效。' : '工艺路线草稿已新增。', 'data' => $routing], 201);
+    }
+    public function updateRouting(Request $request, int $id, ProductionMasterDataService $service)
+    {
+        $routing = $service->updateRouting($id, $this->routingData($request, true), $this->user($request), ...$this->context($request));
+        return $this->respond($request, ['message' => $routing->status === 'active' ? '工艺路线已保存并生效。' : '工艺路线已保存。', 'data' => $routing]);
+    }
     public function activateRouting(Request $request, int $id, ProductionMasterDataService $service) { return $this->respond($request, ['message' => '工艺路线已生效。', 'data' => $service->activateRouting($id, $this->stateData($request), $this->user($request), ...$this->context($request))]); }
     public function setDefaultRouting(Request $request, int $id, ProductionMasterDataService $service) { return $this->respond($request, ['message' => '默认工艺路线已更新。', 'data' => $service->setDefaultRouting($id, $this->stateData($request), $this->user($request), ...$this->context($request))]); }
     public function copyRouting(Request $request, int $id, ProductionMasterDataService $service) { return $this->respond($request, ['message' => '已复制为新版本。', 'data' => $service->copyRouting($id, $request->validate(['client_command_id' => 'required|string|max:120']), $this->user($request), ...$this->context($request))], 201); }
     public function retireRouting(Request $request, int $id, ProductionMasterDataService $service) { return $this->respond($request, ['message' => '工艺路线已退役。', 'data' => $service->retireRouting($id, $this->stateData($request), $this->user($request), ...$this->context($request))]); }
     public function destroyRouting(Request $request, int $id, ProductionMasterDataService $service) { return $this->respond($request, ['message' => '未生效的工艺路线草稿已删除。', 'data' => $service->deleteRouting($id, $this->stateData($request), $this->user($request), ...$this->context($request))]); }
-    public function selector(Request $request, string $type, ProductionMasterDataService $service) { return $this->respond($request, $service->selector($type, $request->validate(['keyword' => 'nullable|string|max:160', 'purpose' => 'nullable|in:routing', 'is_public' => 'nullable|boolean', 'output_item_id' => 'nullable|integer|min:1', 'category_id' => 'nullable|integer|min:1', 'item_type' => 'nullable|in:finished_product,semi_finished,raw_material,packaging,service', 'page' => 'nullable|integer|min:1', 'per_page' => 'nullable|integer|min:1|max:50']), ...$this->context($request))); }
+    public function selector(Request $request, string $type, ProductionMasterDataService $service)
+    {
+        $rules = [
+            'keyword' => 'nullable|string|max:160', 'purpose' => 'nullable|in:routing', 'is_public' => 'nullable|boolean',
+            'output_item_id' => 'nullable|integer|min:1', 'category_id' => 'nullable|integer|min:1',
+            'item_type' => 'nullable|in:finished_product,semi_finished,raw_material,packaging,service',
+            'page' => 'nullable|integer|min:1', 'per_page' => 'nullable|integer|min:1|max:50',
+        ];
+        if ($type === 'items') {
+            $rules['ids'] = 'sometimes|array';
+            $rules['ids.*'] = 'required|integer|min:1';
+            if (is_array($request->input('ids'))) $rules['per_page'] = 'nullable|integer|min:1';
+        }
+        $filters = $request->validate($rules);
+        return $this->respond($request, $service->selector($type, $filters, ...$this->context($request)));
+    }
 
     private function respond(Request $request, mixed $payload, int $status = 200)
     {
@@ -48,7 +77,7 @@ class ProductionMasterDataController extends Controller
     ]); }
     private function routingData(Request $request, bool $editing): array { return $request->validate([
         'client_command_id' => 'required|string|max:120', 'creation_session_id' => $editing ? 'prohibited' : 'required|uuid', 'reservation_token' => $editing ? 'prohibited' : 'required|uuid',
-        'routing_name' => ($editing ? 'sometimes' : 'required').'|string|max:160', 'output_item_id' => 'prohibited',
+        'routing_name' => ($editing ? 'sometimes' : 'required').'|string|max:160', 'output_item_id' => 'prohibited', 'activate_after_save' => 'sometimes|boolean',
         'product_id' => 'nullable|integer|exists:erp_products,id', 'sku_id' => 'nullable|integer|exists:erp_skus,id', 'version' => 'prohibited', 'remark' => 'nullable|string|max:2000',
         'applicable_item_ids' => 'sometimes|array|max:500', 'applicable_item_ids.*' => 'integer|distinct|exists:erp_items,id',
         'applicable_category_ids' => 'sometimes|array|max:100', 'applicable_category_ids.*' => 'integer|distinct|exists:erp_item_categories,id',
@@ -61,7 +90,7 @@ class ProductionMasterDataController extends Controller
         'operations.*.packaging_scheme_id' => 'nullable|integer|exists:erp_production_packaging_schemes,id',
         'operations.*.packaging_materials' => 'nullable|array',
         'operations.*.packaging_materials.*.component_item_id' => 'required|integer|exists:erp_items,id',
-        'operations.*.packaging_materials.*.base_qty_per_output_unit' => 'required|numeric|gt:0|max:999999999',
+        'operations.*.packaging_materials.*.base_qty_per_output_unit' => \App\Services\Erp\ProductionProcessCatalogService::PACKAGING_QUANTITY_RULES,
         'operations.*.output_item_id' => 'prohibited',
         'operations.*.output_mode' => 'nullable|in:flow_only,warehouse_optional,warehouse_required', 'operations.*.quality_mode' => 'nullable|in:none,required',
         'operations.*.work_mode' => 'nullable|in:manual,automatic',

@@ -189,63 +189,69 @@ class DocumentNumberService
      */
     public function next(string $documentType, ?string $fallbackPrefix = null): string
     {
-        return DB::transaction(fn () => $this->allocate($documentType, $fallbackPrefix), 5);
+        return $this->allocateBatch($documentType, 1, $fallbackPrefix)[0];
     }
 
     private function allocate(string $documentType, ?string $fallbackPrefix = null): string
     {
-        $rule = DocumentNumberRule::query()
-            ->where('document_type', $documentType)
-            ->where('enabled', true)
-            ->lockForUpdate()
-            ->first();
+        return $this->allocateBatch($documentType, 1, $fallbackPrefix)[0];
+    }
 
-        if (!$rule) {
-            if (!$fallbackPrefix) {
-                throw ValidationException::withMessages([
-                    'document_type' => '未配置或未启用该业务的编号规则。',
+    /** 整批只锁定一次规则与序列；外层业务失败时序号分配也随事务回滚。 */
+    public function allocateBatch(string $documentType, int $count, ?string $fallbackPrefix = null): array
+    {
+        if ($count < 1) throw ValidationException::withMessages(['count' => '编号分配数量必须大于 0。']);
+        return DB::transaction(function () use ($documentType, $count, $fallbackPrefix): array {
+            $rule = DocumentNumberRule::query()
+                ->where('document_type', $documentType)
+                ->where('enabled', true)
+                ->lockForUpdate()
+                ->first();
+
+            if (!$rule) {
+                if (!$fallbackPrefix) {
+                    throw ValidationException::withMessages([
+                        'document_type' => '未配置或未启用该业务的编号规则。',
+                    ]);
+                }
+                $rule = new DocumentNumberRule([
+                    'document_type' => $documentType,
+                    'prefix' => $fallbackPrefix,
+                    'date_format' => 'Ymd',
+                    'sequence_length' => 5,
+                    'reset_cycle' => 'daily',
+                    'enabled' => true,
                 ]);
             }
-            $rule = new DocumentNumberRule([
-                'document_type' => $documentType,
-                'prefix' => $fallbackPrefix,
-                'date_format' => 'Ymd',
-                'sequence_length' => 5,
-                'reset_cycle' => 'daily',
-                'enabled' => true,
+
+            $allocatedAt = now();
+            $numberDate = match ($rule->reset_cycle) {
+                'none' => '1970-01-01',
+                'yearly' => $allocatedAt->copy()->startOfYear()->toDateString(),
+                'monthly' => $allocatedAt->copy()->startOfMonth()->toDateString(),
+                default => $allocatedAt->toDateString(),
+            };
+
+            // fallback 规则没有可锁父行，先按唯一键补齐序列行，再读取锁，避免首次分配竞争插入。
+            DocumentNumber::query()->insertOrIgnore([
+                'document_type' => $documentType, 'number_date' => $numberDate,
+                'current_sequence' => 0, 'created_at' => $allocatedAt, 'updated_at' => $allocatedAt,
             ]);
-        }
-
-        $numberDate = match ($rule->reset_cycle) {
-            'none' => '1970-01-01',
-            'yearly' => now()->startOfYear()->toDateString(),
-            'monthly' => now()->startOfMonth()->toDateString(),
-            default => now()->toDateString(),
-        };
-
-        $counter = DocumentNumber::query()
-            ->where('document_type', $documentType)
-            ->whereDate('number_date', $numberDate)
-            ->lockForUpdate()
-            ->first();
-
-        if (!$counter) {
-            $counter = DocumentNumber::create([
-                'document_type' => $documentType,
-                'number_date' => $numberDate,
-                'current_sequence' => 0,
-            ]);
-        }
-
-        $counter->increment('current_sequence');
-        $sequence = str_pad(
-            (string) $counter->fresh()->current_sequence,
-            (int) $rule->sequence_length,
-            '0',
-            STR_PAD_LEFT
-        );
-        $datePart = $rule->date_format ? now()->format($rule->date_format) : '';
-
-        return (string) $rule->prefix.$datePart.$sequence;
+            $counter = DocumentNumber::query()
+                ->where('document_type', $documentType)
+                ->where('number_date', $numberDate)
+                ->lockForUpdate()
+                ->firstOrFail();
+            $first = (int) $counter->current_sequence + 1;
+            $last = $first + $count - 1;
+            if ($last > 4294967295) throw ValidationException::withMessages(['count' => '编号序列已超出可分配范围。']);
+            $counter->update(['current_sequence' => $last]);
+            $datePart = $rule->date_format ? $allocatedAt->format($rule->date_format) : '';
+            $numbers = [];
+            for ($sequence = $first; $sequence <= $last; $sequence++) {
+                $numbers[] = (string) $rule->prefix.$datePart.str_pad((string) $sequence, (int) $rule->sequence_length, '0', STR_PAD_LEFT);
+            }
+            return $numbers;
+        }, 5);
     }
 }

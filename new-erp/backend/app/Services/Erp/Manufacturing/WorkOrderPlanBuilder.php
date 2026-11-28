@@ -8,7 +8,7 @@ use App\Models\Erp\Item;
 use App\Models\Erp\ProductionRouting;
 use App\Services\Erp\BomMatcher;
 use App\Services\Erp\InventoryAvailabilityService;
-use App\Services\Erp\LengthCutRequirementService;
+use App\Services\Erp\BomExplosionEngine;
 use App\Services\Erp\ProductionMasterDataService;
 use Illuminate\Support\Collection;
 
@@ -20,7 +20,7 @@ final class WorkOrderPlanBuilder
 {
     public function __construct(
         private readonly BomMatcher $bomMatcher,
-        private readonly LengthCutRequirementService $lengthCut,
+        private readonly BomExplosionEngine $explosion,
         private readonly ProductionMasterDataService $masterData,
         private readonly InventoryAvailabilityService $availability,
     ) {}
@@ -64,16 +64,7 @@ final class WorkOrderPlanBuilder
 
     public function freezeBom(array $bom, int $itemId, bool $lock = false): array
     {
-        $blocks = [];
-        $expanded = $this->explodePhantoms($bom['items'], [$itemId], $blocks, $lock);
-        $bom['phantom_expansion_complete'] = ! $blocks;
-        // 展开失败时保留基准行和原因，防止把部分用料当成完整生产依据。
-        if ($blocks) $bom['phantom_expansion_block_reasons'] = $blocks;
-        else {
-            $bom['items'] = $expanded;
-            unset($bom['phantom_expansion_block_reasons']);
-        }
-        return $bom;
+        return $this->explosion->freeze($bom, $itemId, $lock);
     }
 
     public function applyConfirmedMaterials(array $plan, array $bom, float $qty): array
@@ -165,14 +156,13 @@ final class WorkOrderPlanBuilder
     private function bom(Item $item, ?int $productId, ?int $skuId, ?array $configuration, ?int $bomId, array &$blocks): ?array
     {
         if ($bomId) {
-            $bom = $this->bomMatcher->eligibleQuery()->with(['items.componentItem.unit.standardUnit', 'items.unit.standardUnit'])
-                ->whereKey($bomId)->where('output_item_id', $item->id)->first();
-            if (! $bom) { $blocks['bom_selection'] = '所选 BOM 已失效或不适用于这个产品，请重新选择。'; return null; }
-            if ($bom->items->isEmpty()) {
-                $blocks['bom_selection'] = BomMatcher::emptyMaterialsMessage($bom->bom_no);
+            $selection = $this->explosion->select($productId, $skuId, (int) $item->id, $bomId, requireMaterials: true, matchScope: false);
+            if ($selection['status'] !== 'matched') {
+                $blocks['bom_selection'] = $selection['block_reason'];
                 return null;
             }
-            return $this->bomArray($bom, $this->lengthCut->resolveBomLines($bom, $configuration)->all());
+            $bom = $selection['bom'];
+            return $this->bomArray($bom, $this->explosion->lines($bom, $configuration)->all());
         }
         $match = $this->bomMatcher->match($productId, $skuId, $item->id, $configuration, requireMaterials: true);
         if ($match['status'] === 'empty_materials') {
@@ -233,77 +223,10 @@ final class WorkOrderPlanBuilder
         return $snapshot;
     }
 
-    /**
-     * 虚拟件展开：上级行用量 c、损耗 lc、固定 fc，下层行用量 q、损耗 l、固定 f，
-     * 下层总需求 = (c×Q×(1+lc)+fc)×q×(1+l)+f，即单件用量 c×(1+lc)×q、损耗 l、固定 fc×q×(1+l)+f。
-     * 下层行未指定用料工序时沿用虚拟件行的工序。
-     */
-    private function explodePhantoms(array $lines, array $path, array &$blocks, bool $lock): array
-    {
-        $ids = array_values(array_unique(array_map(fn ($line) => (int) $line['component_item_id'], $lines)));
-        $phantoms = $ids ? Item::query()->whereIn('id', $ids)->where('manufacturing_strategy', 'phantom')
-            ->when($lock, fn ($q) => $q->lockForUpdate())->get()->keyBy('id') : collect();
-        if ($phantoms->isEmpty()) return $lines;
-        $out = [];
-        foreach ($lines as $line) {
-            $phantom = $phantoms->get((int) $line['component_item_id']);
-            if (! $phantom) { $out[] = $line; continue; }
-            $name = $phantom->item_name ?: $phantom->item_code;
-            if (in_array((int) $phantom->id, $path, true) || count($path) > 8) { $blocks[] = '虚拟件 '.$name.' 的 BOM 层级循环或过深，请检查 BOM'; continue; }
-            if (! empty($line['child_bom_id'])) {
-                $childBom = $this->bomMatcher->eligibleQuery()->whereKey((int) $line['child_bom_id'])->where('output_item_id', $phantom->id)
-                    ->when($lock, fn ($q) => $q->lockForUpdate())->first();
-                if (! $childBom) { $blocks[] = '虚拟件 '.$name.' 指定的子 BOM 不可用，无法展开用料'; continue; }
-                if ($lock) $this->bomMatcher->loadLockedLines($childBom);
-                if ($childBom->items->isEmpty()) { $blocks[] = BomMatcher::emptyMaterialsMessage($childBom->bom_no); continue; }
-                $childItems = $this->lengthCut->resolveBomLines($childBom, null)->all();
-            } else {
-                $match = $this->bomMatcher->match(null, null, (int) $phantom->id, lock: $lock, requireMaterials: true);
-                if (($match['status'] ?? null) !== 'matched') { $blocks[] = '虚拟件 '.$name.' 没有唯一可用的已审核 BOM（物料级），无法展开用料'; continue; }
-                $childItems = $match['bom_snapshot']['items'];
-            }
-            $children = $this->explodePhantoms($childItems, [...$path, (int) $phantom->id], $blocks, $lock);
-            $multiplier = (float) $line['qty'] * (1 + (float) ($line['loss_rate'] ?? 0) / 100);
-            $parentFixed = (float) ($line['fixed_qty'] ?? 0);
-            foreach ($children as $child) {
-                // 位置路径随虚拟件层级下延：父行路径 + '/' + 子行在子 BOM 里的 uid。
-                $child['position_path'] = trim(($line['position_path'] ?? $line['position_uid'] ?? '').'/'.($child['position_path'] ?? $child['position_uid'] ?? ''), '/');
-                $childQty = (float) $child['qty'];
-                $childLoss = (float) ($child['loss_rate'] ?? 0);
-                $child['qty'] = (string) round($multiplier * $childQty, 6);
-                $child['fixed_qty'] = (string) round($parentFixed * $childQty * (1 + $childLoss / 100) + (float) ($child['fixed_qty'] ?? 0), 6);
-                if (is_array($child['cutting_quantity_snapshot'] ?? null)) {
-                    if (abs($multiplier - round($multiplier)) > 0.000001 || $parentFixed > 0) {
-                        $blocks[] = '虚拟件 '.$name.' 下的下料物料 '.($child['component_item_name'] ?? '').' 需要虚拟件用量为整数且无固定用量，请调整 BOM';
-                    } else {
-                        $times = (int) round($multiplier);
-                        $snapshot = $child['cutting_quantity_snapshot'];
-                        foreach (['theoretical_qty', 'total_length_mm'] as $key) if (isset($snapshot[$key])) $snapshot[$key] = round((float) $snapshot[$key] * $times, 6);
-                        if (isset($snapshot['dimensions']['piece_qty'])) $snapshot['dimensions']['piece_qty'] = (int) $snapshot['dimensions']['piece_qty'] * $times;
-                        $child['cutting_quantity_snapshot'] = $snapshot;
-                        if (isset($child['piece_qty'])) $child['piece_qty'] = (int) $child['piece_qty'] * $times;
-                        if (isset($child['total_length_mm'])) $child['total_length_mm'] = round((float) $child['total_length_mm'] * $times, 6);
-                    }
-                }
-                if (empty($child['operation_id']) && empty($child['target_routing_operation_id'])) {
-                    $child['operation_id'] = $line['operation_id'] ?? null;
-                    if (! empty($line['target_routing_operation_id'])) $child['target_routing_operation_id'] = $line['target_routing_operation_id'];
-                }
-                $child['phantom_item_id'] = (int) $phantom->id;
-                $child['phantom_item_name'] = trim(($child['phantom_item_name'] ?? '') ? $name.' / '.$child['phantom_item_name'] : $name);
-                $out[] = $child;
-            }
-        }
-        $duplicates = collect($out)->pluck('id')->filter()->duplicates();
-        if ($duplicates->isNotEmpty()) $blocks[] = '同一个虚拟件在 BOM 里被重复引用，请合并为一行';
-        return $out;
-    }
-
     /** 正式需求和技术缺料提醒共用同一数量口径，固定用量只按整张工单加一次。 */
     public static function requiredQuantity(array $line, float $qty): float
     {
-        $unitQty = (float) (data_get($line, 'cutting_quantity_snapshot.theoretical_qty') ?? $line['qty']);
-        return round($unitQty * $qty * (1 + (float) ($line['loss_rate'] ?? 0) / 100) + (float) ($line['fixed_qty'] ?? 0), 4);
+        return BomExplosionEngine::requiredQuantity($line, $qty);
     }
 
     /** BOM 决定总量，路线的供料规则决定分到哪道工序；没有规则的料默认给第一道车间工序。 */
